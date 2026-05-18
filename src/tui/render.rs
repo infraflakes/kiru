@@ -1,4 +1,5 @@
 use super::*;
+use crate::colors;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -7,15 +8,55 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
+fn colorize_output(line: &str) -> Line<'static> {
+    let trimmed = line.trim_start();
+
+    // function header like "build(todo)" — color whole line
+    if !trimmed.contains(' ') && trimmed.contains('(') && trimmed.ends_with(')') {
+        return Line::from(Span::styled(
+            line.to_string(),
+            Style::default().fg(colors::EXEC),
+        ));
+    }
+
+    // execution primitives — color the keyword
+    let (prefix, kw_color) = if trimmed.starts_with("log  ") {
+        ("log  ", colors::LOG)
+    } else if trimmed.starts_with("exec ") {
+        ("exec ", colors::EXEC)
+    } else if trimmed.starts_with("cd   ") {
+        ("cd   ", colors::CD)
+    } else if trimmed.starts_with("env  ") {
+        ("env  ", colors::ENV)
+    } else {
+        return Line::from(line.to_string());
+    };
+
+    let indent = line.len() - trimmed.len();
+    let mut spans = Vec::new();
+    if indent > 0 {
+        spans.push(Span::raw(line[..indent].to_string()));
+    }
+    spans.push(Span::styled(
+        prefix.to_string(),
+        Style::default().fg(kw_color),
+    ));
+    spans.push(Span::styled(
+        trimmed[prefix.len()..].to_string(),
+        Style::default().fg(colors::TEXT),
+    ));
+    Line::from(spans)
+}
+
 pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
     let size = f.size();
 
     // Header with badge and info
     let badge_color = match model.model_type.as_str() {
-        "seq" => Color::Blue,
-        "par" => Color::Magenta,
-        "sync" => Color::Cyan,
-        _ => Color::White,
+        "seq" => colors::SEQ,
+        "par" => colors::PAR,
+        "sync" => colors::SYNC,
+        _ => colors::TEXT_BRIGHT,
     };
 
     let header_spans = vec![
@@ -25,11 +66,11 @@ pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
         ),
         Span::styled(
             format!(" {} ", model.name),
-            Style::default().fg(Color::White),
+            Style::default().fg(colors::TEXT),
         ),
         Span::styled(
             format!(" {} tasks ", model.tasks.len()),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(colors::MUTED),
         ),
     ];
 
@@ -38,7 +79,7 @@ pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
 
     // Separator
     let separator =
-        Paragraph::new("─".repeat(size.width as usize)).style(Style::default().fg(Color::DarkGray));
+        Paragraph::new("─".repeat(size.width as usize)).style(Style::default().fg(colors::MUTED));
     f.render_widget(separator, Rect::new(0, 1, size.width, 1));
 
     // Task rows with accordion expansion
@@ -63,10 +104,10 @@ pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
             };
 
             let color = match task.status {
-                TaskStatus::Pending => Color::DarkGray,
-                TaskStatus::Running => Color::Yellow,
-                TaskStatus::Success => Color::Green,
-                TaskStatus::Error => Color::Red,
+                TaskStatus::Pending => colors::PENDING,
+                TaskStatus::Running => colors::RUNNING,
+                TaskStatus::Success => colors::OK,
+                TaskStatus::Error => colors::FAILED,
             };
 
             let is_selected = i == model.selected;
@@ -113,7 +154,7 @@ pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
                 if pruned_count > 0 && y - model.scroll_row < max_y {
                     let pruned_text = format!(" ↑ {} lines hidden ", pruned_count);
                     let pruned_line =
-                        Paragraph::new(pruned_text).style(Style::default().fg(Color::DarkGray));
+                        Paragraph::new(pruned_text).style(Style::default().fg(colors::MUTED));
                     f.render_widget(
                         pruned_line,
                         Rect::new(
@@ -140,15 +181,15 @@ pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
                     let output_text: Vec<Line> = output_lines
                         .iter()
                         .rev()
-                        .map(|line| Line::from(line.as_str()))
+                        .map(|line| colorize_output(line))
                         .collect();
 
                     let output_paragraph = Paragraph::new(output_text)
-                        .style(Style::default().fg(Color::Gray))
+                        .style(Style::default().fg(colors::TEXT))
                         .block(
                             Block::default()
                                 .borders(Borders::LEFT)
-                                .border_style(Style::default().fg(Color::DarkGray)),
+                                .border_style(Style::default().fg(colors::MUTED)),
                         );
                     f.render_widget(
                         output_paragraph,
@@ -188,25 +229,25 @@ pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
     if ok_count > 0 {
         footer_spans.push(Span::styled(
             format!("✓ {} ok ", ok_count),
-            Style::default().fg(Color::Green),
+            Style::default().fg(colors::OK),
         ));
     }
     if running_count > 0 {
         footer_spans.push(Span::styled(
             format!("{} {} running ", SPINNER_FRAMES[spinner_idx], running_count),
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(colors::RUNNING),
         ));
     }
     if pending_count > 0 {
         footer_spans.push(Span::styled(
             format!("· {} pending ", pending_count),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(colors::PENDING),
         ));
     }
     if error_count > 0 {
         footer_spans.push(Span::styled(
             format!("✗ {} error ", error_count),
-            Style::default().fg(Color::Red),
+            Style::default().fg(colors::FAILED),
         ));
     }
 
@@ -223,7 +264,7 @@ pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
 
     // Footer separator
     let footer_sep =
-        Paragraph::new("─".repeat(size.width as usize)).style(Style::default().fg(Color::DarkGray));
+        Paragraph::new("─".repeat(size.width as usize)).style(Style::default().fg(colors::MUTED));
     f.render_widget(
         footer_sep,
         Rect::new(0, size.height.saturating_sub(2), size.width, 1),

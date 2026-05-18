@@ -1,3 +1,4 @@
+use crate::colors;
 use crate::config::{Config, ConfigError, Project};
 use crate::dsl::ast::{Expr, FnStmt};
 use std::collections::HashMap;
@@ -66,7 +67,7 @@ impl<'a> ExecContext<'a> {
         if let Some(callback) = self.output_callback {
             callback(line);
         } else {
-            writeln!(self.writer, "\x1b[38;2;255;203;107m{}\x1b[0m", line)
+            writeln!(self.writer, "{}{}{}", colors::LOG_ANSI, line, colors::RESET)
                 .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
         }
         Ok(())
@@ -80,8 +81,14 @@ impl<'a> ExecContext<'a> {
         if let Some(callback) = self.output_callback {
             callback(line);
         } else {
-            writeln!(self.writer, "\x1b[38;2;91;156;246m{}\x1b[0m", line)
-                .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
+            writeln!(
+                self.writer,
+                "{}{}{}",
+                colors::EXEC_ANSI,
+                line,
+                colors::RESET
+            )
+            .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
         }
 
         let mut child = Command::new(&self.cfg.shell)
@@ -177,7 +184,7 @@ impl<'a> ExecContext<'a> {
         if let Some(callback) = self.output_callback {
             callback(line);
         } else {
-            writeln!(self.writer, "\x1b[38;2;255;203;107m{}\x1b[0m", line)
+            writeln!(self.writer, "{}{}{}", colors::CD_ANSI, line, colors::RESET)
                 .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
         }
         Ok(())
@@ -240,7 +247,7 @@ impl<'a> ExecContext<'a> {
         if let Some(callback) = self.output_callback {
             callback(line);
         } else {
-            writeln!(self.writer, "\x1b[38;2;199;146;234m{}\x1b[0m", line)
+            writeln!(self.writer, "{}{}{}", colors::ENV_ANSI, line, colors::RESET)
                 .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
         }
 
