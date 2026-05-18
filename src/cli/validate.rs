@@ -1,4 +1,4 @@
-use super::load_config;
+use super::load_config_and_resolve;
 use crate::config::types::Config;
 use std::io::Write;
 use std::path::PathBuf;
@@ -19,7 +19,7 @@ macro_rules! style {
 }
 
 pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
-    let cfg = load_config(config_arg)?;
+    let cfg = load_config_and_resolve(config_arg)?;
     let output = format_config(&cfg);
     display_output(&output)?;
     Ok(())

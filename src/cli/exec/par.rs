@@ -1,4 +1,4 @@
-use super::super::load_config;
+use super::super::load_config_and_resolve;
 use crate::runner::{OutputCallback, Runner};
 use crate::tui::{self, Model, TaskStatus, TuiApp, TuiEvent};
 use std::path::PathBuf;
@@ -10,7 +10,7 @@ pub fn run(
     project: String,
     plain: bool,
 ) -> miette::Result<()> {
-    let config = load_config(config_arg)?;
+    let config = load_config_and_resolve(config_arg)?;
 
     if !config.projects.contains_key(&project) {
         return Err(miette::miette!("unknown project: {}", project));

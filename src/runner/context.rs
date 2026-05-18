@@ -94,62 +94,53 @@ impl<'a> ExecContext<'a> {
             .spawn()
             .map_err(|e| ConfigError::Validation(format!("exec failed: {}: {}", cmd_str, e)))?;
 
+        let output_cb = self.output_callback.cloned();
         let stdout_indent = "  ".repeat(self.env_stack.len() + 1);
 
         let stdout_thread = child.stdout.take().map(|stdout| {
             let indent = stdout_indent.clone();
-            thread::spawn(move || -> Result<Vec<String>, ConfigError> {
+            let cb = output_cb.clone();
+            thread::spawn(move || -> Result<(), ConfigError> {
                 let reader = std::io::BufReader::new(stdout);
-                let mut lines = Vec::new();
                 for line in reader.lines() {
                     let line =
                         line.map_err(|e| ConfigError::Validation(format!("read error: {}", e)))?;
-                    lines.push(format!("{}{}", indent, line));
+                    let formatted = format!("{}{}", indent, line);
+                    if let Some(ref callback) = cb {
+                        callback(formatted);
+                    }
                 }
-                Ok(lines)
+                Ok(())
             })
         });
 
         let stderr_thread = child.stderr.take().map(|stderr| {
             let indent = stdout_indent.clone();
-            thread::spawn(move || -> Result<Vec<String>, ConfigError> {
+            let cb = output_cb.clone();
+            thread::spawn(move || -> Result<(), ConfigError> {
                 let reader = std::io::BufReader::new(stderr);
-                let mut lines = Vec::new();
                 for line in reader.lines() {
                     let line =
                         line.map_err(|e| ConfigError::Validation(format!("read error: {}", e)))?;
-                    lines.push(format!("{}{}", indent, line));
+                    let formatted = format!("{}{}", indent, line);
+                    if let Some(ref callback) = cb {
+                        callback(formatted);
+                    }
                 }
-                Ok(lines)
+                Ok(())
             })
         });
 
         if let Some(handle) = stdout_thread {
-            let lines = handle
+            handle
                 .join()
                 .map_err(|_| ConfigError::Validation("stdout reader panicked".to_string()))??;
-            for line in lines {
-                if let Some(callback) = self.output_callback {
-                    callback(line);
-                } else {
-                    writeln!(self.writer, "{}", line)
-                        .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
-                }
-            }
         }
 
         if let Some(handle) = stderr_thread {
-            let lines = handle
+            handle
                 .join()
                 .map_err(|_| ConfigError::Validation("stderr reader panicked".to_string()))??;
-            for line in lines {
-                if let Some(callback) = self.output_callback {
-                    callback(line);
-                } else {
-                    writeln!(self.writer, "{}", line)
-                        .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
-                }
-            }
         }
 
         let status = child
