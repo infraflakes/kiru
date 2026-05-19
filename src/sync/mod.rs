@@ -60,7 +60,7 @@ fn sync_project_inner(
     let mut child = Command::new("git")
         .args(&args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| {
             ConfigError::Validation(format!(

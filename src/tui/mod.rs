@@ -86,6 +86,9 @@ impl Model {
     pub fn update_task_status(&mut self, index: usize, status: TaskStatus) {
         if let Some(task) = self.tasks.get_mut(index) {
             task.status = status;
+            if status == TaskStatus::Running {
+                task.expanded = true;
+            }
         }
     }
 

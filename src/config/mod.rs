@@ -25,12 +25,14 @@ pub fn load(entry_path: &Path) -> Result<Config, ConfigError> {
     let mut recursion_stack = HashSet::new();
     let programs = parse_recursive(&abs_path, &mut loaded_files, &mut recursion_stack)?;
 
-    let mut config = merge::merge(programs)?;
+    let config = merge::merge(programs)?;
     validation::validate_base(&config)?;
 
-    validation::resolve_use(&mut config, parse_recursive)?;
-
     Ok(config)
+}
+
+pub fn resolve_uses(cfg: &mut Config) -> Result<(), ConfigError> {
+    validation::resolve_use(cfg, parse_recursive)
 }
 
 fn parse_recursive(
@@ -124,6 +126,12 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::Path;
+
+    fn load_full(entry_path: &Path) -> Result<Config, ConfigError> {
+        let mut cfg = load(entry_path)?;
+        resolve_uses(&mut cfg)?;
+        Ok(cfg)
+    }
 
     fn write_config(dir: &Path, name: &str, content: &str) {
         let path = dir.join(name);
@@ -598,7 +606,7 @@ pr test {\n\
 }\
 ",
         );
-        let err = load(&dir.path().join("main.sro")).unwrap_err();
+        let err = load_full(&dir.path().join("main.sro")).unwrap_err();
         assert!(
             err.to_string().contains("undefined variable"),
             "got: {}",
@@ -624,7 +632,7 @@ pr test {\n\
 }\
 ",
         );
-        let err = load(&dir.path().join("main.sro")).unwrap_err();
+        let err = load_full(&dir.path().join("main.sro")).unwrap_err();
         let err_str = err.to_string();
         assert!(err_str.contains("unknown function"), "got: {}", err_str);
     }
@@ -671,7 +679,7 @@ pr test {\n\
 }\
 ",
         );
-        let err = load(&dir.path().join("main.sro")).unwrap_err();
+        let err = load_full(&dir.path().join("main.sro")).unwrap_err();
         assert!(
             err.to_string().contains("duplicate variable"),
             "got: {}",
@@ -710,7 +718,7 @@ pr test {{ url = `http://example.com`; dir = `test`; use = `use.sro`; }}\
                 dir.path().display()
             ),
         );
-        let cfg = load(&dir.path().join("main.sro")).unwrap();
+        let cfg = load_full(&dir.path().join("main.sro")).unwrap();
         let proj = &cfg.projects["test"];
         assert_eq!(proj.vars.get("usevar").unwrap(), "from-use");
         assert!(proj.functions.contains_key("usefn"));
@@ -733,7 +741,7 @@ pr test {{ url = `http://example.com`; dir = `test`; use = `nonexistent.sro`; }}
                 dir.path().display()
             ),
         );
-        let err = load(&dir.path().join("main.sro")).unwrap_err();
+        let err = load_full(&dir.path().join("main.sro")).unwrap_err();
         let err_str = err.to_string();
         assert!(
             err_str.contains("use file not found") || err_str.contains("not found"),
@@ -836,7 +844,7 @@ pr test {\n\
 }\
 ",
         );
-        let err = load(&dir.path().join("main.sro")).unwrap_err();
+        let err = load_full(&dir.path().join("main.sro")).unwrap_err();
         assert!(
             err.to_string().contains("undefined variable"),
             "project fns should not have access to global vars, got: {}",

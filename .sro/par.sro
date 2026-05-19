@@ -1,5 +1,5 @@
 pr sro {
-  par all_sro {
+  par all {
     build;
     check;
     test;

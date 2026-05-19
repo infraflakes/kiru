@@ -17,6 +17,20 @@ fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Config> {
     })
 }
 
+fn load_config_and_resolve(config_arg: Option<PathBuf>) -> miette::Result<Config> {
+    let mut config = load_config(config_arg)?;
+    match crate::config::resolve_uses(&mut config) {
+        Ok(()) => {}
+        Err(crate::config::ConfigError::ParseReports(reports)) => {
+            return Err(print_parse_errors(reports));
+        }
+        Err(e) => {
+            return Err(miette::miette!("{}", e));
+        }
+    }
+    Ok(config)
+}
+
 fn print_parse_errors(reports: Vec<miette::Report>) -> miette::Report {
     let count = reports.len();
     if count == 1 {

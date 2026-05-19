@@ -1,3 +1,4 @@
+use crate::colors;
 use crate::config::{Config, ConfigError, Project};
 use crate::dsl::ast::{Expr, FnStmt};
 use std::collections::HashMap;
@@ -66,7 +67,7 @@ impl<'a> ExecContext<'a> {
         if let Some(callback) = self.output_callback {
             callback(line);
         } else {
-            writeln!(self.writer, "\x1b[38;2;255;203;107m{}\x1b[0m", line)
+            writeln!(self.writer, "{}{}{}", colors::LOG_ANSI, line, colors::RESET)
                 .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
         }
         Ok(())
@@ -80,8 +81,14 @@ impl<'a> ExecContext<'a> {
         if let Some(callback) = self.output_callback {
             callback(line);
         } else {
-            writeln!(self.writer, "\x1b[38;2;91;156;246m{}\x1b[0m", line)
-                .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
+            writeln!(
+                self.writer,
+                "{}{}{}",
+                colors::EXEC_ANSI,
+                line,
+                colors::RESET
+            )
+            .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
         }
 
         let mut child = Command::new(&self.cfg.shell)
@@ -96,65 +103,77 @@ impl<'a> ExecContext<'a> {
 
         let stdout_indent = "  ".repeat(self.env_stack.len() + 1);
 
-        let stdout_thread = child.stdout.take().map(|stdout| {
-            let indent = stdout_indent.clone();
-            thread::spawn(move || -> Result<Vec<String>, ConfigError> {
-                let reader = std::io::BufReader::new(stdout);
-                let mut lines = Vec::new();
-                for line in reader.lines() {
-                    let line =
-                        line.map_err(|e| ConfigError::Validation(format!("read error: {}", e)))?;
-                    lines.push(format!("{}{}", indent, line));
-                }
-                Ok(lines)
-            })
-        });
+        let status = if let Some(cb) = self.output_callback {
+            let cb: OutputCallback = cb.clone();
+            let stdout_thread = child.stdout.take().map(|stdout| {
+                let indent = stdout_indent.clone();
+                let cb = cb.clone();
+                thread::spawn(move || -> Result<(), ConfigError> {
+                    let reader = std::io::BufReader::new(stdout);
+                    for line in reader.lines() {
+                        let line = line
+                            .map_err(|e| ConfigError::Validation(format!("read error: {}", e)))?;
+                        cb(format!("{}{}", indent, line));
+                    }
+                    Ok(())
+                })
+            });
 
-        let stderr_thread = child.stderr.take().map(|stderr| {
-            let indent = stdout_indent.clone();
-            thread::spawn(move || -> Result<Vec<String>, ConfigError> {
-                let reader = std::io::BufReader::new(stderr);
-                let mut lines = Vec::new();
-                for line in reader.lines() {
-                    let line =
-                        line.map_err(|e| ConfigError::Validation(format!("read error: {}", e)))?;
-                    lines.push(format!("{}{}", indent, line));
-                }
-                Ok(lines)
-            })
-        });
+            let stderr_thread = child.stderr.take().map(|stderr| {
+                let indent = stdout_indent.clone();
+                let cb = cb.clone();
+                thread::spawn(move || -> Result<(), ConfigError> {
+                    let reader = std::io::BufReader::new(stderr);
+                    for line in reader.lines() {
+                        let line = line
+                            .map_err(|e| ConfigError::Validation(format!("read error: {}", e)))?;
+                        cb(format!("{}{}", indent, line));
+                    }
+                    Ok(())
+                })
+            });
 
-        if let Some(handle) = stdout_thread {
-            let lines = handle
-                .join()
-                .map_err(|_| ConfigError::Validation("stdout reader panicked".to_string()))??;
-            for line in lines {
-                if let Some(callback) = self.output_callback {
-                    callback(line);
-                } else {
-                    writeln!(self.writer, "{}", line)
-                        .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
-                }
+            let stdout_result = stdout_thread.map(|handle| {
+                handle
+                    .join()
+                    .map_err(|_| ConfigError::Validation("stdout reader panicked".to_string()))
+            });
+            let stderr_result = stderr_thread.map(|handle| {
+                handle
+                    .join()
+                    .map_err(|_| ConfigError::Validation("stderr reader panicked".to_string()))
+            });
+
+            let status = child
+                .wait()
+                .map_err(|e| ConfigError::Validation(format!("exec failed: {}: {}", cmd_str, e)))?;
+
+            if let Some(result) = stdout_result {
+                result??;
             }
-        }
-
-        if let Some(handle) = stderr_thread {
-            let lines = handle
-                .join()
-                .map_err(|_| ConfigError::Validation("stderr reader panicked".to_string()))??;
-            for line in lines {
-                if let Some(callback) = self.output_callback {
-                    callback(line);
-                } else {
-                    writeln!(self.writer, "{}", line)
-                        .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
-                }
+            if let Some(result) = stderr_result {
+                result??;
             }
-        }
 
-        let status = child
-            .wait()
-            .map_err(|e| ConfigError::Validation(format!("exec failed: {}: {}", cmd_str, e)))?;
+            status
+        } else {
+            let output = child
+                .wait_with_output()
+                .map_err(|e| ConfigError::Validation(format!("exec failed: {}: {}", cmd_str, e)))?;
+            for line in std::io::BufReader::new(&output.stdout[..]).lines() {
+                let line =
+                    line.map_err(|e| ConfigError::Validation(format!("read error: {}", e)))?;
+                writeln!(self.writer, "{}{}", stdout_indent, line)
+                    .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
+            }
+            for line in std::io::BufReader::new(&output.stderr[..]).lines() {
+                let line =
+                    line.map_err(|e| ConfigError::Validation(format!("read error: {}", e)))?;
+                writeln!(self.writer, "{}{}", stdout_indent, line)
+                    .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
+            }
+            output.status
+        };
 
         if !status.success() {
             return Err(ConfigError::Validation(format!(
@@ -186,7 +205,7 @@ impl<'a> ExecContext<'a> {
         if let Some(callback) = self.output_callback {
             callback(line);
         } else {
-            writeln!(self.writer, "\x1b[38;2;255;203;107m{}\x1b[0m", line)
+            writeln!(self.writer, "{}{}{}", colors::CD_ANSI, line, colors::RESET)
                 .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
         }
         Ok(())
@@ -249,7 +268,7 @@ impl<'a> ExecContext<'a> {
         if let Some(callback) = self.output_callback {
             callback(line);
         } else {
-            writeln!(self.writer, "\x1b[38;2;199;146;234m{}\x1b[0m", line)
+            writeln!(self.writer, "{}{}{}", colors::ENV_ANSI, line, colors::RESET)
                 .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
         }
 

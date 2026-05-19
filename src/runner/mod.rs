@@ -1,6 +1,7 @@
 pub mod context;
 pub mod resolver;
 
+use crate::colors;
 use crate::config::{Config, ConfigError};
 pub use context::{ExecContext, OutputCallback};
 use std::io::{self, Write};
@@ -58,8 +59,14 @@ impl Runner {
             if let Some(ref callback) = self.output_callback {
                 callback(line);
             } else {
-                writeln!(self.writer, "\x1b[38;2;91;156;246m{}\x1b[0m", line)
-                    .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
+                writeln!(
+                    self.writer,
+                    "{}{}{}",
+                    colors::EXEC_ANSI,
+                    line,
+                    colors::RESET
+                )
+                .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
             }
         }
 
