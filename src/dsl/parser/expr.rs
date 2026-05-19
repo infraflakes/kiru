@@ -62,7 +62,10 @@ impl Parser {
     }
 }
 
-fn parse_template_parts(content: &str, offset: usize) -> Result<Vec<TemplatePart>, ParseError> {
+pub(crate) fn parse_template_parts(
+    content: &str,
+    offset: usize,
+) -> Result<Vec<TemplatePart>, ParseError> {
     let mut parts = Vec::new();
     let mut current = String::new();
     let mut chars = content.char_indices().peekable();

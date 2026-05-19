@@ -11,14 +11,14 @@ impl Parser {
                         self.current_token().len,
                     ),
                     format!(
-                        "expected function name, found {}",
+                        "expected function name in seq/par, found {}",
                         format_token(self.current_token())
                     ),
                 ));
             }
         };
         self.advance();
-        self.expect(TokenType::Semicolon)?;
+        self.expect_with_context(TokenType::Semicolon, "after function name")?;
         Ok(fn_name)
     }
 }

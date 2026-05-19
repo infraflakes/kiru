@@ -7,16 +7,20 @@ pr sro {
     exec(`nix develop -c make init`);
   }
 
-  fn build {
-    log(`Building sro CLI!`);
-    exec(`nix develop -c make build`);
-  }
-
   fn check {
     exec(`nix develop -c make fmt`);
   }
 
   fn test {
     exec(`nix develop -c make test`);
+  }
+  fn build {
+      var shell docker_bin = `command -v docker 2> /dev/null || command -v podman 2> /dev/null`;
+      case ($docker_bin) {
+        `` { log(`no container runtime found`); };
+        _  { exec(`rm -rf bin`);
+                  exec(`rm -rf result`);
+                  exec(`${docker_bin} build --output type=local,dest=bin .`); };
+      };
   }
 }

@@ -18,14 +18,14 @@ impl Parser {
         };
         self.advance();
 
-        self.expect(TokenType::LBrace)?;
+        self.expect_with_context(TokenType::LBrace, "after function name")?;
 
         let mut body = Vec::new();
         while self.current_token().ty != TokenType::RBrace {
             body.push(self.parse_fn_stmt()?);
         }
 
-        self.expect(TokenType::RBrace)?;
+        self.expect_with_context(TokenType::RBrace, "to close function body")?;
 
         Ok(Stmt::FnDecl { name, body })
     }
@@ -41,13 +41,13 @@ impl Parser {
                         self.current_token().offset.into(),
                         self.current_token().len,
                     ),
-                    "expected identifier".to_string(),
+                    "expected sequence name".to_string(),
                 ));
             }
         };
         self.advance();
 
-        self.expect(TokenType::LBrace)?;
+        self.expect_with_context(TokenType::LBrace, "after sequence name")?;
 
         let mut fns = Vec::new();
         while self.current_token().ty != TokenType::RBrace {
@@ -60,7 +60,7 @@ impl Parser {
             fns.push(self.parse_block_fn_name()?);
         }
 
-        self.expect(TokenType::RBrace)?;
+        self.expect_with_context(TokenType::RBrace, "to close sequence body")?;
 
         Ok(Stmt::SeqDecl { name, fns })
     }
@@ -76,13 +76,13 @@ impl Parser {
                         self.current_token().offset.into(),
                         self.current_token().len,
                     ),
-                    "expected identifier".to_string(),
+                    "expected parallel block name".to_string(),
                 ));
             }
         };
         self.advance();
 
-        self.expect(TokenType::LBrace)?;
+        self.expect_with_context(TokenType::LBrace, "after parallel block name")?;
 
         let mut fns = Vec::new();
         while self.current_token().ty != TokenType::RBrace {
@@ -95,7 +95,7 @@ impl Parser {
             fns.push(self.parse_block_fn_name()?);
         }
 
-        self.expect(TokenType::RBrace)?;
+        self.expect_with_context(TokenType::RBrace, "to close parallel block body")?;
 
         Ok(Stmt::ParDecl { name, fns })
     }

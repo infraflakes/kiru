@@ -6,6 +6,19 @@ fn parse_program(input: &str) -> Result<Program, Vec<ParseError>> {
     parser.parse()
 }
 
+fn count_fn_stmt_types(body: &[FnStmt]) -> Vec<&'static str> {
+    body.iter()
+        .map(|s| match s {
+            FnStmt::Log { .. } => "log",
+            FnStmt::Exec { .. } => "exec",
+            FnStmt::Cd { .. } => "cd",
+            FnStmt::VarDecl { .. } => "var",
+            FnStmt::EnvBlock { .. } => "env",
+            FnStmt::Case { .. } => "case",
+        })
+        .collect()
+}
+
 fn count_stmt_types(program: &Program) -> Vec<&'static str> {
     program
         .stmts
@@ -320,6 +333,180 @@ fn test_project_with_interleaved_fields_and_body() {
             assert_eq!(fields.len(), 3);
             assert_eq!(body.len(), 2);
         }
+        _ => panic!("expected ProjectDecl"),
+    }
+}
+
+// --- Case statement tests ---
+
+#[test]
+fn test_case_stmt_in_fn_body() {
+    let input =
+        "pr p { fn test { case ($os) { `Linux` { log(`linux`); }; _ { log(`other`); }; }; } }";
+    let prog = parse_program(input).unwrap();
+    match &prog.stmts[0] {
+        Stmt::ProjectDecl { body, .. } => match &body[0] {
+            Stmt::FnDecl { name, body, .. } => {
+                assert_eq!(name, "test");
+                assert_eq!(count_fn_stmt_types(body), vec!["case"]);
+                match &body[0] {
+                    FnStmt::Case {
+                        condition, arms, ..
+                    } => {
+                        assert!(matches!(condition, Expr::VarRef { .. }));
+                        assert_eq!(arms.len(), 2);
+                        assert!(matches!(arms[0].pattern, CasePattern::Literal { .. }));
+                        assert!(matches!(arms[1].pattern, CasePattern::Default));
+                    }
+                    _ => panic!("expected Case"),
+                }
+            }
+            _ => panic!("expected FnDecl"),
+        },
+        _ => panic!("expected ProjectDecl"),
+    }
+}
+
+#[test]
+fn test_case_with_var_ref_pattern() {
+    let input =
+        "pr p { fn test { case ($os) { $expected { log(`match`); }; _ { log(`no match`); }; }; } }";
+    let prog = parse_program(input).unwrap();
+    match &prog.stmts[0] {
+        Stmt::ProjectDecl { body, .. } => match &body[0] {
+            Stmt::FnDecl { body, .. } => match &body[0] {
+                FnStmt::Case { arms, .. } => {
+                    assert_eq!(arms.len(), 2);
+                    assert!(matches!(arms[0].pattern, CasePattern::VarRef { .. }));
+                    assert!(matches!(arms[1].pattern, CasePattern::Default));
+                }
+                _ => panic!("expected Case"),
+            },
+            _ => panic!("expected FnDecl"),
+        },
+        _ => panic!("expected ProjectDecl"),
+    }
+}
+
+#[test]
+fn test_case_with_backtick_condition() {
+    let input =
+        "pr p { fn test { case (`hello`) { `hello` { log(`match`); }; _ { log(`no`); }; }; } }";
+    let prog = parse_program(input).unwrap();
+    match &prog.stmts[0] {
+        Stmt::ProjectDecl { body, .. } => match &body[0] {
+            Stmt::FnDecl { body, .. } => match &body[0] {
+                FnStmt::Case { condition, .. } => {
+                    assert!(matches!(condition, Expr::BacktickLit { .. }));
+                }
+                _ => panic!("expected Case"),
+            },
+            _ => panic!("expected FnDecl"),
+        },
+        _ => panic!("expected ProjectDecl"),
+    }
+}
+
+#[test]
+fn test_case_with_interpolation_in_pattern() {
+    let input = "pr p { fn test { case ($os) { `hello ${world}` { log(`match`); }; _ { log(`no`); }; }; } }";
+    let prog = parse_program(input).unwrap();
+    match &prog.stmts[0] {
+        Stmt::ProjectDecl { body, .. } => match &body[0] {
+            Stmt::FnDecl { body, .. } => match &body[0] {
+                FnStmt::Case { arms, .. } => {
+                    assert!(matches!(arms[0].pattern, CasePattern::Literal { .. }));
+                }
+                _ => panic!("expected Case"),
+            },
+            _ => panic!("expected FnDecl"),
+        },
+        _ => panic!("expected ProjectDecl"),
+    }
+}
+
+#[test]
+fn test_case_nested_inside_env() {
+    let input = "pr p { fn test { env [DEBUG = `1`] { case ($os) { `Linux` { log(`linux`); }; _ { log(`other`); }; }; }; } }";
+    let prog = parse_program(input).unwrap();
+    match &prog.stmts[0] {
+        Stmt::ProjectDecl { body, .. } => match &body[0] {
+            Stmt::FnDecl { body, .. } => {
+                assert_eq!(count_fn_stmt_types(body), vec!["env"]);
+                match &body[0] {
+                    FnStmt::EnvBlock { body: env_body, .. } => {
+                        assert_eq!(count_fn_stmt_types(env_body), vec!["case"]);
+                    }
+                    _ => panic!("expected EnvBlock"),
+                }
+            }
+            _ => panic!("expected FnDecl"),
+        },
+        _ => panic!("expected ProjectDecl"),
+    }
+}
+
+#[test]
+fn test_case_missing_lparen_error() {
+    let result = parse_program("pr p { fn test { case $os { _ { log(`x`); }; } } }");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_case_missing_rparen_error() {
+    let result = parse_program("pr p { fn test { case ($os { _ { log(`x`); }; } } }");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_case_missing_opening_brace_error() {
+    let result = parse_program("pr p { fn test { case ($os) _ { log(`x`); }; } }");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_case_missing_semicolon_after_arm() {
+    let result = parse_program("pr p { fn test { case ($os) { `a` { log(`x`); } } } }");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_case_pattern_invalid() {
+    let result = parse_program("pr p { fn test { case ($os) { 123 { log(`x`); }; } } }");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_case_with_exec_and_log() {
+    let input = "pr p {
+    fn deploy {
+        var shell docker_bin = `command -v docker 2>/dev/null || command -v podman 2>/dev/null`;
+        case (`${docker_bin}`) {
+            `` { log(`no container runtime found`); };
+            _ { exec(`${docker_bin} build .`); };
+        };
+    }
+}";
+    let prog = parse_program(input).unwrap();
+    match &prog.stmts[0] {
+        Stmt::ProjectDecl { body, .. } => match &body[0] {
+            Stmt::FnDecl { name, body, .. } => {
+                assert_eq!(name, "deploy");
+                assert_eq!(count_fn_stmt_types(body), vec!["var", "case"]);
+                match &body[1] {
+                    FnStmt::Case { condition, arms } => {
+                        assert!(matches!(condition, Expr::BacktickLit { .. }));
+                        assert_eq!(arms.len(), 2);
+                        assert!(matches!(arms[0].pattern, CasePattern::Literal { .. }));
+                        assert!(matches!(arms[1].pattern, CasePattern::Default));
+                        assert_eq!(count_fn_stmt_types(&arms[0].body), vec!["log"]);
+                        assert_eq!(count_fn_stmt_types(&arms[1].body), vec!["exec"]);
+                    }
+                    _ => panic!("expected Case"),
+                }
+            }
+            _ => panic!("expected FnDecl"),
+        },
         _ => panic!("expected ProjectDecl"),
     }
 }

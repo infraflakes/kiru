@@ -1,6 +1,6 @@
 use crate::colors;
 use crate::config::{Config, ConfigError, Project};
-use crate::dsl::ast::{Expr, FnStmt};
+use crate::dsl::ast::{CasePattern, Expr, FnStmt};
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
@@ -55,9 +55,54 @@ impl<'a> ExecContext<'a> {
                     body: block_body,
                     ..
                 } => self.exec_env_block(pairs, block_body)?,
+                FnStmt::Case { condition, arms } => {
+                    let value = self.resolve_expr(condition)?;
+                    for arm in arms {
+                        if self.match_case_pattern(&arm.pattern, &value)? {
+                            self.exec_fn_body(&arm.body)?;
+                            break;
+                        }
+                    }
+                }
             }
         }
         Ok(())
+    }
+
+    fn match_case_pattern(
+        &mut self,
+        pattern: &CasePattern,
+        value: &str,
+    ) -> Result<bool, ConfigError> {
+        match pattern {
+            CasePattern::Default => Ok(true),
+            CasePattern::Literal { parts } => {
+                let mut resolved = String::new();
+                for part in parts {
+                    if part.is_var {
+                        match self.vars.get(&part.value) {
+                            Some(v) => resolved.push_str(v),
+                            None => {
+                                return Err(ConfigError::Validation(format!(
+                                    "undefined variable: ${}",
+                                    part.value
+                                )));
+                            }
+                        }
+                    } else {
+                        resolved.push_str(&part.value);
+                    }
+                }
+                Ok(value == resolved)
+            }
+            CasePattern::VarRef { name } => match self.vars.get(name) {
+                Some(v) => Ok(value == v),
+                None => Err(ConfigError::Validation(format!(
+                    "undefined variable: ${}",
+                    name
+                ))),
+            },
+        }
     }
 
     fn exec_log(&mut self, value: &Expr) -> Result<(), ConfigError> {

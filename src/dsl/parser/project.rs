@@ -12,13 +12,13 @@ impl Parser {
                         self.current_token().offset.into(),
                         self.current_token().len,
                     ),
-                    "expected identifier".to_string(),
+                    "expected project name".to_string(),
                 ));
             }
         };
         self.advance();
 
-        self.expect(TokenType::LBrace)?;
+        self.expect_with_context(TokenType::LBrace, "after project name")?;
 
         let mut fields = Vec::new();
         let mut body = Vec::new();
@@ -37,23 +37,23 @@ impl Parser {
                                     self.current_token().offset.into(),
                                     self.current_token().len,
                                 ),
-                                "expected identifier".to_string(),
+                                "expected field name or var/fn/seq/par".to_string(),
                             ));
                         }
                     };
                     self.advance();
 
-                    self.expect(TokenType::Assign)?;
+                    self.expect_with_context(TokenType::Assign, "in project field")?;
 
                     let value = self.parse_expr()?;
-                    self.expect(TokenType::Semicolon)?;
+                    self.expect_with_context(TokenType::Semicolon, "after project field value")?;
 
                     fields.push(ProjectField { key, value });
                 }
             }
         }
 
-        self.expect(TokenType::RBrace)?;
+        self.expect_with_context(TokenType::RBrace, "to close project body")?;
 
         Ok(Stmt::ProjectDecl { name, fields, body })
     }

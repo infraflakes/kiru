@@ -106,6 +106,23 @@ pub enum FnStmt {
         pairs: Vec<EnvPair>,
         body: Vec<FnStmt>,
     },
+    Case {
+        condition: Expr,
+        arms: Vec<CaseArm>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum CasePattern {
+    Literal { parts: Vec<TemplatePart> },
+    VarRef { name: String },
+    Default,
+}
+
+#[derive(Debug, Clone)]
+pub struct CaseArm {
+    pub pattern: CasePattern,
+    pub body: Vec<FnStmt>,
 }
 
 #[derive(Debug, Clone)]

@@ -4,10 +4,10 @@ impl Parser {
     pub(crate) fn parse_shell_decl(&mut self) -> Result<Stmt, ParseError> {
         self.advance();
 
-        self.expect(TokenType::Assign)?;
+        self.expect_with_context(TokenType::Assign, "after `shell`")?;
 
         let value = self.parse_simple_backtick()?;
-        self.expect(TokenType::Semicolon)?;
+        self.expect_with_context(TokenType::Semicolon, "after shell declaration")?;
 
         Ok(Stmt::ShellDecl { value })
     }
@@ -15,10 +15,10 @@ impl Parser {
     pub(crate) fn parse_sanctuary_decl(&mut self) -> Result<Stmt, ParseError> {
         self.advance();
 
-        self.expect(TokenType::Assign)?;
+        self.expect_with_context(TokenType::Assign, "after `sanctuary`")?;
 
         let value = self.parse_expr()?;
-        self.expect(TokenType::Semicolon)?;
+        self.expect_with_context(TokenType::Semicolon, "after sanctuary declaration")?;
 
         Ok(Stmt::SanctuaryDecl { value })
     }
@@ -40,7 +40,7 @@ impl Parser {
         };
         self.advance();
 
-        self.expect(TokenType::Semicolon)?;
+        self.expect_with_context(TokenType::Semicolon, "after import path")?;
 
         Ok(Stmt::ImportDecl { paths: vec![path] })
     }
@@ -76,16 +76,16 @@ impl Parser {
                         self.current_token().offset.into(),
                         self.current_token().len,
                     ),
-                    "expected identifier".to_string(),
+                    "expected variable name".to_string(),
                 ));
             }
         };
         self.advance();
 
-        self.expect(TokenType::Assign)?;
+        self.expect_with_context(TokenType::Assign, "in variable declaration")?;
 
         let value = self.parse_expr()?;
-        self.expect(TokenType::Semicolon)?;
+        self.expect_with_context(TokenType::Semicolon, "after variable declaration")?;
 
         Ok(Stmt::VarDecl {
             var_type,

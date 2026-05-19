@@ -104,9 +104,20 @@ pr todo {
 
     fn build {
         log(`Building ${app} at ${version}`);
-        cd(`cmd`);
-        env [CGO_ENABLED = `0`, GOOS = `linux`] {
-            exec(`go build -ldflags='${version}' -o bin/${app} .`);
+        # Check which OS we're on for conditional build flags
+        var shell os = `uname -s`;
+        case ($os) {
+            `Linux`   {
+                cd(`cmd`);
+                env [CGO_ENABLED = `0`, GOOS = `linux`] {
+                    exec(`go build -ldflags='${version}' -o bin/${app} .`);
+                };
+            };
+            `Darwin`  {
+                cd(`cmd`);
+                exec(`go build -ldflags='${version}' -o bin/${app} .`);
+            };
+            _         { log(`unsupported OS: ${os}`); };
         };
     }
 
@@ -164,11 +175,28 @@ pr calendar {
 #   cd(<path>);            Change cwd relative to project dir (string only)
 #   var <type> <n> = <v>;  Declare a scoped variable
 #   env [...] { ... };     Scoped environment variable block
+#   case (<expr>) { ... }; Conditional branching (first-match semantics)
 #
 # Variable interpolation:
 #   Use ${name} inside backticks to interpolate variables.
 #   Both project vars and fn-local vars are accessible.
 #   All variable references are validated at load time.
+#
+# Conditional branching with case:
+#   - Condition is an expression (backtick or $var reference)
+#   - Each arm has a pattern followed by a body in braces
+#   - Patterns: `literal`, $var_ref, or _ (default/catch-all)
+#   - Patterns support ${interpolation}: `hello ${world}`
+#   - First matching arm wins, then execution continues after the case block
+#   - Each arm body ends with ; (consistent with env blocks)
+#   - The entire case block ends with ; (consistent with env blocks)
+#
+#   Example:
+#     var shell docker_bin = `command -v docker 2>/dev/null || command -v podman 2>/dev/null`;
+#     case ($docker_bin) {
+#         ``      { log(`no container runtime found`); };
+#         _       { exec(`${docker_bin} build .`); };
+#     };
 
 # 7. USE FILES
 #
@@ -180,31 +208,34 @@ pr calendar {
 
 # GRAMMAR SUMMARY (EBNF)
 #
-# program     = { statement } ;
-# statement   = shellDecl | sanctuaryDecl | importDecl | varDecl | projectDecl ;
+# program      = { statement } ;
+# statement    = shellDecl | sanctuaryDecl | importDecl | varDecl | projectDecl ;
 #
-# shellDecl   = "shell" "=" BACKTICK ";" ;
+# shellDecl    = "shell" "=" BACKTICK ";" ;
 # sanctuaryDecl = "sanctuary" "=" ( BACKTICK | "$" IDENT ) ";" ;
-# importDecl  = "import" path ";" ;
-# varDecl     = "var" ( "string" | "shell" ) IDENT "=" ( BACKTICK | "$" IDENT ) ";" ;
-# projectDecl = "pr" IDENT "{" { projectStmt } "}" ;
-# projectStmt = projectField | varDecl | fnDecl | seqDecl | parDecl ;
+# importDecl   = "import" path ";" ;
+# varDecl      = "var" ( "string" | "shell" ) IDENT "=" expr ";" ;
+# projectDecl  = "pr" IDENT "{" { projectStmt } "}" ;
+# projectStmt  = projectField | varDecl | fnDecl | seqDecl | parDecl ;
 # projectField = IDENT "=" expr ";" ;
-# fnDecl      = "fn" IDENT "{" { fnStmt } "}" ;
-# seqDecl     = "seq" IDENT "{" { IDENT ";" } "}" ;
-# parDecl     = "par" IDENT "{" { IDENT ";" } "}" ;
+# fnDecl       = "fn" IDENT "{" { fnStmt } "}" ;
+# seqDecl      = "seq" IDENT "{" { IDENT ";" } "}" ;
+# parDecl      = "par" IDENT "{" { IDENT ";" } "}" ;
 #
-# fnStmt      = logStmt | execStmt | cdStmt | varDecl | envBlock ;
-# logStmt     = "log" "(" expr ")" ";" ;
-# execStmt    = "exec" "(" expr ")" ";" ;
-# cdStmt      = "cd" "(" BACKTICK ")" ";" ;
-# envBlock    = "env" "[" envPair { "," envPair } [ "," ] "]"
-#               "{" { fnStmt } "}" ";" ;
-# envPair     = IDENT "=" expr ;
+# fnStmt       = logStmt | execStmt | cdStmt | varDecl | envBlock | caseStmt ;
+# logStmt      = "log" "(" expr ")" ";" ;
+# execStmt     = "exec" "(" expr ")" ";" ;
+# cdStmt       = "cd" "(" BACKTICK ")" ";" ;
+# envBlock     = "env" "[" envPair { "," envPair } [ "," ] "]"
+#                "{" { fnStmt } "}" ";" ;
+# caseStmt     = "case" "(" expr ")" "{" { caseArm } "}" ";" ;
+# caseArm      = pattern "{" { fnStmt } "}" ";" ;
+# pattern      = BACKTICK | "$" IDENT | "_" ;
+# envPair      = IDENT "=" expr ;
 #
-# expr        = BACKTICK | "$" IDENT ;
-# BACKTICK    = "`" { char | "${" IDENT "}" } "`" ;
-# path        = "./" { char } ;
+# expr         = BACKTICK | "$" IDENT ;
+# BACKTICK     = "`" { char | "${" IDENT "}" } "`" ;
+# path         = "./" { char } ;
 #
 # Keywords: shell sanctuary import var string pr fn seq par
-#           env log exec cd
+#           env log exec cd case

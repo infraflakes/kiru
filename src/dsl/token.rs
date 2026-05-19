@@ -29,6 +29,7 @@ pub enum TokenType {
     Exec,
     Cd,
     Env,
+    Case,
     PathLit(String),
 }
 
@@ -68,6 +69,7 @@ pub fn lookup_ident(ident: &str) -> TokenType {
         "exec" => TokenType::Exec,
         "cd" => TokenType::Cd,
         "shell" => TokenType::Shell,
+        "case" => TokenType::Case,
         _ => TokenType::Ident(ident.to_string()),
     }
 }

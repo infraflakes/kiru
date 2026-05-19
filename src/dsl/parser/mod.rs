@@ -51,6 +51,7 @@ fn format_token_type(ty: &TokenType) -> &'static str {
         TokenType::Seq => "`seq`",
         TokenType::Par => "`par`",
         TokenType::Env => "`env`",
+        TokenType::Case => "`case`",
         TokenType::Log => "`log`",
         TokenType::Exec => "`exec`",
         TokenType::Cd => "`cd`",
@@ -91,7 +92,7 @@ impl Parser {
         self.current = self.lexer.next_token();
     }
 
-    fn expect(&mut self, ty: TokenType) -> Result<(), ParseError> {
+    fn expect_with_context(&mut self, ty: TokenType, context: &str) -> Result<(), ParseError> {
         if std::mem::discriminant(&self.current_token().ty) == std::mem::discriminant(&ty) {
             self.advance();
             Ok(())
@@ -101,7 +102,7 @@ impl Parser {
             let found = format_token(&token);
             Err(ParseError::new(
                 SourceSpan::new(token.offset.into(), token.len),
-                format!("expected {}, found {}", expected, found),
+                format!("expected {} {}, found {}", expected, context, found),
             ))
         }
     }
@@ -191,13 +192,14 @@ impl Parser {
             TokenType::Cd => self.parse_cd_stmt(),
             TokenType::Var => self.parse_fn_var_decl(),
             TokenType::Env => self.parse_env_block(),
+            TokenType::Case => self.parse_case_stmt(),
             _ => Err(ParseError::new(
                 miette::SourceSpan::new(
                     self.current_token().offset.into(),
                     self.current_token().len,
                 ),
                 format!(
-                    "expected log, exec, cd, var, or env, found {}",
+                    "expected log, exec, cd, var, env, or case, found {}",
                     format_token(self.current_token())
                 ),
             )),
