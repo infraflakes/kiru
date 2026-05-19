@@ -43,7 +43,7 @@ fn colorize_output(line: &str) -> Line<'static> {
     ));
     spans.push(Span::styled(
         trimmed[prefix.len()..].to_string(),
-        Style::default().fg(colors::TEXT),
+        Style::default().fg(kw_color),
     ));
     Line::from(spans)
 }
