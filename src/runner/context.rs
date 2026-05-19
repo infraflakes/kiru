@@ -133,21 +133,29 @@ impl<'a> ExecContext<'a> {
                 })
             });
 
-            if let Some(handle) = stdout_thread {
+            let stdout_result = stdout_thread.map(|handle| {
                 handle
                     .join()
-                    .map_err(|_| ConfigError::Validation("stdout reader panicked".to_string()))??;
-            }
-
-            if let Some(handle) = stderr_thread {
+                    .map_err(|_| ConfigError::Validation("stdout reader panicked".to_string()))
+            });
+            let stderr_result = stderr_thread.map(|handle| {
                 handle
                     .join()
-                    .map_err(|_| ConfigError::Validation("stderr reader panicked".to_string()))??;
-            }
+                    .map_err(|_| ConfigError::Validation("stderr reader panicked".to_string()))
+            });
 
-            child
+            let status = child
                 .wait()
-                .map_err(|e| ConfigError::Validation(format!("exec failed: {}: {}", cmd_str, e)))?
+                .map_err(|e| ConfigError::Validation(format!("exec failed: {}: {}", cmd_str, e)))?;
+
+            if let Some(result) = stdout_result {
+                result??;
+            }
+            if let Some(result) = stderr_result {
+                result??;
+            }
+
+            status
         } else {
             let output = child
                 .wait_with_output()
