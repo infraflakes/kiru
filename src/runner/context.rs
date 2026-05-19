@@ -101,58 +101,71 @@ impl<'a> ExecContext<'a> {
             .spawn()
             .map_err(|e| ConfigError::Validation(format!("exec failed: {}: {}", cmd_str, e)))?;
 
-        let output_cb = self.output_callback.cloned();
         let stdout_indent = "  ".repeat(self.env_stack.len() + 1);
 
-        let stdout_thread = child.stdout.take().map(|stdout| {
-            let indent = stdout_indent.clone();
-            let cb = output_cb.clone();
-            thread::spawn(move || -> Result<(), ConfigError> {
-                let reader = std::io::BufReader::new(stdout);
-                for line in reader.lines() {
-                    let line =
-                        line.map_err(|e| ConfigError::Validation(format!("read error: {}", e)))?;
-                    let formatted = format!("{}{}", indent, line);
-                    if let Some(ref callback) = cb {
-                        callback(formatted);
+        let status = if let Some(cb) = self.output_callback {
+            let cb: OutputCallback = cb.clone();
+            let stdout_thread = child.stdout.take().map(|stdout| {
+                let indent = stdout_indent.clone();
+                let cb = cb.clone();
+                thread::spawn(move || -> Result<(), ConfigError> {
+                    let reader = std::io::BufReader::new(stdout);
+                    for line in reader.lines() {
+                        let line = line
+                            .map_err(|e| ConfigError::Validation(format!("read error: {}", e)))?;
+                        cb(format!("{}{}", indent, line));
                     }
-                }
-                Ok(())
-            })
-        });
+                    Ok(())
+                })
+            });
 
-        let stderr_thread = child.stderr.take().map(|stderr| {
-            let indent = stdout_indent.clone();
-            let cb = output_cb.clone();
-            thread::spawn(move || -> Result<(), ConfigError> {
-                let reader = std::io::BufReader::new(stderr);
-                for line in reader.lines() {
-                    let line =
-                        line.map_err(|e| ConfigError::Validation(format!("read error: {}", e)))?;
-                    let formatted = format!("{}{}", indent, line);
-                    if let Some(ref callback) = cb {
-                        callback(formatted);
+            let stderr_thread = child.stderr.take().map(|stderr| {
+                let indent = stdout_indent.clone();
+                let cb = cb.clone();
+                thread::spawn(move || -> Result<(), ConfigError> {
+                    let reader = std::io::BufReader::new(stderr);
+                    for line in reader.lines() {
+                        let line = line
+                            .map_err(|e| ConfigError::Validation(format!("read error: {}", e)))?;
+                        cb(format!("{}{}", indent, line));
                     }
-                }
-                Ok(())
-            })
-        });
+                    Ok(())
+                })
+            });
 
-        if let Some(handle) = stdout_thread {
-            handle
-                .join()
-                .map_err(|_| ConfigError::Validation("stdout reader panicked".to_string()))??;
-        }
+            if let Some(handle) = stdout_thread {
+                handle
+                    .join()
+                    .map_err(|_| ConfigError::Validation("stdout reader panicked".to_string()))??;
+            }
 
-        if let Some(handle) = stderr_thread {
-            handle
-                .join()
-                .map_err(|_| ConfigError::Validation("stderr reader panicked".to_string()))??;
-        }
+            if let Some(handle) = stderr_thread {
+                handle
+                    .join()
+                    .map_err(|_| ConfigError::Validation("stderr reader panicked".to_string()))??;
+            }
 
-        let status = child
-            .wait()
-            .map_err(|e| ConfigError::Validation(format!("exec failed: {}: {}", cmd_str, e)))?;
+            child
+                .wait()
+                .map_err(|e| ConfigError::Validation(format!("exec failed: {}: {}", cmd_str, e)))?
+        } else {
+            let output = child
+                .wait_with_output()
+                .map_err(|e| ConfigError::Validation(format!("exec failed: {}: {}", cmd_str, e)))?;
+            for line in std::io::BufReader::new(&output.stdout[..]).lines() {
+                let line =
+                    line.map_err(|e| ConfigError::Validation(format!("read error: {}", e)))?;
+                writeln!(self.writer, "{}{}", stdout_indent, line)
+                    .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
+            }
+            for line in std::io::BufReader::new(&output.stderr[..]).lines() {
+                let line =
+                    line.map_err(|e| ConfigError::Validation(format!("read error: {}", e)))?;
+                writeln!(self.writer, "{}{}", stdout_indent, line)
+                    .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
+            }
+            output.status
+        };
 
         if !status.success() {
             return Err(ConfigError::Validation(format!(
