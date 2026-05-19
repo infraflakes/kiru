@@ -28,7 +28,7 @@
 # 1. SHELL DECLARATION (required, must be first)
 #
 # Declares which shell to use for:
-#   - `exec()` calls inside functions
+#   - `exec` calls inside functions
 #   - `var shell` declarations (backtick-wrapped commands)
 #
 # Must appear before any `var shell` or `fn` declaration.
@@ -103,39 +103,38 @@ pr todo {
     var string app    = `todo`;
 
     fn build {
-        log(`Building ${app} at ${version}`);
+        log `Building ${app} at ${version}`;
         # Check which OS we're on for conditional build flags
         var shell os = `uname -s`;
         case ($os) {
             `Linux`   {
-                cd(`cmd`);
-                env [CGO_ENABLED = `0`, GOOS = `linux`] {
-                    exec(`go build -ldflags='${version}' -o bin/${app} .`);
-                };
+                cd `cmd`;
+
+                exec `go build -ldflags='${version}' -o bin/${app} .`;
             };
             `Darwin`  {
-                cd(`cmd`);
-                exec(`go build -ldflags='${version}' -o bin/${app} .`);
+                cd `cmd`;
+                exec `go build -ldflags='${version}' -o bin/${app} .`;
             };
-            _         { log(`unsupported OS: ${os}`); };
+            _         { log `unsupported OS: ${os}`; };
         };
     }
 
     fn test {
         env [CGO_ENABLED = `0`] {
-            exec(`go test -race ./...`);
-            exec(`go vet ./...`);
+            exec `go test -race ./...`;
+            exec `go vet ./...`;
         };
     }
 
     fn lint {
-        exec(`golangci-lint run ./...`);
+        exec `golangci-lint run ./...`;
     }
 
     fn check {
-        log(`Running checks...`);
-        exec(`go fmt ./...`);
-        exec(`go vet ./...`);
+        log `Running checks...`;
+        exec `go fmt ./...`;
+        exec `go vet ./...`;
     }
 
     seq quality {
@@ -170,9 +169,9 @@ pr calendar {
 # 6. FUNCTION PRIMITIVES
 #
 # Available inside fn { ... }:
-#   log(<expr>);           Print a message
-#   exec(<expr>);          Run a shell command via the declared shell
-#   cd(<path>);            Change cwd relative to project dir (string only)
+#   log <expr>;            Print a message
+#   exec <expr>;           Run a shell command via the declared shell
+#   cd <expr>;             Change cwd relative to project dir
 #   var <type> <n> = <v>;  Declare a scoped variable
 #   env [...] { ... };     Scoped environment variable block
 #   case (<expr>) { ... }; Conditional branching (first-match semantics)
@@ -194,8 +193,8 @@ pr calendar {
 #   Example:
 #     var shell docker_bin = `command -v docker 2>/dev/null || command -v podman 2>/dev/null`;
 #     case ($docker_bin) {
-#         ``      { log(`no container runtime found`); };
-#         _       { exec(`${docker_bin} build .`); };
+#         ``      { log `no container runtime found`; };
+#         _       { exec `${docker_bin} build .`; };
 #     };
 
 # 7. USE FILES
@@ -223,9 +222,9 @@ pr calendar {
 # parDecl      = "par" IDENT "{" { IDENT ";" } "}" ;
 #
 # fnStmt       = logStmt | execStmt | cdStmt | varDecl | envBlock | caseStmt ;
-# logStmt      = "log" "(" expr ")" ";" ;
-# execStmt     = "exec" "(" expr ")" ";" ;
-# cdStmt       = "cd" "(" BACKTICK ")" ";" ;
+# logStmt      = "log" expr ";" ;
+# execStmt     = "exec" expr ";" ;
+# cdStmt       = "cd" expr ";" ;
 # envBlock     = "env" "[" envPair { "," envPair } [ "," ] "]"
 #                "{" { fnStmt } "}" ";" ;
 # caseStmt     = "case" "(" expr ")" "{" { caseArm } "}" ";" ;

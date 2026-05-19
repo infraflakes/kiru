@@ -5,10 +5,8 @@ impl Parser {
     pub(crate) fn parse_log_stmt(&mut self) -> Result<FnStmt, ParseError> {
         self.advance();
 
-        self.expect_with_context(TokenType::LParen, "after `log`")?;
         let value = self.parse_expr()?;
-        self.expect_with_context(TokenType::RParen, "to close `log` call")?;
-        self.expect_with_context(TokenType::Semicolon, "after `log` call")?;
+        self.expect_with_context(TokenType::Semicolon, "after `log`")?;
 
         Ok(FnStmt::Log { value })
     }
@@ -16,10 +14,8 @@ impl Parser {
     pub(crate) fn parse_exec_stmt(&mut self) -> Result<FnStmt, ParseError> {
         self.advance();
 
-        self.expect_with_context(TokenType::LParen, "after `exec`")?;
         let value = self.parse_expr()?;
-        self.expect_with_context(TokenType::RParen, "to close `exec` call")?;
-        self.expect_with_context(TokenType::Semicolon, "after `exec` call")?;
+        self.expect_with_context(TokenType::Semicolon, "after `exec`")?;
 
         Ok(FnStmt::Exec { value })
     }
@@ -27,10 +23,8 @@ impl Parser {
     pub(crate) fn parse_cd_stmt(&mut self) -> Result<FnStmt, ParseError> {
         self.advance();
 
-        self.expect_with_context(TokenType::LParen, "after `cd`")?;
-        let arg = self.parse_simple_backtick()?;
-        self.expect_with_context(TokenType::RParen, "to close `cd` call")?;
-        self.expect_with_context(TokenType::Semicolon, "after `cd` call")?;
+        let arg = self.parse_expr()?;
+        self.expect_with_context(TokenType::Semicolon, "after `cd`")?;
 
         Ok(FnStmt::Cd { arg })
     }

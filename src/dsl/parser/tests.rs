@@ -165,7 +165,7 @@ fn test_project_decl_with_fields() {
 
 #[test]
 fn test_project_decl_with_body_stmts() {
-    let input = "\npr todo {\n    url = `git@github.com:user/repo.git`;\n    dir = `todo`;\n    var string app = `todo`;\n    fn build {\n        log(`building`);\n    }\n    seq release {\n        build;\n    }\n    par ci {\n        build;\n    }\n}";
+    let input = "\npr todo {\n    url = `git@github.com:user/repo.git`;\n    dir = `todo`;\n    var string app = `todo`;\n    fn build {\n        log `building`;\n    }\n    seq release {\n        build;\n    }\n    par ci {\n        build;\n    }\n}";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
         Stmt::ProjectDecl {
@@ -264,7 +264,7 @@ fn test_unexpected_token_at_top_level() {
 
 #[test]
 fn test_unclosed_fn_brace() {
-    let result = parse_program("fn bad { log(`hi`);");
+    let result = parse_program("fn bad { log `hi`;");
     assert!(result.is_err());
 }
 
@@ -287,7 +287,7 @@ fn test_multiple_top_level_statements() {
                  sanctuary = `/tmp`;\n\
                  import ./other.sro;\n\
                  var string x = `hello`;\n\
-                 pr p { url = `u`; dir = `d`; fn f { log(`hi`); } seq s { f; } }";
+                  pr p { url = `u`; dir = `d`; fn f { log `hi`; } seq s { f; } }";
     let prog = parse_program(input).unwrap();
     assert_eq!(
         count_stmt_types(&prog),
@@ -326,7 +326,7 @@ fn test_import_path_types() {
 
 #[test]
 fn test_project_with_interleaved_fields_and_body() {
-    let input = "\npr todo {\n    url = `u`;\n    var string app = `todo`;\n    dir = `d`;\n    fn build { log(`x`); }\n    sync = `clone`;\n}";
+    let input = "\npr todo {\n    url = `u`;\n    var string app = `todo`;\n    dir = `d`;\n    fn build { log `x`; }\n    sync = `clone`;\n}";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
         Stmt::ProjectDecl { fields, body, .. } => {
@@ -342,7 +342,7 @@ fn test_project_with_interleaved_fields_and_body() {
 #[test]
 fn test_case_stmt_in_fn_body() {
     let input =
-        "pr p { fn test { case ($os) { `Linux` { log(`linux`); }; _ { log(`other`); }; }; } }";
+        "pr p { fn test { case ($os) { `Linux` { log `linux`; }; _ { log `other`; }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
         Stmt::ProjectDecl { body, .. } => match &body[0] {
@@ -370,7 +370,7 @@ fn test_case_stmt_in_fn_body() {
 #[test]
 fn test_case_with_var_ref_pattern() {
     let input =
-        "pr p { fn test { case ($os) { $expected { log(`match`); }; _ { log(`no match`); }; }; } }";
+        "pr p { fn test { case ($os) { $expected { log `match`; }; _ { log `no match`; }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
         Stmt::ProjectDecl { body, .. } => match &body[0] {
@@ -391,7 +391,7 @@ fn test_case_with_var_ref_pattern() {
 #[test]
 fn test_case_with_backtick_condition() {
     let input =
-        "pr p { fn test { case (`hello`) { `hello` { log(`match`); }; _ { log(`no`); }; }; } }";
+        "pr p { fn test { case (`hello`) { `hello` { log `match`; }; _ { log `no`; }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
         Stmt::ProjectDecl { body, .. } => match &body[0] {
@@ -409,7 +409,8 @@ fn test_case_with_backtick_condition() {
 
 #[test]
 fn test_case_with_interpolation_in_pattern() {
-    let input = "pr p { fn test { case ($os) { `hello ${world}` { log(`match`); }; _ { log(`no`); }; }; } }";
+    let input =
+        "pr p { fn test { case ($os) { `hello ${world}` { log `match`; }; _ { log `no`; }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
         Stmt::ProjectDecl { body, .. } => match &body[0] {
@@ -427,7 +428,7 @@ fn test_case_with_interpolation_in_pattern() {
 
 #[test]
 fn test_case_nested_inside_env() {
-    let input = "pr p { fn test { env [DEBUG = `1`] { case ($os) { `Linux` { log(`linux`); }; _ { log(`other`); }; }; }; } }";
+    let input = "pr p { fn test { env [DEBUG = `1`] { case ($os) { `Linux` { log `linux`; }; _ { log `other`; }; }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
         Stmt::ProjectDecl { body, .. } => match &body[0] {
@@ -448,31 +449,31 @@ fn test_case_nested_inside_env() {
 
 #[test]
 fn test_case_missing_lparen_error() {
-    let result = parse_program("pr p { fn test { case $os { _ { log(`x`); }; } } }");
+    let result = parse_program("pr p { fn test { case $os { _ { log `x`; }; } } }");
     assert!(result.is_err());
 }
 
 #[test]
 fn test_case_missing_rparen_error() {
-    let result = parse_program("pr p { fn test { case ($os { _ { log(`x`); }; } } }");
+    let result = parse_program("pr p { fn test { case ($os { _ { log `x`; }; } } }");
     assert!(result.is_err());
 }
 
 #[test]
 fn test_case_missing_opening_brace_error() {
-    let result = parse_program("pr p { fn test { case ($os) _ { log(`x`); }; } }");
+    let result = parse_program("pr p { fn test { case ($os) _ { log `x`; }; } }");
     assert!(result.is_err());
 }
 
 #[test]
 fn test_case_missing_semicolon_after_arm() {
-    let result = parse_program("pr p { fn test { case ($os) { `a` { log(`x`); } } } }");
+    let result = parse_program("pr p { fn test { case ($os) { `a` { log `x`; } } } }");
     assert!(result.is_err());
 }
 
 #[test]
 fn test_case_pattern_invalid() {
-    let result = parse_program("pr p { fn test { case ($os) { 123 { log(`x`); }; } } }");
+    let result = parse_program("pr p { fn test { case ($os) { 123 { log `x`; }; } } }");
     assert!(result.is_err());
 }
 
@@ -482,8 +483,8 @@ fn test_case_with_exec_and_log() {
     fn deploy {
         var shell docker_bin = `command -v docker 2>/dev/null || command -v podman 2>/dev/null`;
         case (`${docker_bin}`) {
-            `` { log(`no container runtime found`); };
-            _ { exec(`${docker_bin} build .`); };
+             `` { log `no container runtime found`; };
+            _ { exec `${docker_bin} build .`; };
         };
     }
 }";

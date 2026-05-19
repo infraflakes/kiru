@@ -4,7 +4,7 @@ pr sro {
     build;
   }
   seq test {
-    check;
+    fmt;
     test;
   }
 }

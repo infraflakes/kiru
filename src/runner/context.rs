@@ -230,23 +230,24 @@ impl<'a> ExecContext<'a> {
         Ok(())
     }
 
-    fn exec_cd(&mut self, arg: &str) -> Result<(), ConfigError> {
+    fn exec_cd(&mut self, arg: &Expr) -> Result<(), ConfigError> {
+        let resolved = self.resolve_expr(arg)?;
         let base_dir = PathBuf::from(&self.cfg.sanctuary).join(&self.project.dir);
-        self.work_dir = if arg == "." {
+        self.work_dir = if resolved == "." {
             base_dir
         } else {
-            base_dir.join(arg)
+            base_dir.join(&resolved)
         };
 
         if !self.work_dir.exists() {
             return Err(ConfigError::Validation(format!(
                 "cd {}: directory does not exist",
-                arg
+                resolved
             )));
         }
 
         let indent = "  ".repeat(self.env_stack.len());
-        let line = format!("{}cd   {}", indent, arg);
+        let line = format!("{}cd   {}", indent, resolved);
         if let Some(callback) = self.output_callback {
             callback(line);
         } else {

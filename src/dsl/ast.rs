@@ -95,7 +95,7 @@ pub enum FnStmt {
         value: Expr,
     },
     Cd {
-        arg: String,
+        arg: Expr,
     },
     VarDecl {
         var_type: VarType,

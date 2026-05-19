@@ -173,7 +173,7 @@ pr test {\n\
     url = `http://example.com`;\n\
     dir = `test`;\n\
     var string app = `todo`;\n\
-    fn build { log(`hi`); }\n\
+    fn build { log `hi`; }\n\
     seq release { build; }\n\
     par ci { build; }\n\
 }\n\
@@ -515,8 +515,8 @@ sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
     dir = `d`;\n\
-    fn dup { log(`a`); }\n\
-    fn dup { log(`b`); }\n\
+    fn dup { log `a`; }\n\
+    fn dup { log `b`; }\n\
 }\
 ",
         );
@@ -540,7 +540,7 @@ sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
     dir = `d`;\n\
-    fn check { log(`x`); }\n\
+    fn check { log `x`; }\n\
     seq dup { check; }\n\
     seq dup { check; }\n\
 }\
@@ -562,7 +562,7 @@ sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
     dir = `d`;\n\
-    fn check { log(`x`); }\n\
+    fn check { log `x`; }\n\
     par dup { check; }\n\
     par dup { check; }\n\
 }\
@@ -602,7 +602,7 @@ sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
     dir = `d`;\n\
-    fn badfn { log($undefined); }\n\
+    fn badfn { log $undefined; }\n\
 }\
 ",
         );
@@ -626,7 +626,7 @@ sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
     dir = `d`;\n\
-    fn real { log(`hi`); }\n\
+    fn real { log `hi`; }\n\
     seq s { unknown; }\n\
     par p { fake; }\n\
 }\
@@ -649,7 +649,7 @@ sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
     dir = `d`;\n\
-    fn real { log(`hi`); }\n\
+    fn real { log `hi`; }\n\
     seq s { real; }\n\
     par p { real; }\n\
 }\
@@ -700,7 +700,7 @@ shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
 pr __config__ {\n\
     var string usevar = `from-use`;\n\
-    fn usefn { log(`from-use`); }\n\
+    fn usefn { log `from-use`; }\n\
     seq useseq { usefn; }\n\
     par usepar { usefn; }\n\
 }\
@@ -840,7 +840,7 @@ var string global_var = `global`;\n\
 pr test {\n\
     url = `u`;\n\
     dir = `d`;\n\
-    fn f { log($global_var); }\n\
+    fn f { log $global_var; }\n\
 }\
 ",
         );
