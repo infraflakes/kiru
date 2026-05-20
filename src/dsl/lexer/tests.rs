@@ -214,12 +214,12 @@ fn test_case_keyword() {
 
 #[test]
 fn test_case_inside_fn_body() {
-    let input = "case ($os) { `Linux` { log `linux`; }; _ { log `other`; }; }";
+    let input = "case $os { `Linux` { log `linux`; }; _ { log `other`; }; }";
     let tokens = collect_tokens(input);
     assert!(tokens.contains(&TokenType::Case));
     assert!(tokens.contains(&TokenType::Dollar));
-    assert!(tokens.contains(&TokenType::LParen));
-    assert!(tokens.contains(&TokenType::RParen));
+    assert!(!tokens.contains(&TokenType::LParen));
+    assert!(!tokens.contains(&TokenType::RParen));
     assert!(tokens.contains(&TokenType::LBrace));
     assert!(tokens.contains(&TokenType::RBrace));
     assert!(tokens.contains(&TokenType::Semicolon));
@@ -228,7 +228,7 @@ fn test_case_inside_fn_body() {
 
 #[test]
 fn test_default_pattern() {
-    let input = "case ($x) { _ { log `default`; }; }";
+    let input = "case $x { _ { log `default`; }; }";
     let tokens = collect_tokens(input);
     assert!(tokens.contains(&TokenType::Case));
     assert!(tokens.contains(&TokenType::Ident("_".to_string())));

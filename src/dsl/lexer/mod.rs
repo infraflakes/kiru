@@ -33,7 +33,7 @@ impl Lexer {
     }
 
     pub fn source_len(&self) -> usize {
-        self.input.len()
+        self.input.iter().map(|c| c.len_utf8()).sum()
     }
 
     pub fn next_token(&mut self) -> Token {

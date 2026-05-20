@@ -144,9 +144,7 @@ impl Parser {
     pub(crate) fn parse_case_stmt(&mut self) -> Result<FnStmt, ParseError> {
         self.advance(); // skip 'case'
 
-        self.expect_with_context(TokenType::LParen, "after `case`")?;
         let condition = self.parse_expr()?;
-        self.expect_with_context(TokenType::RParen, "to close case condition")?;
 
         self.expect_with_context(TokenType::LBrace, "to open case arms")?;
 

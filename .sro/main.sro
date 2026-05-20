@@ -15,8 +15,8 @@ pr sro {
 
   fn fmt {
     log `Formatting the codebase...`;
-    exec `cargo clippy --fix --allow-dirty`;
-    exec `cargo fmt`;
+    exec `nix develop -c cargo clippy --fix --allow-dirty`;
+    exec `nix develop -c cargo fmt`;
   }
 
   fn test {
@@ -28,8 +28,9 @@ pr sro {
 
   fn build {
       var shell docker_bin = `command -v docker 2> /dev/null || command -v podman 2> /dev/null`;
-      case ($docker_bin) {
-        `` { log `no container runtime found`; };
+      case $docker_bin {
+        `` { log `no container runtime found`;
+             exec `exit 1`; };
         _  { exec `rm -rf bin`;
                   exec `rm -rf result`;
                   exec `${docker_bin} build --output type=local,dest=bin .`; };

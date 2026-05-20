@@ -206,16 +206,30 @@ fn validate_fn_vars(
                 FnStmt::Case { condition, arms } => {
                     validate_expr(condition, fn_name, scope, errs, proj_name);
                     for arm in arms {
-                        if let CasePattern::VarRef { name } = &arm.pattern {
-                            validate_expr(
-                                &Expr::VarRef { name: name.clone() },
-                                fn_name,
-                                scope,
-                                errs,
-                                proj_name,
-                            );
+                        match &arm.pattern {
+                            CasePattern::VarRef { name } => {
+                                validate_expr(
+                                    &Expr::VarRef { name: name.clone() },
+                                    fn_name,
+                                    scope,
+                                    errs,
+                                    proj_name,
+                                );
+                            }
+                            CasePattern::Literal { parts } => {
+                                for part in parts {
+                                    if part.is_var && !scope.contains(&part.value) {
+                                        errs.push(format!(
+                                            "project {:?}: fn {:?}: undefined variable ${}",
+                                            proj_name, fn_name, part.value
+                                        ));
+                                    }
+                                }
+                            }
+                            CasePattern::Default => {}
                         }
-                        validate_fn_body(fn_name, &arm.body, scope, errs, proj_name);
+                        let mut arm_scope = scope.clone();
+                        validate_fn_body(fn_name, &arm.body, &mut arm_scope, errs, proj_name);
                     }
                 }
             }

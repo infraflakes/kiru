@@ -106,7 +106,7 @@ pr todo {
         log `Building ${app} at ${version}`;
         # Check which OS we're on for conditional build flags
         var shell os = `uname -s`;
-        case ($os) {
+        case $os {
             `Linux`   {
                 cd `cmd`;
 
@@ -174,7 +174,7 @@ pr calendar {
 #   cd <expr>;             Change cwd relative to project dir
 #   var <type> <n> = <v>;  Declare a scoped variable
 #   env [...] { ... };     Scoped environment variable block
-#   case (<expr>) { ... }; Conditional branching (first-match semantics)
+#   case <expr> { ... }; Conditional branching (first-match semantics)
 #
 # Variable interpolation:
 #   Use ${name} inside backticks to interpolate variables.
@@ -192,7 +192,7 @@ pr calendar {
 #
 #   Example:
 #     var shell docker_bin = `command -v docker 2>/dev/null || command -v podman 2>/dev/null`;
-#     case ($docker_bin) {
+#     case $docker_bin {
 #         ``      { log `no container runtime found`; };
 #         _       { exec `${docker_bin} build .`; };
 #     };
@@ -227,7 +227,7 @@ pr calendar {
 # cdStmt       = "cd" expr ";" ;
 # envBlock     = "env" "[" envPair { "," envPair } [ "," ] "]"
 #                "{" { fnStmt } "}" ";" ;
-# caseStmt     = "case" "(" expr ")" "{" { caseArm } "}" ";" ;
+# caseStmt     = "case" expr "{" { caseArm } "}" ";" ;
 # caseArm      = pattern "{" { fnStmt } "}" ";" ;
 # pattern      = BACKTICK | "$" IDENT | "_" ;
 # envPair      = IDENT "=" expr ;

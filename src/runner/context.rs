@@ -59,7 +59,10 @@ impl<'a> ExecContext<'a> {
                     let value = self.resolve_expr(condition)?;
                     for arm in arms {
                         if self.match_case_pattern(&arm.pattern, &value)? {
-                            self.exec_fn_body(&arm.body)?;
+                            let saved_vars = self.vars.clone();
+                            let result = self.exec_fn_body(&arm.body);
+                            self.vars = saved_vars;
+                            result?;
                             break;
                         }
                     }

@@ -40,6 +40,10 @@ impl Parser {
 
     fn eof_aware_span(&self) -> SourceSpan {
         let tok = &self.current;
+        if tok.len == 0 && tok.offset >= self.source_len && self.source_len > 0 {
+            let start = self.source_len.saturating_sub(1);
+            return SourceSpan::new(start.into(), 1);
+        }
         let len = if tok.len == 0 {
             1.min(self.source_len.saturating_sub(tok.offset))
         } else {

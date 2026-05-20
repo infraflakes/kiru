@@ -866,7 +866,7 @@ sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
     dir = `d`;\n\
-    fn badfn { case ($undefined) { _ { }; }; }\n\
+    fn badfn { case $undefined { _ { }; }; }\n\
 }\
 ",
         );
@@ -890,7 +890,7 @@ sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
     dir = `d`;\n\
-    fn badfn { case ($x) { $undefined { }; _ { }; }; }\n\
+    fn badfn { case $x { $undefined { }; _ { }; }; }\n\
 }\
 ",
         );
@@ -917,7 +917,7 @@ pr test {{\n\
     dir = `test`;\n\
     var string os = `Linux`;\n\
     fn deploy {{\n\
-        case ($os) {{\n\
+        case $os {{\n\
             `Linux` {{ log `matched`; }};\n\
             _ {{ log `default`; }};\n\
         }};\n\
@@ -947,7 +947,7 @@ pr test {{\n\
     dir = `test`;\n\
     var string os = `Darwin`;\n\
     fn deploy {{\n\
-        case ($os) {{\n\
+        case $os {{\n\
             `Linux` {{ log `only-linux`; }};\n\
         }};\n\
     }}\n\

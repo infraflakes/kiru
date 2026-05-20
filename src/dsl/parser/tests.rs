@@ -342,8 +342,7 @@ fn test_project_with_interleaved_fields_and_body() {
 
 #[test]
 fn test_case_stmt_in_fn_body() {
-    let input =
-        "pr p { fn test { case ($os) { `Linux` { log `linux`; }; _ { log `other`; }; }; } }";
+    let input = "pr p { fn test { case $os { `Linux` { log `linux`; }; _ { log `other`; }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
         Stmt::ProjectDecl { body, .. } => match &body[0] {
@@ -371,7 +370,7 @@ fn test_case_stmt_in_fn_body() {
 #[test]
 fn test_case_with_var_ref_pattern() {
     let input =
-        "pr p { fn test { case ($os) { $expected { log `match`; }; _ { log `no match`; }; }; } }";
+        "pr p { fn test { case $os { $expected { log `match`; }; _ { log `no match`; }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
         Stmt::ProjectDecl { body, .. } => match &body[0] {
@@ -391,8 +390,7 @@ fn test_case_with_var_ref_pattern() {
 
 #[test]
 fn test_case_with_backtick_condition() {
-    let input =
-        "pr p { fn test { case (`hello`) { `hello` { log `match`; }; _ { log `no`; }; }; } }";
+    let input = "pr p { fn test { case `hello` { `hello` { log `match`; }; _ { log `no`; }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
         Stmt::ProjectDecl { body, .. } => match &body[0] {
@@ -411,7 +409,7 @@ fn test_case_with_backtick_condition() {
 #[test]
 fn test_case_with_interpolation_in_pattern() {
     let input =
-        "pr p { fn test { case ($os) { `hello ${world}` { log `match`; }; _ { log `no`; }; }; } }";
+        "pr p { fn test { case $os { `hello ${world}` { log `match`; }; _ { log `no`; }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
         Stmt::ProjectDecl { body, .. } => match &body[0] {
@@ -429,7 +427,7 @@ fn test_case_with_interpolation_in_pattern() {
 
 #[test]
 fn test_case_nested_inside_env() {
-    let input = "pr p { fn test { env [DEBUG = `1`] { case ($os) { `Linux` { log `linux`; }; _ { log `other`; }; }; }; } }";
+    let input = "pr p { fn test { env [DEBUG = `1`] { case $os { `Linux` { log `linux`; }; _ { log `other`; }; }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
         Stmt::ProjectDecl { body, .. } => match &body[0] {
@@ -449,30 +447,8 @@ fn test_case_nested_inside_env() {
 }
 
 #[test]
-fn test_case_missing_lparen_error() {
-    let result = parse_program("pr p { fn test { case $os { _ { log `x`; }; } } }");
-    let errs = result.unwrap_err();
-    assert!(
-        errs.iter().any(|e| e.to_string().contains("expected `(`")),
-        "got: {:?}",
-        errs
-    );
-}
-
-#[test]
-fn test_case_missing_rparen_error() {
-    let result = parse_program("pr p { fn test { case ($os { _ { log `x`; }; } } }");
-    let errs = result.unwrap_err();
-    assert!(
-        errs.iter().any(|e| e.to_string().contains("expected `)`")),
-        "got: {:?}",
-        errs
-    );
-}
-
-#[test]
 fn test_case_missing_opening_brace_error() {
-    let result = parse_program("pr p { fn test { case ($os) _ { log `x`; }; } }");
+    let result = parse_program("pr p { fn test { case $os _ { log `x`; }; } }");
     let errs = result.unwrap_err();
     assert!(
         errs.iter().any(|e| e.to_string().contains("expected `{`")),
@@ -483,7 +459,7 @@ fn test_case_missing_opening_brace_error() {
 
 #[test]
 fn test_case_missing_semicolon_after_arm() {
-    let result = parse_program("pr p { fn test { case ($os) { `a` { log `x`; } } } }");
+    let result = parse_program("pr p { fn test { case $os { `a` { log `x`; } } } }");
     let errs = result.unwrap_err();
     assert!(
         errs.iter().any(|e| e.to_string().contains("expected `;`")),
@@ -494,7 +470,7 @@ fn test_case_missing_semicolon_after_arm() {
 
 #[test]
 fn test_case_pattern_invalid() {
-    let result = parse_program("pr p { fn test { case ($os) { 123 { log `x`; }; } } }");
+    let result = parse_program("pr p { fn test { case $os { 123 { log `x`; }; } } }");
     let errs = result.unwrap_err();
     assert!(
         errs.iter()
@@ -506,7 +482,7 @@ fn test_case_pattern_invalid() {
 
 #[test]
 fn test_case_missing_semicolon_after_block() {
-    let result = parse_program("pr p { fn test { case ($os) { _ { log `x`; }; } } }");
+    let result = parse_program("pr p { fn test { case $os { _ { log `x`; }; } } }");
     let errs = result.unwrap_err();
     assert!(
         errs.iter().any(|e| e.to_string().contains("expected `;`")),
@@ -517,7 +493,7 @@ fn test_case_missing_semicolon_after_block() {
 
 #[test]
 fn test_case_nested_inside_case() {
-    let input = "pr p { fn test { case ($x) { `a` { case ($y) { `1` { log `nested`; }; _ { }; }; }; _ { }; }; } }";
+    let input = "pr p { fn test { case $x { `a` { case $y { `1` { log `nested`; }; _ { }; }; }; _ { }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
         Stmt::ProjectDecl { body, .. } => match &body[0] {
@@ -540,7 +516,7 @@ fn test_case_nested_inside_case() {
 
 #[test]
 fn test_case_with_cd_in_arm() {
-    let input = "pr p { fn test { case ($x) { `a` { cd `dir`; }; _ { cd $x; }; }; } }";
+    let input = "pr p { fn test { case $x { `a` { cd `dir`; }; _ { cd $x; }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
         Stmt::ProjectDecl { body, .. } => match &body[0] {
@@ -559,7 +535,7 @@ fn test_case_with_cd_in_arm() {
 
 #[test]
 fn test_case_with_var_decl_in_arm() {
-    let input = "pr p { fn test { case ($x) { `a` { var string msg = `hello`; }; _ { }; }; } }";
+    let input = "pr p { fn test { case $x { `a` { var string msg = `hello`; }; _ { }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
         Stmt::ProjectDecl { body, .. } => match &body[0] {
@@ -578,7 +554,7 @@ fn test_case_with_var_decl_in_arm() {
 #[test]
 fn test_case_with_env_in_arm() {
     let input =
-        "pr p { fn test { case ($x) { `a` { env [DEBUG = `1`] { log `ok`; }; }; _ { }; }; } }";
+        "pr p { fn test { case $x { `a` { env [DEBUG = `1`] { log `ok`; }; }; _ { }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
         Stmt::ProjectDecl { body, .. } => match &body[0] {
@@ -596,7 +572,7 @@ fn test_case_with_env_in_arm() {
 
 #[test]
 fn test_case_arm_empty_body() {
-    let input = "pr p { fn test { case ($x) { _ { }; }; } }";
+    let input = "pr p { fn test { case $x { _ { }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
         Stmt::ProjectDecl { body, .. } => match &body[0] {
@@ -614,7 +590,7 @@ fn test_case_arm_empty_body() {
 
 #[test]
 fn test_case_duplicate_default() {
-    let input = "pr p { fn test { case ($x) { _ { log `a`; }; _ { log `b`; }; }; } }";
+    let input = "pr p { fn test { case $x { _ { log `a`; }; _ { log `b`; }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
         Stmt::ProjectDecl { body, .. } => match &body[0] {
@@ -650,7 +626,7 @@ fn test_case_with_exec_and_log() {
     let input = "pr p {
     fn deploy {
         var shell docker_bin = `command -v docker 2>/dev/null || command -v podman 2>/dev/null`;
-        case (`${docker_bin}`) {
+        case `${docker_bin}` {
              `` { log `no container runtime found`; };
             _ { exec `${docker_bin} build .`; };
         };
