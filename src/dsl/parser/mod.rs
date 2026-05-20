@@ -1,97 +1,17 @@
 use crate::dsl::ast::*;
+use crate::dsl::error::{ParseError, format_token, format_token_type, is_keyword_token};
 use crate::dsl::lexer::Lexer;
 use crate::dsl::token::{Token, TokenType};
-use miette::{Diagnostic, SourceSpan};
-use thiserror::Error;
+use miette::SourceSpan;
 
-mod block;
 mod expr;
 mod fn_body;
 mod fn_seq_par;
-mod globals;
 mod project;
+mod stmts;
 
 #[cfg(test)]
 mod tests;
-
-#[derive(Debug, Error, Diagnostic)]
-#[error("{msg}")]
-pub struct ParseError {
-    #[label("{msg}")]
-    span: SourceSpan,
-    msg: String,
-}
-
-impl ParseError {
-    fn new(span: SourceSpan, msg: String) -> Self {
-        Self { span, msg }
-    }
-}
-
-fn format_token_type(ty: &TokenType) -> &'static str {
-    match ty {
-        TokenType::LBrace => "`{`",
-        TokenType::RBrace => "`}`",
-        TokenType::LParen => "`(`",
-        TokenType::RParen => "`)`",
-        TokenType::LBracket => "`[`",
-        TokenType::RBracket => "`]`",
-        TokenType::Semicolon => "`;`",
-        TokenType::Comma => "`,`",
-        TokenType::Assign => "`=`",
-        TokenType::Dollar => "`$`",
-        TokenType::Dot => "`.`",
-        TokenType::Shell => "`shell`",
-        TokenType::StringKw => "`string`",
-        TokenType::Sanctuary => "`sanctuary`",
-        TokenType::Import => "`import`",
-        TokenType::Var => "`var`",
-        TokenType::Pr => "`pr`",
-        TokenType::Fn => "`fn`",
-        TokenType::Seq => "`seq`",
-        TokenType::Par => "`par`",
-        TokenType::Env => "`env`",
-        TokenType::Case => "`case`",
-        TokenType::Log => "`log`",
-        TokenType::Exec => "`exec`",
-        TokenType::Cd => "`cd`",
-        TokenType::Ident(_) => "identifier",
-        TokenType::Backtick(_) => "backtick string",
-        TokenType::PathLit(_) => "path literal",
-        TokenType::Illegal(_) => "illegal token",
-        TokenType::EOF => "end of file",
-    }
-}
-
-fn format_token(token: &Token) -> String {
-    match &token.ty {
-        TokenType::Ident(s) => format!("`{}`", s),
-        TokenType::Backtick(s) => format!("`{}`", s),
-        TokenType::PathLit(s) => format!("`{}`", s),
-        TokenType::Illegal(s) => format!("`{}`", s),
-        _ => format_token_type(&token.ty).to_string(),
-    }
-}
-
-fn is_keyword_token(ty: &TokenType) -> bool {
-    matches!(
-        ty,
-        TokenType::Log
-            | TokenType::Exec
-            | TokenType::Cd
-            | TokenType::Case
-            | TokenType::Env
-            | TokenType::Var
-            | TokenType::Fn
-            | TokenType::Seq
-            | TokenType::Par
-            | TokenType::Pr
-            | TokenType::Shell
-            | TokenType::StringKw
-            | TokenType::Sanctuary
-            | TokenType::Import
-    )
-}
 
 pub struct Parser {
     lexer: Lexer,
