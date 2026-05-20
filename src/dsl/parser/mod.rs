@@ -73,15 +73,41 @@ fn format_token(token: &Token) -> String {
     }
 }
 
+fn is_keyword_token(ty: &TokenType) -> bool {
+    matches!(
+        ty,
+        TokenType::Log
+            | TokenType::Exec
+            | TokenType::Cd
+            | TokenType::Case
+            | TokenType::Env
+            | TokenType::Var
+            | TokenType::Fn
+            | TokenType::Seq
+            | TokenType::Par
+            | TokenType::Pr
+            | TokenType::Shell
+            | TokenType::StringKw
+            | TokenType::Sanctuary
+            | TokenType::Import
+    )
+}
+
 pub struct Parser {
     lexer: Lexer,
     current: Token,
+    source_len: usize,
 }
 
 impl Parser {
     pub fn new(mut lexer: Lexer) -> Self {
+        let source_len = lexer.source_len();
         let current = lexer.next_token();
-        Parser { lexer, current }
+        Parser {
+            lexer,
+            current,
+            source_len,
+        }
     }
 
     fn current_token(&self) -> &Token {
@@ -90,6 +116,16 @@ impl Parser {
 
     fn advance(&mut self) {
         self.current = self.lexer.next_token();
+    }
+
+    fn eof_aware_span(&self) -> SourceSpan {
+        let tok = &self.current;
+        let len = if tok.len == 0 {
+            1.min(self.source_len.saturating_sub(tok.offset))
+        } else {
+            tok.len
+        };
+        SourceSpan::new(tok.offset.into(), len)
     }
 
     fn expect_with_context(&mut self, ty: TokenType, context: &str) -> Result<(), ParseError> {
@@ -101,7 +137,7 @@ impl Parser {
             let expected = format_token_type(&ty);
             let found = format_token(&token);
             Err(ParseError::new(
-                SourceSpan::new(token.offset.into(), token.len),
+                self.eof_aware_span(),
                 format!("expected {} {}, found {}", expected, context, found),
             ))
         }
@@ -129,41 +165,83 @@ impl Parser {
     }
 
     fn parse_toplevel_stmt(&mut self) -> Result<Stmt, ParseError> {
+        if matches!(self.current_token().ty, TokenType::Illegal(_)) {
+            let token = self.current_token().clone();
+            let msg = match &token.ty {
+                TokenType::Illegal(m) => m.clone(),
+                _ => unreachable!(),
+            };
+            return Err(ParseError::new(
+                SourceSpan::new(token.offset.into(), token.len),
+                msg,
+            ));
+        }
         match self.current_token().ty {
             TokenType::Shell => self.parse_shell_decl(),
             TokenType::Sanctuary => self.parse_sanctuary_decl(),
             TokenType::Import => self.parse_import_decl(),
             TokenType::Var => self.parse_var_decl(),
             TokenType::Pr => self.parse_project_decl(),
-            _ => Err(ParseError::new(
-                miette::SourceSpan::new(
-                    self.current_token().offset.into(),
-                    self.current_token().len,
-                ),
-                format!(
-                    "expected shell, sanctuary, import, var, or pr, found {}",
-                    format_token(self.current_token())
-                ),
-            )),
+            _ => {
+                let is_underscore = matches!(
+                    &self.current_token().ty,
+                    TokenType::Ident(s) if s == "_"
+                );
+                if is_underscore {
+                    Err(ParseError::new(
+                        self.eof_aware_span(),
+                        "`_` is only valid as a case pattern".to_string(),
+                    ))
+                } else {
+                    Err(ParseError::new(
+                        self.eof_aware_span(),
+                        format!(
+                            "expected shell, sanctuary, import, var, or pr, found {}",
+                            format_token(self.current_token())
+                        ),
+                    ))
+                }
+            }
         }
     }
 
     pub(crate) fn parse_project_body_stmt(&mut self) -> Result<Stmt, ParseError> {
+        if matches!(self.current_token().ty, TokenType::Illegal(_)) {
+            let token = self.current_token().clone();
+            let msg = match &token.ty {
+                TokenType::Illegal(m) => m.clone(),
+                _ => unreachable!(),
+            };
+            return Err(ParseError::new(
+                SourceSpan::new(token.offset.into(), token.len),
+                msg,
+            ));
+        }
         match self.current_token().ty {
             TokenType::Var => self.parse_var_decl(),
             TokenType::Fn => self.parse_fn_decl(),
             TokenType::Seq => self.parse_seq_decl(),
             TokenType::Par => self.parse_par_decl(),
-            _ => Err(ParseError::new(
-                miette::SourceSpan::new(
-                    self.current_token().offset.into(),
-                    self.current_token().len,
-                ),
-                format!(
-                    "expected var, fn, seq, or par, found {}",
-                    format_token(self.current_token())
-                ),
-            )),
+            _ => {
+                let is_underscore = matches!(
+                    &self.current_token().ty,
+                    TokenType::Ident(s) if s == "_"
+                );
+                if is_underscore {
+                    Err(ParseError::new(
+                        self.eof_aware_span(),
+                        "`_` is only valid as a case pattern".to_string(),
+                    ))
+                } else {
+                    Err(ParseError::new(
+                        self.eof_aware_span(),
+                        format!(
+                            "expected var, fn, seq, or par, found {}",
+                            format_token(self.current_token())
+                        ),
+                    ))
+                }
+            }
         }
     }
 
@@ -193,16 +271,41 @@ impl Parser {
             TokenType::Var => self.parse_fn_var_decl(),
             TokenType::Env => self.parse_env_block(),
             TokenType::Case => self.parse_case_stmt(),
-            _ => Err(ParseError::new(
-                miette::SourceSpan::new(
-                    self.current_token().offset.into(),
-                    self.current_token().len,
-                ),
-                format!(
-                    "expected log, exec, cd, var, env, or case, found {}",
-                    format_token(self.current_token())
-                ),
+            TokenType::Illegal(_) => {
+                let token = self.current_token().clone();
+                let msg = match &token.ty {
+                    TokenType::Illegal(m) => m.clone(),
+                    _ => unreachable!(),
+                };
+                Err(ParseError::new(
+                    SourceSpan::new(token.offset.into(), token.len),
+                    msg,
+                ))
+            }
+            TokenType::Semicolon => Err(ParseError::new(
+                self.eof_aware_span(),
+                "unexpected `;` (empty statement)".to_string(),
             )),
+            _ => {
+                let is_underscore = matches!(
+                    &self.current_token().ty,
+                    TokenType::Ident(s) if s == "_"
+                );
+                if is_underscore {
+                    Err(ParseError::new(
+                        self.eof_aware_span(),
+                        "`_` is only valid as a case pattern".to_string(),
+                    ))
+                } else {
+                    Err(ParseError::new(
+                        self.eof_aware_span(),
+                        format!(
+                            "expected log, exec, cd, var, env, or case, found {}",
+                            format_token(self.current_token())
+                        ),
+                    ))
+                }
+            }
         }
     }
 }

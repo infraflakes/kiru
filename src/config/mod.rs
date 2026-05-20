@@ -124,8 +124,10 @@ fn parse_recursive(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runner::Runner;
     use std::fs;
     use std::path::Path;
+    use std::sync::Arc;
 
     fn load_full(entry_path: &Path) -> Result<Config, ConfigError> {
         let mut cfg = load(entry_path)?;
@@ -850,5 +852,113 @@ pr test {\n\
             "project fns should not have access to global vars, got: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_undefined_var_in_case_condition() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.sro",
+            "\
+shell = `bash`;\n\
+sanctuary = `/tmp`;\n\
+pr test {\n\
+    url = `u`;\n\
+    dir = `d`;\n\
+    fn badfn { case ($undefined) { _ { }; }; }\n\
+}\
+",
+        );
+        let err = load_full(&dir.path().join("main.sro")).unwrap_err();
+        assert!(
+            err.to_string().contains("undefined variable"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_undefined_var_in_case_varref_pattern() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.sro",
+            "\
+shell = `bash`;\n\
+sanctuary = `/tmp`;\n\
+pr test {\n\
+    url = `u`;\n\
+    dir = `d`;\n\
+    fn badfn { case ($x) { $undefined { }; _ { }; }; }\n\
+}\
+",
+        );
+        let err = load_full(&dir.path().join("main.sro")).unwrap_err();
+        assert!(
+            err.to_string().contains("undefined variable"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_case_runtime_matching_arm() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.sro",
+            &format!(
+                "\
+shell = `bash`;\n\
+sanctuary = `{}`;\n\
+pr test {{\n\
+    url = `http://example.com`;\n\
+    dir = `test`;\n\
+    var string os = `Linux`;\n\
+    fn deploy {{\n\
+        case ($os) {{\n\
+            `Linux` {{ log `matched`; }};\n\
+            _ {{ log `default`; }};\n\
+        }};\n\
+    }}\n\
+}}\
+",
+                dir.path().display()
+            ),
+        );
+        let cfg = load(&dir.path().join("main.sro")).unwrap();
+        let mut runner = Runner::from_arc(Arc::new(cfg));
+        runner.execute_fn_call("deploy", "test").unwrap();
+    }
+
+    #[test]
+    fn test_case_runtime_no_match() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.sro",
+            &format!(
+                "\
+shell = `bash`;\n\
+sanctuary = `{}`;\n\
+pr test {{\n\
+    url = `http://example.com`;\n\
+    dir = `test`;\n\
+    var string os = `Darwin`;\n\
+    fn deploy {{\n\
+        case ($os) {{\n\
+            `Linux` {{ log `only-linux`; }};\n\
+        }};\n\
+    }}\n\
+}}\
+",
+                dir.path().display()
+            ),
+        );
+        let cfg = load(&dir.path().join("main.sro")).unwrap();
+        let mut runner = Runner::from_arc(Arc::new(cfg));
+        // No matching arm — silently does nothing, no error.
+        runner.execute_fn_call("deploy", "test").unwrap();
     }
 }

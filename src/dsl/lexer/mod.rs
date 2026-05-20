@@ -32,6 +32,10 @@ impl Lexer {
         self.input.into_iter().collect()
     }
 
+    pub fn source_len(&self) -> usize {
+        self.input.len()
+    }
+
     pub fn next_token(&mut self) -> Token {
         loop {
             self.skip_whitespace();

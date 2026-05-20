@@ -30,10 +30,7 @@ impl Parser {
             TokenType::PathLit(p) => p.clone(),
             _ => {
                 return Err(ParseError::new(
-                    miette::SourceSpan::new(
-                        self.current_token().offset.into(),
-                        self.current_token().len,
-                    ),
+                    self.eof_aware_span(),
                     "expected import path".to_string(),
                 ));
             }
@@ -59,10 +56,7 @@ impl Parser {
             }
             _ => {
                 return Err(ParseError::new(
-                    miette::SourceSpan::new(
-                        self.current_token().offset.into(),
-                        self.current_token().len,
-                    ),
+                    self.eof_aware_span(),
                     "expected 'string' or 'shell'".to_string(),
                 ));
             }
@@ -70,12 +64,18 @@ impl Parser {
 
         let name = match &self.current_token().ty {
             TokenType::Ident(n) => n.clone(),
+            ty if is_keyword_token(ty) => {
+                return Err(ParseError::new(
+                    self.eof_aware_span(),
+                    format!(
+                        "expected variable name, found {} (reserved keyword)",
+                        format_token(self.current_token())
+                    ),
+                ));
+            }
             _ => {
                 return Err(ParseError::new(
-                    miette::SourceSpan::new(
-                        self.current_token().offset.into(),
-                        self.current_token().len,
-                    ),
+                    self.eof_aware_span(),
                     "expected variable name".to_string(),
                 ));
             }

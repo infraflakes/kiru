@@ -450,31 +450,198 @@ fn test_case_nested_inside_env() {
 #[test]
 fn test_case_missing_lparen_error() {
     let result = parse_program("pr p { fn test { case $os { _ { log `x`; }; } } }");
-    assert!(result.is_err());
+    let errs = result.unwrap_err();
+    assert!(
+        errs.iter().any(|e| e.to_string().contains("expected `(`")),
+        "got: {:?}",
+        errs
+    );
 }
 
 #[test]
 fn test_case_missing_rparen_error() {
     let result = parse_program("pr p { fn test { case ($os { _ { log `x`; }; } } }");
-    assert!(result.is_err());
+    let errs = result.unwrap_err();
+    assert!(
+        errs.iter().any(|e| e.to_string().contains("expected `)`")),
+        "got: {:?}",
+        errs
+    );
 }
 
 #[test]
 fn test_case_missing_opening_brace_error() {
     let result = parse_program("pr p { fn test { case ($os) _ { log `x`; }; } }");
-    assert!(result.is_err());
+    let errs = result.unwrap_err();
+    assert!(
+        errs.iter().any(|e| e.to_string().contains("expected `{`")),
+        "got: {:?}",
+        errs
+    );
 }
 
 #[test]
 fn test_case_missing_semicolon_after_arm() {
     let result = parse_program("pr p { fn test { case ($os) { `a` { log `x`; } } } }");
-    assert!(result.is_err());
+    let errs = result.unwrap_err();
+    assert!(
+        errs.iter().any(|e| e.to_string().contains("expected `;`")),
+        "got: {:?}",
+        errs
+    );
 }
 
 #[test]
 fn test_case_pattern_invalid() {
     let result = parse_program("pr p { fn test { case ($os) { 123 { log `x`; }; } } }");
-    assert!(result.is_err());
+    let errs = result.unwrap_err();
+    assert!(
+        errs.iter()
+            .any(|e| e.to_string().contains("expected pattern before")),
+        "got: {:?}",
+        errs
+    );
+}
+
+#[test]
+fn test_case_missing_semicolon_after_block() {
+    let result = parse_program("pr p { fn test { case ($os) { _ { log `x`; }; } } }");
+    let errs = result.unwrap_err();
+    assert!(
+        errs.iter().any(|e| e.to_string().contains("expected `;`")),
+        "got: {:?}",
+        errs
+    );
+}
+
+#[test]
+fn test_case_nested_inside_case() {
+    let input = "pr p { fn test { case ($x) { `a` { case ($y) { `1` { log `nested`; }; _ { }; }; }; _ { }; }; } }";
+    let prog = parse_program(input).unwrap();
+    match &prog.stmts[0] {
+        Stmt::ProjectDecl { body, .. } => match &body[0] {
+            Stmt::FnDecl { body, .. } => {
+                assert_eq!(count_fn_stmt_types(body), vec!["case"]);
+                match &body[0] {
+                    FnStmt::Case { arms, .. } => {
+                        assert_eq!(arms.len(), 2);
+                        assert_eq!(count_fn_stmt_types(&arms[0].body), vec!["case"]);
+                        assert!(arms[1].body.is_empty());
+                    }
+                    _ => panic!("expected Case"),
+                }
+            }
+            _ => panic!("expected FnDecl"),
+        },
+        _ => panic!("expected ProjectDecl"),
+    }
+}
+
+#[test]
+fn test_case_with_cd_in_arm() {
+    let input = "pr p { fn test { case ($x) { `a` { cd `dir`; }; _ { cd $x; }; }; } }";
+    let prog = parse_program(input).unwrap();
+    match &prog.stmts[0] {
+        Stmt::ProjectDecl { body, .. } => match &body[0] {
+            Stmt::FnDecl { body, .. } => match &body[0] {
+                FnStmt::Case { arms, .. } => {
+                    assert_eq!(count_fn_stmt_types(&arms[0].body), vec!["cd"]);
+                    assert_eq!(count_fn_stmt_types(&arms[1].body), vec!["cd"]);
+                }
+                _ => panic!("expected Case"),
+            },
+            _ => panic!("expected FnDecl"),
+        },
+        _ => panic!("expected ProjectDecl"),
+    }
+}
+
+#[test]
+fn test_case_with_var_decl_in_arm() {
+    let input = "pr p { fn test { case ($x) { `a` { var string msg = `hello`; }; _ { }; }; } }";
+    let prog = parse_program(input).unwrap();
+    match &prog.stmts[0] {
+        Stmt::ProjectDecl { body, .. } => match &body[0] {
+            Stmt::FnDecl { body, .. } => match &body[0] {
+                FnStmt::Case { arms, .. } => {
+                    assert_eq!(count_fn_stmt_types(&arms[0].body), vec!["var"]);
+                }
+                _ => panic!("expected Case"),
+            },
+            _ => panic!("expected FnDecl"),
+        },
+        _ => panic!("expected ProjectDecl"),
+    }
+}
+
+#[test]
+fn test_case_with_env_in_arm() {
+    let input =
+        "pr p { fn test { case ($x) { `a` { env [DEBUG = `1`] { log `ok`; }; }; _ { }; }; } }";
+    let prog = parse_program(input).unwrap();
+    match &prog.stmts[0] {
+        Stmt::ProjectDecl { body, .. } => match &body[0] {
+            Stmt::FnDecl { body, .. } => match &body[0] {
+                FnStmt::Case { arms, .. } => {
+                    assert_eq!(count_fn_stmt_types(&arms[0].body), vec!["env"]);
+                }
+                _ => panic!("expected Case"),
+            },
+            _ => panic!("expected FnDecl"),
+        },
+        _ => panic!("expected ProjectDecl"),
+    }
+}
+
+#[test]
+fn test_case_arm_empty_body() {
+    let input = "pr p { fn test { case ($x) { _ { }; }; } }";
+    let prog = parse_program(input).unwrap();
+    match &prog.stmts[0] {
+        Stmt::ProjectDecl { body, .. } => match &body[0] {
+            Stmt::FnDecl { body, .. } => match &body[0] {
+                FnStmt::Case { arms, .. } => {
+                    assert!(arms[0].body.is_empty());
+                }
+                _ => panic!("expected Case"),
+            },
+            _ => panic!("expected FnDecl"),
+        },
+        _ => panic!("expected ProjectDecl"),
+    }
+}
+
+#[test]
+fn test_case_duplicate_default() {
+    let input = "pr p { fn test { case ($x) { _ { log `a`; }; _ { log `b`; }; }; } }";
+    let prog = parse_program(input).unwrap();
+    match &prog.stmts[0] {
+        Stmt::ProjectDecl { body, .. } => match &body[0] {
+            Stmt::FnDecl { body, .. } => match &body[0] {
+                FnStmt::Case { arms, .. } => {
+                    assert_eq!(arms.len(), 2);
+                    assert!(matches!(arms[0].pattern, CasePattern::Default));
+                    assert!(matches!(arms[1].pattern, CasePattern::Default));
+                }
+                _ => panic!("expected Case"),
+            },
+            _ => panic!("expected FnDecl"),
+        },
+        _ => panic!("expected ProjectDecl"),
+    }
+}
+
+#[test]
+fn test_underscore_outside_case_pattern() {
+    let result = parse_program("pr p { fn test { log `_`; _; } }");
+    let errs = result.unwrap_err();
+    assert!(
+        errs.iter().any(|e| e
+            .to_string()
+            .contains("`_` is only valid as a case pattern")),
+        "got: {:?}",
+        errs
+    );
 }
 
 #[test]

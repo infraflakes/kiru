@@ -43,10 +43,7 @@ impl Parser {
             }
             _ => {
                 return Err(ParseError::new(
-                    miette::SourceSpan::new(
-                        self.current_token().offset.into(),
-                        self.current_token().len,
-                    ),
+                    self.eof_aware_span(),
                     "expected 'string' or 'shell'".to_string(),
                 ));
             }
@@ -54,12 +51,18 @@ impl Parser {
 
         let name = match &self.current_token().ty {
             TokenType::Ident(n) => n.clone(),
+            ty if is_keyword_token(ty) => {
+                return Err(ParseError::new(
+                    self.eof_aware_span(),
+                    format!(
+                        "expected variable name, found {} (reserved keyword)",
+                        format_token(self.current_token())
+                    ),
+                ));
+            }
             _ => {
                 return Err(ParseError::new(
-                    miette::SourceSpan::new(
-                        self.current_token().offset.into(),
-                        self.current_token().len,
-                    ),
+                    self.eof_aware_span(),
                     "expected variable name".to_string(),
                 ));
             }
@@ -87,12 +90,18 @@ impl Parser {
         while self.current_token().ty != TokenType::RBracket {
             let key = match &self.current_token().ty {
                 TokenType::Ident(k) => k.clone(),
+                ty if is_keyword_token(ty) => {
+                    return Err(ParseError::new(
+                        self.eof_aware_span(),
+                        format!(
+                            "expected identifier in env pair, found {} (reserved keyword)",
+                            format_token(self.current_token())
+                        ),
+                    ));
+                }
                 _ => {
                     return Err(ParseError::new(
-                        miette::SourceSpan::new(
-                            self.current_token().offset.into(),
-                            self.current_token().len,
-                        ),
+                        self.eof_aware_span(),
                         "expected identifier in env pair".to_string(),
                     ));
                 }
@@ -111,10 +120,7 @@ impl Parser {
                 TokenType::RBracket => break,
                 _ => {
                     return Err(ParseError::new(
-                        miette::SourceSpan::new(
-                            self.current_token().offset.into(),
-                            self.current_token().len,
-                        ),
+                        self.eof_aware_span(),
                         "expected `,` or `]`".to_string(),
                     ));
                 }
@@ -176,12 +182,18 @@ impl Parser {
                 self.advance();
                 let name = match &self.current_token().ty {
                     TokenType::Ident(n) => n.clone(),
+                    ty if is_keyword_token(ty) => {
+                        return Err(ParseError::new(
+                            self.eof_aware_span(),
+                            format!(
+                                "expected identifier after `$` in case pattern, found {} (reserved keyword)",
+                                format_token(self.current_token())
+                            ),
+                        ));
+                    }
                     _ => {
                         return Err(ParseError::new(
-                            miette::SourceSpan::new(
-                                self.current_token().offset.into(),
-                                self.current_token().len,
-                            ),
+                            self.eof_aware_span(),
                             "expected identifier after `$` in case pattern".to_string(),
                         ));
                     }
@@ -200,13 +212,16 @@ impl Parser {
                     _ => unreachable!(),
                 }
             }
-            _ => Err(ParseError::new(
-                miette::SourceSpan::new(
-                    self.current_token().offset.into(),
-                    self.current_token().len,
-                ),
-                "expected backtick, `$`, or `_` in case pattern".to_string(),
-            )),
+            _ => {
+                let tok = format_token(self.current_token());
+                Err(ParseError::new(
+                    self.eof_aware_span(),
+                    format!(
+                        "expected pattern before {}; are you missing a case arm pattern?",
+                        tok
+                    ),
+                ))
+            }
         }
     }
 }

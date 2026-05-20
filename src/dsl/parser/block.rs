@@ -6,10 +6,7 @@ impl Parser {
             TokenType::Ident(n) => n.clone(),
             _ => {
                 return Err(ParseError::new(
-                    miette::SourceSpan::new(
-                        self.current_token().offset.into(),
-                        self.current_token().len,
-                    ),
+                    self.eof_aware_span(),
                     format!(
                         "expected function name in seq/par, found {}",
                         format_token(self.current_token())

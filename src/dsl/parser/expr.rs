@@ -2,6 +2,17 @@ use super::*;
 
 impl Parser {
     pub(crate) fn parse_expr(&mut self) -> Result<Expr, ParseError> {
+        if matches!(self.current_token().ty, TokenType::Illegal(_)) {
+            let token = self.current_token().clone();
+            let msg = match &token.ty {
+                TokenType::Illegal(m) => m.clone(),
+                _ => unreachable!(),
+            };
+            return Err(ParseError::new(
+                SourceSpan::new(token.offset.into(), token.len),
+                msg,
+            ));
+        }
         match &self.current_token().ty {
             TokenType::Backtick(_) => self.parse_backtick_expr(),
             TokenType::Dollar => {
@@ -9,12 +20,18 @@ impl Parser {
 
                 let name = match &self.current_token().ty {
                     TokenType::Ident(n) => n.clone(),
+                    ty if is_keyword_token(ty) => {
+                        return Err(ParseError::new(
+                            self.eof_aware_span(),
+                            format!(
+                                "expected identifier after `$`, found {} (reserved keyword)",
+                                format_token(self.current_token())
+                            ),
+                        ));
+                    }
                     _ => {
                         return Err(ParseError::new(
-                            miette::SourceSpan::new(
-                                self.current_token().offset.into(),
-                                self.current_token().len,
-                            ),
+                            self.eof_aware_span(),
                             "expected identifier after `$`".to_string(),
                         ));
                     }
@@ -23,16 +40,26 @@ impl Parser {
 
                 Ok(Expr::VarRef { name })
             }
-            _ => Err(ParseError::new(
-                miette::SourceSpan::new(
-                    self.current_token().offset.into(),
-                    self.current_token().len,
-                ),
-                format!(
-                    "unexpected token in expression: {:?}",
-                    self.current_token().ty
-                ),
-            )),
+            _ => {
+                let is_underscore = matches!(
+                    &self.current_token().ty,
+                    TokenType::Ident(s) if s == "_"
+                );
+                if is_underscore {
+                    Err(ParseError::new(
+                        self.eof_aware_span(),
+                        "`_` is only valid as a case pattern".to_string(),
+                    ))
+                } else {
+                    Err(ParseError::new(
+                        self.eof_aware_span(),
+                        format!(
+                            "unexpected token in expression: {:?}",
+                            self.current_token().ty
+                        ),
+                    ))
+                }
+            }
         }
     }
 

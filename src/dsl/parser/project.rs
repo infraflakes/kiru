@@ -6,12 +6,18 @@ impl Parser {
 
         let name = match &self.current_token().ty {
             TokenType::Ident(n) => n.clone(),
+            ty if is_keyword_token(ty) => {
+                return Err(ParseError::new(
+                    self.eof_aware_span(),
+                    format!(
+                        "expected project name, found {} (reserved keyword)",
+                        format_token(self.current_token())
+                    ),
+                ));
+            }
             _ => {
                 return Err(ParseError::new(
-                    miette::SourceSpan::new(
-                        self.current_token().offset.into(),
-                        self.current_token().len,
-                    ),
+                    self.eof_aware_span(),
                     "expected project name".to_string(),
                 ));
             }
@@ -31,12 +37,18 @@ impl Parser {
                 _ => {
                     let key = match &self.current_token().ty {
                         TokenType::Ident(k) => k.clone(),
+                        ty if is_keyword_token(ty) => {
+                            return Err(ParseError::new(
+                                self.eof_aware_span(),
+                                format!(
+                                    "expected field name, found {} (reserved keyword)",
+                                    format_token(self.current_token())
+                                ),
+                            ));
+                        }
                         _ => {
                             return Err(ParseError::new(
-                                miette::SourceSpan::new(
-                                    self.current_token().offset.into(),
-                                    self.current_token().len,
-                                ),
+                                self.eof_aware_span(),
                                 "expected field name or var/fn/seq/par".to_string(),
                             ));
                         }

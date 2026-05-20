@@ -6,13 +6,19 @@ impl Parser {
 
         let name = match &self.current_token().ty {
             TokenType::Ident(n) => n.clone(),
+            ty if is_keyword_token(ty) => {
+                return Err(ParseError::new(
+                    self.eof_aware_span(),
+                    format!(
+                        "expected function name, found {} (reserved keyword)",
+                        format_token(self.current_token())
+                    ),
+                ));
+            }
             _ => {
                 return Err(ParseError::new(
-                    miette::SourceSpan::new(
-                        self.current_token().offset.into(),
-                        self.current_token().len,
-                    ),
-                    "expected identifier".to_string(),
+                    self.eof_aware_span(),
+                    "expected function name".to_string(),
                 ));
             }
         };
@@ -35,12 +41,18 @@ impl Parser {
 
         let name = match &self.current_token().ty {
             TokenType::Ident(n) => n.clone(),
+            ty if is_keyword_token(ty) => {
+                return Err(ParseError::new(
+                    self.eof_aware_span(),
+                    format!(
+                        "expected sequence name, found {} (reserved keyword)",
+                        format_token(self.current_token())
+                    ),
+                ));
+            }
             _ => {
                 return Err(ParseError::new(
-                    miette::SourceSpan::new(
-                        self.current_token().offset.into(),
-                        self.current_token().len,
-                    ),
+                    self.eof_aware_span(),
                     "expected sequence name".to_string(),
                 ));
             }
@@ -53,7 +65,7 @@ impl Parser {
         while self.current_token().ty != TokenType::RBrace {
             if self.current_token().ty == TokenType::EOF {
                 return Err(ParseError::new(
-                    miette::SourceSpan::new(self.current_token().offset.into(), 0),
+                    self.eof_aware_span(),
                     "unexpected end of file in seq declaration (expected '}')".to_string(),
                 ));
             }
@@ -70,12 +82,18 @@ impl Parser {
 
         let name = match &self.current_token().ty {
             TokenType::Ident(n) => n.clone(),
+            ty if is_keyword_token(ty) => {
+                return Err(ParseError::new(
+                    self.eof_aware_span(),
+                    format!(
+                        "expected parallel block name, found {} (reserved keyword)",
+                        format_token(self.current_token())
+                    ),
+                ));
+            }
             _ => {
                 return Err(ParseError::new(
-                    miette::SourceSpan::new(
-                        self.current_token().offset.into(),
-                        self.current_token().len,
-                    ),
+                    self.eof_aware_span(),
                     "expected parallel block name".to_string(),
                 ));
             }
@@ -88,7 +106,7 @@ impl Parser {
         while self.current_token().ty != TokenType::RBrace {
             if self.current_token().ty == TokenType::EOF {
                 return Err(ParseError::new(
-                    miette::SourceSpan::new(self.current_token().offset.into(), 0),
+                    self.eof_aware_span(),
                     "unexpected end of file in par declaration (expected '}')".to_string(),
                 ));
             }
