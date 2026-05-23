@@ -1,7 +1,7 @@
 use crate::config::error::ConfigError;
 use crate::config::merge::merge_project_body_stmt;
 use crate::config::types::Config;
-use crate::dsl::ast::{Expr, FnStmt, Stmt};
+use crate::dsl::ast::{CasePattern, Expr, FnStmt, Stmt};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -194,7 +194,7 @@ fn validate_fn_vars(
                 }
                 FnStmt::Log { value, .. } => validate_expr(value, fn_name, scope, errs, proj_name),
                 FnStmt::Exec { value, .. } => validate_expr(value, fn_name, scope, errs, proj_name),
-                FnStmt::Cd { .. } => {}
+                FnStmt::Cd { arg, .. } => validate_expr(arg, fn_name, scope, errs, proj_name),
                 FnStmt::EnvBlock { pairs, body, .. } => {
                     let mut block_scope = scope.clone();
                     for pair in pairs {
@@ -202,6 +202,35 @@ fn validate_fn_vars(
                         block_scope.insert(pair.key.clone());
                     }
                     validate_fn_body(fn_name, body, &mut block_scope, errs, proj_name);
+                }
+                FnStmt::Case { condition, arms } => {
+                    validate_expr(condition, fn_name, scope, errs, proj_name);
+                    for arm in arms {
+                        match &arm.pattern {
+                            CasePattern::VarRef { name } => {
+                                validate_expr(
+                                    &Expr::VarRef { name: name.clone() },
+                                    fn_name,
+                                    scope,
+                                    errs,
+                                    proj_name,
+                                );
+                            }
+                            CasePattern::Literal { parts } => {
+                                for part in parts {
+                                    if part.is_var && !scope.contains(&part.value) {
+                                        errs.push(format!(
+                                            "project {:?}: fn {:?}: undefined variable ${}",
+                                            proj_name, fn_name, part.value
+                                        ));
+                                    }
+                                }
+                            }
+                            CasePattern::Default => {}
+                        }
+                        let mut arm_scope = scope.clone();
+                        validate_fn_body(fn_name, &arm.body, &mut arm_scope, errs, proj_name);
+                    }
                 }
             }
         }

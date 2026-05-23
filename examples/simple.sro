@@ -8,13 +8,13 @@ pr sro {
     sync = `ignore`;
 
     fn check {
-        log(`checking project...`);
-        exec(`echo done`);
+        log `checking project...`;
+        exec `echo done`;
     }
 
     fn build {
-        log(`building...`);
-        exec(`echo build complete`);
+        log `building...`;
+        exec `echo build complete`;
     }
 
     seq pipeline {

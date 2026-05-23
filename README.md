@@ -7,11 +7,6 @@
 
 <img src="./examples/tui_example.png" alt="TUI" width="600">
 
-> [!CAUTION]
-> Main development happens on [Gitlab](https://gitlab.com/infraflakes/sro).
->
-> The [Github repository](https://github.com/infraflakes/sro) is just a mirror!
-
 ---
 
 ## The problem
