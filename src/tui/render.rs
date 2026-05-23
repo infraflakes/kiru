@@ -99,7 +99,7 @@ fn write_colored_line(line: &str, w: &mut impl Write) -> io::Result<()> {
     } else if trimmed.starts_with("env  ") {
         ("env  ", colors::ENV_ANSI)
     } else {
-        write!(w, "{}{line}", colors::TEXT_ANSI)?;
+        write!(w, "{}{line}{}", colors::TEXT_ANSI, colors::RESET)?;
         return Ok(());
     };
 

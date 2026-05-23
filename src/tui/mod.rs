@@ -168,6 +168,7 @@ impl Model {
     pub fn update_task_status(&mut self, index: usize, status: TaskStatus) {
         if let Some(task) = self.tasks.get_mut(index) {
             task.status = status;
+            task.finalized = matches!(status, TaskStatus::Success | TaskStatus::Error);
         }
     }
 
@@ -250,13 +251,7 @@ impl TuiApp {
             loop {
                 match rx.try_recv() {
                     Ok(TuiEvent::UpdateStatus(idx, status)) => {
-                        let mut model = self.model.lock().unwrap();
-                        model.update_task_status(idx, status);
-                        if (status == TaskStatus::Success || status == TaskStatus::Error)
-                            && let Some(task) = model.tasks.get_mut(idx)
-                        {
-                            task.finalized = true;
-                        }
+                        self.model.lock().unwrap().update_task_status(idx, status);
                     }
                     Ok(TuiEvent::AppendOutput(idx, line)) => {
                         self.model.lock().unwrap().append_output(idx, line);
