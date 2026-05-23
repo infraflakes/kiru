@@ -27,7 +27,6 @@ pr sro {
   }
 
   fn build {
-      var shell docker_bin = `command -v docker 2> /dev/null || command -v podman 2> /dev/null`;
       var shell docker_bin = `command -v docker 2> /dev/null || command -v podman 2> /dev/null || true`;
       case $docker_bin {
         `` { log `no container runtime found`;
