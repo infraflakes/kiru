@@ -890,7 +890,7 @@ sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
     dir = `d`;\n\
-    fn badfn { case $x { $undefined { }; _ { }; }; }\n\
+    fn badfn { var string x = `ok`; case $x { $undefined { }; _ { }; }; }\n\
 }\
 ",
         );
