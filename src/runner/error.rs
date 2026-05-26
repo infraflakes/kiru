@@ -1,18 +1,51 @@
 use std::fmt;
 
 #[derive(Debug)]
-pub struct RuntimeError(pub(crate) String);
-
-impl RuntimeError {
-    pub fn new(msg: impl Into<String>) -> Self {
-        RuntimeError(msg.into())
-    }
+pub(crate) enum RuntimeError {
+    Lookup(String),
+    Io(std::io::Error),
+    Exec {
+        cmd: String,
+        exit_code: Option<i32>,
+        detail: String,
+    },
+    Panic(String),
+    Other(String),
 }
 
 impl fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        match self {
+            RuntimeError::Lookup(s) => write!(f, "lookup error: {}", s),
+            RuntimeError::Io(e) => write!(f, "IO error: {}", e),
+            RuntimeError::Exec {
+                cmd,
+                exit_code,
+                detail,
+            } => match exit_code {
+                None => write!(f, "execution failed: {}: {}", cmd, detail),
+                Some(code) if detail.is_empty() => {
+                    write!(f, "execution failed: {} with exit code {}", cmd, code)
+                }
+                Some(code) => {
+                    write!(
+                        f,
+                        "execution failed: {}: {} (exit code {})",
+                        cmd, detail, code
+                    )
+                }
+            },
+            RuntimeError::Panic(s) => write!(f, "runtime panic: {}", s),
+            RuntimeError::Other(s) => write!(f, "{}", s),
+        }
     }
 }
 
-impl std::error::Error for RuntimeError {}
+impl std::error::Error for RuntimeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            RuntimeError::Io(e) => Some(e),
+            _ => None,
+        }
+    }
+}

@@ -83,7 +83,7 @@ impl<'a> ExecContext<'a> {
                         match self.vars.get(&part.value) {
                             Some(v) => resolved.push_str(v),
                             None => {
-                                return Err(RuntimeError::new(format!(
+                                return Err(RuntimeError::Lookup(format!(
                                     "undefined variable: ${}",
                                     part.value
                                 )));
@@ -97,7 +97,10 @@ impl<'a> ExecContext<'a> {
             }
             CasePattern::VarRef { name } => match self.vars.get(name) {
                 Some(v) => Ok(value == v),
-                None => Err(RuntimeError::new(format!("undefined variable: ${}", name))),
+                None => Err(RuntimeError::Lookup(format!(
+                    "undefined variable: ${}",
+                    name
+                ))),
             },
         }
     }
@@ -108,7 +111,7 @@ impl<'a> ExecContext<'a> {
         let line = format!("{}log  {}", indent, msg);
         self.output
             .writeln_colored(&line, colors::LOG_ANSI)
-            .map_err(|e| RuntimeError::new(format!("write error: {}", e)))?;
+            .map_err(RuntimeError::Io)?;
         Ok(())
     }
 
@@ -118,7 +121,7 @@ impl<'a> ExecContext<'a> {
         let line = format!("{}exec {}", indent, cmd_str);
         self.output
             .writeln_colored(&line, colors::EXEC_ANSI)
-            .map_err(|e| RuntimeError::new(format!("write error: {}", e)))?;
+            .map_err(RuntimeError::Io)?;
 
         let mut child = Command::new(&self.cfg.shell)
             .arg("-c")
@@ -128,7 +131,11 @@ impl<'a> ExecContext<'a> {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| RuntimeError::new(format!("exec failed: {}: {}", cmd_str, e)))?;
+            .map_err(|e| RuntimeError::Exec {
+                cmd: cmd_str.clone(),
+                exit_code: None,
+                detail: e.to_string(),
+            })?;
 
         let stdout_indent = "  ".repeat(self.env_stack.len() + 1);
 
@@ -140,8 +147,7 @@ impl<'a> ExecContext<'a> {
                 thread::spawn(move || -> Result<(), RuntimeError> {
                     let reader = std::io::BufReader::new(stdout);
                     for line in reader.lines() {
-                        let line =
-                            line.map_err(|e| RuntimeError::new(format!("read error: {}", e)))?;
+                        let line = line.map_err(RuntimeError::Io)?;
                         cb(format!("{}{}", indent, line));
                     }
                     Ok(())
@@ -154,50 +160,54 @@ impl<'a> ExecContext<'a> {
                 thread::spawn(move || -> Result<(), RuntimeError> {
                     let reader = std::io::BufReader::new(stderr);
                     for line in reader.lines() {
-                        let line =
-                            line.map_err(|e| RuntimeError::new(format!("read error: {}", e)))?;
+                        let line = line.map_err(RuntimeError::Io)?;
                         cb(format!("{}{}", indent, line));
                     }
                     Ok(())
                 })
             });
 
-            let status = child
-                .wait()
-                .map_err(|e| RuntimeError::new(format!("exec failed: {}: {}", cmd_str, e)))?;
+            let status = child.wait().map_err(|e| RuntimeError::Exec {
+                cmd: cmd_str.clone(),
+                exit_code: None,
+                detail: e.to_string(),
+            })?;
 
             if let Some(result) = stdout_thread.map(|h| h.join()) {
-                result.map_err(|_| RuntimeError::new("stdout reader panicked".to_string()))??;
+                result.map_err(|_| RuntimeError::Panic("stdout reader panicked".to_string()))??;
             }
             if let Some(result) = stderr_thread.map(|h| h.join()) {
-                result.map_err(|_| RuntimeError::new("stderr reader panicked".to_string()))??;
+                result.map_err(|_| RuntimeError::Panic("stderr reader panicked".to_string()))??;
             }
 
             status
         } else {
-            let output = child
-                .wait_with_output()
-                .map_err(|e| RuntimeError::new(format!("exec failed: {}: {}", cmd_str, e)))?;
+            let output = child.wait_with_output().map_err(|e| RuntimeError::Exec {
+                cmd: cmd_str.clone(),
+                exit_code: None,
+                detail: e.to_string(),
+            })?;
             for line in std::io::BufReader::new(&output.stdout[..]).lines() {
-                let line = line.map_err(|e| RuntimeError::new(format!("read error: {}", e)))?;
+                let line = line.map_err(RuntimeError::Io)?;
                 self.output
                     .writeln(&format!("{}{}", stdout_indent, line))
-                    .map_err(|e| RuntimeError::new(format!("write error: {}", e)))?;
+                    .map_err(RuntimeError::Io)?;
             }
             for line in std::io::BufReader::new(&output.stderr[..]).lines() {
-                let line = line.map_err(|e| RuntimeError::new(format!("read error: {}", e)))?;
+                let line = line.map_err(RuntimeError::Io)?;
                 self.output
                     .writeln(&format!("{}{}", stdout_indent, line))
-                    .map_err(|e| RuntimeError::new(format!("write error: {}", e)))?;
+                    .map_err(RuntimeError::Io)?;
             }
             output.status
         };
 
         if !status.success() {
-            return Err(RuntimeError::new(format!(
-                "exec failed with exit code: {}",
-                status.code().unwrap_or(-1)
-            )));
+            return Err(RuntimeError::Exec {
+                cmd: cmd_str,
+                exit_code: status.code(),
+                detail: String::new(),
+            });
         }
 
         Ok(())
@@ -213,7 +223,7 @@ impl<'a> ExecContext<'a> {
         };
 
         if !self.work_dir.exists() {
-            return Err(RuntimeError::new(format!(
+            return Err(RuntimeError::Lookup(format!(
                 "cd {}: directory does not exist",
                 resolved
             )));
@@ -223,7 +233,7 @@ impl<'a> ExecContext<'a> {
         let line = format!("{}cd   {}", indent, resolved);
         self.output
             .writeln_colored(&line, colors::CD_ANSI)
-            .map_err(|e| RuntimeError::new(format!("write error: {}", e)))?;
+            .map_err(RuntimeError::Io)?;
         Ok(())
     }
 
@@ -242,15 +252,18 @@ impl<'a> ExecContext<'a> {
                 .current_dir(&self.work_dir)
                 .envs(self.build_env())
                 .output()
-                .map_err(|e| {
-                    RuntimeError::new(format!("shell execution failed for var {}: {}", name, e))
+                .map_err(|e| RuntimeError::Exec {
+                    cmd: format!("shell var {}", name),
+                    exit_code: None,
+                    detail: e.to_string(),
                 })?;
 
             if !output.status.success() {
-                return Err(RuntimeError::new(format!(
-                    "shell execution failed for var {}",
-                    name
-                )));
+                return Err(RuntimeError::Exec {
+                    cmd: format!("shell var {}", name),
+                    exit_code: output.status.code(),
+                    detail: String::new(),
+                });
             }
 
             let result = String::from_utf8_lossy(&output.stdout)
@@ -280,7 +293,7 @@ impl<'a> ExecContext<'a> {
 
         self.output
             .writeln_colored(&line, colors::ENV_ANSI)
-            .map_err(|e| RuntimeError::new(format!("write error: {}", e)))?;
+            .map_err(RuntimeError::Io)?;
 
         self.env_stack.push(layer);
 

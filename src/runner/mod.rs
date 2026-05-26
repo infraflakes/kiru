@@ -74,21 +74,20 @@ impl Runner {
         fn_name: &str,
         project_name: &str,
     ) -> Result<(), RuntimeError> {
-        let project = self
-            .cfg
-            .projects
-            .get(project_name)
-            .ok_or_else(|| RuntimeError::new(format!("unknown project: {}", project_name)))?;
+        let project =
+            self.cfg.projects.get(project_name).ok_or_else(|| {
+                RuntimeError::Lookup(format!("unknown project: {}", project_name))
+            })?;
 
         let fn_body = project
             .functions
             .get(fn_name)
-            .ok_or_else(|| RuntimeError::new(format!("unknown function: {}", fn_name)))?;
+            .ok_or_else(|| RuntimeError::Lookup(format!("unknown function: {}", fn_name)))?;
 
         let line = format!("{}({})", fn_name, project_name);
         self.output
             .writeln_colored(&line, colors::EXEC_ANSI)
-            .map_err(|e| RuntimeError::new(format!("write error: {}", e)))?;
+            .map_err(RuntimeError::Io)?;
 
         let mut ctx = ExecContext::new(&self.cfg, project, &mut self.output);
         ctx.exec_fn_body(fn_body)
@@ -99,16 +98,14 @@ impl Runner {
             .cfg
             .projects
             .get(project_name)
-            .ok_or_else(|| RuntimeError::new(format!("unknown project: {}", project_name)))?
+            .ok_or_else(|| RuntimeError::Lookup(format!("unknown project: {}", project_name)))?
             .seqs
             .get(seq_name)
-            .ok_or_else(|| RuntimeError::new(format!("unknown seq: {}", seq_name)))?
+            .ok_or_else(|| RuntimeError::Lookup(format!("unknown seq: {}", seq_name)))?
             .clone();
 
         let line = format!("seq {} ({})", seq_name, project_name);
-        self.output
-            .writeln(&line)
-            .map_err(|e| RuntimeError::new(format!("write error: {}", e)))?;
+        self.output.writeln(&line).map_err(RuntimeError::Io)?;
 
         for fn_name in &fns {
             self.execute_fn_call(fn_name, project_name)?;
@@ -118,21 +115,18 @@ impl Runner {
     }
 
     pub fn run_par(&mut self, par_name: &str, project_name: &str) -> Result<(), RuntimeError> {
-        let project = self
-            .cfg
-            .projects
-            .get(project_name)
-            .ok_or_else(|| RuntimeError::new(format!("unknown project: {}", project_name)))?;
+        let project =
+            self.cfg.projects.get(project_name).ok_or_else(|| {
+                RuntimeError::Lookup(format!("unknown project: {}", project_name))
+            })?;
 
         let fns = project
             .pars
             .get(par_name)
-            .ok_or_else(|| RuntimeError::new(format!("unknown par: {}", par_name)))?;
+            .ok_or_else(|| RuntimeError::Lookup(format!("unknown par: {}", par_name)))?;
 
         let line = format!("par {} ({})", par_name, project_name);
-        self.output
-            .writeln(&line)
-            .map_err(|e| RuntimeError::new(format!("write error: {}", e)))?;
+        self.output.writeln(&line).map_err(RuntimeError::Io)?;
 
         let mut handles = Vec::new();
         let cb = self.output.fork_callback();
@@ -160,7 +154,7 @@ impl Runner {
         }
 
         if !errors.is_empty() {
-            return Err(RuntimeError::new(errors.join("\n")));
+            return Err(RuntimeError::Other(errors.join("\n")));
         }
 
         Ok(())

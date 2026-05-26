@@ -7,7 +7,7 @@ use std::process::Command;
 
 pub fn sync_all(cfg: &Config, writer: &mut dyn Write) -> Result<(), RuntimeError> {
     fs::create_dir_all(&cfg.sanctuary).map_err(|e| {
-        RuntimeError::new(format!("cannot create sanctuary {}: {}", cfg.sanctuary, e))
+        RuntimeError::Other(format!("cannot create sanctuary {}: {}", cfg.sanctuary, e))
     })?;
 
     for proj in cfg.projects.values() {
@@ -21,8 +21,7 @@ pub fn sync_all(cfg: &Config, writer: &mut dyn Write) -> Result<(), RuntimeError
         buf.push(line.to_string());
     })?;
     for line in buf {
-        writeln!(writer, "{}", line)
-            .map_err(|e| RuntimeError::new(format!("write error: {}", e)))?;
+        writeln!(writer, "{}", line).map_err(RuntimeError::Io)?;
     }
 
     Ok(())
@@ -63,34 +62,37 @@ fn sync_project_inner(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| {
-            RuntimeError::new(format!(
-                "failed to clone {}: git command failed: {}",
-                proj.name, e
-            ))
+        .map_err(|e| RuntimeError::Exec {
+            cmd: format!("git clone {}", proj.name),
+            exit_code: None,
+            detail: e.to_string(),
         })?;
 
     if let Some(stdout) = child.stdout.take() {
         for line in std::io::BufReader::new(stdout).lines() {
-            let line =
-                line.map_err(|e| RuntimeError::new(format!("failed to read clone output: {}", e)))?;
+            let line = line.map_err(RuntimeError::Io)?;
             output(&format!("    {}", line));
         }
     }
     if let Some(stderr) = child.stderr.take() {
         for line in std::io::BufReader::new(stderr).lines() {
-            let line =
-                line.map_err(|e| RuntimeError::new(format!("failed to read clone output: {}", e)))?;
+            let line = line.map_err(RuntimeError::Io)?;
             output(&line);
         }
     }
 
-    let status = child
-        .wait()
-        .map_err(|e| RuntimeError::new(format!("failed to clone {}: {}", proj.name, e)))?;
+    let status = child.wait().map_err(|e| RuntimeError::Exec {
+        cmd: format!("git clone {}", proj.name),
+        exit_code: None,
+        detail: e.to_string(),
+    })?;
 
     if !status.success() {
-        return Err(RuntimeError::new(format!("failed to clone {}", proj.name)));
+        return Err(RuntimeError::Exec {
+            cmd: format!("git clone {}", proj.name),
+            exit_code: status.code(),
+            detail: String::new(),
+        });
     }
 
     Ok(())
@@ -120,8 +122,7 @@ fn warn_unknown_repos_inner(
     };
 
     for entry in entries {
-        let entry =
-            entry.map_err(|e| RuntimeError::new(format!("failed to read sanctuary: {}", e)))?;
+        let entry = entry.map_err(RuntimeError::Io)?;
         if !entry.path().is_dir() {
             continue;
         }
@@ -151,7 +152,7 @@ pub fn warn_unknown_repos(
         warnings.push(line.to_string());
     })?;
     if !warnings.is_empty() {
-        return Err(RuntimeError::new(warnings.join("\n")));
+        return Err(RuntimeError::Other(warnings.join("\n")));
     }
     Ok(())
 }
