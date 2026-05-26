@@ -20,6 +20,5 @@ pub struct Config {
     pub shell: String,
     pub sanctuary: String,
     pub projects: HashMap<String, Project>,
-    #[allow(dead_code)]
     pub vars: HashMap<String, String>,
 }

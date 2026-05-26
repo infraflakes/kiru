@@ -2,17 +2,18 @@ use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
+
 use ratatui::{
     Terminal, TerminalOptions, Viewport,
     backend::{Backend, ClearType, CrosstermBackend, WindowSize},
     buffer::Cell,
     layout::{Position, Size},
 };
+use std::future::Future;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::broadcast;
-use tokio::sync::broadcast::Sender as BroadcastSender;
+use tokio::sync::mpsc;
 
 /// A wrapper around [`CrosstermBackend`] that returns fallback dimensions (80x24) if the
 /// terminal size query fails. This allows the TUI to function in non-TTY environments
@@ -22,7 +23,7 @@ struct SafeBackend<W: Write> {
 }
 
 impl<W: Write> SafeBackend<W> {
-    const fn new(inner: CrosstermBackend<W>) -> Self {
+    fn new(inner: CrosstermBackend<W>) -> Self {
         Self { inner }
     }
 }
@@ -108,16 +109,16 @@ impl<W: Write> Backend for SafeBackend<W> {
     }
 }
 
-mod render;
+pub mod render;
 
-pub fn send_event(tx: &BroadcastSender<TuiEvent>, event: TuiEvent) {
-    if let Err(e) = tx.send(event) {
-        eprintln!("[sro] warning: failed to send TUI event: {}", e);
+pub fn send_event(tx: &mpsc::UnboundedSender<TuiEvent>, event: TuiEvent) {
+    if tx.send(event).is_err() {
+        eprintln!("[sro] warning: failed to send TUI event");
     }
 }
 
-pub const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-pub const MAX_PANEL_HEIGHT: usize = 15;
+const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+pub(super) const MAX_PANEL_HEIGHT: usize = 15;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskStatus {
@@ -128,7 +129,7 @@ pub enum TaskStatus {
 }
 
 #[derive(Debug, Clone)]
-pub struct Task {
+pub(super) struct Task {
     pub name: String,
     pub status: TaskStatus,
     pub output: Vec<String>,
@@ -137,23 +138,12 @@ pub struct Task {
 
 #[derive(Debug, Clone)]
 pub struct Model {
-    #[allow(dead_code)]
-    pub model_type: String,
-    #[allow(dead_code)]
-    pub name: String,
     pub tasks: Vec<Task>,
-    #[allow(dead_code)]
-    pub selected: usize,
 }
 
 impl Model {
-    pub fn new(model_type: String, name: String) -> Self {
-        Self {
-            model_type,
-            name,
-            tasks: Vec::new(),
-            selected: 0,
-        }
+    pub fn new() -> Self {
+        Self { tasks: Vec::new() }
     }
 
     pub fn add_task(&mut self, name: String) {
@@ -207,100 +197,106 @@ impl Drop for RawMode {
     }
 }
 
-pub struct TuiApp {
-    model: Arc<Mutex<Model>>,
-    tx: broadcast::Sender<TuiEvent>,
-    rx: Mutex<Option<broadcast::Receiver<TuiEvent>>>,
-}
-
 #[derive(Debug, Clone)]
 pub enum TuiEvent {
     UpdateStatus(usize, TaskStatus),
     AppendOutput(usize, String),
 }
 
-impl TuiApp {
-    pub fn new(model: Model) -> Self {
-        let model = Arc::new(Mutex::new(model));
-        let (tx, rx) = broadcast::channel(10000);
-        Self {
-            model,
-            tx,
-            rx: Mutex::new(Some(rx)),
-        }
-    }
+pub async fn run_tui(
+    model: Arc<Mutex<Model>>,
+    mut rx: mpsc::UnboundedReceiver<TuiEvent>,
+) -> Result<(), io::Error> {
+    let raw = RawMode::try_enable();
 
-    pub fn get_sender(&self) -> broadcast::Sender<TuiEvent> {
-        self.tx.clone()
-    }
+    let mut terminal = Terminal::with_options(
+        SafeBackend::new(CrosstermBackend::new(io::stdout())),
+        TerminalOptions {
+            viewport: Viewport::Inline(1),
+        },
+    )?;
 
-    pub async fn run(&self) -> Result<(), io::Error> {
-        let raw = RawMode::try_enable();
+    let mut spinner_idx = 0;
 
-        let mut terminal = Terminal::with_options(
-            SafeBackend::new(CrosstermBackend::new(io::stdout())),
-            TerminalOptions {
-                viewport: Viewport::Inline(1),
-            },
-        )?;
-
-        let mut rx = self.rx.lock().unwrap().take().expect("run() called twice");
-        let mut spinner_idx = 0;
-
+    loop {
         loop {
-            loop {
-                match rx.try_recv() {
-                    Ok(TuiEvent::UpdateStatus(idx, status)) => {
-                        self.model.lock().unwrap().update_task_status(idx, status);
-                    }
-                    Ok(TuiEvent::AppendOutput(idx, line)) => {
-                        self.model.lock().unwrap().append_output(idx, line);
-                    }
-                    Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
-                    Err(_) => break,
+            match rx.try_recv() {
+                Ok(TuiEvent::UpdateStatus(idx, status)) => {
+                    model
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .update_task_status(idx, status);
                 }
-            }
-
-            if self.model.lock().unwrap().all_done() {
-                terminal.draw(|f| {
-                    let model = self.model.lock().unwrap();
-                    render::render(f, &model, spinner_idx);
-                })?;
-                break;
-            }
-
-            if matches!(raw, RawMode::Enabled) {
-                if event::poll(Duration::from_millis(50))?
-                    && let Event::Key(key) = event::read()?
-                {
-                    match key.code {
-                        KeyCode::Char('q') => break,
-                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            break;
-                        }
-                        _ => {}
-                    }
+                Ok(TuiEvent::AppendOutput(idx, line)) => {
+                    model
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .append_output(idx, line);
                 }
-            } else {
-                tokio::time::sleep(Duration::from_millis(50)).await;
+                Err(mpsc::error::TryRecvError::Empty) => break,
+                Err(mpsc::error::TryRecvError::Disconnected) => break,
             }
+        }
 
-            spinner_idx = (spinner_idx + 1) % SPINNER_FRAMES.len();
+        if model.lock().unwrap_or_else(|e| e.into_inner()).all_done() {
             terminal.draw(|f| {
-                let model = self.model.lock().unwrap();
-                render::render(f, &model, spinner_idx);
+                let guard = model.lock().unwrap_or_else(|e| e.into_inner());
+                render::render(f, &guard, spinner_idx);
             })?;
+            break;
         }
 
-        drop(terminal);
-        drop(raw);
-
-        {
-            let model = self.model.lock().unwrap();
-            let mut out = io::stdout().lock();
-            render::dump_final(&model, &mut out)?;
+        if matches!(raw, RawMode::Enabled) {
+            if event::poll(Duration::from_millis(50))?
+                && let Event::Key(key) = event::read()?
+            {
+                match key.code {
+                    KeyCode::Char('q') => break,
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
+                    _ => {}
+                }
+            }
+        } else {
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
 
-        Ok(())
+        spinner_idx = (spinner_idx + 1) % SPINNER_FRAMES.len();
+        terminal.draw(|f| {
+            let guard = model.lock().unwrap_or_else(|e| e.into_inner());
+            render::render(f, &guard, spinner_idx);
+        })?;
     }
+
+    drop(terminal);
+    drop(raw);
+
+    let guard = model.lock().unwrap_or_else(|e| e.into_inner());
+    let mut out = io::stdout().lock();
+    render::dump_final(&guard, &mut out)?;
+    Ok(())
+}
+
+pub(crate) fn run_tui_with<F, Fut>(tasks: Vec<String>, worker: F) -> miette::Result<()>
+where
+    F: FnOnce(mpsc::UnboundedSender<TuiEvent>) -> Fut + Send + 'static,
+    Fut: Future<Output = miette::Result<()>> + Send + 'static,
+{
+    let rt = tokio::runtime::Runtime::new().map_err(|e| miette::miette!("{}", e))?;
+    rt.block_on(async {
+        let mut model = Model::new();
+        for t in tasks {
+            model.add_task(t);
+        }
+        let model = Arc::new(Mutex::new(model));
+        let (tx, rx) = mpsc::unbounded_channel();
+        let tui = tokio::spawn(run_tui(model, rx));
+        let worker = tokio::spawn(worker(tx));
+
+        tui.await
+            .map_err(|e| miette::miette!("TUI panicked: {}", e))?
+            .map_err(|e| miette::miette!("TUI error: {}", e))?;
+        worker
+            .await
+            .map_err(|e| miette::miette!("worker panicked: {}", e))?
+    })
 }

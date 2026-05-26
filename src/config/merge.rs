@@ -7,12 +7,28 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 pub(crate) fn merge(programs: Vec<Program>) -> Result<Config, ConfigError> {
-    let mut shell = String::new();
-    let mut sanctuary_expr: Option<Expr> = None;
-    let mut projects: HashMap<String, Project> = HashMap::new();
-    let mut global_vars: HashMap<String, String> = HashMap::new();
+    let shell = collect_shell(&programs)?;
+    let global_vars = collect_global_vars(&programs, &shell)?;
+    let (sanctuary_expr, projects) = collect_projects(programs, &global_vars, &shell)?;
 
-    for program in &programs {
+    let sanctuary = match sanctuary_expr {
+        Some(ref expr) => expr
+            .resolve(&global_vars)
+            .map_err(ConfigError::Validation)?,
+        None => String::new(),
+    };
+
+    Ok(Config {
+        shell,
+        sanctuary,
+        projects,
+        vars: global_vars,
+    })
+}
+
+fn collect_shell(programs: &[Program]) -> Result<String, ConfigError> {
+    let mut shell = String::new();
+    for program in programs {
         for stmt in &program.stmts {
             if let Stmt::ShellDecl { value } = stmt {
                 if !shell.is_empty() {
@@ -24,8 +40,15 @@ pub(crate) fn merge(programs: Vec<Program>) -> Result<Config, ConfigError> {
             }
         }
     }
+    Ok(shell)
+}
 
-    for program in &programs {
+fn collect_global_vars(
+    programs: &[Program],
+    shell: &str,
+) -> Result<HashMap<String, String>, ConfigError> {
+    let mut global_vars = HashMap::new();
+    for program in programs {
         for stmt in &program.stmts {
             if let Stmt::VarDecl {
                 name,
@@ -50,7 +73,7 @@ pub(crate) fn merge(programs: Vec<Program>) -> Result<Config, ConfigError> {
                             "shell must be declared before using shell variables".to_string(),
                         ));
                     }
-                    execute_shell(&shell, &resolved)?
+                    execute_shell(shell, &resolved)?
                 } else {
                     resolved
                 };
@@ -59,6 +82,16 @@ pub(crate) fn merge(programs: Vec<Program>) -> Result<Config, ConfigError> {
             }
         }
     }
+    Ok(global_vars)
+}
+
+fn collect_projects(
+    programs: Vec<Program>,
+    global_vars: &HashMap<String, String>,
+    shell: &str,
+) -> Result<(Option<Expr>, HashMap<String, Project>), ConfigError> {
+    let mut sanctuary_expr: Option<Expr> = None;
+    let mut projects: HashMap<String, Project> = HashMap::new();
 
     for program in programs {
         for stmt in program.stmts {
@@ -98,7 +131,7 @@ pub(crate) fn merge(programs: Vec<Program>) -> Result<Config, ConfigError> {
                     for field in &fields {
                         let value = field
                             .value
-                            .resolve(&global_vars)
+                            .resolve(global_vars)
                             .map_err(ConfigError::Validation)?;
                         match field.key.as_str() {
                             "url" => project.url = value,
@@ -120,7 +153,7 @@ pub(crate) fn merge(programs: Vec<Program>) -> Result<Config, ConfigError> {
                     }
 
                     for body_stmt in body {
-                        merge_project_body_stmt(&mut project, body_stmt, &shell)?;
+                        merge_project_body_stmt(&mut project, body_stmt, shell)?;
                     }
 
                     projects.insert(name, project);
@@ -130,19 +163,7 @@ pub(crate) fn merge(programs: Vec<Program>) -> Result<Config, ConfigError> {
         }
     }
 
-    let sanctuary = match sanctuary_expr {
-        Some(ref expr) => expr
-            .resolve(&global_vars)
-            .map_err(ConfigError::Validation)?,
-        None => String::new(),
-    };
-
-    Ok(Config {
-        shell,
-        sanctuary,
-        projects,
-        vars: global_vars,
-    })
+    Ok((sanctuary_expr, projects))
 }
 
 pub(crate) fn merge_project_body_stmt(

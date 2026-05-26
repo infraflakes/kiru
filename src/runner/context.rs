@@ -1,44 +1,44 @@
 use crate::colors;
-use crate::config::{Config, ConfigError, Project};
+use crate::config::{Config, Project};
 use crate::dsl::ast::{CasePattern, Expr, FnStmt};
+use crate::runner::Output;
+use crate::runner::error::RuntimeError;
 use std::collections::HashMap;
-use std::io::{BufRead, Write};
-use std::path::PathBuf;
+use std::io::BufRead;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::thread;
 
 pub type OutputCallback = Arc<dyn Fn(String) + Send + Sync>;
 
 pub struct ExecContext<'a> {
     pub(super) cfg: &'a Config,
     pub(super) project: &'a Project,
-    pub(super) writer: &'a mut dyn Write,
-    pub(super) output_callback: Option<&'a OutputCallback>,
+    output: &'a mut Output,
     pub(super) vars: HashMap<String, String>,
     pub(super) env_stack: Vec<HashMap<String, String>>,
     pub(super) work_dir: PathBuf,
+    pub(super) sys_env: Vec<(String, String)>,
 }
 
 impl<'a> ExecContext<'a> {
-    pub(super) fn new(
-        cfg: &'a Config,
-        project: &'a Project,
-        writer: &'a mut dyn Write,
-        output_callback: Option<&'a OutputCallback>,
-    ) -> Self {
+    pub(super) fn new(cfg: &'a Config, project: &'a Project, output: &'a mut Output) -> Self {
         ExecContext {
             cfg,
             project,
-            writer,
-            output_callback,
+            output,
             vars: project.vars.clone(),
             env_stack: Vec::new(),
             work_dir: PathBuf::from(&cfg.sanctuary).join(&project.dir),
+            sys_env: std::env::vars().collect(),
         }
     }
 
-    pub(super) fn exec_fn_body(&mut self, body: &[FnStmt]) -> Result<(), ConfigError> {
+    fn indent(&self, extra: usize) -> String {
+        "  ".repeat(self.env_stack.len() + extra)
+    }
+
+    pub(super) fn exec_fn_body(&mut self, body: &[FnStmt]) -> Result<(), RuntimeError> {
         for stmt in body {
             match stmt {
                 FnStmt::Log { value, .. } => self.exec_log(value)?,
@@ -76,7 +76,7 @@ impl<'a> ExecContext<'a> {
         &mut self,
         pattern: &CasePattern,
         value: &str,
-    ) -> Result<bool, ConfigError> {
+    ) -> Result<bool, RuntimeError> {
         match pattern {
             CasePattern::Default => Ok(true),
             CasePattern::Literal { parts } => {
@@ -86,7 +86,7 @@ impl<'a> ExecContext<'a> {
                         match self.vars.get(&part.value) {
                             Some(v) => resolved.push_str(v),
                             None => {
-                                return Err(ConfigError::Validation(format!(
+                                return Err(RuntimeError::Lookup(format!(
                                     "undefined variable: ${}",
                                     part.value
                                 )));
@@ -100,7 +100,7 @@ impl<'a> ExecContext<'a> {
             }
             CasePattern::VarRef { name } => match self.vars.get(name) {
                 Some(v) => Ok(value == v),
-                None => Err(ConfigError::Validation(format!(
+                None => Err(RuntimeError::Lookup(format!(
                     "undefined variable: ${}",
                     name
                 ))),
@@ -108,36 +108,23 @@ impl<'a> ExecContext<'a> {
         }
     }
 
-    fn exec_log(&mut self, value: &Expr) -> Result<(), ConfigError> {
+    fn exec_log(&mut self, value: &Expr) -> Result<(), RuntimeError> {
         let msg = self.resolve_expr(value)?;
-        let indent = "  ".repeat(self.env_stack.len());
+        let indent = self.indent(0);
         let line = format!("{}log  {}", indent, msg);
-        if let Some(callback) = self.output_callback {
-            callback(line);
-        } else {
-            writeln!(self.writer, "{}{}{}", colors::LOG_ANSI, line, colors::RESET)
-                .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
-        }
+        self.output
+            .writeln_colored(&line, colors::LOG_ANSI)
+            .map_err(RuntimeError::Io)?;
         Ok(())
     }
 
-    fn exec_exec(&mut self, value: &Expr) -> Result<(), ConfigError> {
+    fn exec_exec(&mut self, value: &Expr) -> Result<(), RuntimeError> {
         let cmd_str = self.resolve_expr(value)?;
-        let indent = "  ".repeat(self.env_stack.len());
+        let indent = self.indent(0);
         let line = format!("{}exec {}", indent, cmd_str);
-
-        if let Some(callback) = self.output_callback {
-            callback(line);
-        } else {
-            writeln!(
-                self.writer,
-                "{}{}{}",
-                colors::EXEC_ANSI,
-                line,
-                colors::RESET
-            )
-            .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
-        }
+        self.output
+            .writeln_colored(&line, colors::EXEC_ANSI)
+            .map_err(RuntimeError::Io)?;
 
         let mut child = Command::new(&self.cfg.shell)
             .arg("-c")
@@ -147,93 +134,49 @@ impl<'a> ExecContext<'a> {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| ConfigError::Validation(format!("exec failed: {}: {}", cmd_str, e)))?;
+            .map_err(|e| RuntimeError::exec_io_error(&cmd_str, e))?;
 
-        let stdout_indent = "  ".repeat(self.env_stack.len() + 1);
+        let indent = self.indent(1);
 
-        let status = if let Some(cb) = self.output_callback {
-            let cb: OutputCallback = cb.clone();
-            let stdout_thread = child.stdout.take().map(|stdout| {
-                let indent = stdout_indent.clone();
-                let cb = cb.clone();
-                thread::spawn(move || -> Result<(), ConfigError> {
-                    let reader = std::io::BufReader::new(stdout);
-                    for line in reader.lines() {
-                        let line = line
-                            .map_err(|e| ConfigError::Validation(format!("read error: {}", e)))?;
-                        cb(format!("{}{}", indent, line));
-                    }
-                    Ok(())
-                })
-            });
+        let status = match self.output.fork_callback() {
+            Some(cb) => {
+                let stdout_thread =
+                    spawn_stream_reader(child.stdout.take(), indent.clone(), cb.clone());
+                let stderr_thread = spawn_stream_reader(child.stderr.take(), indent, cb);
 
-            let stderr_thread = child.stderr.take().map(|stderr| {
-                let indent = stdout_indent.clone();
-                let cb = cb.clone();
-                thread::spawn(move || -> Result<(), ConfigError> {
-                    let reader = std::io::BufReader::new(stderr);
-                    for line in reader.lines() {
-                        let line = line
-                            .map_err(|e| ConfigError::Validation(format!("read error: {}", e)))?;
-                        cb(format!("{}{}", indent, line));
-                    }
-                    Ok(())
-                })
-            });
+                let status = child
+                    .wait()
+                    .map_err(|e| RuntimeError::exec_io_error(&cmd_str, e))?;
 
-            let stdout_result = stdout_thread.map(|handle| {
-                handle
-                    .join()
-                    .map_err(|_| ConfigError::Validation("stdout reader panicked".to_string()))
-            });
-            let stderr_result = stderr_thread.map(|handle| {
-                handle
-                    .join()
-                    .map_err(|_| ConfigError::Validation("stderr reader panicked".to_string()))
-            });
+                if let Some(result) = stdout_thread.map(|h| h.join()) {
+                    result
+                        .map_err(|_| RuntimeError::Panic("stdout reader panicked".to_string()))??;
+                }
+                if let Some(result) = stderr_thread.map(|h| h.join()) {
+                    result
+                        .map_err(|_| RuntimeError::Panic("stderr reader panicked".to_string()))??;
+                }
 
-            let status = child
-                .wait()
-                .map_err(|e| ConfigError::Validation(format!("exec failed: {}: {}", cmd_str, e)))?;
-
-            if let Some(result) = stdout_result {
-                result??;
+                status
             }
-            if let Some(result) = stderr_result {
-                result??;
+            None => {
+                let output = child
+                    .wait_with_output()
+                    .map_err(|e| RuntimeError::exec_io_error(&cmd_str, e))?;
+                write_output_lines(self.output, &output.stdout, &indent)?;
+                write_output_lines(self.output, &output.stderr, &indent)?;
+                output.status
             }
-
-            status
-        } else {
-            let output = child
-                .wait_with_output()
-                .map_err(|e| ConfigError::Validation(format!("exec failed: {}: {}", cmd_str, e)))?;
-            for line in std::io::BufReader::new(&output.stdout[..]).lines() {
-                let line =
-                    line.map_err(|e| ConfigError::Validation(format!("read error: {}", e)))?;
-                writeln!(self.writer, "{}{}", stdout_indent, line)
-                    .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
-            }
-            for line in std::io::BufReader::new(&output.stderr[..]).lines() {
-                let line =
-                    line.map_err(|e| ConfigError::Validation(format!("read error: {}", e)))?;
-                writeln!(self.writer, "{}{}", stdout_indent, line)
-                    .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
-            }
-            output.status
         };
 
         if !status.success() {
-            return Err(ConfigError::Validation(format!(
-                "exec failed with exit code: {}",
-                status.code().unwrap_or(-1)
-            )));
+            return Err(RuntimeError::exec_exit_code(cmd_str, status.code()));
         }
 
         Ok(())
     }
 
-    fn exec_cd(&mut self, arg: &Expr) -> Result<(), ConfigError> {
+    fn exec_cd(&mut self, arg: &Expr) -> Result<(), RuntimeError> {
         let resolved = self.resolve_expr(arg)?;
         let base_dir = PathBuf::from(&self.cfg.sanctuary).join(&self.project.dir);
         self.work_dir = if resolved == "." {
@@ -243,20 +186,17 @@ impl<'a> ExecContext<'a> {
         };
 
         if !self.work_dir.exists() {
-            return Err(ConfigError::Validation(format!(
+            return Err(RuntimeError::Lookup(format!(
                 "cd {}: directory does not exist",
                 resolved
             )));
         }
 
-        let indent = "  ".repeat(self.env_stack.len());
+        let indent = self.indent(0);
         let line = format!("{}cd   {}", indent, resolved);
-        if let Some(callback) = self.output_callback {
-            callback(line);
-        } else {
-            writeln!(self.writer, "{}{}{}", colors::CD_ANSI, line, colors::RESET)
-                .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
-        }
+        self.output
+            .writeln_colored(&line, colors::CD_ANSI)
+            .map_err(RuntimeError::Io)?;
         Ok(())
     }
 
@@ -265,37 +205,16 @@ impl<'a> ExecContext<'a> {
         name: &str,
         value: &Expr,
         var_type: &crate::dsl::ast::VarType,
-    ) -> Result<(), ConfigError> {
+    ) -> Result<(), RuntimeError> {
         let val = self.resolve_expr(value)?;
 
-        if var_type == &crate::dsl::ast::VarType::Shell {
-            let output = Command::new(&self.cfg.shell)
-                .arg("-c")
-                .arg(&val)
-                .current_dir(&self.work_dir)
-                .envs(self.build_env())
-                .output()
-                .map_err(|e| {
-                    ConfigError::Validation(format!(
-                        "shell execution failed for var {}: {}",
-                        name, e
-                    ))
-                })?;
-
-            if !output.status.success() {
-                return Err(ConfigError::Validation(format!(
-                    "shell execution failed for var {}",
-                    name
-                )));
-            }
-
-            let result = String::from_utf8_lossy(&output.stdout)
-                .trim_end()
-                .to_string();
-            self.vars.insert(name.to_string(), result);
+        let resolved = if var_type == &crate::dsl::ast::VarType::Shell {
+            run_shell(&self.cfg.shell, &val, &self.work_dir, self.build_env())?
         } else {
-            self.vars.insert(name.to_string(), val);
-        }
+            val
+        };
+
+        self.vars.insert(name.to_string(), resolved);
         Ok(())
     }
 
@@ -303,7 +222,7 @@ impl<'a> ExecContext<'a> {
         &mut self,
         pairs: &[crate::dsl::ast::EnvPair],
         body: &[FnStmt],
-    ) -> Result<(), ConfigError> {
+    ) -> Result<(), RuntimeError> {
         let mut layer = HashMap::new();
         for pair in pairs {
             let val = self.resolve_expr(&pair.value)?;
@@ -311,15 +230,12 @@ impl<'a> ExecContext<'a> {
         }
 
         let keys: Vec<&str> = pairs.iter().map(|p| p.key.as_str()).collect();
-        let indent = "  ".repeat(self.env_stack.len());
+        let indent = self.indent(0);
         let line = format!("{}env  {}", indent, keys.join(", "));
 
-        if let Some(callback) = self.output_callback {
-            callback(line);
-        } else {
-            writeln!(self.writer, "{}{}{}", colors::ENV_ANSI, line, colors::RESET)
-                .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
-        }
+        self.output
+            .writeln_colored(&line, colors::ENV_ANSI)
+            .map_err(RuntimeError::Io)?;
 
         self.env_stack.push(layer);
 
@@ -333,14 +249,63 @@ impl<'a> ExecContext<'a> {
     }
 }
 
+fn run_shell(
+    shell: &str,
+    command: &str,
+    dir: &Path,
+    env: impl IntoIterator<Item = (String, String)>,
+) -> Result<String, RuntimeError> {
+    let output = Command::new(shell)
+        .arg("-c")
+        .arg(command)
+        .current_dir(dir)
+        .envs(env)
+        .output()
+        .map_err(|e| RuntimeError::exec_io_error(command, e))?;
+
+    if !output.status.success() {
+        return Err(RuntimeError::exec_exit_code(command, output.status.code()));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .trim_end()
+        .to_string())
+}
+
+fn spawn_stream_reader<R: std::io::Read + Send + 'static>(
+    stream: Option<R>,
+    indent: String,
+    cb: OutputCallback,
+) -> Option<std::thread::JoinHandle<Result<(), RuntimeError>>> {
+    stream.map(|s| {
+        std::thread::spawn(move || {
+            let reader = std::io::BufReader::new(s);
+            for line in reader.lines() {
+                let line = line.map_err(RuntimeError::Io)?;
+                cb(format!("{}{}", indent, line));
+            }
+            Ok(())
+        })
+    })
+}
+
+fn write_output_lines(output: &mut Output, data: &[u8], indent: &str) -> Result<(), RuntimeError> {
+    for line in std::io::BufReader::new(data).lines() {
+        let line = line.map_err(RuntimeError::Io)?;
+        output
+            .writeln(&format!("{}{}", indent, line))
+            .map_err(RuntimeError::Io)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::types::Config;
     use crate::dsl::ast::{CaseArm, TemplatePart};
     use std::collections::HashMap;
 
-    fn test_context(vars: HashMap<String, String>) -> (Config, Project, Vec<u8>) {
+    fn test_context(vars: HashMap<String, String>) -> (Config, Project, Output) {
         let project = Project {
             name: "test".to_string(),
             url: "http://example.com".to_string(),
@@ -359,14 +324,14 @@ mod tests {
             projects: HashMap::new(),
             vars: HashMap::new(),
         };
-        (cfg, project, Vec::new())
+        (cfg, project, Output::Direct(Box::new(Vec::new())))
     }
 
     #[test]
     fn test_match_literal_pattern() {
         let vars = HashMap::new();
-        let (cfg, project, mut writer) = test_context(vars);
-        let mut ctx = ExecContext::new(&cfg, &project, &mut writer, None);
+        let (cfg, project, mut output) = test_context(vars);
+        let mut ctx = ExecContext::new(&cfg, &project, &mut output);
         let pattern = CasePattern::Literal {
             parts: vec![TemplatePart {
                 is_var: false,
@@ -381,8 +346,8 @@ mod tests {
     fn test_match_literal_with_interpolation() {
         let mut vars = HashMap::new();
         vars.insert("arch".to_string(), "amd64".to_string());
-        let (cfg, project, mut writer) = test_context(vars);
-        let mut ctx = ExecContext::new(&cfg, &project, &mut writer, None);
+        let (cfg, project, mut output) = test_context(vars);
+        let mut ctx = ExecContext::new(&cfg, &project, &mut output);
         let pattern = CasePattern::Literal {
             parts: vec![
                 TemplatePart {
@@ -403,8 +368,8 @@ mod tests {
     fn test_match_varref_pattern() {
         let mut vars = HashMap::new();
         vars.insert("expected".to_string(), "hello".to_string());
-        let (cfg, project, mut writer) = test_context(vars);
-        let mut ctx = ExecContext::new(&cfg, &project, &mut writer, None);
+        let (cfg, project, mut output) = test_context(vars);
+        let mut ctx = ExecContext::new(&cfg, &project, &mut output);
         let pattern = CasePattern::VarRef {
             name: "expected".to_string(),
         };
@@ -415,8 +380,8 @@ mod tests {
     #[test]
     fn test_match_default_pattern() {
         let vars = HashMap::new();
-        let (cfg, project, mut writer) = test_context(vars);
-        let mut ctx = ExecContext::new(&cfg, &project, &mut writer, None);
+        let (cfg, project, mut output) = test_context(vars);
+        let mut ctx = ExecContext::new(&cfg, &project, &mut output);
         let pattern = CasePattern::Default;
         assert!(ctx.match_case_pattern(&pattern, "anything").unwrap());
         assert!(ctx.match_case_pattern(&pattern, "").unwrap());
@@ -425,8 +390,8 @@ mod tests {
     #[test]
     fn test_match_empty_string() {
         let vars = HashMap::new();
-        let (cfg, project, mut writer) = test_context(vars);
-        let mut ctx = ExecContext::new(&cfg, &project, &mut writer, None);
+        let (cfg, project, mut output) = test_context(vars);
+        let mut ctx = ExecContext::new(&cfg, &project, &mut output);
         let pattern = CasePattern::Literal {
             parts: vec![TemplatePart {
                 is_var: false,
@@ -440,8 +405,8 @@ mod tests {
     #[test]
     fn test_match_undefined_var_in_literal_pattern() {
         let vars = HashMap::new();
-        let (cfg, project, mut writer) = test_context(vars);
-        let mut ctx = ExecContext::new(&cfg, &project, &mut writer, None);
+        let (cfg, project, mut output) = test_context(vars);
+        let mut ctx = ExecContext::new(&cfg, &project, &mut output);
         let pattern = CasePattern::Literal {
             parts: vec![TemplatePart {
                 is_var: true,
@@ -461,8 +426,8 @@ mod tests {
     #[test]
     fn test_match_undefined_var_in_varref_pattern() {
         let vars = HashMap::new();
-        let (cfg, project, mut writer) = test_context(vars);
-        let mut ctx = ExecContext::new(&cfg, &project, &mut writer, None);
+        let (cfg, project, mut output) = test_context(vars);
+        let mut ctx = ExecContext::new(&cfg, &project, &mut output);
         let pattern = CasePattern::VarRef {
             name: "undefined".to_string(),
         };
@@ -479,8 +444,8 @@ mod tests {
     #[test]
     fn test_case_first_match_wins() {
         let vars = HashMap::new();
-        let (cfg, project, mut writer) = test_context(vars);
-        let mut ctx = ExecContext::new(&cfg, &project, &mut writer, None);
+        let (cfg, project, mut output) = test_context(vars);
+        let mut ctx = ExecContext::new(&cfg, &project, &mut output);
         let body = [FnStmt::Case {
             condition: Expr::BacktickLit {
                 parts: vec![TemplatePart {
@@ -527,8 +492,8 @@ mod tests {
     #[test]
     fn test_case_no_match_does_nothing() {
         let vars = HashMap::new();
-        let (cfg, project, mut writer) = test_context(vars);
-        let mut ctx = ExecContext::new(&cfg, &project, &mut writer, None);
+        let (cfg, project, mut output) = test_context(vars);
+        let mut ctx = ExecContext::new(&cfg, &project, &mut output);
         let body = [FnStmt::Case {
             condition: Expr::BacktickLit {
                 parts: vec![TemplatePart {

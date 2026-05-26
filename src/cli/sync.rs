@@ -1,8 +1,9 @@
 use super::load_config;
 use crate::sync;
-use crate::tui::{self, TaskStatus, TuiApp, TuiEvent};
+use crate::tui::{self, TaskStatus, TuiEvent};
 use std::io;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 pub fn run(config_arg: Option<PathBuf>, plain: bool) -> miette::Result<()> {
     let config = load_config(config_arg)?;
@@ -11,83 +12,84 @@ pub fn run(config_arg: Option<PathBuf>, plain: bool) -> miette::Result<()> {
         let mut stdout = io::stdout();
         sync::sync_all(&config, &mut stdout).map_err(|e| miette::miette!("{}", e))?;
     } else {
-        let rt = tokio::runtime::Runtime::new().map_err(|e| miette::miette!("{}", e))?;
-        rt.block_on(async {
-            let project_names: Vec<String> = config.projects.keys().cloned().collect();
-            let mut model = tui::Model::new("sync".to_string(), "all".to_string());
+        let project_names: Vec<String> = config.projects.keys().cloned().collect();
+        let task_names = project_names.clone();
+        let sanctuary = config.sanctuary.clone();
+        let projects = Arc::new(config.projects);
 
-            for proj_name in &project_names {
-                model.add_task(proj_name.clone());
-            }
+        if let Err(e) = tui::run_tui_with(task_names, move |tx| {
+            let sanctuary = sanctuary.clone();
+            let projects = Arc::clone(&projects);
+            async move {
+                for i in 0..project_names.len() {
+                    crate::tui::send_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Running));
+                }
 
-            let app = TuiApp::new(model);
-            let tx = app.get_sender();
+                let mut join_handles = Vec::new();
 
-            let tx_clone = tx.clone();
-            let sanctuary = config.sanctuary.clone();
-            let projects = config.projects.clone();
-            tokio::spawn(async move {
                 for (i, proj_name) in project_names.iter().enumerate() {
-                    crate::tui::send_event(
-                        &tx_clone,
-                        TuiEvent::UpdateStatus(i, TaskStatus::Running),
-                    );
-
-                    if let Some(proj) = projects.get(proj_name) {
-                        let proj = proj.clone();
-                        let sanctuary = sanctuary.clone();
-                        let tx = tx_clone.clone();
-                        let result = tokio::task::spawn_blocking(move || {
-                            sync::sync_project_with_callback(&sanctuary, &proj, |line: &str| {
-                                crate::tui::send_event(
-                                    &tx,
-                                    TuiEvent::AppendOutput(i, line.to_string()),
-                                );
-                            })
-                        })
-                        .await;
-
-                        match result {
-                            Ok(Ok(())) => {
-                                crate::tui::send_event(
-                                    &tx_clone,
-                                    TuiEvent::UpdateStatus(i, TaskStatus::Success),
-                                );
-                            }
-                            Ok(Err(e)) => {
-                                crate::tui::send_event(
-                                    &tx_clone,
-                                    TuiEvent::AppendOutput(i, format!("Error: {}", e)),
-                                );
-                                crate::tui::send_event(
-                                    &tx_clone,
-                                    TuiEvent::UpdateStatus(i, TaskStatus::Error),
-                                );
-                            }
-                            Err(e) => {
-                                crate::tui::send_event(
-                                    &tx_clone,
-                                    TuiEvent::AppendOutput(i, format!("Task failed: {}", e)),
-                                );
-                                crate::tui::send_event(
-                                    &tx_clone,
-                                    TuiEvent::UpdateStatus(i, TaskStatus::Error),
-                                );
-                            }
+                    let proj = match projects.get(proj_name) {
+                        Some(p) => p.clone(),
+                        None => {
+                            crate::tui::send_event(
+                                &tx,
+                                TuiEvent::UpdateStatus(i, TaskStatus::Error),
+                            );
+                            continue;
                         }
-                    } else {
-                        crate::tui::send_event(
-                            &tx_clone,
-                            TuiEvent::UpdateStatus(i, TaskStatus::Error),
-                        );
+                    };
+                    let sanctuary = sanctuary.clone();
+                    let tx_cb = tx.clone();
+                    let idx = i;
+
+                    let handle = tokio::task::spawn_blocking(move || {
+                        sync::sync_project_with_callback(&sanctuary, &proj, |line: &str| {
+                            crate::tui::send_event(
+                                &tx_cb,
+                                TuiEvent::AppendOutput(idx, line.to_string()),
+                            );
+                        })
+                    });
+
+                    join_handles.push((i, handle));
+                }
+
+                for (i, handle) in join_handles {
+                    match handle.await {
+                        Ok(Ok(())) => {
+                            crate::tui::send_event(
+                                &tx,
+                                TuiEvent::UpdateStatus(i, TaskStatus::Success),
+                            );
+                        }
+                        Ok(Err(e)) => {
+                            crate::tui::send_event(
+                                &tx,
+                                TuiEvent::AppendOutput(i, format!("Error: {}", e)),
+                            );
+                            crate::tui::send_event(
+                                &tx,
+                                TuiEvent::UpdateStatus(i, TaskStatus::Error),
+                            );
+                        }
+                        Err(e) => {
+                            crate::tui::send_event(
+                                &tx,
+                                TuiEvent::AppendOutput(i, format!("Task panicked: {}", e)),
+                            );
+                            crate::tui::send_event(
+                                &tx,
+                                TuiEvent::UpdateStatus(i, TaskStatus::Error),
+                            );
+                        }
                     }
                 }
 
-                let projects_for_warn = projects.clone();
+                let projects = Arc::clone(&projects);
                 let sanctuary = sanctuary.clone();
-                let tx_clone = tx_clone.clone();
+                let tx = tx.clone();
                 let warn_result = tokio::task::spawn_blocking(move || {
-                    sync::warn_unknown_repos(&sanctuary, &projects_for_warn)
+                    sync::warn_unknown_repos(&sanctuary, Arc::as_ref(&projects))
                 })
                 .await;
 
@@ -96,7 +98,7 @@ pub fn run(config_arg: Option<PathBuf>, plain: bool) -> miette::Result<()> {
                     Ok(Err(e)) => {
                         if has_tasks {
                             crate::tui::send_event(
-                                &tx_clone,
+                                &tx,
                                 TuiEvent::AppendOutput(0, format!("Warning: {}", e)),
                             );
                         } else {
@@ -106,7 +108,7 @@ pub fn run(config_arg: Option<PathBuf>, plain: bool) -> miette::Result<()> {
                     Err(e) => {
                         if has_tasks {
                             crate::tui::send_event(
-                                &tx_clone,
+                                &tx,
                                 TuiEvent::AppendOutput(
                                     0,
                                     format!("Warning: blocking task failed: {}", e),
@@ -118,13 +120,13 @@ pub fn run(config_arg: Option<PathBuf>, plain: bool) -> miette::Result<()> {
                     }
                     _ => {}
                 }
-            });
 
-            if let Err(e) = app.run().await {
-                eprintln!("TUI error: {}", e);
-                std::process::exit(1);
+                Ok(())
             }
-        });
+        }) {
+            eprintln!("TUI error: {}", e);
+            std::process::exit(1);
+        }
     }
     Ok(())
 }

@@ -232,7 +232,9 @@ fn pipe_to_pager(output: &str) -> miette::Result<()> {
     let pager_parts = shlex::split(&pager)
         .filter(|v| !v.is_empty())
         .ok_or_else(|| miette::miette!("failed to parse PAGER: '{}'", pager))?;
-    let (program, args) = pager_parts.split_first().unwrap();
+    let (program, args) = pager_parts
+        .split_first()
+        .ok_or_else(|| miette::miette!("no pager command in PAGER='{}'", pager))?;
 
     let mut cmd = Command::new(program)
         .args(args)

@@ -1,12 +1,13 @@
-use crate::config::{Config, ConfigError, Project};
+use crate::config::{Config, Project};
+use crate::runner::error::RuntimeError;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 
-pub fn sync_all(cfg: &Config, writer: &mut dyn Write) -> Result<(), ConfigError> {
+pub fn sync_all(cfg: &Config, writer: &mut dyn Write) -> Result<(), RuntimeError> {
     fs::create_dir_all(&cfg.sanctuary).map_err(|e| {
-        ConfigError::Validation(format!("cannot create sanctuary {}: {}", cfg.sanctuary, e))
+        RuntimeError::Other(format!("cannot create sanctuary {}: {}", cfg.sanctuary, e))
     })?;
 
     for proj in cfg.projects.values() {
@@ -20,8 +21,7 @@ pub fn sync_all(cfg: &Config, writer: &mut dyn Write) -> Result<(), ConfigError>
         buf.push(line.to_string());
     })?;
     for line in buf {
-        writeln!(writer, "{}", line)
-            .map_err(|e| ConfigError::Validation(format!("write error: {}", e)))?;
+        writeln!(writer, "{}", line).map_err(RuntimeError::Io)?;
     }
 
     Ok(())
@@ -31,7 +31,7 @@ fn sync_project_inner(
     sanctuary: &str,
     proj: &Project,
     output: &mut dyn FnMut(&str),
-) -> Result<(), ConfigError> {
+) -> Result<(), RuntimeError> {
     if proj.sync == "ignore" {
         output(&format!("skip  {} (sync=ignore)", proj.name));
         return Ok(());
@@ -62,39 +62,30 @@ fn sync_project_inner(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| {
-            ConfigError::Validation(format!(
-                "failed to clone {}: git command failed: {}",
-                proj.name, e
-            ))
-        })?;
+        .map_err(|e| RuntimeError::exec_io_error(format!("git clone {}", proj.name), e))?;
 
     if let Some(stdout) = child.stdout.take() {
         for line in std::io::BufReader::new(stdout).lines() {
-            let line = line.map_err(|e| {
-                ConfigError::Validation(format!("failed to read clone output: {}", e))
-            })?;
+            let line = line.map_err(RuntimeError::Io)?;
             output(&format!("    {}", line));
         }
     }
     if let Some(stderr) = child.stderr.take() {
         for line in std::io::BufReader::new(stderr).lines() {
-            let line = line.map_err(|e| {
-                ConfigError::Validation(format!("failed to read clone output: {}", e))
-            })?;
+            let line = line.map_err(RuntimeError::Io)?;
             output(&line);
         }
     }
 
     let status = child
         .wait()
-        .map_err(|e| ConfigError::Validation(format!("failed to clone {}: {}", proj.name, e)))?;
+        .map_err(|e| RuntimeError::exec_io_error(format!("git clone {}", proj.name), e))?;
 
     if !status.success() {
-        return Err(ConfigError::Validation(format!(
-            "failed to clone {}",
-            proj.name
-        )));
+        return Err(RuntimeError::exec_exit_code(
+            format!("git clone {}", proj.name),
+            status.code(),
+        ));
     }
 
     Ok(())
@@ -104,7 +95,7 @@ pub fn sync_project_with_callback(
     sanctuary: &str,
     proj: &Project,
     mut output_cb: impl FnMut(&str),
-) -> Result<(), ConfigError> {
+) -> Result<(), RuntimeError> {
     sync_project_inner(sanctuary, proj, &mut output_cb)
 }
 
@@ -112,7 +103,7 @@ fn warn_unknown_repos_inner(
     sanctuary: &str,
     projects: &std::collections::HashMap<String, Project>,
     output: &mut dyn FnMut(&str),
-) -> Result<(), ConfigError> {
+) -> Result<(), RuntimeError> {
     let mut known_dirs = std::collections::HashSet::new();
     for proj in projects.values() {
         known_dirs.insert(&proj.dir);
@@ -124,8 +115,7 @@ fn warn_unknown_repos_inner(
     };
 
     for entry in entries {
-        let entry = entry
-            .map_err(|e| ConfigError::Validation(format!("failed to read sanctuary: {}", e)))?;
+        let entry = entry.map_err(RuntimeError::Io)?;
         if !entry.path().is_dir() {
             continue;
         }
@@ -149,13 +139,13 @@ fn warn_unknown_repos_inner(
 pub fn warn_unknown_repos(
     sanctuary: &str,
     projects: &std::collections::HashMap<String, Project>,
-) -> Result<(), ConfigError> {
+) -> Result<(), RuntimeError> {
     let mut warnings = Vec::new();
     warn_unknown_repos_inner(sanctuary, projects, &mut |line: &str| {
         warnings.push(line.to_string());
     })?;
     if !warnings.is_empty() {
-        return Err(ConfigError::Validation(warnings.join("\n")));
+        return Err(RuntimeError::Other(warnings.join("\n")));
     }
     Ok(())
 }
