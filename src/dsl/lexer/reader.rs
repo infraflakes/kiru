@@ -126,7 +126,7 @@ impl Lexer {
         }
 
         while let Some(c) = self.ch {
-            if !c.is_whitespace() && c != ',' && c != ']' && c != ';' {
+            if !c.is_whitespace() && c != ',' && c != ']' && c != ';' && c != '}' {
                 self.read_char();
             } else {
                 break;

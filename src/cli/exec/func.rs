@@ -27,10 +27,10 @@ pub fn run(
     if plain {
         let mut runner = Runner::new(config);
         runner
-            .run_fn(&name, &project)
+            .execute_fn_call(&name, &project)
             .map_err(|e| miette::miette!("{}", e))?;
     } else {
-        let callback: OutputCallback = Arc::new(move |line| {
+        let callback: OutputCallback = Arc::new(|line| {
             let mut out = io::stdout().lock();
             let _ = crate::tui::render::write_colored_line(&line, &mut out);
             let _ = writeln!(out);
@@ -38,7 +38,7 @@ pub fn run(
 
         let mut runner = Runner::new(config).with_output_callback(callback);
         runner
-            .run_fn(&name, &project)
+            .execute_fn_call(&name, &project)
             .map_err(|e| miette::miette!("{}", e))?;
     }
     Ok(())

@@ -1,4 +1,4 @@
-use super::*;
+use super::{MAX_PANEL_HEIGHT, Model, SPINNER_FRAMES, Task, TaskStatus};
 use crate::colors;
 use ratatui::{
     Frame,
@@ -20,7 +20,7 @@ fn task_marker(task: &Task, spinner_idx: usize) -> String {
         match task.status {
             TaskStatus::Pending => "·".to_string(),
             TaskStatus::Running => SPINNER_FRAMES[spinner_idx].to_string(),
-            _ => " ".to_string(),
+            TaskStatus::Success | TaskStatus::Error => unreachable!(),
         }
     }
 }
@@ -88,8 +88,6 @@ pub fn write_colored_line(line: &str, w: &mut impl Write) -> io::Result<()> {
         return Ok(());
     }
 
-    let indent = line.len() - trimmed.len();
-
     let (prefix, ansi_color) = if trimmed.starts_with("log  ") {
         ("log  ", colors::LOG_ANSI)
     } else if trimmed.starts_with("exec ") {
@@ -102,6 +100,8 @@ pub fn write_colored_line(line: &str, w: &mut impl Write) -> io::Result<()> {
         write!(w, "{}{line}{}", colors::TEXT_ANSI, colors::RESET)?;
         return Ok(());
     };
+
+    let indent = line.len() - trimmed.len();
 
     if indent > 0 {
         write!(w, "{}", &line[..indent])?;
@@ -174,5 +174,3 @@ pub fn dump_final(model: &Model, w: &mut impl Write) -> io::Result<()> {
 
     Ok(())
 }
-
-

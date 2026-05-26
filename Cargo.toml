@@ -12,7 +12,7 @@ miette = { version = "7.6", features = ["fancy"] }
 ratatui = "0.30.0"
 shlex = "2.0.1"
 thiserror = "2.0.18"
-tokio = { version = "1.52", features = ["full"] }
+tokio = { version = "1.52", features = ["rt-multi-thread", "sync", "time"] }
 
 [dev-dependencies]
 tempfile = "3.27"

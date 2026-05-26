@@ -1,7 +1,7 @@
-pub mod error;
-pub mod merge;
-pub mod types;
-pub mod validation;
+pub(crate) mod error;
+pub(crate) mod merge;
+pub(crate) mod types;
+pub(crate) mod validation;
 
 pub use error::ConfigError;
 pub use types::{Config, Project};

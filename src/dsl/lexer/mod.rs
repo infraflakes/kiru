@@ -92,20 +92,10 @@ impl Lexer {
                     self.byte_offset - start_byte_offset,
                 )
             }
-            Some('(') => {
+            Some('(') | Some(')') => {
                 self.read_char();
                 Token::new(
-                    TokenType::LParen,
-                    start_line,
-                    start_col,
-                    start_byte_offset,
-                    self.byte_offset - start_byte_offset,
-                )
-            }
-            Some(')') => {
-                self.read_char();
-                Token::new(
-                    TokenType::RParen,
+                    TokenType::Illegal(format!("unexpected character: {}", ch.unwrap())),
                     start_line,
                     start_col,
                     start_byte_offset,
@@ -130,7 +120,7 @@ impl Lexer {
                 } else {
                     self.read_char();
                     Token::new(
-                        TokenType::Dot,
+                        TokenType::Illegal("unexpected character: .".to_string()),
                         start_line,
                         start_col,
                         start_byte_offset,
@@ -162,16 +152,6 @@ impl Lexer {
                 self.read_char();
                 Token::new(
                     TokenType::Assign,
-                    start_line,
-                    start_col,
-                    start_byte_offset,
-                    self.byte_offset - start_byte_offset,
-                )
-            }
-            Some(':') => {
-                self.read_char();
-                Token::new(
-                    TokenType::Illegal("unexpected character: :".to_string()),
                     start_line,
                     start_col,
                     start_byte_offset,

@@ -8,10 +8,7 @@ fn test_single_tokens() {
         ("}", TokenType::RBrace),
         ("[", TokenType::LBracket),
         ("]", TokenType::RBracket),
-        ("(", TokenType::LParen),
-        (")", TokenType::RParen),
         (",", TokenType::Comma),
-        (".", TokenType::Dot),
         (";", TokenType::Semicolon),
         ("$", TokenType::Dollar),
     ];
@@ -110,15 +107,16 @@ fn test_path_literals() {
 
 #[test]
 fn test_dot_and_dotdot_are_not_paths() {
-    let mut lexer = Lexer::new(".".to_string());
-    assert_eq!(lexer.next_token().ty, TokenType::Dot);
+    let errors = extract_errors(".");
+    assert!(errors.iter().any(|e| e == "unexpected character: ."));
 
-    let mut lexer = Lexer::new("..".to_string());
-    assert_eq!(lexer.next_token().ty, TokenType::Dot);
-    assert_eq!(lexer.next_token().ty, TokenType::Dot);
+    let errors = extract_errors("..");
+    assert_eq!(errors.len(), 2);
+    assert!(errors.iter().all(|e| e == "unexpected character: ."));
 
     let mut lexer = Lexer::new(".../".to_string());
-    assert_eq!(lexer.next_token().ty, TokenType::Dot);
+    let first = lexer.next_token();
+    assert!(matches!(first.ty, TokenType::Illegal(_)));
     assert_eq!(lexer.next_token().ty, TokenType::PathLit("../".to_string()));
 }
 
@@ -218,8 +216,6 @@ fn test_case_inside_fn_body() {
     let tokens = collect_tokens(input);
     assert!(tokens.contains(&TokenType::Case));
     assert!(tokens.contains(&TokenType::Dollar));
-    assert!(!tokens.contains(&TokenType::LParen));
-    assert!(!tokens.contains(&TokenType::RParen));
     assert!(tokens.contains(&TokenType::LBrace));
     assert!(tokens.contains(&TokenType::RBrace));
     assert!(tokens.contains(&TokenType::Semicolon));
