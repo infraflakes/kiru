@@ -5,10 +5,9 @@ use crate::runner::Output;
 use crate::runner::error::RuntimeError;
 use std::collections::HashMap;
 use std::io::BufRead;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::thread;
 
 pub type OutputCallback = Arc<dyn Fn(String) + Send + Sync>;
 
@@ -33,6 +32,10 @@ impl<'a> ExecContext<'a> {
             work_dir: PathBuf::from(&cfg.sanctuary).join(&project.dir),
             sys_env: std::env::vars().collect(),
         }
+    }
+
+    fn indent(&self, extra: usize) -> String {
+        "  ".repeat(self.env_stack.len() + extra)
     }
 
     pub(super) fn exec_fn_body(&mut self, body: &[FnStmt]) -> Result<(), RuntimeError> {
@@ -107,7 +110,7 @@ impl<'a> ExecContext<'a> {
 
     fn exec_log(&mut self, value: &Expr) -> Result<(), RuntimeError> {
         let msg = self.resolve_expr(value)?;
-        let indent = "  ".repeat(self.env_stack.len());
+        let indent = self.indent(0);
         let line = format!("{}log  {}", indent, msg);
         self.output
             .writeln_colored(&line, colors::LOG_ANSI)
@@ -117,7 +120,7 @@ impl<'a> ExecContext<'a> {
 
     fn exec_exec(&mut self, value: &Expr) -> Result<(), RuntimeError> {
         let cmd_str = self.resolve_expr(value)?;
-        let indent = "  ".repeat(self.env_stack.len());
+        let indent = self.indent(0);
         let line = format!("{}exec {}", indent, cmd_str);
         self.output
             .writeln_colored(&line, colors::EXEC_ANSI)
@@ -131,83 +134,43 @@ impl<'a> ExecContext<'a> {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| RuntimeError::Exec {
-                cmd: cmd_str.clone(),
-                exit_code: None,
-                detail: e.to_string(),
-            })?;
+            .map_err(|e| RuntimeError::exec_io_error(&cmd_str, e))?;
 
-        let stdout_indent = "  ".repeat(self.env_stack.len() + 1);
+        let indent = self.indent(1);
 
-        let cb = self.output.fork_callback();
-        let status = if let Some(cb) = cb {
-            let stdout_thread = child.stdout.take().map(|stdout| {
-                let indent = stdout_indent.clone();
-                let cb = cb.clone();
-                thread::spawn(move || -> Result<(), RuntimeError> {
-                    let reader = std::io::BufReader::new(stdout);
-                    for line in reader.lines() {
-                        let line = line.map_err(RuntimeError::Io)?;
-                        cb(format!("{}{}", indent, line));
-                    }
-                    Ok(())
-                })
-            });
+        let status = match self.output.fork_callback() {
+            Some(cb) => {
+                let stdout_thread =
+                    spawn_stream_reader(child.stdout.take(), indent.clone(), cb.clone());
+                let stderr_thread = spawn_stream_reader(child.stderr.take(), indent, cb);
 
-            let stderr_thread = child.stderr.take().map(|stderr| {
-                let indent = stdout_indent.clone();
-                let cb = cb.clone();
-                thread::spawn(move || -> Result<(), RuntimeError> {
-                    let reader = std::io::BufReader::new(stderr);
-                    for line in reader.lines() {
-                        let line = line.map_err(RuntimeError::Io)?;
-                        cb(format!("{}{}", indent, line));
-                    }
-                    Ok(())
-                })
-            });
+                let status = child
+                    .wait()
+                    .map_err(|e| RuntimeError::exec_io_error(&cmd_str, e))?;
 
-            let status = child.wait().map_err(|e| RuntimeError::Exec {
-                cmd: cmd_str.clone(),
-                exit_code: None,
-                detail: e.to_string(),
-            })?;
+                if let Some(result) = stdout_thread.map(|h| h.join()) {
+                    result
+                        .map_err(|_| RuntimeError::Panic("stdout reader panicked".to_string()))??;
+                }
+                if let Some(result) = stderr_thread.map(|h| h.join()) {
+                    result
+                        .map_err(|_| RuntimeError::Panic("stderr reader panicked".to_string()))??;
+                }
 
-            if let Some(result) = stdout_thread.map(|h| h.join()) {
-                result.map_err(|_| RuntimeError::Panic("stdout reader panicked".to_string()))??;
+                status
             }
-            if let Some(result) = stderr_thread.map(|h| h.join()) {
-                result.map_err(|_| RuntimeError::Panic("stderr reader panicked".to_string()))??;
+            None => {
+                let output = child
+                    .wait_with_output()
+                    .map_err(|e| RuntimeError::exec_io_error(&cmd_str, e))?;
+                write_output_lines(self.output, &output.stdout, &indent)?;
+                write_output_lines(self.output, &output.stderr, &indent)?;
+                output.status
             }
-
-            status
-        } else {
-            let output = child.wait_with_output().map_err(|e| RuntimeError::Exec {
-                cmd: cmd_str.clone(),
-                exit_code: None,
-                detail: e.to_string(),
-            })?;
-            for line in std::io::BufReader::new(&output.stdout[..]).lines() {
-                let line = line.map_err(RuntimeError::Io)?;
-                self.output
-                    .writeln(&format!("{}{}", stdout_indent, line))
-                    .map_err(RuntimeError::Io)?;
-            }
-            for line in std::io::BufReader::new(&output.stderr[..]).lines() {
-                let line = line.map_err(RuntimeError::Io)?;
-                self.output
-                    .writeln(&format!("{}{}", stdout_indent, line))
-                    .map_err(RuntimeError::Io)?;
-            }
-            output.status
         };
 
         if !status.success() {
-            return Err(RuntimeError::Exec {
-                cmd: cmd_str,
-                exit_code: status.code(),
-                detail: String::new(),
-            });
+            return Err(RuntimeError::exec_exit_code(cmd_str, status.code()));
         }
 
         Ok(())
@@ -229,7 +192,7 @@ impl<'a> ExecContext<'a> {
             )));
         }
 
-        let indent = "  ".repeat(self.env_stack.len());
+        let indent = self.indent(0);
         let line = format!("{}cd   {}", indent, resolved);
         self.output
             .writeln_colored(&line, colors::CD_ANSI)
@@ -245,34 +208,13 @@ impl<'a> ExecContext<'a> {
     ) -> Result<(), RuntimeError> {
         let val = self.resolve_expr(value)?;
 
-        if var_type == &crate::dsl::ast::VarType::Shell {
-            let output = Command::new(&self.cfg.shell)
-                .arg("-c")
-                .arg(&val)
-                .current_dir(&self.work_dir)
-                .envs(self.build_env())
-                .output()
-                .map_err(|e| RuntimeError::Exec {
-                    cmd: format!("shell var {}", name),
-                    exit_code: None,
-                    detail: e.to_string(),
-                })?;
-
-            if !output.status.success() {
-                return Err(RuntimeError::Exec {
-                    cmd: format!("shell var {}", name),
-                    exit_code: output.status.code(),
-                    detail: String::new(),
-                });
-            }
-
-            let result = String::from_utf8_lossy(&output.stdout)
-                .trim_end()
-                .to_string();
-            self.vars.insert(name.to_string(), result);
+        let resolved = if var_type == &crate::dsl::ast::VarType::Shell {
+            run_shell(&self.cfg.shell, &val, &self.work_dir, self.build_env())?
         } else {
-            self.vars.insert(name.to_string(), val);
-        }
+            val
+        };
+
+        self.vars.insert(name.to_string(), resolved);
         Ok(())
     }
 
@@ -288,7 +230,7 @@ impl<'a> ExecContext<'a> {
         }
 
         let keys: Vec<&str> = pairs.iter().map(|p| p.key.as_str()).collect();
-        let indent = "  ".repeat(self.env_stack.len());
+        let indent = self.indent(0);
         let line = format!("{}env  {}", indent, keys.join(", "));
 
         self.output
@@ -305,6 +247,56 @@ impl<'a> ExecContext<'a> {
 
         result
     }
+}
+
+fn run_shell(
+    shell: &str,
+    command: &str,
+    dir: &Path,
+    env: impl IntoIterator<Item = (String, String)>,
+) -> Result<String, RuntimeError> {
+    let output = Command::new(shell)
+        .arg("-c")
+        .arg(command)
+        .current_dir(dir)
+        .envs(env)
+        .output()
+        .map_err(|e| RuntimeError::exec_io_error(command, e))?;
+
+    if !output.status.success() {
+        return Err(RuntimeError::exec_exit_code(command, output.status.code()));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .trim_end()
+        .to_string())
+}
+
+fn spawn_stream_reader<R: std::io::Read + Send + 'static>(
+    stream: Option<R>,
+    indent: String,
+    cb: OutputCallback,
+) -> Option<std::thread::JoinHandle<Result<(), RuntimeError>>> {
+    stream.map(|s| {
+        std::thread::spawn(move || {
+            let reader = std::io::BufReader::new(s);
+            for line in reader.lines() {
+                let line = line.map_err(RuntimeError::Io)?;
+                cb(format!("{}{}", indent, line));
+            }
+            Ok(())
+        })
+    })
+}
+
+fn write_output_lines(output: &mut Output, data: &[u8], indent: &str) -> Result<(), RuntimeError> {
+    for line in std::io::BufReader::new(data).lines() {
+        let line = line.map_err(RuntimeError::Io)?;
+        output
+            .writeln(&format!("{}{}", indent, line))
+            .map_err(RuntimeError::Io)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

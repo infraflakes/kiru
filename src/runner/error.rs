@@ -13,6 +13,24 @@ pub(crate) enum RuntimeError {
     Other(String),
 }
 
+impl RuntimeError {
+    pub(crate) fn exec_io_error(cmd: impl ToString, err: impl ToString) -> Self {
+        RuntimeError::Exec {
+            cmd: cmd.to_string(),
+            exit_code: None,
+            detail: err.to_string(),
+        }
+    }
+
+    pub(crate) fn exec_exit_code(cmd: impl ToString, code: Option<i32>) -> Self {
+        RuntimeError::Exec {
+            cmd: cmd.to_string(),
+            exit_code: code,
+            detail: String::new(),
+        }
+    }
+}
+
 impl fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

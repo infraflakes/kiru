@@ -62,11 +62,7 @@ fn sync_project_inner(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| RuntimeError::Exec {
-            cmd: format!("git clone {}", proj.name),
-            exit_code: None,
-            detail: e.to_string(),
-        })?;
+        .map_err(|e| RuntimeError::exec_io_error(format!("git clone {}", proj.name), e))?;
 
     if let Some(stdout) = child.stdout.take() {
         for line in std::io::BufReader::new(stdout).lines() {
@@ -81,18 +77,15 @@ fn sync_project_inner(
         }
     }
 
-    let status = child.wait().map_err(|e| RuntimeError::Exec {
-        cmd: format!("git clone {}", proj.name),
-        exit_code: None,
-        detail: e.to_string(),
-    })?;
+    let status = child
+        .wait()
+        .map_err(|e| RuntimeError::exec_io_error(format!("git clone {}", proj.name), e))?;
 
     if !status.success() {
-        return Err(RuntimeError::Exec {
-            cmd: format!("git clone {}", proj.name),
-            exit_code: status.code(),
-            detail: String::new(),
-        });
+        return Err(RuntimeError::exec_exit_code(
+            format!("git clone {}", proj.name),
+            status.code(),
+        ));
     }
 
     Ok(())
