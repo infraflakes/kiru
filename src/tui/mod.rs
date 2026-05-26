@@ -108,7 +108,7 @@ impl<W: Write> Backend for SafeBackend<W> {
     }
 }
 
-mod render;
+pub mod render;
 
 pub fn send_event(tx: &BroadcastSender<TuiEvent>, event: TuiEvent) {
     if let Err(e) = tx.send(event) {
@@ -137,22 +137,13 @@ pub struct Task {
 
 #[derive(Debug, Clone)]
 pub struct Model {
-    #[allow(dead_code)]
-    pub model_type: String,
-    #[allow(dead_code)]
-    pub name: String,
     pub tasks: Vec<Task>,
-    #[allow(dead_code)]
-    pub selected: usize,
 }
 
 impl Model {
-    pub fn new(model_type: String, name: String) -> Self {
+    pub fn new() -> Self {
         Self {
-            model_type,
-            name,
             tasks: Vec::new(),
-            selected: 0,
         }
     }
 

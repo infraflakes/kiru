@@ -80,7 +80,7 @@ pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
     render_summary(f, area.y, model, spinner_idx, area.width);
 }
 
-fn write_colored_line(line: &str, w: &mut impl Write) -> io::Result<()> {
+pub fn write_colored_line(line: &str, w: &mut impl Write) -> io::Result<()> {
     let trimmed = line.trim_start();
 
     if !trimmed.contains(' ') && trimmed.contains('(') && trimmed.ends_with(')') {
@@ -175,72 +175,4 @@ pub fn dump_final(model: &Model, w: &mut impl Write) -> io::Result<()> {
     Ok(())
 }
 
-#[allow(dead_code)]
-pub fn compute_needed_lines(model: &Model) -> u16 {
-    let mut needed: u16 = 1;
-    for task in &model.tasks {
-        needed += 1;
-        if !task.output.is_empty() {
-            let panel = task.output.len().min(MAX_PANEL_HEIGHT) as u16;
-            let pruned = if task.output.len() > MAX_PANEL_HEIGHT {
-                1
-            } else {
-                0
-            };
-            needed += pruned + panel + 1;
-        }
-    }
-    needed
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn task(name: &str, output_len: usize) -> Task {
-        Task {
-            name: name.to_string(),
-            status: TaskStatus::Pending,
-            output: (0..output_len).map(|i| format!("line {}", i)).collect(),
-            finalized: false,
-        }
-    }
-
-    #[test]
-    fn test_compute_needed_lines_no_output() {
-        let mut model = Model::new("test".into(), "m".into());
-        model.add_task("foo".into());
-        model.add_task("bar".into());
-        assert_eq!(compute_needed_lines(&model), 3);
-    }
-
-    #[test]
-    fn test_compute_needed_lines_with_output_no_prune() {
-        let mut model = Model::new("test".into(), "m".into());
-        model.tasks.push(task("build", 3));
-        assert_eq!(compute_needed_lines(&model), 6);
-    }
-
-    #[test]
-    fn test_compute_needed_lines_with_output_prune_edge() {
-        let mut model = Model::new("test".into(), "m".into());
-        model.tasks.push(task("build", MAX_PANEL_HEIGHT));
-        assert_eq!(compute_needed_lines(&model), 18);
-    }
-
-    #[test]
-    fn test_compute_needed_lines_with_output_pruned() {
-        let mut model = Model::new("test".into(), "m".into());
-        model.tasks.push(task("build", MAX_PANEL_HEIGHT + 20));
-        assert_eq!(compute_needed_lines(&model), 19);
-    }
-
-    #[test]
-    fn test_compute_needed_lines_mixed() {
-        let mut model = Model::new("test".into(), "m".into());
-        model.tasks.push(task("lint", 2));
-        model.tasks.push(task("test", MAX_PANEL_HEIGHT + 5));
-        model.tasks.push(task("deploy", 0));
-        assert_eq!(compute_needed_lines(&model), 24);
-    }
-}

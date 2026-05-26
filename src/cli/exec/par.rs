@@ -38,7 +38,7 @@ pub fn run(
         let result: miette::Result<()> = rt.block_on(async {
             let config = Arc::new(config);
 
-            let mut model = Model::new("par".to_string(), format!("{} ({})", name, project));
+            let mut model = Model::new();
 
             for fn_name in &fns {
                 model.add_task(format!("{}({})", fn_name, project));

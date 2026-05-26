@@ -14,7 +14,7 @@ pub fn run(config_arg: Option<PathBuf>, plain: bool) -> miette::Result<()> {
         let rt = tokio::runtime::Runtime::new().map_err(|e| miette::miette!("{}", e))?;
         rt.block_on(async {
             let project_names: Vec<String> = config.projects.keys().cloned().collect();
-            let mut model = tui::Model::new("sync".to_string(), "all".to_string());
+            let mut model = tui::Model::new();
 
             for proj_name in &project_names {
                 model.add_task(proj_name.clone());
