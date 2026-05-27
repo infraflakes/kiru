@@ -1,6 +1,6 @@
-# SRO Language Reference (schema.sro)
+# kiru Language Reference (schema.kiru)
 #
-# SRO (Sanctuary Repository Orchestrator) is a local project orchestrator CLI.
+# kiru is a local project orchestrator CLI.
 # This file documents every language feature with examples.
 #
 # Design principles:
@@ -13,16 +13,16 @@
 #   - No cross-project execution — each project is self-contained.
 #
 # CLI usage:
-#   sro sync                      Clone/sync all project repositories
-#   sro seq <name> <project>      Run a sequential block in a project
-#   sro par <name> <project>      Run a parallel block in a project
-#   sro fn <name> <project>       Run a function directly in a project
-#   sro -c <path> <command>       Use a custom config file
-#   sro validate                  Validate the configuration file
-#   sro version                   Print version
+#   kiru sync                      Clone/sync all project repositories
+#   kiru seq <name> <project>      Run a sequential block in a project
+#   kiru par <name> <project>      Run a parallel block in a project
+#   kiru fn <name> <project>       Run a function directly in a project
+#   kiru -c <path> <command>       Use a custom config file
+#   kiru validate                  Validate the configuration file
+#   kiru version                   Print version
 #
 # Config discovery:
-#   By default sro looks for ~/.config/sro/config.sro.
+#   By default kiru looks for ~/.config/kiru/config.kiru.
 #   Use -c or --config to override.
 
 # 1. SHELL DECLARATION (required, must be first)
@@ -65,24 +65,24 @@ sanctuary = $workdir;
 
 # 4. IMPORTS
 #
-# Import other .sro files to split config across multiple files.
+# Import other .kiru files to split config across multiple files.
 # Only relative paths are supported.
 # Circular imports are detected and rejected at parse time.
 
-import ./other_config.sro;
+import ./other_config.kiru;
 
 # 5. PROJECT DECLARATIONS
 #
 # Syntax: pr <name> { ... }
 #
-# Declares a git repository to be managed by `sro sync`.
+# Declares a git repository to be managed by `kiru sync`.
 # Projects are cloned into <sanctuary>/<dir>.
 #
 # Fields:
 #   url    (required)  Git clone URL
 #   dir    (required)  Directory name relative to sanctuary (must be unique)
 #   sync   (optional)  `clone` (default) or `ignore`
-#   use    (optional)  Path to a .sro file inside the project repo
+#   use    (optional)  Path to a .kiru file inside the project repo
 #   branch (optional)  Branch to clone
 #
 # Inside a project block you can also declare:
@@ -159,7 +159,7 @@ pr calendar {
     url = `git@github.com:yourname/calendar.git`;
     dir = `calendar`;
     sync = `clone`;
-    use = `.sro/main.sro`;
+    use = `.kiru/main.kiru`;
     branch = `rust`;
 
     # Use files can declare var/fn/seq/par that get merged into this project
@@ -199,8 +199,8 @@ pr calendar {
 
 # 7. USE FILES
 #
-# If a project declares `use`, that file is parsed after `sro sync`.
-# Use files use the same grammar as any .sro file.
+# If a project declares `use`, that file is parsed after `kiru sync`.
+# Use files use the same grammar as any .kiru file.
 # A `pr { ... }` block in the use file has its body (var, fn, seq, par)
 # merged into the project's scope — allowing shared declarations across
 # multiple projects.

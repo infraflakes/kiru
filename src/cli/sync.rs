@@ -102,7 +102,7 @@ pub fn run(config_arg: Option<PathBuf>, plain: bool) -> miette::Result<()> {
                                 TuiEvent::AppendOutput(0, format!("Warning: {}", e)),
                             );
                         } else {
-                            eprintln!("[sro] Warning: {}", e);
+                            eprintln!("[kiru] Warning: {}", e);
                         }
                     }
                     Err(e) => {
@@ -115,7 +115,7 @@ pub fn run(config_arg: Option<PathBuf>, plain: bool) -> miette::Result<()> {
                                 ),
                             );
                         } else {
-                            eprintln!("[sro] Warning: blocking task failed: {}", e);
+                            eprintln!("[kiru] Warning: blocking task failed: {}", e);
                         }
                     }
                     _ => {}

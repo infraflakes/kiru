@@ -146,7 +146,7 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp/dev`;\n\
@@ -154,7 +154,7 @@ var string a = `hello`;\n\
 pr test { url = `http://example.com`; dir = `test`; }\n\
 ",
         );
-        let cfg = load(&dir.path().join("main.sro")).unwrap();
+        let cfg = load(&dir.path().join("main.kiru")).unwrap();
         assert_eq!(cfg.shell, "bash");
         assert_eq!(cfg.sanctuary, "/tmp/dev");
         assert_eq!(cfg.vars.get("a").unwrap(), "hello");
@@ -167,7 +167,7 @@ pr test { url = `http://example.com`; dir = `test`; }\n\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp/dev`;\n\
@@ -181,7 +181,7 @@ pr test {\n\
 }\n\
 ",
         );
-        let cfg = load(&dir.path().join("main.sro")).unwrap();
+        let cfg = load(&dir.path().join("main.kiru")).unwrap();
         let proj = &cfg.projects["test"];
         assert_eq!(proj.vars.get("app").unwrap(), "todo");
         assert!(proj.functions.contains_key("build"));
@@ -194,18 +194,18 @@ pr test {\n\
     #[test]
     fn test_import_resolution() {
         let dir = tempfile::TempDir::new().unwrap();
-        write_config(dir.path(), "other.sro", "var string extra = `from-other`;");
+        write_config(dir.path(), "other.kiru", "var string extra = `from-other`;");
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
-import ./other.sro;\n\
+import ./other.kiru;\n\
 var string x = $extra;\
 ",
         );
-        let cfg = load(&dir.path().join("main.sro")).unwrap();
+        let cfg = load(&dir.path().join("main.kiru")).unwrap();
         assert_eq!(cfg.vars.get("x").unwrap(), "from-other");
     }
 
@@ -214,15 +214,15 @@ var string x = $extra;\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "a.sro",
-            "shell = `bash`; import ./b.sro; sanctuary = `/tmp`;",
+            "a.kiru",
+            "shell = `bash`; import ./b.kiru; sanctuary = `/tmp`;",
         );
         write_config(
             dir.path(),
-            "b.sro",
-            "shell = `bash`; import ./a.sro; sanctuary = `/tmp`;",
+            "b.kiru",
+            "shell = `bash`; import ./a.kiru; sanctuary = `/tmp`;",
         );
-        let err = load(&dir.path().join("a.sro")).unwrap_err();
+        let err = load(&dir.path().join("a.kiru")).unwrap_err();
         let err_str = err.to_string();
         assert!(
             err_str.contains("circular") || err_str.contains("Circular"),
@@ -236,14 +236,14 @@ var string x = $extra;\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
 sanctuary = `/other`;\
 ",
         );
-        let err = load(&dir.path().join("main.sro")).unwrap_err();
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
         assert!(
             err.to_string().contains("duplicate sanctuary"),
             "got: {}",
@@ -256,7 +256,7 @@ sanctuary = `/other`;\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
@@ -264,7 +264,7 @@ var string x = `a`;\n\
 var string x = `b`;\
 ",
         );
-        let err = load(&dir.path().join("main.sro")).unwrap_err();
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
         assert!(
             err.to_string().contains("duplicate variable"),
             "got: {}",
@@ -277,7 +277,7 @@ var string x = `b`;\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
@@ -285,7 +285,7 @@ pr p1 { url = `u`; dir = `d1`; }\n\
 pr p1 { url = `u2`; dir = `d2`; }\
 ",
         );
-        let err = load(&dir.path().join("main.sro")).unwrap_err();
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
         assert!(
             err.to_string().contains("duplicate project"),
             "got: {}",
@@ -298,7 +298,7 @@ pr p1 { url = `u2`; dir = `d2`; }\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
@@ -307,7 +307,7 @@ var string b = $a;\n\
 var string c = $b;\
 ",
         );
-        let cfg = load(&dir.path().join("main.sro")).unwrap();
+        let cfg = load(&dir.path().join("main.kiru")).unwrap();
         assert_eq!(cfg.vars["a"], "x");
         assert_eq!(cfg.vars["b"], "x");
         assert_eq!(cfg.vars["c"], "x");
@@ -318,14 +318,14 @@ var string c = $b;\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
 var string x = $missing;\
 ",
         );
-        let err = load(&dir.path().join("main.sro")).unwrap_err();
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
         assert!(
             err.to_string().contains("undefined variable"),
             "got: {}",
@@ -338,13 +338,13 @@ var string x = $missing;\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 sanctuary = `/tmp`;\n\
 pr test { url = `http://example.com`; dir = `test`; }\
 ",
         );
-        let err = load(&dir.path().join("main.sro")).unwrap_err();
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("shell"), "got: {}", err);
     }
 
@@ -353,13 +353,13 @@ pr test { url = `http://example.com`; dir = `test`; }\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 pr test { url = `http://example.com`; dir = `test`; }\
 ",
         );
-        let err = load(&dir.path().join("main.sro")).unwrap_err();
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("sanctuary"), "got: {}", err);
     }
 
@@ -368,13 +368,13 @@ pr test { url = `http://example.com`; dir = `test`; }\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `relative/path`;\
 ",
         );
-        let err = load(&dir.path().join("main.sro")).unwrap_err();
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("absolute"), "got: {}", err);
     }
 
@@ -383,14 +383,14 @@ sanctuary = `relative/path`;\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
 pr p { dir = `d`; }\
 ",
         );
-        let err = load(&dir.path().join("main.sro")).unwrap_err();
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("url is required"), "got: {}", err);
     }
 
@@ -399,14 +399,14 @@ pr p { dir = `d`; }\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
 pr p { url = `u`; }\
 ",
         );
-        let err = load(&dir.path().join("main.sro")).unwrap_err();
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("dir is required"), "got: {}", err);
     }
 
@@ -415,7 +415,7 @@ pr p { url = `u`; }\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
@@ -423,7 +423,7 @@ pr a { url = `ua`; dir = `shared`; }\n\
 pr b { url = `ub`; dir = `shared`; }\
 ",
         );
-        let err = load(&dir.path().join("main.sro")).unwrap_err();
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
         assert!(
             err.to_string().contains("duplicate directory"),
             "got: {}",
@@ -436,22 +436,22 @@ pr b { url = `ub`; dir = `shared`; }\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
 pr p { url = `u`; dir = `d`; sync = `invalid`; }\
 ",
         );
-        let err = load(&dir.path().join("main.sro")).unwrap_err();
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("sync"), "got: {}", err);
     }
 
     #[test]
     fn test_empty_config() {
         let dir = tempfile::TempDir::new().unwrap();
-        write_config(dir.path(), "main.sro", "");
-        let err = load(&dir.path().join("main.sro")).unwrap_err();
+        write_config(dir.path(), "main.kiru", "");
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("shell"), "got: {}", err);
     }
 
@@ -460,13 +460,13 @@ pr p { url = `u`; dir = `d`; sync = `invalid`; }\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\
 ",
         );
-        let cfg = load(&dir.path().join("main.sro")).unwrap();
+        let cfg = load(&dir.path().join("main.kiru")).unwrap();
         assert_eq!(cfg.shell, "bash");
         assert_eq!(cfg.sanctuary, "/tmp");
     }
@@ -476,7 +476,7 @@ sanctuary = `/tmp`;\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
@@ -484,7 +484,7 @@ var string name = `world`;\n\
 var string greeting = `hello ${name}`;\
 ",
         );
-        let cfg = load(&dir.path().join("main.sro")).unwrap();
+        let cfg = load(&dir.path().join("main.kiru")).unwrap();
         assert_eq!(cfg.vars["greeting"], "hello world");
     }
 
@@ -493,7 +493,7 @@ var string greeting = `hello ${name}`;\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
@@ -501,7 +501,7 @@ var string myurl = `http://example.com`;\n\
 pr x { url = $myurl; dir = `d`; }\
 ",
         );
-        let cfg = load(&dir.path().join("main.sro")).unwrap();
+        let cfg = load(&dir.path().join("main.kiru")).unwrap();
         assert_eq!(cfg.projects["x"].url, "http://example.com");
     }
 
@@ -510,7 +510,7 @@ pr x { url = $myurl; dir = `d`; }\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
@@ -522,7 +522,7 @@ pr test {\n\
 }\
 ",
         );
-        let err = load(&dir.path().join("main.sro")).unwrap_err();
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
         assert!(
             err.to_string().contains("duplicate function"),
             "got: {}",
@@ -535,7 +535,7 @@ pr test {\n\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
@@ -548,7 +548,7 @@ pr test {\n\
 }\
 ",
         );
-        let err = load(&dir.path().join("main.sro")).unwrap_err();
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("duplicate seq"), "got: {}", err);
     }
 
@@ -557,7 +557,7 @@ pr test {\n\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
@@ -570,25 +570,25 @@ pr test {\n\
 }\
 ",
         );
-        let err = load(&dir.path().join("main.sro")).unwrap_err();
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("duplicate par"), "got: {}", err);
     }
 
     #[test]
     fn test_multi_file_parse_order() {
         let dir = tempfile::TempDir::new().unwrap();
-        write_config(dir.path(), "a.sro", "var string a = `from-a`;");
+        write_config(dir.path(), "a.kiru", "var string a = `from-a`;");
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
-import ./a.sro;\n\
+import ./a.kiru;\n\
 var string b = $a;\
 ",
         );
-        let cfg = load(&dir.path().join("main.sro")).unwrap();
+        let cfg = load(&dir.path().join("main.kiru")).unwrap();
         assert_eq!(cfg.vars["b"], "from-a");
     }
 
@@ -597,7 +597,7 @@ var string b = $a;\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
@@ -608,7 +608,7 @@ pr test {\n\
 }\
 ",
         );
-        let err = load_full(&dir.path().join("main.sro")).unwrap_err();
+        let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(
             err.to_string().contains("undefined variable"),
             "got: {}",
@@ -621,7 +621,7 @@ pr test {\n\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
@@ -634,7 +634,7 @@ pr test {\n\
 }\
 ",
         );
-        let err = load_full(&dir.path().join("main.sro")).unwrap_err();
+        let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
         let err_str = err.to_string();
         assert!(err_str.contains("unknown function"), "got: {}", err_str);
     }
@@ -644,7 +644,7 @@ pr test {\n\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
@@ -657,7 +657,7 @@ pr test {\n\
 }\
 ",
         );
-        let cfg = load(&dir.path().join("main.sro")).unwrap();
+        let cfg = load(&dir.path().join("main.kiru")).unwrap();
         assert!(cfg.projects["test"].seqs.contains_key("s"));
         assert!(cfg.projects["test"].pars.contains_key("p"));
     }
@@ -667,7 +667,7 @@ pr test {\n\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
@@ -681,7 +681,7 @@ pr test {\n\
 }\
 ",
         );
-        let err = load_full(&dir.path().join("main.sro")).unwrap_err();
+        let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(
             err.to_string().contains("duplicate variable"),
             "got: {}",
@@ -696,7 +696,7 @@ pr test {\n\
         std::fs::create_dir_all(&proj_dir).unwrap();
         write_config(
             &proj_dir,
-            "use.sro",
+            "use.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
@@ -710,17 +710,17 @@ pr __config__ {\n\
         );
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             &format!(
                 "\
 shell = `bash`;\n\
 sanctuary = `{}`;\n\
-pr test {{ url = `http://example.com`; dir = `test`; use = `use.sro`; }}\
+pr test {{ url = `http://example.com`; dir = `test`; use = `use.kiru`; }}\
 ",
                 dir.path().display()
             ),
         );
-        let cfg = load_full(&dir.path().join("main.sro")).unwrap();
+        let cfg = load_full(&dir.path().join("main.kiru")).unwrap();
         let proj = &cfg.projects["test"];
         assert_eq!(proj.vars.get("usevar").unwrap(), "from-use");
         assert!(proj.functions.contains_key("usefn"));
@@ -733,17 +733,17 @@ pr test {{ url = `http://example.com`; dir = `test`; use = `use.sro`; }}\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             &format!(
                 "\
 shell = `bash`;\n\
 sanctuary = `{}`;\n\
-pr test {{ url = `http://example.com`; dir = `test`; use = `nonexistent.sro`; }}\
+pr test {{ url = `http://example.com`; dir = `test`; use = `nonexistent.kiru`; }}\
 ",
                 dir.path().display()
             ),
         );
-        let err = load_full(&dir.path().join("main.sro")).unwrap_err();
+        let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
         let err_str = err.to_string();
         assert!(
             err_str.contains("use file not found") || err_str.contains("not found"),
@@ -757,17 +757,17 @@ pr test {{ url = `http://example.com`; dir = `test`; use = `nonexistent.sro`; }}
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             &format!(
                 "\
 shell = `bash`;\n\
 sanctuary = `{}`;\n\
-pr test {{ url = `http://example.com`; dir = `test`; sync = `ignore`; use = `use.sro`; }}\
+pr test {{ url = `http://example.com`; dir = `test`; sync = `ignore`; use = `use.kiru`; }}\
 ",
                 dir.path().display()
             ),
         );
-        let cfg = load(&dir.path().join("main.sro")).unwrap();
+        let cfg = load(&dir.path().join("main.kiru")).unwrap();
         assert!(cfg.projects.contains_key("test"));
     }
 
@@ -776,14 +776,14 @@ pr test {{ url = `http://example.com`; dir = `test`; sync = `ignore`; use = `use
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
 var shell test_var = `echo hello`;\
 ",
         );
-        let cfg = load(&dir.path().join("main.sro")).unwrap();
+        let cfg = load(&dir.path().join("main.kiru")).unwrap();
         assert_eq!(cfg.vars["test_var"], "hello");
     }
 
@@ -792,7 +792,7 @@ var shell test_var = `echo hello`;\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             &format!(
                 "\
 shell = `bash`;\n\
@@ -802,7 +802,7 @@ sanctuary = $workdir;\
                 dir.path().display()
             ),
         );
-        let cfg = load(&dir.path().join("main.sro")).unwrap();
+        let cfg = load(&dir.path().join("main.kiru")).unwrap();
         assert_eq!(cfg.sanctuary, dir.path().to_str().unwrap());
     }
 
@@ -811,7 +811,7 @@ sanctuary = $workdir;\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
@@ -823,7 +823,7 @@ pr test {\n\
 }\
 ",
         );
-        let cfg = load(&dir.path().join("main.sro")).unwrap();
+        let cfg = load(&dir.path().join("main.kiru")).unwrap();
         let proj = &cfg.projects["test"];
         assert_eq!(proj.vars["a"], "hello");
         assert_eq!(proj.vars["b"], "hello");
@@ -834,7 +834,7 @@ pr test {\n\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
@@ -846,7 +846,7 @@ pr test {\n\
 }\
 ",
         );
-        let err = load_full(&dir.path().join("main.sro")).unwrap_err();
+        let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(
             err.to_string().contains("undefined variable"),
             "project fns should not have access to global vars, got: {}",
@@ -859,7 +859,7 @@ pr test {\n\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
@@ -870,7 +870,7 @@ pr test {\n\
 }\
 ",
         );
-        let err = load_full(&dir.path().join("main.sro")).unwrap_err();
+        let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(
             err.to_string().contains("undefined variable"),
             "got: {}",
@@ -883,7 +883,7 @@ pr test {\n\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
@@ -894,7 +894,7 @@ pr test {\n\
 }\
 ",
         );
-        let err = load_full(&dir.path().join("main.sro")).unwrap_err();
+        let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(
             err.to_string().contains("undefined variable"),
             "got: {}",
@@ -907,7 +907,7 @@ pr test {\n\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             &format!(
                 "\
 shell = `bash`;\n\
@@ -927,7 +927,7 @@ pr test {{\n\
                 dir.path().display()
             ),
         );
-        let cfg = load(&dir.path().join("main.sro")).unwrap();
+        let cfg = load(&dir.path().join("main.kiru")).unwrap();
         let mut runner = Runner::from_arc(Arc::new(cfg));
         runner.execute_fn_call("deploy", "test").unwrap();
     }
@@ -937,7 +937,7 @@ pr test {{\n\
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
-            "main.sro",
+            "main.kiru",
             &format!(
                 "\
 shell = `bash`;\n\
@@ -956,7 +956,7 @@ pr test {{\n\
                 dir.path().display()
             ),
         );
-        let cfg = load(&dir.path().join("main.sro")).unwrap();
+        let cfg = load(&dir.path().join("main.kiru")).unwrap();
         let mut runner = Runner::from_arc(Arc::new(cfg));
         // No matching arm — silently does nothing, no error.
         runner.execute_fn_call("deploy", "test").unwrap();

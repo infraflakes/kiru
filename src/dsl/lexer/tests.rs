@@ -88,10 +88,10 @@ fn test_backtick_literals() {
 #[test]
 fn test_path_literals() {
     let cases = vec![
-        ("./file.sro", "./file.sro"),
-        ("./path/to/file.sro", "./path/to/file.sro"),
-        ("../file.sro", "../file.sro"),
-        ("../../dir/file.sro", "../../dir/file.sro"),
+        ("./file.kiru", "./file.kiru"),
+        ("./path/to/file.kiru", "./path/to/file.kiru"),
+        ("../file.kiru", "../file.kiru"),
+        ("../../dir/file.kiru", "../../dir/file.kiru"),
         ("./a", "./a"),
     ];
     for (input, expected) in cases {
@@ -233,7 +233,7 @@ fn test_default_pattern() {
 #[test]
 fn test_full_snippet() {
     let input = "sanctuary = `$HOME/dev`;\n\
-                  import ./a.sro;\n\
+                  import ./a.kiru;\n\
                   var string port1 = `127.0.0.1:8080`;\n\
                   pr hello {\n\
                       url = `git@github.com:foo/bar.git`;\n\
@@ -255,12 +255,12 @@ fn test_full_snippet() {
 
 #[test]
 fn test_path_termination_at_semicolons() {
-    let input = "import ./foo.sro; import ./bar.sro;";
+    let input = "import ./foo.kiru; import ./bar.kiru;";
     let tokens = collect_tokens(input);
     assert_eq!(tokens[0], TokenType::Import);
-    assert_eq!(tokens[1], TokenType::PathLit("./foo.sro".to_string()));
+    assert_eq!(tokens[1], TokenType::PathLit("./foo.kiru".to_string()));
     assert_eq!(tokens[2], TokenType::Semicolon);
     assert_eq!(tokens[3], TokenType::Import);
-    assert_eq!(tokens[4], TokenType::PathLit("./bar.sro".to_string()));
+    assert_eq!(tokens[4], TokenType::PathLit("./bar.kiru".to_string()));
     assert_eq!(tokens[5], TokenType::Semicolon);
 }

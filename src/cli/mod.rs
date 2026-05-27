@@ -48,8 +48,8 @@ fn print_parse_errors(reports: Vec<miette::Report>) -> miette::Report {
 }
 
 #[derive(Parser)]
-#[command(name = "sro")]
-#[command(about = "SRO - Sanctuary Repository Orchestrator", long_about = None)]
+#[command(name = "kiru")]
+#[command(about = "kiru is a local project orchestrator CLI", long_about = None)]
 struct Cli {
     /// Path to config file
     #[arg(short, long, global = true)]
@@ -113,13 +113,13 @@ fn get_config_path(config_arg: Option<PathBuf>) -> PathBuf {
     }
 
     if let Some(config_dir) = dirs::config_dir() {
-        return config_dir.join("sro").join("config.sro");
+        return config_dir.join("kiru").join("config.kiru");
     }
 
-    PathBuf::from("config.sro")
+    PathBuf::from("config.kiru")
 }
 
 fn run_version() -> miette::Result<()> {
-    println!("sro {}", env!("CARGO_PKG_VERSION"));
+    println!("kiru {}", env!("CARGO_PKG_VERSION"));
     Ok(())
 }

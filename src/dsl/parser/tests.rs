@@ -77,11 +77,11 @@ fn test_sanctuary_with_var_ref() {
 
 #[test]
 fn test_import_decl() {
-    let prog = parse_program("import ./other.sro;").unwrap();
+    let prog = parse_program("import ./other.kiru;").unwrap();
     assert_eq!(count_stmt_types(&prog), vec!["import"]);
     match &prog.stmts[0] {
         Stmt::ImportDecl { paths, .. } => {
-            assert_eq!(paths, &vec!["./other.sro".to_string()]);
+            assert_eq!(paths, &vec!["./other.kiru".to_string()]);
         }
         _ => panic!("expected ImportDecl"),
     }
@@ -147,7 +147,7 @@ fn test_var_invalid_type() {
 
 #[test]
 fn test_project_decl_with_fields() {
-    let input = "\npr todo {\n    url = `git@github.com:user/repo.git`;\n    dir = `todo`;\n    sync = `clone`;\n    use = `./main.sro`;\n    branch = `main`;\n}";
+    let input = "\npr todo {\n    url = `git@github.com:user/repo.git`;\n    dir = `todo`;\n    sync = `clone`;\n    use = `./main.kiru`;\n    branch = `main`;\n}";
     let prog = parse_program(input).unwrap();
     assert_eq!(count_stmt_types(&prog), vec!["pr"]);
     match &prog.stmts[0] {
@@ -286,7 +286,7 @@ fn test_var_with_var_ref_value() {
 fn test_multiple_top_level_statements() {
     let input = "shell = `bash`;\n\
                  sanctuary = `/tmp`;\n\
-                 import ./other.sro;\n\
+                 import ./other.kiru;\n\
                  var string x = `hello`;\n\
                   pr p { url = `u`; dir = `d`; fn f { log `hi`; } seq s { f; } }";
     let prog = parse_program(input).unwrap();
@@ -315,9 +315,9 @@ fn test_error_recovery_skips_bad_stmt() {
 #[test]
 fn test_import_path_types() {
     let inputs = vec![
-        "import ./foo.sro;",
-        "import ../foo.sro;",
-        "import ../../dir/foo.sro;",
+        "import ./foo.kiru;",
+        "import ../foo.kiru;",
+        "import ../../dir/foo.kiru;",
     ];
     for input in inputs {
         let result = parse_program(input);

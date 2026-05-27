@@ -1,5 +1,5 @@
 {
-  description = "SRO development flake";
+  description = "kiru development flake";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -24,7 +24,7 @@
         ...
       }: {
         packages.default = pkgs.rustPlatform.buildRustPackage {
-          pname = "sro";
+          pname = "kiru";
           version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
 
           src = pkgs.lib.cleanSourceWith {
@@ -43,10 +43,10 @@
           nativeBuildInputs = [pkgs.installShellFiles];
 
           postInstall = ''
-            installShellCompletion --cmd sro \
-              --bash completions/sro.bash \
-              --fish completions/sro.fish \
-              --zsh completions/sro.zsh
+            installShellCompletion --cmd kiru \
+              --bash completions/kiru.bash \
+              --fish completions/kiru.fish \
+              --zsh completions/kiru.zsh
           '';
         };
 

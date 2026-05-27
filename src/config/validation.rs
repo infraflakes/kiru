@@ -74,7 +74,7 @@ pub(crate) fn resolve_use(
 
         if !use_path.exists() {
             return Err(ConfigError::Validation(format!(
-                "project {:?}: use file not found: {} (run 'sro sync' first)",
+                "project {:?}: use file not found: {} (run 'kiru sync' first)",
                 proj.name,
                 use_path.display()
             )));

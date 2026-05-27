@@ -1,0 +1,10 @@
+shell = `bash`;
+var shell workdir = `echo $HOME/dev`;
+sanctuary = $workdir;
+
+pr kiru {
+  url = `https://github.com/infraflakes/kiru.git`;
+  dir = `kiru`;
+  sync = `clone`;
+  use = `.kiru/main.kiru`;
+}

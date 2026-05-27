@@ -1,8 +1,8 @@
-<h1 align="center">Serein Repository Orchestrator</h1>
-<p align="center">A declarative multi-repo workspace orchestrator with its own DSL, execution engine, and live TUI.</p>
+<h1 align="center">kiru</h1>
+<p align="center">A statically validated DSL and CLI for multiple git projects orchestration.</p>
 <p align="center">
     <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
-    <a href="https://github.com/infraflakes/sro/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/infraflakes/sro?logo=github"></a>
+    <a href="https://github.com/infraflakes/kiru/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/infraflakes/kiru?logo=github"></a>
 </p>
 
 <img src="./examples/tui_example.png" alt="TUI" width="600">
@@ -13,7 +13,7 @@
 
 You switch machines. You have fifteen repos. You have a different setup script per project, a makefile that forgets `cd` between lines, env vars leaking everywhere, and a shell script graveyard nobody trusts.
 
-`sro` fixes this with a single config file, a small DSL, and zero shell archaeology.
+`kiru` fixes this with a single config file, a small DSL, and zero shell archaeology.
 
 ---
 
@@ -34,20 +34,20 @@ You switch machines. You have fifteen repos. You have a different setup script p
 ## Usage
 
 ```
-sro sync                       clone all declared repos into sanctuary
-sro seq <name>                 run a sequential block, fail-fast
-sro par <name>                 run a parallel block, isolated failures
-sro -c <path> <command>        use a custom config file
-sro --config <path> <command>  same as -c
+kiru sync                       clone all declared repos into sanctuary
+kiru seq <name>                 run a sequential block, fail-fast
+kiru par <name>                 run a parallel block, isolated failures
+kiru -c <path> <command>        use a custom config file
+kiru --config <path> <command>  same as -c
 ```
 
-Config is discovered at `~/.config/sro/config.sro` by default. Override with `-c`.
+Config is discovered at `~/.config/kiru/config.kiru` by default. Override with `-c`.
 
 ---
 
 ## Config
 
-Everything lives in one `.sro` file — project declarations, execution logic, variables. No separate config and script files.
+Everything lives in one `.kiru` file — project declarations, execution logic, variables. No separate config and script files.
 
 For example:
 
@@ -69,7 +69,7 @@ pr calendar {
     url  = `git@github.com:yourname/calendar.git`;
     dir  = `calendar`;
     sync = `clone`;
-    use  = `.sro/main.sro`;
+    use  = `.kiru/main.kiru`;
 }
 
 fn build {
@@ -111,7 +111,7 @@ par ci {
 | `sanctuary = \`...\` \| $var;` | required. absolute path to workspace root |
 | `var string name = \`...\` \| $var;` | string variable, global or fn-scoped |
 | `var shell name = \`...\`;` | runs content via declared shell, stores stdout |
-| `import ./path;` | import other `.sro` files, relative paths only |
+| `import ./path;` | import other `.kiru` files, relative paths only |
 | `pr name { ... }` | project declaration |
 | `fn name { ... }` | execution block |
 | `seq name { ... }` | sequential orchestration block |
@@ -124,7 +124,7 @@ par ci {
 | `url` | yes | git clone url |
 | `dir` | yes | directory name relative to sanctuary, must be unique |
 | `sync` | no | `clone` (default) — skip if exists. `ignore` — skip entirely |
-| `use` | no | path to a `.sro` file inside the project, relative to project dir |
+| `use` | no | path to a `.kiru` file inside the project, relative to project dir |
 | `branch` | no | branch to clone. defaults to repo default branch |
 
 ### fn primitives
@@ -179,10 +179,10 @@ par ci {
 
 ## Per-project config
 
-If a project declares `use`, that file is parsed after `sro sync` clones the repo. It can define or `override` global fns. It cannot declare `sanctuary`, `pr`, or `shell`.
+If a project declares `use`, that file is parsed after `kiru sync` clones the repo. It can define or `override` global fns. It cannot declare `sanctuary`, `pr`, or `shell`.
 
 ```
-# calendar/.sro/main.sro
+# calendar/.kiru/main.kiru
 
 override fn build {
     exec(`pnpm build`);
@@ -197,7 +197,7 @@ fn dev {
 
 ## TUI
 
-`sro` renders a live accordion TUI during execution. each task has a colored left bar indicating status, expandable stdout, and pruned history for long output.
+`kiru` renders a live accordion TUI during execution. each task has a colored left bar indicating status, expandable stdout, and pruned history for long output.
 
 ```
 par  ci                                                3 tasks

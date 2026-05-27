@@ -1,4 +1,4 @@
-pr sro {
+pr kiru {
   seq build {
     init;
     build;

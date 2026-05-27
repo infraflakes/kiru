@@ -9,18 +9,18 @@ pr nix {
   branch = `nixos`;
 }
 
-pr sro {
-  url = `git@gitlab.com:infraflakes/sro.git`;
-  dir = `sro`;
+pr kiru {
+  url = `git@gitlab.com:infraflakes/kiru.git`;
+  dir = `kiru`;
   sync = `clone`;
-  use = `.sro/main.sro`;
+  use = `.kiru/main.kiru`;
 }
 
 pr portfolio {
   url = `git@gitlab.com:infraflakes/infraflakes-github-io.git`;
   dir = `portfolio`;
   sync = `clone`;
-  use = `.sro/main.sro`;
+  use = `.kiru/main.kiru`;
 }
 
 pr srwc {
@@ -28,5 +28,5 @@ pr srwc {
   dir = `srwc`;
   sync = `ignore`;
   branch = `architectural-cleanups`;
-  use = `.sro/main.sro`;
+  use = `.kiru/main.kiru`;
 }

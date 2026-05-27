@@ -2,9 +2,9 @@ shell = `bash`;
 var shell workdir = `echo $HOME/dev`;
 sanctuary = $workdir;
 
-pr sro {
-    url = `git@github.com:infraflakes/sro.git`;
-    dir = `sro`;
+pr kiru {
+    url = `git@github.com:infraflakes/kiru.git`;
+    dir = `kiru`;
     sync = `ignore`;
 
     fn check {

@@ -113,7 +113,7 @@ pub mod render;
 
 pub fn send_event(tx: &mpsc::UnboundedSender<TuiEvent>, event: TuiEvent) {
     if tx.send(event).is_err() {
-        eprintln!("[sro] warning: failed to send TUI event");
+        eprintln!("[kiru] warning: failed to send TUI event");
     }
 }
 

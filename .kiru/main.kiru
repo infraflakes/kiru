@@ -1,7 +1,7 @@
-import ./seq.sro;
-import ./par.sro;
+import ./seq.kiru;
+import ./par.kiru;
 
-pr sro {
+pr kiru {
 
   fn init {
     exec `nix develop -c cargo check`;
