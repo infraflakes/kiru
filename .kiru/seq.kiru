@@ -1,6 +1,7 @@
 pr kiru {
   seq build {
     init;
+    test;
     build;
   }
   seq test {
