@@ -46,7 +46,7 @@
             installShellCompletion --cmd kiru \
               --bash completions/kiru.bash \
               --fish completions/kiru.fish \
-              --zsh completions/kiru.zsh
+              --zsh completions/_kiru
           '';
         };
 

@@ -1,9 +1,12 @@
+mod args;
 mod exec;
 mod sync;
 mod validate;
 
+pub use args::{Cli, Commands};
+
 use crate::config::{Config, ConfigError, load};
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use std::path::PathBuf;
 
 fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Config> {
@@ -45,53 +48,6 @@ fn print_parse_errors(reports: Vec<miette::Report>) -> miette::Report {
         }
         miette::miette!("{}\n{} parse error(s) found", combined, count)
     }
-}
-
-#[derive(Parser)]
-#[command(name = "kiru")]
-#[command(about = "kiru is a local project orchestrator CLI", long_about = None)]
-struct Cli {
-    /// Path to config file
-    #[arg(short, long, global = true)]
-    config: Option<PathBuf>,
-
-    /// Use plain text output instead of TUI
-    #[arg(short, long, global = true)]
-    plain: bool,
-
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    /// Parse and validate the configuration file
-    Validate,
-    /// Clone/sync project repositories
-    Sync,
-    /// Run a sequential execution block
-    Seq {
-        /// Name of the sequential block to run
-        name: String,
-        /// Project to run the seq in
-        project: String,
-    },
-    /// Run a parallel execution block
-    Par {
-        /// Name of the parallel block to run
-        name: String,
-        /// Project to run the par in
-        project: String,
-    },
-    /// Run a function directly
-    Fn {
-        /// Name of the function to run
-        name: String,
-        /// Project to run the function in
-        project: String,
-    },
-    /// Print the version number
-    Version,
 }
 
 pub fn run() -> miette::Result<()> {
