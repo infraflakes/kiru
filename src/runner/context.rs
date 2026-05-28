@@ -24,11 +24,13 @@ pub struct ExecContext<'a> {
 
 impl<'a> ExecContext<'a> {
     pub(super) fn new(cfg: &'a Config, project: &'a Project, output: &'a mut Output) -> Self {
+        let mut vars = cfg.vars.clone();
+        vars.extend(project.vars.clone());
         ExecContext {
             cfg,
             project,
             output,
-            vars: project.vars.clone(),
+            vars,
             env_stack: Vec::new(),
             work_dir: PathBuf::from(&cfg.sanctuary).join(&project.dir),
             sys_env: std::env::vars().collect(),

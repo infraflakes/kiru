@@ -158,7 +158,7 @@ fn collect_projects(
                     }
 
                     for body_stmt in body {
-                        merge_project_body_stmt(&mut project, body_stmt, shell)?;
+                        merge_project_body_stmt(&mut project, body_stmt, shell, global_vars)?;
                     }
 
                     projects.insert(name, project);
@@ -175,6 +175,7 @@ pub(crate) fn merge_project_body_stmt(
     project: &mut Project,
     stmt: Stmt,
     shell: &str,
+    global_vars: &HashMap<String, String>,
 ) -> Result<(), ConfigError> {
     match stmt {
         Stmt::VarDecl {
@@ -189,9 +190,9 @@ pub(crate) fn merge_project_body_stmt(
                 )));
             }
 
-            let resolved = value
-                .resolve(&project.vars)
-                .map_err(ConfigError::Validation)?;
+            let mut merged = global_vars.clone();
+            merged.extend(project.vars.clone());
+            let resolved = value.resolve(&merged).map_err(ConfigError::Validation)?;
 
             let final_value = if var_type == VarType::Shell {
                 if shell.is_empty() {

@@ -2,7 +2,7 @@ use crate::config::error::ConfigError;
 use crate::config::merge::merge_project_body_stmt;
 use crate::config::types::Config;
 use crate::dsl::ast::{CasePattern, Expr, FnStmt};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 pub(crate) fn validate_base(config: &Config) -> Result<(), ConfigError> {
@@ -86,7 +86,7 @@ pub(crate) fn resolve_use(
 
         for program in &programs {
             for stmt in &program.stmts {
-                merge_project_body_stmt(proj, stmt.clone(), &cfg.shell)?;
+                merge_project_body_stmt(proj, stmt.clone(), &cfg.shell, &cfg.vars)?;
             }
         }
     }
@@ -113,7 +113,7 @@ fn validate_full(cfg: &Config) -> Result<(), ConfigError> {
             }
         }
 
-        validate_fn_vars(project, proj_name, &mut errs);
+        validate_fn_vars(project, &cfg.vars, proj_name, &mut errs);
     }
 
     if !errs.is_empty() {
@@ -125,6 +125,7 @@ fn validate_full(cfg: &Config) -> Result<(), ConfigError> {
 
 fn validate_fn_vars(
     project: &crate::config::types::Project,
+    global_vars: &HashMap<String, String>,
     proj_name: &str,
     errs: &mut Vec<String>,
 ) {
@@ -223,7 +224,8 @@ fn validate_fn_vars(
     }
 
     for (fn_name, body) in &project.functions {
-        let mut scope: HashSet<String> = project.vars.keys().cloned().collect();
+        let mut scope: HashSet<String> = global_vars.keys().cloned().collect();
+        scope.extend(project.vars.keys().cloned());
         validate_fn_body(fn_name, body, &mut scope, errs, proj_name);
     }
 }

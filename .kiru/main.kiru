@@ -1,41 +1,55 @@
 import ./run.kiru;
 
-  fn init {
-    exec `nix develop -c cargo check`;
-  }
+fn init {
+  exec `nix develop -c cargo check`;
+}
 
-  fn clean {
-    log `Cleaning up artifacts...`;
-    exec `rm -rf bin`;
-    exec `rm -rf result`;
-  }
+fn clean {
+  log `Cleaning up artifacts...`;
+  exec `rm -rf bin`;
+  exec `rm -rf result`;
+}
 
-  fn fmt {
-    log `Formatting the codebase...`;
-    exec `nix develop -c cargo clippy --fix --allow-dirty`;
-    exec `nix develop -c cargo fmt`;
-  }
+fn fmt {
+  log `Formatting the codebase...`;
+  exec `nix develop -c cargo clippy --fix --allow-dirty`;
+  exec `nix develop -c cargo fmt`;
+}
 
-  fn test {
-    log `Testing the codebase!`;
-    exec `nix develop -c cargo test`;
-    exec `nix develop -c cargo clippy`;
-    exec `nix develop -c cargo fmt --check`;
-  }
-  fn fail {
-    log `Failing the task!`;
-    env [CGO_ENABLED = `0`, GOPATH = `$HOME/.local/share/go`] {
-      exec `nix develop -c go build ./...`;
+fn test {
+  log `Testing the codebase!`;
+  exec `nix develop -c cargo test`;
+  exec `nix develop -c cargo clippy`;
+  exec `nix develop -c cargo fmt --check`;
+}
+fn fail {
+  log `Failing the task!`;
+  env [
+    CGO_ENABLED = `0`,
+    GOPATH = `$HOME/.local/share/go`
+  ] {
+    exec `nix develop -c go build ./...`;
+  };
+}
+
+fn build {
+  var shell docker_bin = `command -v docker >/dev/null 2>&1 && echo "docker" || { command -v podman >/dev/null 2>&1 && echo "podman"; }`;
+  case $docker_bin {
+    `docker` {
+      log `building kiru with docker`;
+      exec `rm -rf bin`;
+      exec `rm -rf result`;
+      exec `${docker_bin} build --output type=local,dest=bin .`;
     };
-  }
-
-  fn build {
-      var shell docker_bin = `command -v docker 2> /dev/null || command -v podman 2> /dev/null || true`;
-      case $docker_bin {
-        `` { log `no container runtime found`;
-             exec `exit 1`; };
-        _  { exec `rm -rf bin`;
-                  exec `rm -rf result`;
-                  exec `${docker_bin} build --output type=local,dest=bin .`; };
-      };
-  }
+    `podman` {
+      log `building kiru with podman`;
+      exec `rm -rf bin`;
+      exec `rm -rf result`;
+      exec `${docker_bin} build --output type=local,dest=bin .`;
+    };
+    _  {
+      log `no container runtime found`;
+      exec `exit 1`; 
+    };
+  };
+}

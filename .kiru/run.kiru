@@ -1,11 +1,11 @@
-  run all {
-    init => test => build;
-    fmt => test;
-  }
-  run build {
-    init => test => build;
-  }
-  run test {
-    fmt => test;
-    fail;
-  }
+run all {
+  init => test => build;
+  fmt => test;
+}
+run build {
+  init => test => build;
+}
+run test {
+  fmt => test;
+  fail;
+}

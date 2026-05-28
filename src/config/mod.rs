@@ -831,7 +831,7 @@ pr test {\n\
     }
 
     #[test]
-    fn test_project_var_isolated_from_global() {
+    fn test_project_var_sees_global() {
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
@@ -847,12 +847,8 @@ pr test {\n\
 }\
 ",
         );
-        let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(
-            err.to_string().contains("undefined variable"),
-            "project fns should not have access to global vars, got: {}",
-            err
-        );
+        // global vars should be accessible inside project function bodies
+        load_full(&dir.path().join("main.kiru")).unwrap();
     }
 
     #[test]
