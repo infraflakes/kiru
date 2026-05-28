@@ -64,13 +64,9 @@ pub enum Stmt {
         name: String,
         body: Vec<FnStmt>,
     },
-    SeqDecl {
+    RunDecl {
         name: String,
-        fns: Vec<String>,
-    },
-    ParDecl {
-        name: String,
-        fns: Vec<String>,
+        chains: Vec<Vec<String>>,
     },
 }
 

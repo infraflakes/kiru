@@ -130,8 +130,7 @@ fn collect_projects(
                         branch: String::new(),
                         vars: HashMap::new(),
                         functions: HashMap::new(),
-                        seqs: HashMap::new(),
-                        pars: HashMap::new(),
+                        runs: HashMap::new(),
                     };
 
                     for field in &fields {
@@ -224,23 +223,14 @@ pub(crate) fn merge_project_body_stmt(
             }
             project.functions.insert(name, body);
         }
-        Stmt::SeqDecl { name, fns, .. } => {
-            if project.seqs.contains_key(&name) {
+        Stmt::RunDecl { name, chains, .. } => {
+            if project.runs.contains_key(&name) {
                 return Err(ConfigError::Validation(format!(
-                    "duplicate seq in project '{}': {}",
+                    "duplicate run block in project '{}': {}",
                     project.name, name
                 )));
             }
-            project.seqs.insert(name, fns);
-        }
-        Stmt::ParDecl { name, fns, .. } => {
-            if project.pars.contains_key(&name) {
-                return Err(ConfigError::Validation(format!(
-                    "duplicate par in project '{}': {}",
-                    project.name, name
-                )));
-            }
-            project.pars.insert(name, fns);
+            project.runs.insert(name, chains);
         }
         _ => {}
     }

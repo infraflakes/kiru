@@ -25,9 +25,7 @@ You switch machines. You have fifteen repos. You have a different setup script p
 
 **`fn`** — a named execution block scoped to a project directory. primitives never leak between blocks.
 
-**`seq`** — runs fn calls sequentially. stops everything on first failure.
-
-**`par`** — runs fn calls concurrently. failures are isolated, others continue.
+**`run`** — orchestration block. concurrent chains of sequential function calls. each chain runs in order; chains run concurrently.
 
 ---
 
@@ -35,8 +33,8 @@ You switch machines. You have fifteen repos. You have a different setup script p
 
 ```
 kiru sync                       clone all declared repos into sanctuary
-kiru seq <name>                 run a sequential block, fail-fast
-kiru par <name>                 run a parallel block, isolated failures
+kiru run <name> <project>       run a run block
+kiru fn <name> <project>        run a function directly
 kiru -c <path> <command>        use a custom config file
 kiru --config <path> <command>  same as -c
 ```
@@ -87,15 +85,10 @@ fn test {
     };
 }
 
-seq release {
+run ci {
     test(todo);
     build(todo);
-}
-
-par ci {
-    build(todo);
     build(calendar);
-    seq.release;
 }
 ```
 
@@ -114,8 +107,7 @@ par ci {
 | `import ./path;` | import other `.kiru` files, relative paths only |
 | `pr name { ... }` | project declaration |
 | `fn name { ... }` | execution block |
-| `seq name { ... }` | sequential orchestration block |
-| `par name { ... }` | parallel orchestration block |
+| `run name { ... }` | orchestration block with chain syntax |
 
 ### Project fields
 
@@ -137,14 +129,15 @@ par ci {
 | `env [...] { };` | scoped env vars. inner `env` overrides outer. no leakage |
 | `var <type> name = ...;` | fn-local variable. shadows global with same name |
 
-### seq and par body
+### run block
 
-| statement | description |
-|-----------|-------------|
-| `fnname(project);` | call fn with project as cwd context |
-| `seq.name;` | reference another seq block |
+| syntax | description |
+|--------|-------------|
+| `fn_name;` | single function call as a concurrent chain |
+| `fn_a => fn_b => fn_c;` | sequential chain: fn_a → fn_b → fn_c in order |
+| `fn_a; fn_b => fn_c;` | two concurrent chains (first: fn_a alone, second: fn_b → fn_c) |
 
-`par.name` cannot be referenced — par blocks are CLI entry points only.
+Chains are separated by `;`. Each chain runs sequentially; chains run concurrently. If a function in a chain fails, the rest of that chain is skipped but other chains continue.
 
 ### Types and values
 
@@ -161,8 +154,9 @@ par ci {
 | `()` | primitive args — `exec()`, `cd()`, `log()` |
 | `[]` | typed list — `env[]` |
 | `{}` | statement block |
-| `;` | statement terminator inside `{}` |
+| `;` | statement terminator inside `{}` and run chain separator |
 | `,` | item separator inside `[]` |
+| `=>` | sequential chain separator inside run blocks |
 
 ### Rules
 
@@ -173,7 +167,6 @@ par ci {
 - `override fn` is required to redefine a global `fn` in a `use` file. silent redeclaration is a parse error.
 - circular imports fail at parse time.
 - two projects cannot share the same `dir`. parse error.
-- `par.name` references are not allowed inside `seq` or `par` bodies.
 
 ---
 
@@ -200,7 +193,7 @@ fn dev {
 `kiru` renders a live accordion TUI during execution. each task has a colored left bar indicating status, expandable stdout, and pruned history for long output.
 
 ```
-par  ci                                                3 tasks
+run  ci                                                3 tasks
 
  ✓  build(todo)                                          ▶
  ⠋  build(calendar)                                      ▼
@@ -209,9 +202,8 @@ par  ci                                                3 tasks
     env  CGO_ENABLED=0 GOOS=linux
     exec go build -ldflags='-X main.version=3a1b2c4' -o bin/todo .
     ⠋
- ✓  seq.release                                             ▶
 
-✓ 2 ok  ⠋ 1 running
+ ✓ 2 ok  ⠋ 1 running
 ```
 
 ---

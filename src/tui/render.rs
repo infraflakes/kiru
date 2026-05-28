@@ -13,6 +13,8 @@ fn task_marker(task: &Task, spinner_idx: usize) -> String {
     if task.finalized {
         if task.status == TaskStatus::Success {
             "✓".to_string()
+        } else if task.status == TaskStatus::Skipped {
+            "−".to_string()
         } else {
             "✗".to_string()
         }
@@ -20,7 +22,7 @@ fn task_marker(task: &Task, spinner_idx: usize) -> String {
         match task.status {
             TaskStatus::Pending => "·".to_string(),
             TaskStatus::Running => SPINNER_FRAMES[spinner_idx].to_string(),
-            TaskStatus::Success | TaskStatus::Error => unreachable!(),
+            TaskStatus::Success | TaskStatus::Error | TaskStatus::Skipped => unreachable!(),
         }
     }
 }
@@ -37,6 +39,7 @@ fn render_summary(f: &mut Frame, yo: u16, model: &Model, spinner_idx: usize, wid
             TaskStatus::Running => running_count += 1,
             TaskStatus::Pending => pending_count += 1,
             TaskStatus::Error => error_count += 1,
+            TaskStatus::Skipped => {}
         }
     }
 
@@ -127,6 +130,11 @@ pub fn dump_final(model: &Model, w: &mut impl Write) -> io::Result<()> {
         .iter()
         .filter(|t| t.status == TaskStatus::Error)
         .count();
+    let skipped_count = model
+        .tasks
+        .iter()
+        .filter(|t| t.status == TaskStatus::Skipped)
+        .count();
 
     writeln!(w)?;
     writeln!(w)?;
@@ -137,6 +145,7 @@ pub fn dump_final(model: &Model, w: &mut impl Write) -> io::Result<()> {
             TaskStatus::Running => colors::RUNNING_ANSI,
             TaskStatus::Pending => colors::PENDING_ANSI,
             TaskStatus::Error => colors::FAILED_ANSI,
+            TaskStatus::Skipped => colors::MUTED_ANSI,
         };
         let marker = task_marker(task, 0);
 
@@ -167,7 +176,17 @@ pub fn dump_final(model: &Model, w: &mut impl Write) -> io::Result<()> {
     }
 
     if err_count > 0 {
-        writeln!(w, "{} done, {} failed", ok_count, err_count)?;
+        if skipped_count > 0 {
+            writeln!(
+                w,
+                "{} done, {} failed, {} skipped",
+                ok_count, err_count, skipped_count
+            )?;
+        } else {
+            writeln!(w, "{} done, {} failed", ok_count, err_count)?;
+        }
+    } else if skipped_count > 0 {
+        writeln!(w, "✓ all passed, {} skipped", skipped_count)?;
     } else {
         writeln!(w, "✓ all {} passed", ok_count)?;
     }

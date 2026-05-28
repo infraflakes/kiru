@@ -316,8 +316,7 @@ mod tests {
             branch: "main".to_string(),
             vars,
             functions: HashMap::new(),
-            seqs: HashMap::new(),
-            pars: HashMap::new(),
+            runs: HashMap::new(),
         };
         let cfg = Config {
             shell: "bash".to_string(),

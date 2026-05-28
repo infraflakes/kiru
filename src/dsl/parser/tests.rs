@@ -31,8 +31,7 @@ fn count_stmt_types(program: &Program) -> Vec<&'static str> {
             Stmt::VarDecl { .. } => "var",
             Stmt::ProjectDecl { .. } => "pr",
             Stmt::FnDecl { .. } => "fn",
-            Stmt::SeqDecl { .. } => "seq",
-            Stmt::ParDecl { .. } => "par",
+            Stmt::RunDecl { .. } => "run",
         })
         .collect()
 }
@@ -166,7 +165,7 @@ fn test_project_decl_with_fields() {
 
 #[test]
 fn test_project_decl_with_body_stmts() {
-    let input = "\npr todo {\n    url = `git@github.com:user/repo.git`;\n    dir = `todo`;\n    var string app = `todo`;\n    fn build {\n        log `building`;\n    }\n    seq release {\n        build;\n    }\n    par ci {\n        build;\n    }\n}";
+    let input = "\npr todo {\n    url = `git@github.com:user/repo.git`;\n    dir = `todo`;\n    var string app = `todo`;\n    fn build {\n        log `building`;\n    }\n    run release {\n        build;\n    }\n    run ci {\n        build;\n    }\n}";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
         Stmt::ProjectDecl {
@@ -177,8 +176,8 @@ fn test_project_decl_with_body_stmts() {
             assert_eq!(body.len(), 4);
             assert!(matches!(body[0], Stmt::VarDecl { .. }));
             assert!(matches!(body[1], Stmt::FnDecl { .. }));
-            assert!(matches!(body[2], Stmt::SeqDecl { .. }));
-            assert!(matches!(body[3], Stmt::ParDecl { .. }));
+            assert!(matches!(body[2], Stmt::RunDecl { .. }));
+            assert!(matches!(body[3], Stmt::RunDecl { .. }));
         }
         _ => panic!("expected ProjectDecl"),
     }
@@ -197,20 +196,20 @@ fn test_project_duplicate_fields() {
 }
 
 #[test]
-fn test_seq_par_only_allows_ident() {
-    let result = parse_program("seq s { 123; }");
+fn test_run_only_allows_ident() {
+    let result = parse_program("run s { 123; }");
     assert!(result.is_err());
 }
 
 #[test]
-fn test_par_ref_not_allowed() {
-    let result = parse_program("par p { par.x; }");
+fn test_run_ref_not_allowed() {
+    let result = parse_program("run p { run.x; }");
     assert!(result.is_err());
 }
 
 #[test]
-fn test_seq_ref_not_allowed() {
-    let result = parse_program("seq s { seq.x; }");
+fn test_run_name_ref_not_allowed() {
+    let result = parse_program("run s { run.x; }");
     assert!(result.is_err());
 }
 
@@ -231,14 +230,8 @@ fn test_missing_opening_brace_after_fn() {
 }
 
 #[test]
-fn test_missing_opening_brace_after_seq() {
-    let result = parse_program("seq bad");
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_missing_opening_brace_after_par() {
-    let result = parse_program("par bad");
+fn test_missing_opening_brace_after_run() {
+    let result = parse_program("run bad");
     assert!(result.is_err());
 }
 
@@ -260,8 +253,8 @@ fn test_unclosed_fn_brace() {
 }
 
 #[test]
-fn test_unclosed_seq_brace() {
-    let result = parse_program("seq s { check;");
+fn test_unclosed_run_brace() {
+    let result = parse_program("run s { check;");
     assert!(result.is_err());
 }
 
@@ -278,7 +271,7 @@ fn test_multiple_top_level_statements() {
                  sanctuary = `/tmp`;\n\
                  import ./other.kiru;\n\
                  var string x = `hello`;\n\
-                  pr p { url = `u`; dir = `d`; fn f { log `hi`; } seq s { f; } }";
+                  pr p { url = `u`; dir = `d`; fn f { log `hi`; } run s { f; } }";
     let prog = parse_program(input).unwrap();
     assert_eq!(
         count_stmt_types(&prog),

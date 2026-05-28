@@ -126,6 +126,7 @@ pub enum TaskStatus {
     Running,
     Success,
     Error,
+    Skipped,
 }
 
 #[derive(Debug, Clone)]
@@ -162,7 +163,10 @@ impl Model {
     pub fn update_task_status(&mut self, index: usize, status: TaskStatus) {
         if let Some(task) = self.tasks.get_mut(index) {
             task.status = status;
-            task.finalized = matches!(status, TaskStatus::Success | TaskStatus::Error);
+            task.finalized = matches!(
+                status,
+                TaskStatus::Success | TaskStatus::Error | TaskStatus::Skipped
+            );
         }
     }
 
@@ -173,9 +177,12 @@ impl Model {
     }
 
     pub fn all_done(&self) -> bool {
-        self.tasks
-            .iter()
-            .all(|t| matches!(t.status, TaskStatus::Success | TaskStatus::Error))
+        self.tasks.iter().all(|t| {
+            matches!(
+                t.status,
+                TaskStatus::Success | TaskStatus::Error | TaskStatus::Skipped
+            )
+        })
     }
 }
 

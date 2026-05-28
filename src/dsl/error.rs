@@ -33,8 +33,8 @@ pub fn format_token_type(ty: &TokenType) -> &'static str {
         TokenType::Var => "`var`",
         TokenType::Pr => "`pr`",
         TokenType::Fn => "`fn`",
-        TokenType::Seq => "`seq`",
-        TokenType::Par => "`par`",
+        TokenType::Run => "`run`",
+        TokenType::Arrow => "`=>`",
         TokenType::Env => "`env`",
         TokenType::Case => "`case`",
         TokenType::Log => "`log`",
@@ -68,8 +68,7 @@ pub fn is_keyword_token(ty: &TokenType) -> bool {
             | TokenType::Env
             | TokenType::Var
             | TokenType::Fn
-            | TokenType::Seq
-            | TokenType::Par
+            | TokenType::Run
             | TokenType::Pr
             | TokenType::Shell
             | TokenType::StringKw

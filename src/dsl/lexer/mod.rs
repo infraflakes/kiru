@@ -150,13 +150,24 @@ impl Lexer {
             }
             Some('=') => {
                 self.read_char();
-                Token::new(
-                    TokenType::Assign,
-                    start_line,
-                    start_col,
-                    start_byte_offset,
-                    self.byte_offset - start_byte_offset,
-                )
+                if self.ch == Some('>') {
+                    self.read_char();
+                    Token::new(
+                        TokenType::Arrow,
+                        start_line,
+                        start_col,
+                        start_byte_offset,
+                        self.byte_offset - start_byte_offset,
+                    )
+                } else {
+                    Token::new(
+                        TokenType::Assign,
+                        start_line,
+                        start_col,
+                        start_byte_offset,
+                        self.byte_offset - start_byte_offset,
+                    )
+                }
             }
             Some('`') => self.read_backtick(),
             Some(c) if c.is_alphabetic() || c == '_' => self.read_ident(),

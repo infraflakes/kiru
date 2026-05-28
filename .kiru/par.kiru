@@ -1,5 +1,0 @@
-  par all {
-    build;
-    fmt;
-    test;
-  }

@@ -20,7 +20,7 @@ fn test_single_tokens() {
 
 #[test]
 fn test_keywords() {
-    let tokens = collect_tokens("sanctuary import var string pr fn seq par env log exec cd shell");
+    let tokens = collect_tokens("sanctuary import var string pr fn run env log exec cd shell");
     assert_eq!(
         tokens,
         vec![
@@ -30,8 +30,7 @@ fn test_keywords() {
             TokenType::StringKw,
             TokenType::Pr,
             TokenType::Fn,
-            TokenType::Seq,
-            TokenType::Par,
+            TokenType::Run,
             TokenType::Env,
             TokenType::Log,
             TokenType::Exec,

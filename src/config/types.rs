@@ -11,8 +11,7 @@ pub struct Project {
     pub branch: String,
     pub vars: HashMap<String, String>,
     pub functions: HashMap<String, Vec<FnStmt>>,
-    pub seqs: HashMap<String, Vec<String>>,
-    pub pars: HashMap<String, Vec<String>>,
+    pub runs: HashMap<String, Vec<Vec<String>>>,
 }
 
 #[derive(Debug, Clone)]

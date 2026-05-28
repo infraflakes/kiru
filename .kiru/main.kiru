@@ -1,5 +1,4 @@
-import ./seq.kiru;
-import ./par.kiru;
+import ./run.kiru;
 
   fn init {
     exec `nix develop -c cargo check`;

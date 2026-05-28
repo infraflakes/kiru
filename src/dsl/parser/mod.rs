@@ -6,7 +6,7 @@ use miette::SourceSpan;
 
 mod expr;
 mod fn_body;
-mod fn_seq_par;
+mod fn_run;
 mod project;
 mod stmts;
 
@@ -103,8 +103,7 @@ impl Parser {
             TokenType::Var => self.parse_var_decl(),
             TokenType::Pr => self.parse_project_decl(),
             TokenType::Fn => self.parse_fn_decl(),
-            TokenType::Seq => self.parse_seq_decl(),
-            TokenType::Par => self.parse_par_decl(),
+            TokenType::Run => self.parse_run_decl(),
             _ => {
                 let is_underscore = matches!(
                     &self.current_token().ty,
@@ -119,7 +118,7 @@ impl Parser {
                     Err(ParseError::new(
                         self.eof_aware_span(),
                         format!(
-                            "expected shell, sanctuary, import, var, pr, fn, seq, or par, found {}",
+                            "expected shell, sanctuary, import, var, pr, fn, or run, found {}",
                             format_token(self.current_token())
                         ),
                     ))
@@ -139,8 +138,7 @@ impl Parser {
         match self.current_token().ty {
             TokenType::Var => self.parse_var_decl(),
             TokenType::Fn => self.parse_fn_decl(),
-            TokenType::Seq => self.parse_seq_decl(),
-            TokenType::Par => self.parse_par_decl(),
+            TokenType::Run => self.parse_run_decl(),
             _ => {
                 let is_underscore = matches!(
                     &self.current_token().ty,
@@ -155,7 +153,7 @@ impl Parser {
                     Err(ParseError::new(
                         self.eof_aware_span(),
                         format!(
-                            "expected var, fn, seq, or par, found {}",
+                            "expected shell, sanctuary, import, var, pr, fn, or run, found {}",
                             format_token(self.current_token())
                         ),
                     ))
@@ -172,7 +170,7 @@ impl Parser {
                 Semicolon | RBrace => {
                     self.advance();
                 }
-                Shell | Sanctuary | Import | Var | Pr | Fn | Seq | Par => break,
+                Shell | Sanctuary | Import | Var | Pr | Fn | Run => break,
                 _ => self.advance(),
             }
         }

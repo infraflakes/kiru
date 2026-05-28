@@ -14,8 +14,7 @@
 #
 # CLI usage:
 #   kiru sync                      Clone/sync all project repositories
-#   kiru seq <name> <project>      Run a sequential block in a project
-#   kiru par <name> <project>      Run a parallel block in a project
+#   kiru run <name> <project>      Run a run block in a project
 #   kiru fn <name> <project>       Run a function directly in a project
 #   kiru -c <path> <command>       Use a custom config file
 #   kiru validate                  Validate the configuration file
@@ -88,11 +87,10 @@ import ./other_config.kiru;
 # Inside a project block you can also declare:
 #   var <type> <name> = <value>;   Project-scoped variables
 #   fn <name> { ... }              Function declarations
-#   seq <name> { ... }             Sequential block (fn calls only)
-#   par <name> { ... }             Parallel block (fn calls only)
+#   run <name> { ... }             Orchestration block with chain syntax
 #
 # Project vars are isolated from global vars.
-# Seq/par can only call fns — no seq-ref or par-ref syntax.
+# Run blocks can only call fns — no run-ref syntax.
 
 pr todo {
     url = `git@github.com:yourname/todo.git`;
@@ -137,21 +135,16 @@ pr todo {
         exec `go vet ./...`;
     }
 
-    seq quality {
-        lint;
-        test;
+    # A run block with two chains, running concurrently:
+    #   chain 1: lint -> test -> build (sequential within the chain)
+    #   chain 2: check (single fn, runs concurrently with chain 1)
+    run quality {
+        lint => test => build;
+        check;
     }
 
-    seq release {
-        lint;
-        test;
-        build;
-    }
-
-    par ci {
-        build;
-        lint;
-        test;
+    run release {
+        lint => test => build;
     }
 }
 
@@ -162,7 +155,7 @@ pr calendar {
     use = `.kiru/main.kiru`;
     branch = `rust`;
 
-    # Use files can declare var/fn/seq/par that get merged into this project
+    # Use files can declare var/fn/run that get merged into this project
     # Use file path is relative to the project directory
 }
 
@@ -201,7 +194,7 @@ pr calendar {
 #
 # If a project declares `use`, that file is parsed after `kiru sync`.
 # Use files use the same grammar as any .kiru file.
-# A `pr { ... }` block in the use file has its body (var, fn, seq, par)
+# A `pr { ... }` block in the use file has its body (var, fn, run)
 # merged into the project's scope — allowing shared declarations across
 # multiple projects.
 
@@ -215,11 +208,11 @@ pr calendar {
 # importDecl   = "import" path ";" ;
 # varDecl      = "var" ( "string" | "shell" ) IDENT "=" expr ";" ;
 # projectDecl  = "pr" IDENT "{" { projectStmt } "}" ;
-# projectStmt  = projectField | varDecl | fnDecl | seqDecl | parDecl ;
+# projectStmt  = projectField | varDecl | fnDecl | runDecl ;
 # projectField = IDENT "=" expr ";" ;
 # fnDecl       = "fn" IDENT "{" { fnStmt } "}" ;
-# seqDecl      = "seq" IDENT "{" { IDENT ";" } "}" ;
-# parDecl      = "par" IDENT "{" { IDENT ";" } "}" ;
+# runDecl      = "run" IDENT "{" { chain ";" } "}" ;
+# chain        = IDENT ( "=>" IDENT )* ;
 #
 # fnStmt       = logStmt | execStmt | cdStmt | varDecl | envBlock | caseStmt ;
 # logStmt      = "log" expr ";" ;
@@ -236,5 +229,5 @@ pr calendar {
 # BACKTICK     = "`" { char | "${" IDENT "}" } "`" ;
 # path         = "./" { char } ;
 #
-# Keywords: shell sanctuary import var string pr fn seq par
+# Keywords: shell sanctuary import var string pr fn run
 #           env log exec cd case

@@ -134,17 +134,11 @@ fn draw_project(out: &mut String, name: &str, proj: &crate::config::types::Proje
     proj_vars.sort_unstable();
     let mut proj_fns: Vec<&String> = proj.functions.keys().collect();
     proj_fns.sort_unstable();
-    let mut proj_seqs: Vec<&String> = proj.seqs.keys().collect();
-    proj_seqs.sort_unstable();
-    let mut proj_pars: Vec<&String> = proj.pars.keys().collect();
-    proj_pars.sort_unstable();
+    let mut proj_runs: Vec<&String> = proj.runs.keys().collect();
+    proj_runs.sort_unstable();
 
-    let items: &[(&str, &Vec<&String>)] = &[
-        ("var", &proj_vars),
-        ("fn", &proj_fns),
-        ("seq", &proj_seqs),
-        ("par", &proj_pars),
-    ];
+    let items: &[(&str, &Vec<&String>)] =
+        &[("var", &proj_vars), ("fn", &proj_fns), ("run", &proj_runs)];
 
     for (i, (label, names)) in items.iter().enumerate() {
         let last_item = i == items.len() - 1;
@@ -195,16 +189,14 @@ fn draw_item_line(out: &mut String, indent: &str, conn: &str, label: &str, names
 
 fn footer_bar(out: &mut String, cfg: &Config) {
     let total_fns: usize = cfg.projects.values().map(|p| p.functions.len()).sum();
-    let total_seqs: usize = cfg.projects.values().map(|p| p.seqs.len()).sum();
-    let total_pars: usize = cfg.projects.values().map(|p| p.pars.len()).sum();
+    let total_runs: usize = cfg.projects.values().map(|p| p.runs.len()).sum();
 
     out.push_str(&style!(
         GRAY,
-        "  ─ {} projects · {} fns · {} seqs · {} pars · {} global vars ─\n",
+        "  ─ {} projects · {} fns · {} runs · {} global vars ─\n",
         cfg.projects.len(),
         total_fns,
-        total_seqs,
-        total_pars,
+        total_runs,
         cfg.vars.len()
     ));
 }

@@ -100,24 +100,15 @@ fn validate_full(cfg: &Config) -> Result<(), ConfigError> {
     let mut errs = Vec::new();
 
     for (proj_name, project) in &cfg.projects {
-        for (seq_name, fns) in &project.seqs {
-            for fn_name in fns {
-                if !project.functions.contains_key(fn_name) {
-                    errs.push(format!(
-                        "project {:?}: seq {:?} references unknown function {:?}",
-                        proj_name, seq_name, fn_name
-                    ));
-                }
-            }
-        }
-
-        for (par_name, fns) in &project.pars {
-            for fn_name in fns {
-                if !project.functions.contains_key(fn_name) {
-                    errs.push(format!(
-                        "project {:?}: par {:?} references unknown function {:?}",
-                        proj_name, par_name, fn_name
-                    ));
+        for (run_name, chains) in &project.runs {
+            for chain in chains {
+                for fn_name in chain {
+                    if !project.functions.contains_key(fn_name) {
+                        errs.push(format!(
+                            "project {:?}: run {:?} references unknown function {:?}",
+                            proj_name, run_name, fn_name
+                        ));
+                    }
                 }
             }
         }

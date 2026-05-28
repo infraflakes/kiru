@@ -1,9 +1,0 @@
-  seq build {
-    init;
-    test;
-    build;
-  }
-  seq test {
-    fmt;
-    test;
-  }

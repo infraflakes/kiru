@@ -31,7 +31,7 @@ impl Parser {
 
         while self.current_token().ty != TokenType::RBrace {
             match &self.current_token().ty {
-                TokenType::Var | TokenType::Fn | TokenType::Seq | TokenType::Par => {
+                TokenType::Var | TokenType::Fn | TokenType::Run => {
                     body.push(self.parse_project_body_stmt()?);
                 }
                 _ => {
@@ -49,7 +49,7 @@ impl Parser {
                         _ => {
                             return Err(ParseError::new(
                                 self.eof_aware_span(),
-                                "expected field name or var/fn/seq/par".to_string(),
+                                "expected field name or var/fn/run".to_string(),
                             ));
                         }
                     };

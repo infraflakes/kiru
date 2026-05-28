@@ -176,8 +176,8 @@ pr test {\n\
     dir = `test`;\n\
     var string app = `todo`;\n\
     fn build { log `hi`; }\n\
-    seq release { build; }\n\
-    par ci { build; }\n\
+    run release { build; }\n\
+    run ci { build; }\n\
 }\n\
 ",
         );
@@ -185,10 +185,10 @@ pr test {\n\
         let proj = &cfg.projects["test"];
         assert_eq!(proj.vars.get("app").unwrap(), "todo");
         assert!(proj.functions.contains_key("build"));
-        assert!(proj.seqs.contains_key("release"));
-        assert!(proj.pars.contains_key("ci"));
-        assert_eq!(proj.seqs["release"], vec!["build"]);
-        assert_eq!(proj.pars["ci"], vec!["build"]);
+        assert!(proj.runs.contains_key("release"));
+        assert!(proj.runs.contains_key("ci"));
+        assert_eq!(proj.runs["release"], vec![vec!["build"]]);
+        assert_eq!(proj.runs["ci"], vec![vec!["build"]]);
     }
 
     #[test]
@@ -531,7 +531,7 @@ pr test {\n\
     }
 
     #[test]
-    fn test_duplicate_seq_in_project() {
+    fn test_duplicate_run_in_project() {
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
@@ -543,13 +543,17 @@ pr test {\n\
     url = `u`;\n\
     dir = `d`;\n\
     fn check { log `x`; }\n\
-    seq dup { check; }\n\
-    seq dup { check; }\n\
+    run dup { check; }\n\
+    run dup { check; }\n\
 }\
 ",
         );
         let err = load(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(err.to_string().contains("duplicate seq"), "got: {}", err);
+        assert!(
+            err.to_string().contains("duplicate run block"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]
@@ -565,13 +569,17 @@ pr test {\n\
     url = `u`;\n\
     dir = `d`;\n\
     fn check { log `x`; }\n\
-    par dup { check; }\n\
-    par dup { check; }\n\
+    run dup { check; }\n\
+    run dup { check; }\n\
 }\
 ",
         );
         let err = load(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(err.to_string().contains("duplicate par"), "got: {}", err);
+        assert!(
+            err.to_string().contains("duplicate run block"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]
@@ -617,7 +625,7 @@ pr test {\n\
     }
 
     #[test]
-    fn test_seq_par_reference_validation() {
+    fn test_run_reference_validation() {
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
@@ -629,8 +637,7 @@ pr test {\n\
     url = `u`;\n\
     dir = `d`;\n\
     fn real { log `hi`; }\n\
-    seq s { unknown; }\n\
-    par p { fake; }\n\
+    run s { unknown; }\n\
 }\
 ",
         );
@@ -640,7 +647,7 @@ pr test {\n\
     }
 
     #[test]
-    fn test_valid_seq_par_references() {
+    fn test_valid_run_references() {
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
@@ -652,14 +659,12 @@ pr test {\n\
     url = `u`;\n\
     dir = `d`;\n\
     fn real { log `hi`; }\n\
-    seq s { real; }\n\
-    par p { real; }\n\
+    run s { real; }\n\
 }\
 ",
         );
         let cfg = load(&dir.path().join("main.kiru")).unwrap();
-        assert!(cfg.projects["test"].seqs.contains_key("s"));
-        assert!(cfg.projects["test"].pars.contains_key("p"));
+        assert!(cfg.projects["test"].runs.contains_key("s"));
     }
 
     #[test]
@@ -700,8 +705,8 @@ pr test {\n\
             "\
 var string usevar = `from-use`;\n\
 fn usefn { log `from-use`; }\n\
-seq useseq { usefn; }\n\
-par usepar { usefn; }\
+run useseq { usefn; }\n\
+run usepar { usefn; }\
 ",
         );
         write_config(
@@ -720,8 +725,8 @@ pr test {{ url = `http://example.com`; dir = `test`; use = `use.kiru`; }}\
         let proj = &cfg.projects["test"];
         assert_eq!(proj.vars.get("usevar").unwrap(), "from-use");
         assert!(proj.functions.contains_key("usefn"));
-        assert!(proj.seqs.contains_key("useseq"));
-        assert!(proj.pars.contains_key("usepar"));
+        assert!(proj.runs.contains_key("useseq"));
+        assert!(proj.runs.contains_key("usepar"));
     }
 
     #[test]
