@@ -55,10 +55,10 @@ pub fn run() -> miette::Result<()> {
 
     match cli.command {
         Commands::Validate => validate::run(cli.config),
-        Commands::Sync => sync::run(cli.config, cli.plain),
-        Commands::Seq { name, project } => exec::run_seq(cli.config, name, project, cli.plain),
-        Commands::Par { name, project } => exec::run_par(cli.config, name, project, cli.plain),
-        Commands::Fn { name, project } => exec::run_fn(cli.config, name, project, cli.plain),
+        Commands::Sync => sync::run(cli.config),
+        Commands::Seq { name, project } => exec::run_seq(cli.config, name, project),
+        Commands::Par { name, project } => exec::run_par(cli.config, name, project),
+        Commands::Fn { name, project } => exec::run_fn(cli.config, name, project),
         Commands::Version => run_version(),
     }
 }

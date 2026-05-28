@@ -1,31 +1,8 @@
-use crate::config::{Config, Project};
+use crate::config::Project;
 use crate::runner::error::RuntimeError;
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
-
-pub fn sync_all(cfg: &Config, writer: &mut dyn Write) -> Result<(), RuntimeError> {
-    fs::create_dir_all(&cfg.sanctuary).map_err(|e| {
-        RuntimeError::Other(format!("cannot create sanctuary {}: {}", cfg.sanctuary, e))
-    })?;
-
-    for proj in cfg.projects.values() {
-        sync_project_inner(&cfg.sanctuary, proj, &mut |line: &str| {
-            let _ = writeln!(writer, "  {}", line);
-        })?;
-    }
-
-    let mut buf = Vec::new();
-    warn_unknown_repos_inner(&cfg.sanctuary, &cfg.projects, &mut |line: &str| {
-        buf.push(line.to_string());
-    })?;
-    for line in buf {
-        writeln!(writer, "{}", line).map_err(RuntimeError::Io)?;
-    }
-
-    Ok(())
-}
 
 fn sync_project_inner(
     sanctuary: &str,

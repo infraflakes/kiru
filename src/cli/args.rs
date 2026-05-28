@@ -9,10 +9,6 @@ pub struct Cli {
     #[arg(short, long, global = true)]
     pub config: Option<PathBuf>,
 
-    /// Use plain text output instead of TUI
-    #[arg(short, long, global = true)]
-    pub plain: bool,
-
     #[command(subcommand)]
     pub command: Commands,
 }
