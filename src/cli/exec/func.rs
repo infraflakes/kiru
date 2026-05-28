@@ -21,7 +21,7 @@ pub fn run(config_arg: Option<PathBuf>, name: String, project: String) -> miette
 
     let callback: OutputCallback = Arc::new(|line| {
         let mut out = io::stdout().lock();
-        let _ = crate::tui::render::write_colored_line(&line, &mut out);
+        crate::tui::render::write_colored_line(&line, &mut out);
         let _ = writeln!(out);
     });
 

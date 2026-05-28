@@ -8,11 +8,14 @@ pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
     let config = load_config(config_arg)?;
 
     let project_names: Vec<String> = config.projects.keys().cloned().collect();
-    let task_names = project_names.clone();
+    let chain_pairs: Vec<(String, Vec<String>)> = project_names
+        .iter()
+        .map(|name| (name.clone(), vec![name.clone()]))
+        .collect();
     let sanctuary = config.sanctuary.clone();
     let projects = Arc::new(config.projects);
 
-    if let Err(e) = tui::run_tui_with(task_names, move |tx| {
+    if let Err(e) = tui::run_tui_with(chain_pairs, move |tx| {
         let sanctuary = sanctuary.clone();
         let projects = Arc::clone(&projects);
         async move {

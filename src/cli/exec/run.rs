@@ -25,53 +25,37 @@ pub fn run(config_arg: Option<PathBuf>, name: String, project: String) -> miette
 
     let config = Arc::new(config);
 
-    // Pre-compute base index in flat task list for each chain
-    let mut base_indices: Vec<usize> = Vec::with_capacity(chains.len());
-    let mut offset = 0;
-    for chain in &chains {
-        base_indices.push(offset);
-        offset += chain.len();
-    }
+    // Build chain pairs: (label, task_names) from config chains
+    let chain_pairs: Vec<(String, Vec<String>)> = chains
+        .iter()
+        .map(|chain| {
+            let label = chain.join(" → ");
+            let task_names: Vec<String> = chain
+                .iter()
+                .map(|fn_name| format!("{}({})", fn_name, project))
+                .collect();
+            (label, task_names)
+        })
+        .collect();
 
-    // Build task names
-    let mut task_names: Vec<String> = Vec::new();
-    for (ci, chain) in chains.iter().enumerate() {
-        for fn_name in chain {
-            let label = if chains.len() > 1 {
-                format!("{}({}) chain{}", fn_name, project, ci + 1)
-            } else {
-                format!("{}({})", fn_name, project)
-            };
-            task_names.push(label);
-        }
-    }
-
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    let had_error = Arc::new(AtomicBool::new(false));
-
-    let chains_arc = Arc::new(chains);
-    let base_indices_arc = Arc::new(base_indices);
-
-    tui::run_tui_with(task_names, move |tx| {
+    tui::run_tui_with(chain_pairs, move |tx| {
         let project = project.clone();
-        let had_error = Arc::clone(&had_error);
-        let chains = Arc::clone(&chains_arc);
-        let base_indices = Arc::clone(&base_indices_arc);
+        let config = Arc::clone(&config);
         async move {
             let mut chain_handles = Vec::new();
 
-            for (ci, chain) in chains.iter().enumerate() {
+            let mut base_index = 0;
+            for chain in &chains {
                 let tx = tx.clone();
                 let config = Arc::clone(&config);
                 let chain = chain.clone();
                 let project = project.clone();
-                let had_error = Arc::clone(&had_error);
-                let base_index = base_indices[ci];
+                let start_index = base_index;
+                let chain_len = chain.len();
 
                 let handle = tokio::spawn(async move {
                     for (fi, fn_name) in chain.iter().enumerate() {
-                        let task_idx = base_index + fi;
+                        let task_idx = start_index + fi;
 
                         tui::send_event(&tx, TuiEvent::UpdateStatus(task_idx, TaskStatus::Running));
 
@@ -90,7 +74,6 @@ pub fn run(config_arg: Option<PathBuf>, name: String, project: String) -> miette
                                 );
                             }
                             Err(e) => {
-                                had_error.store(true, Ordering::Relaxed);
                                 tui::send_event(
                                     &tx,
                                     TuiEvent::AppendOutput(task_idx, format!("Error: {}", e)),
@@ -100,7 +83,7 @@ pub fn run(config_arg: Option<PathBuf>, name: String, project: String) -> miette
                                     TuiEvent::UpdateStatus(task_idx, TaskStatus::Error),
                                 );
                                 for remaining in fi + 1..chain.len() {
-                                    let skip_idx = base_index + remaining;
+                                    let skip_idx = start_index + remaining;
                                     tui::send_event(
                                         &tx,
                                         TuiEvent::UpdateStatus(skip_idx, TaskStatus::Skipped),
@@ -113,16 +96,11 @@ pub fn run(config_arg: Option<PathBuf>, name: String, project: String) -> miette
                 });
 
                 chain_handles.push(handle);
+                base_index += chain_len;
             }
 
             for handle in chain_handles {
-                if handle.await.is_err() {
-                    had_error.store(true, Ordering::Relaxed);
-                }
-            }
-
-            if had_error.load(Ordering::Relaxed) {
-                return Err(miette::miette!("one or more tasks failed"));
+                let _ = handle.await;
             }
 
             Ok(())

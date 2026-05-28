@@ -84,11 +84,6 @@ impl Runner {
             .get(fn_name)
             .ok_or_else(|| RuntimeError::Lookup(format!("unknown function: {}", fn_name)))?;
 
-        let line = format!("{}({})", fn_name, project_name);
-        self.output
-            .writeln_colored(&line, colors::EXEC_ANSI)
-            .map_err(RuntimeError::Io)?;
-
         let mut ctx = ExecContext::new(&self.cfg, project, &mut self.output);
         ctx.exec_fn_body(fn_body)
     }

@@ -138,25 +138,45 @@ pub(super) struct Task {
 }
 
 #[derive(Debug, Clone)]
+pub(super) struct Chain {
+    pub label: String,
+    pub task_start: usize,
+    pub task_count: usize,
+}
+
+#[derive(Debug, Clone)]
 pub struct Model {
     pub tasks: Vec<Task>,
+    pub chains: Vec<Chain>,
 }
 
 impl Model {
     pub fn new() -> Self {
-        Self { tasks: Vec::new() }
+        Self {
+            tasks: Vec::new(),
+            chains: Vec::new(),
+        }
     }
 
     fn lock(arc: &Arc<Mutex<Model>>) -> std::sync::MutexGuard<'_, Model> {
         arc.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    pub fn add_task(&mut self, name: String) {
-        self.tasks.push(Task {
-            name,
-            status: TaskStatus::Pending,
-            output: Vec::new(),
-            finalized: false,
+    pub fn add_chain(&mut self, label: String, task_names: Vec<String>) {
+        let task_start = self.tasks.len();
+        let task_count = task_names.len();
+        for name in task_names {
+            self.tasks.push(Task {
+                name,
+                status: TaskStatus::Pending,
+                output: Vec::new(),
+                finalized: false,
+            });
+        }
+        self.chains.push(Chain {
+            label,
+            task_start,
+            task_count,
         });
     }
 
@@ -183,6 +203,31 @@ impl Model {
                 TaskStatus::Success | TaskStatus::Error | TaskStatus::Skipped
             )
         })
+    }
+
+    pub fn chain_status(&self, chain: &Chain) -> TaskStatus {
+        let mut has_error = false;
+        let mut has_running = false;
+        let mut has_pending = false;
+        for i in chain.task_start..chain.task_start + chain.task_count {
+            if let Some(task) = self.tasks.get(i) {
+                match task.status {
+                    TaskStatus::Error => has_error = true,
+                    TaskStatus::Running => has_running = true,
+                    TaskStatus::Pending => has_pending = true,
+                    _ => {}
+                }
+            }
+        }
+        if has_error {
+            TaskStatus::Error
+        } else if has_running {
+            TaskStatus::Running
+        } else if has_pending {
+            TaskStatus::Pending
+        } else {
+            TaskStatus::Success
+        }
     }
 }
 
@@ -217,13 +262,14 @@ pub enum TuiEvent {
 pub async fn run_tui(
     model: Arc<Mutex<Model>>,
     mut rx: mpsc::UnboundedReceiver<TuiEvent>,
+    height: u16,
 ) -> Result<(), io::Error> {
     let raw = RawMode::try_enable();
 
     let mut terminal = Terminal::with_options(
         SafeBackend::new(CrosstermBackend::new(io::stdout())),
         TerminalOptions {
-            viewport: Viewport::Inline(1),
+            viewport: Viewport::Inline(height.max(1)),
         },
     )?;
 
@@ -275,13 +321,30 @@ pub async fn run_tui(
     drop(terminal);
     drop(raw);
 
+    // scroll past the TUI viewport so the ANSI dump doesn't overlay
+    // leftover TUI content on the terminal (which caused visual corruption
+    // like " ✓ fmt(kiru)u)  ✗ failed")
+    {
+        let mut out = io::stdout().lock();
+        for _ in 0..height {
+            out.write_all(b"\n")?;
+        }
+        out.flush()?;
+    }
+
     let guard = Model::lock(&model);
+    let dump = render::dump_final(&guard);
+    drop(guard);
     let mut out = io::stdout().lock();
-    render::dump_final(&guard, &mut out)?;
+    out.write_all(dump.as_bytes())?;
+    out.flush()?;
     Ok(())
 }
 
-pub(crate) fn run_tui_with<F, Fut>(tasks: Vec<String>, worker: F) -> miette::Result<()>
+pub(crate) fn run_tui_with<F, Fut>(
+    chains: Vec<(String, Vec<String>)>,
+    worker: F,
+) -> miette::Result<()>
 where
     F: FnOnce(mpsc::UnboundedSender<TuiEvent>) -> Fut + Send + 'static,
     Fut: Future<Output = miette::Result<()>> + Send + 'static,
@@ -289,12 +352,17 @@ where
     let rt = tokio::runtime::Runtime::new().map_err(|e| miette::miette!("{}", e))?;
     rt.block_on(async {
         let mut model = Model::new();
-        for t in tasks {
-            model.add_task(t);
+        for (label, task_names) in chains {
+            model.add_chain(label, task_names);
         }
+        let height: u16 = model
+            .chains
+            .iter()
+            .map(|c| 1u16 + c.task_count as u16)
+            .sum();
         let model = Arc::new(Mutex::new(model));
         let (tx, rx) = mpsc::unbounded_channel();
-        let tui = tokio::spawn(run_tui(model, rx));
+        let tui = tokio::spawn(run_tui(model, rx, height));
         let worker = tokio::spawn(worker(tx));
 
         tui.await

@@ -7,4 +7,5 @@
   }
   run test {
     fmt => test;
+    fail;
   }

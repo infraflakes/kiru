@@ -22,6 +22,12 @@ import ./run.kiru;
     exec `nix develop -c cargo clippy`;
     exec `nix develop -c cargo fmt --check`;
   }
+  fn fail {
+    log `Failing the task!`;
+    env [CGO_ENABLED = `0`, GOPATH = `$HOME/.local/share/go`] {
+      exec `nix develop -c go build ./...`;
+    };
+  }
 
   fn build {
       var shell docker_bin = `command -v docker 2> /dev/null || command -v podman 2> /dev/null || true`;
