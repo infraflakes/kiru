@@ -31,8 +31,8 @@ pub fn load(entry_path: &Path) -> Result<Config, ConfigError> {
     Ok(config)
 }
 
-pub fn resolve_uses(cfg: &mut Config) -> Result<(), ConfigError> {
-    validation::resolve_use(cfg, parse_recursive)
+pub fn resolve_includes(cfg: &mut Config) -> Result<(), ConfigError> {
+    validation::resolve_include(cfg, parse_recursive)
 }
 
 fn parse_recursive(
@@ -150,7 +150,7 @@ mod tests {
 
     fn load_full(entry_path: &Path) -> Result<Config, ConfigError> {
         let mut cfg = load(entry_path)?;
-        resolve_uses(&mut cfg)?;
+        resolve_includes(&mut cfg)?;
         Ok(cfg)
     }
 
@@ -714,7 +714,7 @@ pr test {\n\
     }
 
     #[test]
-    fn test_use_file_resolution() {
+    fn test_include_file_resolution() {
         let dir = tempfile::TempDir::new().unwrap();
         let proj_dir = dir.path().join("test");
         std::fs::create_dir_all(&proj_dir).unwrap();
@@ -735,7 +735,7 @@ run usepar { usefn; }\
                 "\
 shell = `bash`;\n\
 sanctuary = `{}`;\n\
-pr test {{ url = `http://example.com`; dir = `test`; use = `use.kiru`; }}\
+pr test {{ url = `http://example.com`; dir = `test`; include = `use.kiru`; }}\
 ",
                 dir.path().display()
             ),
@@ -749,7 +749,7 @@ pr test {{ url = `http://example.com`; dir = `test`; use = `use.kiru`; }}\
     }
 
     #[test]
-    fn test_use_file_not_found() {
+    fn test_include_file_not_found() {
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
@@ -758,7 +758,7 @@ pr test {{ url = `http://example.com`; dir = `test`; use = `use.kiru`; }}\
                 "\
 shell = `bash`;\n\
 sanctuary = `{}`;\n\
-pr test {{ url = `http://example.com`; dir = `test`; use = `nonexistent.kiru`; }}\
+pr test {{ url = `http://example.com`; dir = `test`; include = `nonexistent.kiru`; }}\
 ",
                 dir.path().display()
             ),
@@ -766,14 +766,14 @@ pr test {{ url = `http://example.com`; dir = `test`; use = `nonexistent.kiru`; }
         let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
         let err_str = err.to_string();
         assert!(
-            err_str.contains("use file not found") || err_str.contains("not found"),
+            err_str.contains("include file not found") || err_str.contains("not found"),
             "got: {}",
             err_str
         );
     }
 
     #[test]
-    fn test_use_file_sync_ignore_skips() {
+    fn test_include_file_sync_ignore_skips() {
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
@@ -782,7 +782,7 @@ pr test {{ url = `http://example.com`; dir = `test`; use = `nonexistent.kiru`; }
                 "\
 shell = `bash`;\n\
 sanctuary = `{}`;\n\
-pr test {{ url = `http://example.com`; dir = `test`; sync = `ignore`; use = `use.kiru`; }}\
+pr test {{ url = `http://example.com`; dir = `test`; sync = `ignore`; include = `use.kiru`; }}\
 ",
                 dir.path().display()
             ),

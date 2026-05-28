@@ -83,7 +83,7 @@ import ./other_config.kiru;
 #   url    (required)  Git clone URL
 #   dir    (required)  Directory name relative to sanctuary (must be unique)
 #   sync   (optional)  `clone` (default) or `ignore`
-#   use    (optional)  Path to a .kiru file inside the project repo
+#   include (optional)  Path to a .kiru file inside the project repo
 #   branch (optional)  Branch to clone
 #
 # Inside a project block you can also declare:
@@ -154,11 +154,11 @@ pr calendar {
     url = `git@github.com:yourname/calendar.git`;
     dir = `calendar`;
     sync = `clone`;
-    use = `.kiru/main.kiru`;
+    include = `.kiru/main.kiru`;
     branch = `rust`;
 
-    # Use files can declare var/fn/run that get merged into this project
-    # Use file path is relative to the project directory
+    # Include files can declare var/fn/run that get merged into this project
+    # Include file path is relative to the project directory
 }
 
 # 6. FUNCTION PRIMITIVES
@@ -203,11 +203,11 @@ pr calendar {
 # After all tasks complete (or on abort), a colored ANSI dump is printed
 # showing full output per task with chain section separators.
 
-# 8. USE FILES
+# 8. INCLUDE FILES
 #
-# If a project declares `use`, that file is parsed after `kiru sync`.
-# Use files use the same grammar as any .kiru file.
-# A `pr { ... }` block in the use file has its body (var, fn, run)
+# If a project declares `include`, that file is parsed after `kiru sync`.
+# Include files use the same grammar as any .kiru file.
+# A `pr { ... }` block in the include file has its body (var, fn, run)
 # merged into the project's scope — allowing shared declarations across
 # multiple projects.
 

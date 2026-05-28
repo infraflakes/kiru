@@ -53,7 +53,7 @@ pub(crate) fn validate_base(config: &Config) -> Result<(), ConfigError> {
     Ok(())
 }
 
-pub(crate) fn resolve_use(
+pub(crate) fn resolve_include(
     cfg: &mut Config,
     parse_recursive_fn: impl Fn(
         &Path,
@@ -62,7 +62,7 @@ pub(crate) fn resolve_use(
     ) -> Result<Vec<crate::dsl::ast::Program>, ConfigError>,
 ) -> Result<(), ConfigError> {
     for proj in cfg.projects.values_mut() {
-        let Some(use_file) = &proj.use_file else {
+        let Some(include_file) = &proj.include_file else {
             continue;
         };
 
@@ -70,11 +70,13 @@ pub(crate) fn resolve_use(
             continue;
         }
 
-        let use_path = PathBuf::from(&cfg.sanctuary).join(&proj.dir).join(use_file);
+        let use_path = PathBuf::from(&cfg.sanctuary)
+            .join(&proj.dir)
+            .join(include_file);
 
         if !use_path.exists() {
             return Err(ConfigError::Validation(format!(
-                "project {:?}: use file not found: {} (run 'kiru sync' first)",
+                "project {:?}: include file not found: {} (run 'kiru sync' first)",
                 proj.name,
                 use_path.display()
             )));

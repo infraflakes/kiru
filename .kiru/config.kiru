@@ -6,5 +6,5 @@ pr kiru {
   url = `https://github.com/infraflakes/kiru.git`;
   dir = `kiru`;
   sync = `clone`;
-  use = `.kiru/main.kiru`;
+  include = `.kiru/main.kiru`;
 }

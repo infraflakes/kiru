@@ -126,8 +126,8 @@ fn draw_project(out: &mut String, name: &str, proj: &crate::config::types::Proje
 
     project_field(out, indent, "sync", &proj.sync);
 
-    if let Some(ref u) = proj.use_file {
-        project_field(out, indent, "use", u);
+    if let Some(ref u) = proj.include_file {
+        project_field(out, indent, "include", u);
     }
 
     let mut proj_vars: Vec<&String> = proj.vars.keys().collect();

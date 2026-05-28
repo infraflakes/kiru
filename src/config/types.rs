@@ -7,7 +7,7 @@ pub struct Project {
     pub url: String,
     pub dir: String,
     pub sync: String,
-    pub use_file: Option<String>,
+    pub include_file: Option<String>,
     pub branch: String,
     pub vars: HashMap<String, String>,
     pub functions: HashMap<String, Vec<FnStmt>>,

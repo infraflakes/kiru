@@ -126,7 +126,7 @@ fn collect_projects(
                         url: String::new(),
                         dir: String::new(),
                         sync: "clone".to_string(),
-                        use_file: None,
+                        include_file: None,
                         branch: String::new(),
                         vars: HashMap::new(),
                         functions: HashMap::new(),
@@ -142,9 +142,9 @@ fn collect_projects(
                             "url" => project.url = value,
                             "dir" => project.dir = value,
                             "sync" => project.sync = value,
-                            "use" => {
+                            "include" => {
                                 if !value.is_empty() {
-                                    project.use_file = Some(value);
+                                    project.include_file = Some(value);
                                 }
                             }
                             "branch" => project.branch = value,

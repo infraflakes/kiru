@@ -150,7 +150,7 @@ fn test_var_invalid_type() {
 
 #[test]
 fn test_project_decl_with_fields() {
-    let input = "\npr todo {\n    url = `git@github.com:user/repo.git`;\n    dir = `todo`;\n    sync = `clone`;\n    use = `./main.kiru`;\n    branch = `main`;\n}";
+    let input = "\npr todo {\n    url = `git@github.com:user/repo.git`;\n    dir = `todo`;\n    sync = `clone`;\n    include = `./main.kiru`;\n    branch = `main`;\n}";
     let prog = parse_program(input).unwrap();
     assert_eq!(count_stmt_types(&prog), vec!["pr"]);
     match &prog.stmts[0] {
@@ -161,7 +161,7 @@ fn test_project_decl_with_fields() {
             assert_eq!(fields.len(), 5);
             assert!(body.is_empty());
             let keys: Vec<&str> = fields.iter().map(|f| f.key.as_str()).collect();
-            assert_eq!(keys, vec!["url", "dir", "sync", "use", "branch"]);
+            assert_eq!(keys, vec!["url", "dir", "sync", "include", "branch"]);
         }
         _ => panic!("expected ProjectDecl"),
     }

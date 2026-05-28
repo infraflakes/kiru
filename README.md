@@ -64,7 +64,7 @@ pr todo {
     dir  = `todo`;
     sync = `clone`;
     branch = `main`;
-    use = `.kiru/main.kiru`;
+    include = `.kiru/main.kiru`;
 
     var shell version = `git describe --tags --always --dirty 2>/dev/null || echo dev`;
 
@@ -130,7 +130,7 @@ pr todo {
 | `url` | yes | git clone url |
 | `dir` | yes | directory name relative to sanctuary, must be unique |
 | `sync` | no | `clone` (default) — skip if exists. `ignore` — skip entirely |
-| `use` | no | path to a `.kiru` file inside the project, relative to project dir |
+| `include` | no | path to a `.kiru` file inside the project, relative to project dir |
 | `branch` | no | branch to clone. defaults to repo default branch |
 
 ### fn primitives
@@ -209,7 +209,7 @@ During `kiru run`, an interactive TUI shows live progress:
 
 ## Per-project config
 
-If a project declares `use`, that file is parsed after `kiru sync` clones the repo. It can define fns scoped to that project. It cannot declare `sanctuary`, `pr`, or `shell`.
+If a project declares `include`, that file is parsed after `kiru sync` clones the repo. It can define fns scoped to that project. It cannot declare `sanctuary`, `pr`, or `shell`.
 
 ```
 # calendar/.kiru/main.kiru

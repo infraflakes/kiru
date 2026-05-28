@@ -22,7 +22,7 @@ fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Config> {
 
 fn load_config_and_resolve(config_arg: Option<PathBuf>) -> miette::Result<Config> {
     let mut config = load_config(config_arg)?;
-    match crate::config::resolve_uses(&mut config) {
+    match crate::config::resolve_includes(&mut config) {
         Ok(()) => {}
         Err(crate::config::ConfigError::ParseReports(reports)) => {
             return Err(print_parse_errors(reports));

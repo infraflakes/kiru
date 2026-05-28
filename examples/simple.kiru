@@ -15,7 +15,7 @@ pr myapp {
     dir  = `myapp`;
     sync = `clone`;
     branch = `main`;
-    use = `.kiru/main.kiru`;
+    include = `.kiru/main.kiru`;
 
     # project-scoped variable
     var string port = `3000`;

@@ -314,7 +314,7 @@ mod tests {
             url: "http://example.com".to_string(),
             dir: "test".to_string(),
             sync: "clone".to_string(),
-            use_file: None,
+            include_file: None,
             branch: "main".to_string(),
             vars,
             functions: HashMap::new(),
