@@ -1,8 +1,6 @@
 import ./seq.kiru;
 import ./par.kiru;
 
-pr kiru {
-
   fn init {
     exec `nix develop -c cargo check`;
   }
@@ -36,4 +34,3 @@ pr kiru {
                   exec `${docker_bin} build --output type=local,dest=bin .`; };
       };
   }
-}

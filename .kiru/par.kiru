@@ -1,7 +1,5 @@
-pr kiru {
   par all {
     build;
     fmt;
     test;
   }
-}

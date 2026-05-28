@@ -3,9 +3,10 @@ use crate::config::{Config, Project};
 use crate::dsl::ast::{CasePattern, Expr, FnStmt};
 use crate::runner::Output;
 use crate::runner::error::RuntimeError;
+use crate::shell;
 use std::collections::HashMap;
 use std::io::BufRead;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
@@ -209,7 +210,30 @@ impl<'a> ExecContext<'a> {
         let val = self.resolve_expr(value)?;
 
         let resolved = if var_type == &crate::dsl::ast::VarType::Shell {
-            run_shell(&self.cfg.shell, &val, &self.work_dir, self.build_env())?
+            let env_map: HashMap<String, String> = self.build_env().into_iter().collect();
+            let out = shell::run_captured(
+                &self.cfg.shell,
+                &val,
+                Some(&self.work_dir),
+                Some(&env_map),
+                None,
+            )
+            .map_err(|e| match e {
+                shell::Error::Spawn(io_err) => RuntimeError::exec_io_error(&val, io_err),
+                shell::Error::Exit {
+                    stderr, exit_code, ..
+                } => RuntimeError::Exec {
+                    cmd: val.clone(),
+                    exit_code,
+                    detail: stderr,
+                },
+                shell::Error::Timeout { partial_stderr, .. } => RuntimeError::Exec {
+                    cmd: val.clone(),
+                    exit_code: None,
+                    detail: format!("timed out: {}", partial_stderr),
+                },
+            })?;
+            out.stdout
         } else {
             val
         };
@@ -249,29 +273,6 @@ impl<'a> ExecContext<'a> {
     }
 }
 
-fn run_shell(
-    shell: &str,
-    command: &str,
-    dir: &Path,
-    env: impl IntoIterator<Item = (String, String)>,
-) -> Result<String, RuntimeError> {
-    let output = Command::new(shell)
-        .arg("-c")
-        .arg(command)
-        .current_dir(dir)
-        .envs(env)
-        .output()
-        .map_err(|e| RuntimeError::exec_io_error(command, e))?;
-
-    if !output.status.success() {
-        return Err(RuntimeError::exec_exit_code(command, output.status.code()));
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .trim_end()
-        .to_string())
-}
-
 fn spawn_stream_reader<R: std::io::Read + Send + 'static>(
     stream: Option<R>,
     indent: String,
@@ -282,7 +283,7 @@ fn spawn_stream_reader<R: std::io::Read + Send + 'static>(
             let reader = std::io::BufReader::new(s);
             for line in reader.lines() {
                 let line = line.map_err(RuntimeError::Io)?;
-                cb(format!("{}{}", indent, line));
+                cb([indent.as_str(), line.as_str()].concat());
             }
             Ok(())
         })
@@ -293,7 +294,7 @@ fn write_output_lines(output: &mut Output, data: &[u8], indent: &str) -> Result<
     for line in std::io::BufReader::new(data).lines() {
         let line = line.map_err(RuntimeError::Io)?;
         output
-            .writeln(&format!("{}{}", indent, line))
+            .writeln(&[indent, &line].concat())
             .map_err(RuntimeError::Io)?;
     }
     Ok(())

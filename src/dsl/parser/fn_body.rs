@@ -201,14 +201,12 @@ impl Parser {
             }
             TokenType::Backtick(_) => {
                 let token = self.current_token().clone();
+                let TokenType::Backtick(content) = &token.ty else {
+                    unreachable!()
+                };
                 self.advance();
-                match &token.ty {
-                    TokenType::Backtick(content) => {
-                        let parts = parse_template_parts(content, token.offset)?;
-                        Ok(CasePattern::Literal { parts })
-                    }
-                    _ => unreachable!(),
-                }
+                let parts = parse_template_parts(content, token.offset)?;
+                Ok(CasePattern::Literal { parts })
             }
             _ => {
                 let tok = format_token(self.current_token());

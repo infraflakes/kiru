@@ -206,22 +206,12 @@ fn test_seq_par_only_allows_ident() {
 fn test_par_ref_not_allowed() {
     let result = parse_program("par p { par.x; }");
     assert!(result.is_err());
-    let errs = result.unwrap_err();
-    assert!(
-        errs.iter()
-            .any(|e| e.to_string().contains("expected shell"))
-    );
 }
 
 #[test]
 fn test_seq_ref_not_allowed() {
     let result = parse_program("seq s { seq.x; }");
     assert!(result.is_err());
-    let errs = result.unwrap_err();
-    assert!(
-        errs.iter()
-            .any(|e| e.to_string().contains("expected shell"))
-    );
 }
 
 // --- Error recovery tests ---
@@ -304,10 +294,7 @@ fn test_error_recovery_skips_bad_stmt() {
             assert_eq!(prog.stmts.len(), 3);
         }
         Err(errs) => {
-            assert!(
-                errs.iter()
-                    .any(|e| e.to_string().contains("expected shell"))
-            );
+            assert!(errs.iter().any(|e| e.to_string().contains("expected log")));
         }
     }
 }

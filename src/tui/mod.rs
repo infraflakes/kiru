@@ -146,6 +146,10 @@ impl Model {
         Self { tasks: Vec::new() }
     }
 
+    fn lock(arc: &Arc<Mutex<Model>>) -> std::sync::MutexGuard<'_, Model> {
+        arc.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     pub fn add_task(&mut self, name: String) {
         self.tasks.push(Task {
             name,
@@ -222,25 +226,19 @@ pub async fn run_tui(
         loop {
             match rx.try_recv() {
                 Ok(TuiEvent::UpdateStatus(idx, status)) => {
-                    model
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .update_task_status(idx, status);
+                    Model::lock(&model).update_task_status(idx, status);
                 }
                 Ok(TuiEvent::AppendOutput(idx, line)) => {
-                    model
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .append_output(idx, line);
+                    Model::lock(&model).append_output(idx, line);
                 }
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => break,
             }
         }
 
-        if model.lock().unwrap_or_else(|e| e.into_inner()).all_done() {
+        if Model::lock(&model).all_done() {
             terminal.draw(|f| {
-                let guard = model.lock().unwrap_or_else(|e| e.into_inner());
+                let guard = Model::lock(&model);
                 render::render(f, &guard, spinner_idx);
             })?;
             break;
@@ -262,7 +260,7 @@ pub async fn run_tui(
 
         spinner_idx = (spinner_idx + 1) % SPINNER_FRAMES.len();
         terminal.draw(|f| {
-            let guard = model.lock().unwrap_or_else(|e| e.into_inner());
+            let guard = Model::lock(&model);
             render::render(f, &guard, spinner_idx);
         })?;
     }
@@ -270,7 +268,7 @@ pub async fn run_tui(
     drop(terminal);
     drop(raw);
 
-    let guard = model.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = Model::lock(&model);
     let mut out = io::stdout().lock();
     render::dump_final(&guard, &mut out)?;
     Ok(())

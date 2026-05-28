@@ -1,4 +1,3 @@
-pr kiru {
   seq build {
     init;
     test;
@@ -8,4 +7,3 @@ pr kiru {
     fmt;
     test;
   }
-}

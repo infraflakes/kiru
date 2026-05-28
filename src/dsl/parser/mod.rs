@@ -53,7 +53,7 @@ impl Parser {
     }
 
     fn expect_with_context(&mut self, ty: TokenType, context: &str) -> Result<(), ParseError> {
-        if std::mem::discriminant(&self.current_token().ty) == std::mem::discriminant(&ty) {
+        if self.current_token().ty == ty {
             self.advance();
             Ok(())
         } else {
@@ -89,15 +89,11 @@ impl Parser {
     }
 
     fn parse_toplevel_stmt(&mut self) -> Result<Stmt, ParseError> {
-        if matches!(self.current_token().ty, TokenType::Illegal(_)) {
+        if let TokenType::Illegal(m) = &self.current_token().ty {
             let token = self.current_token().clone();
-            let msg = match &token.ty {
-                TokenType::Illegal(m) => m.clone(),
-                _ => unreachable!(),
-            };
             return Err(ParseError::new(
                 SourceSpan::new(token.offset.into(), token.len),
-                msg,
+                m.clone(),
             ));
         }
         match self.current_token().ty {
@@ -106,6 +102,9 @@ impl Parser {
             TokenType::Import => self.parse_import_decl(),
             TokenType::Var => self.parse_var_decl(),
             TokenType::Pr => self.parse_project_decl(),
+            TokenType::Fn => self.parse_fn_decl(),
+            TokenType::Seq => self.parse_seq_decl(),
+            TokenType::Par => self.parse_par_decl(),
             _ => {
                 let is_underscore = matches!(
                     &self.current_token().ty,
@@ -120,7 +119,7 @@ impl Parser {
                     Err(ParseError::new(
                         self.eof_aware_span(),
                         format!(
-                            "expected shell, sanctuary, import, var, or pr, found {}",
+                            "expected shell, sanctuary, import, var, pr, fn, seq, or par, found {}",
                             format_token(self.current_token())
                         ),
                     ))
@@ -130,15 +129,11 @@ impl Parser {
     }
 
     pub(crate) fn parse_project_body_stmt(&mut self) -> Result<Stmt, ParseError> {
-        if matches!(self.current_token().ty, TokenType::Illegal(_)) {
+        if let TokenType::Illegal(m) = &self.current_token().ty {
             let token = self.current_token().clone();
-            let msg = match &token.ty {
-                TokenType::Illegal(m) => m.clone(),
-                _ => unreachable!(),
-            };
             return Err(ParseError::new(
                 SourceSpan::new(token.offset.into(), token.len),
-                msg,
+                m.clone(),
             ));
         }
         match self.current_token().ty {
@@ -177,7 +172,7 @@ impl Parser {
                 Semicolon | RBrace => {
                     self.advance();
                 }
-                Shell | Sanctuary | Import | Var | Pr => break,
+                Shell | Sanctuary | Import | Var | Pr | Fn | Seq | Par => break,
                 _ => self.advance(),
             }
         }
@@ -188,22 +183,18 @@ impl Parser {
     }
 
     pub(crate) fn parse_fn_stmt(&mut self) -> Result<FnStmt, ParseError> {
-        match self.current_token().ty {
+        match &self.current_token().ty {
             TokenType::Log => self.parse_log_stmt(),
             TokenType::Exec => self.parse_exec_stmt(),
             TokenType::Cd => self.parse_cd_stmt(),
             TokenType::Var => self.parse_fn_var_decl(),
             TokenType::Env => self.parse_env_block(),
             TokenType::Case => self.parse_case_stmt(),
-            TokenType::Illegal(_) => {
+            TokenType::Illegal(msg) => {
                 let token = self.current_token().clone();
-                let msg = match &token.ty {
-                    TokenType::Illegal(m) => m.clone(),
-                    _ => unreachable!(),
-                };
                 Err(ParseError::new(
                     SourceSpan::new(token.offset.into(), token.len),
-                    msg,
+                    msg.clone(),
                 ))
             }
             TokenType::Semicolon => Err(ParseError::new(

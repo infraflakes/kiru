@@ -40,7 +40,7 @@ fn render_summary(f: &mut Frame, yo: u16, model: &Model, spinner_idx: usize, wid
         }
     }
 
-    let mut spans: Vec<Span> = Vec::new();
+    let mut spans: Vec<Span> = Vec::with_capacity(4);
 
     if ok_count > 0 {
         spans.push(Span::styled(

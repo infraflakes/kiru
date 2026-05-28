@@ -698,14 +698,10 @@ pr test {\n\
             &proj_dir,
             "use.kiru",
             "\
-shell = `bash`;\n\
-sanctuary = `/tmp`;\n\
-pr __config__ {\n\
-    var string usevar = `from-use`;\n\
-    fn usefn { log `from-use`; }\n\
-    seq useseq { usefn; }\n\
-    par usepar { usefn; }\n\
-}\
+var string usevar = `from-use`;\n\
+fn usefn { log `from-use`; }\n\
+seq useseq { usefn; }\n\
+par usepar { usefn; }\
 ",
         );
         write_config(

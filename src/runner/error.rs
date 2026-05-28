@@ -1,9 +1,9 @@
 use std::fmt;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub(crate) enum RuntimeError {
     Lookup(String),
-    Io(std::io::Error),
+    Io(#[from] std::io::Error),
     Exec {
         cmd: String,
         exit_code: Option<i32>,
@@ -55,15 +55,6 @@ impl fmt::Display for RuntimeError {
             },
             RuntimeError::Panic(s) => write!(f, "runtime panic: {}", s),
             RuntimeError::Other(s) => write!(f, "{}", s),
-        }
-    }
-}
-
-impl std::error::Error for RuntimeError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            RuntimeError::Io(e) => Some(e),
-            _ => None,
         }
     }
 }

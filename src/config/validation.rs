@@ -1,7 +1,7 @@
 use crate::config::error::ConfigError;
 use crate::config::merge::merge_project_body_stmt;
 use crate::config::types::Config;
-use crate::dsl::ast::{CasePattern, Expr, FnStmt, Stmt};
+use crate::dsl::ast::{CasePattern, Expr, FnStmt};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -84,14 +84,9 @@ pub(crate) fn resolve_use(
         let mut recursion_stack = HashSet::new();
         let programs = parse_recursive_fn(&use_path, &mut loaded_files, &mut recursion_stack)?;
 
-        // Extract pr body declarations from use file into project scope
         for program in &programs {
             for stmt in &program.stmts {
-                if let Stmt::ProjectDecl { body, .. } = stmt {
-                    for body_stmt in body.clone() {
-                        merge_project_body_stmt(proj, body_stmt, &cfg.shell)?;
-                    }
-                }
+                merge_project_body_stmt(proj, stmt.clone(), &cfg.shell)?;
             }
         }
     }
