@@ -6,7 +6,7 @@ pub(crate) mod validation;
 pub use error::ConfigError;
 pub use types::{Config, Project};
 
-use crate::dsl::ast::{Program, Stmt};
+use crate::dsl::ast::{Expr, Program, Stmt};
 use crate::dsl::lexer::Lexer;
 use crate::dsl::parser::Parser;
 use std::collections::HashSet;
@@ -101,15 +101,34 @@ fn parse_recursive(
     let base_dir = canon_path.parent().unwrap_or_else(|| Path::new("."));
 
     for stmt in &program.stmts {
-        if let Stmt::ImportDecl { paths, .. } = stmt {
-            for rel_path in paths {
-                let import_abs = base_dir.join(rel_path);
-                match parse_recursive(&import_abs, loaded_files, recursion_stack) {
-                    Ok(imported) => results.extend(imported),
-                    Err(e) => {
-                        recursion_stack.remove(&canon_path);
-                        return Err(e);
+        if let Stmt::ImportDecl { path } = stmt {
+            let rel_path = match path {
+                Expr::BacktickLit { parts } => {
+                    let mut s = String::new();
+                    for part in parts {
+                        if part.is_var {
+                            return Err(ConfigError::Validation(format!(
+                                "variable interpolation in import path is not supported: ${{{}}}",
+                                part.value
+                            )));
+                        }
+                        s.push_str(&part.value);
                     }
+                    s
+                }
+                Expr::VarRef { name } => {
+                    return Err(ConfigError::Validation(format!(
+                        "variable reference in import path is not supported: ${}",
+                        name
+                    )));
+                }
+            };
+            let import_abs = base_dir.join(&rel_path);
+            match parse_recursive(&import_abs, loaded_files, recursion_stack) {
+                Ok(imported) => results.extend(imported),
+                Err(e) => {
+                    recursion_stack.remove(&canon_path);
+                    return Err(e);
                 }
             }
         }
@@ -201,7 +220,7 @@ pr test {\n\
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
-import ./other.kiru;\n\
+import `./other.kiru`;\n\
 var string x = $extra;\
 ",
         );
@@ -215,12 +234,12 @@ var string x = $extra;\
         write_config(
             dir.path(),
             "a.kiru",
-            "shell = `bash`; import ./b.kiru; sanctuary = `/tmp`;",
+            "shell = `bash`; import `./b.kiru`; sanctuary = `/tmp`;",
         );
         write_config(
             dir.path(),
             "b.kiru",
-            "shell = `bash`; import ./a.kiru; sanctuary = `/tmp`;",
+            "shell = `bash`; import `./a.kiru`; sanctuary = `/tmp`;",
         );
         let err = load(&dir.path().join("a.kiru")).unwrap_err();
         let err_str = err.to_string();
@@ -592,7 +611,7 @@ pr test {\n\
             "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
-import ./a.kiru;\n\
+import `./a.kiru`;\n\
 var string b = $a;\
 ",
         );

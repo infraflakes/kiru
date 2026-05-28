@@ -87,19 +87,20 @@ fn test_backtick_literals() {
 #[test]
 fn test_path_literals() {
     let cases = vec![
-        ("./file.kiru", "./file.kiru"),
-        ("./path/to/file.kiru", "./path/to/file.kiru"),
-        ("../file.kiru", "../file.kiru"),
-        ("../../dir/file.kiru", "../../dir/file.kiru"),
-        ("./a", "./a"),
+        "./file.kiru",
+        "./path/to/file.kiru",
+        "../file.kiru",
+        "../../dir/file.kiru",
+        "./a",
     ];
-    for (input, expected) in cases {
+    for input in cases {
         let mut lexer = Lexer::new(input.to_string());
-        assert_eq!(
-            lexer.next_token().ty,
-            TokenType::PathLit(expected.to_string()),
-            "input: {:?}",
-            input
+        let tok = lexer.next_token();
+        assert!(
+            matches!(&tok.ty, TokenType::Illegal(msg) if msg == "unexpected character: ."),
+            "input: {:?}, expected illegal, got {:?}",
+            input,
+            tok.ty
         );
     }
 }
@@ -116,7 +117,10 @@ fn test_dot_and_dotdot_are_not_paths() {
     let mut lexer = Lexer::new(".../".to_string());
     let first = lexer.next_token();
     assert!(matches!(first.ty, TokenType::Illegal(_)));
-    assert_eq!(lexer.next_token().ty, TokenType::PathLit("../".to_string()));
+    let second = lexer.next_token();
+    assert!(matches!(second.ty, TokenType::Illegal(_)));
+    let third = lexer.next_token();
+    assert!(matches!(third.ty, TokenType::Illegal(_)));
 }
 
 #[test]
@@ -232,7 +236,7 @@ fn test_default_pattern() {
 #[test]
 fn test_full_snippet() {
     let input = "sanctuary = `$HOME/dev`;\n\
-                  import ./a.kiru;\n\
+                  import `./a.kiru`;\n\
                   var string port1 = `127.0.0.1:8080`;\n\
                   pr hello {\n\
                       url = `git@github.com:foo/bar.git`;\n\
@@ -254,12 +258,12 @@ fn test_full_snippet() {
 
 #[test]
 fn test_path_termination_at_semicolons() {
-    let input = "import ./foo.kiru; import ./bar.kiru;";
+    let input = "import `./foo.kiru`; import `./bar.kiru`;";
     let tokens = collect_tokens(input);
     assert_eq!(tokens[0], TokenType::Import);
-    assert_eq!(tokens[1], TokenType::PathLit("./foo.kiru".to_string()));
+    assert_eq!(tokens[1], TokenType::Backtick("./foo.kiru".to_string()));
     assert_eq!(tokens[2], TokenType::Semicolon);
     assert_eq!(tokens[3], TokenType::Import);
-    assert_eq!(tokens[4], TokenType::PathLit("./bar.kiru".to_string()));
+    assert_eq!(tokens[4], TokenType::Backtick("./bar.kiru".to_string()));
     assert_eq!(tokens[5], TokenType::Semicolon);
 }

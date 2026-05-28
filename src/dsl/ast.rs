@@ -48,7 +48,7 @@ pub enum Stmt {
         value: Expr,
     },
     ImportDecl {
-        paths: Vec<String>,
+        path: Expr,
     },
     VarDecl {
         var_type: VarType,

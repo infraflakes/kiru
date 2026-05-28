@@ -22,14 +22,6 @@ impl Lexer {
         }
     }
 
-    pub(super) fn peek(&self) -> Option<char> {
-        if self.read_pos < self.input.len() {
-            Some(self.input[self.read_pos])
-        } else {
-            None
-        }
-    }
-
     pub(super) fn skip_whitespace(&mut self) {
         while let Some(c) = self.ch {
             if !c.is_whitespace() {
@@ -109,37 +101,5 @@ impl Lexer {
                 self.byte_offset - start_byte_offset,
             )
         }
-    }
-
-    pub(super) fn read_path(&mut self) -> Token {
-        let start_line = self.line;
-        let start_col = self.col;
-        let start_pos = self.pos;
-        let start_byte_offset = self.byte_offset;
-
-        self.read_char(); // skip '.'
-        if self.ch == Some('.') {
-            self.read_char(); // skip second '.' for '..'
-        }
-        if self.ch == Some('/') {
-            self.read_char(); // skip '/'
-        }
-
-        while let Some(c) = self.ch {
-            if !c.is_whitespace() && c != ',' && c != ']' && c != ';' && c != '}' {
-                self.read_char();
-            } else {
-                break;
-            }
-        }
-
-        let path: String = self.input[start_pos..self.pos].iter().collect();
-        Token::new(
-            TokenType::PathLit(path),
-            start_line,
-            start_col,
-            start_byte_offset,
-            self.byte_offset - start_byte_offset,
-        )
     }
 }

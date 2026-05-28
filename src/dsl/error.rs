@@ -42,7 +42,6 @@ pub fn format_token_type(ty: &TokenType) -> &'static str {
         TokenType::Cd => "`cd`",
         TokenType::Ident(_) => "identifier",
         TokenType::Backtick(_) => "backtick string",
-        TokenType::PathLit(_) => "path literal",
         TokenType::Illegal(_) => "illegal token",
         TokenType::EOF => "end of file",
     }
@@ -52,7 +51,6 @@ pub fn format_token(token: &Token) -> String {
     match &token.ty {
         TokenType::Ident(s) => format!("`{}`", s),
         TokenType::Backtick(s) => format!("`{}`", s),
-        TokenType::PathLit(s) => format!("`{}`", s),
         TokenType::Illegal(s) => format!("`{}`", s),
         _ => format_token_type(&token.ty).to_string(),
     }

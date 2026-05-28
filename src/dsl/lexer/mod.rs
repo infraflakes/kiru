@@ -113,20 +113,14 @@ impl Lexer {
                 )
             }
             Some('.') => {
-                if self.peek() == Some('/')
-                    || (self.peek() == Some('.') && self.input.get(self.read_pos + 1) == Some(&'/'))
-                {
-                    self.read_path()
-                } else {
-                    self.read_char();
-                    Token::new(
-                        TokenType::Illegal("unexpected character: .".to_string()),
-                        start_line,
-                        start_col,
-                        start_byte_offset,
-                        self.byte_offset - start_byte_offset,
-                    )
-                }
+                self.read_char();
+                Token::new(
+                    TokenType::Illegal("unexpected character: .".to_string()),
+                    start_line,
+                    start_col,
+                    start_byte_offset,
+                    self.byte_offset - start_byte_offset,
+                )
             }
             Some(';') => {
                 self.read_char();

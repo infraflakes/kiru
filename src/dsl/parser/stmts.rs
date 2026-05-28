@@ -26,20 +26,10 @@ impl Parser {
     pub(crate) fn parse_import_decl(&mut self) -> Result<Stmt, ParseError> {
         self.advance();
 
-        let path = match &self.current_token().ty {
-            TokenType::PathLit(p) => p.clone(),
-            _ => {
-                return Err(ParseError::new(
-                    self.eof_aware_span(),
-                    "expected import path".to_string(),
-                ));
-            }
-        };
-        self.advance();
-
+        let path = self.parse_expr()?;
         self.expect_with_context(TokenType::Semicolon, "after import path")?;
 
-        Ok(Stmt::ImportDecl { paths: vec![path] })
+        Ok(Stmt::ImportDecl { path })
     }
 
     pub(crate) fn parse_var_decl(&mut self) -> Result<Stmt, ParseError> {

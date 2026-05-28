@@ -27,7 +27,6 @@ pub enum TokenType {
     Cd,
     Env,
     Case,
-    PathLit(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
