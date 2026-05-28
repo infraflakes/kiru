@@ -57,6 +57,7 @@ impl Runner {
         }
     }
 
+    #[allow(dead_code)]
     pub fn from_arc(cfg: Arc<Config>) -> Self {
         Runner {
             cfg,

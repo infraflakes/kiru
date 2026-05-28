@@ -33,50 +33,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_var_decl(&mut self) -> Result<Stmt, ParseError> {
-        self.advance();
-
-        let var_type = match &self.current_token().ty {
-            TokenType::StringKw => {
-                self.advance();
-                VarType::String
-            }
-            TokenType::Shell => {
-                self.advance();
-                VarType::Shell
-            }
-            _ => {
-                return Err(ParseError::new(
-                    self.eof_aware_span(),
-                    "expected 'string' or 'shell'".to_string(),
-                ));
-            }
-        };
-
-        let name = match &self.current_token().ty {
-            TokenType::Ident(n) => n.clone(),
-            ty if is_keyword_token(ty) => {
-                return Err(ParseError::new(
-                    self.eof_aware_span(),
-                    format!(
-                        "expected variable name, found {} (reserved keyword)",
-                        format_token(self.current_token())
-                    ),
-                ));
-            }
-            _ => {
-                return Err(ParseError::new(
-                    self.eof_aware_span(),
-                    "expected variable name".to_string(),
-                ));
-            }
-        };
-        self.advance();
-
-        self.expect_with_context(TokenType::Assign, "in variable declaration")?;
-
-        let value = self.parse_expr()?;
-        self.expect_with_context(TokenType::Semicolon, "after variable declaration")?;
-
+        let (var_type, name, value) = self.parse_var_decl_common()?;
         Ok(Stmt::VarDecl {
             var_type,
             name,

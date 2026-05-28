@@ -140,13 +140,17 @@ pub fn run_captured(
 fn read_output(child: &mut Child) -> (Vec<u8>, Vec<u8>) {
     let mut stdout_buf = Vec::new();
     let mut stderr_buf = Vec::new();
-    let _ = child
-        .stdout
-        .as_mut()
-        .map(|s| s.read_to_end(&mut stdout_buf));
-    let _ = child
-        .stderr
-        .as_mut()
-        .map(|s| s.read_to_end(&mut stderr_buf));
+    if let Some(ref mut s) = child.stdout {
+        s.read_to_end(&mut stdout_buf).unwrap_or_else(|e| {
+            eprintln!("[kiru] warning: failed to read stdout: {}", e);
+            0
+        });
+    }
+    if let Some(ref mut s) = child.stderr {
+        s.read_to_end(&mut stderr_buf).unwrap_or_else(|e| {
+            eprintln!("[kiru] warning: failed to read stderr: {}", e);
+            0
+        });
+    }
     (stdout_buf, stderr_buf)
 }

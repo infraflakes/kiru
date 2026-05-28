@@ -19,10 +19,6 @@ pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
         let sanctuary = sanctuary.clone();
         let projects = Arc::clone(&projects);
         async move {
-            for i in 0..project_names.len() {
-                crate::tui::send_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Running));
-            }
-
             let mut join_handles = Vec::new();
 
             for (i, proj_name) in project_names.iter().enumerate() {
@@ -38,6 +34,10 @@ pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
                 let idx = i;
 
                 let handle = tokio::task::spawn_blocking(move || {
+                    crate::tui::send_event(
+                        &tx_cb,
+                        TuiEvent::UpdateStatus(idx, TaskStatus::Running),
+                    );
                     sync::sync_project_with_callback(&sanctuary, &proj, |line: &str| {
                         crate::tui::send_event(
                             &tx_cb,

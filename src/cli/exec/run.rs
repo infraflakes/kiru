@@ -1,8 +1,10 @@
 use super::super::load_config_and_resolve;
-use crate::runner::{OutputCallback, Runner};
+use crate::runner::Output;
+use crate::runner::context::ExecContext;
 use crate::tui::{self, TaskStatus, TuiEvent};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub fn run(config_arg: Option<PathBuf>, name: String, project: String) -> miette::Result<()> {
     let config = load_config_and_resolve(config_arg)?;
@@ -54,19 +56,53 @@ pub fn run(config_arg: Option<PathBuf>, name: String, project: String) -> miette
                 let chain_len = chain.len();
 
                 let handle = tokio::spawn(async move {
+                    let current_task = Arc::new(AtomicUsize::new(0));
+                    let cb = {
+                        let tx = tx.clone();
+                        let current_task = Arc::clone(&current_task);
+                        move |line: String| {
+                            let idx = current_task.load(Ordering::Relaxed);
+                            tui::send_event(&tx, TuiEvent::AppendOutput(idx, line))
+                        }
+                    };
+                    let mut output = Output::Callback(Arc::new(cb));
+
+                    let project_entry = config.projects.get(&project).unwrap();
+                    let mut ctx = ExecContext::new(&config, project_entry, &mut output);
+
                     for (fi, fn_name) in chain.iter().enumerate() {
                         let task_idx = start_index + fi;
-
+                        current_task.store(task_idx, Ordering::Relaxed);
                         tui::send_event(&tx, TuiEvent::UpdateStatus(task_idx, TaskStatus::Running));
 
-                        let callback: OutputCallback = Arc::new({
-                            let tx = tx.clone();
-                            move |line| tui::send_event(&tx, TuiEvent::AppendOutput(task_idx, line))
-                        });
+                        let fn_body = match project_entry.functions.get(fn_name) {
+                            Some(b) => b.clone(),
+                            None => {
+                                tui::send_event(
+                                    &tx,
+                                    TuiEvent::AppendOutput(
+                                        task_idx,
+                                        format!("Error: unknown function '{}'", fn_name),
+                                    ),
+                                );
+                                tui::send_event(
+                                    &tx,
+                                    TuiEvent::UpdateStatus(task_idx, TaskStatus::Error),
+                                );
+                                for remaining in fi + 1..chain.len() {
+                                    tui::send_event(
+                                        &tx,
+                                        TuiEvent::UpdateStatus(
+                                            start_index + remaining,
+                                            TaskStatus::Skipped,
+                                        ),
+                                    );
+                                }
+                                return;
+                            }
+                        };
 
-                        let mut runner =
-                            Runner::from_arc(Arc::clone(&config)).with_output_callback(callback);
-                        match runner.execute_fn_call(fn_name, &project) {
+                        match ctx.exec_fn_body(&fn_body) {
                             Ok(()) => {
                                 tui::send_event(
                                     &tx,

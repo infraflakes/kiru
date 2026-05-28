@@ -7,16 +7,12 @@ impl<'a> ExecContext<'a> {
         expr.resolve(&self.vars).map_err(RuntimeError::Lookup)
     }
 
-    pub(super) fn build_env(&self) -> Vec<(String, String)> {
-        let mut env: std::collections::HashMap<String, String> =
-            self.sys_env.iter().cloned().collect();
-
-        for layer in &self.env_stack {
-            for (key, value) in layer {
-                env.insert(key.clone(), value.clone());
-            }
-        }
-
-        env.into_iter().collect()
+    pub(super) fn build_env(&self) -> impl Iterator<Item = (String, String)> + '_ {
+        let sys = self.sys_env.iter().map(|(k, v)| (k.clone(), v.clone()));
+        let overrides = self
+            .env_stack
+            .iter()
+            .flat_map(|layer| layer.iter().map(|(k, v)| (k.clone(), v.clone())));
+        sys.chain(overrides)
     }
 }

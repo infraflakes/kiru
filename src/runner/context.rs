@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 pub type OutputCallback = Arc<dyn Fn(String) + Send + Sync>;
 
-pub struct ExecContext<'a> {
+pub(crate) struct ExecContext<'a> {
     pub(super) cfg: &'a Config,
     pub(super) project: &'a Project,
     output: &'a mut Output,
@@ -23,7 +23,7 @@ pub struct ExecContext<'a> {
 }
 
 impl<'a> ExecContext<'a> {
-    pub(super) fn new(cfg: &'a Config, project: &'a Project, output: &'a mut Output) -> Self {
+    pub(crate) fn new(cfg: &'a Config, project: &'a Project, output: &'a mut Output) -> Self {
         let mut vars = cfg.vars.clone();
         vars.extend(project.vars.clone());
         ExecContext {
@@ -41,7 +41,7 @@ impl<'a> ExecContext<'a> {
         "  ".repeat(self.env_stack.len() + extra)
     }
 
-    pub(super) fn exec_fn_body(&mut self, body: &[FnStmt]) -> Result<(), RuntimeError> {
+    pub(crate) fn exec_fn_body(&mut self, body: &[FnStmt]) -> Result<(), RuntimeError> {
         for stmt in body {
             match stmt {
                 FnStmt::Log { value, .. } => self.exec_log(value)?,
@@ -212,7 +212,7 @@ impl<'a> ExecContext<'a> {
         let val = self.resolve_expr(value)?;
 
         let resolved = if var_type == &crate::dsl::ast::VarType::Shell {
-            let env_map: HashMap<String, String> = self.build_env().into_iter().collect();
+            let env_map: HashMap<String, String> = self.build_env().collect();
             let out = shell::run_captured(
                 &self.cfg.shell,
                 &val,

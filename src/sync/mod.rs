@@ -33,6 +33,7 @@ fn sync_project_inner(
 
     use std::io::BufRead;
     use std::process::Stdio;
+    use std::thread;
 
     let mut child = Command::new("git")
         .args(&args)
@@ -41,22 +42,47 @@ fn sync_project_inner(
         .spawn()
         .map_err(|e| RuntimeError::exec_io_error(format!("git clone {}", proj.name), e))?;
 
-    if let Some(stdout) = child.stdout.take() {
-        for line in std::io::BufReader::new(stdout).lines() {
-            let line = line.map_err(RuntimeError::Io)?;
-            output(&format!("    {}", line));
-        }
-    }
-    if let Some(stderr) = child.stderr.take() {
-        for line in std::io::BufReader::new(stderr).lines() {
-            let line = line.map_err(RuntimeError::Io)?;
-            output(&line);
-        }
-    }
+    let stdout_handle = child.stdout.take().map(|s| {
+        thread::spawn(move || {
+            let mut lines = Vec::new();
+            for line in std::io::BufReader::new(s).lines() {
+                let line = line.map_err(RuntimeError::Io)?;
+                lines.push(format!("    {}", line));
+            }
+            Ok::<_, RuntimeError>(lines)
+        })
+    });
+    let stderr_handle = child.stderr.take().map(|s| {
+        thread::spawn(move || {
+            let mut lines = Vec::new();
+            for line in std::io::BufReader::new(s).lines() {
+                let line = line.map_err(RuntimeError::Io)?;
+                lines.push(line);
+            }
+            Ok::<_, RuntimeError>(lines)
+        })
+    });
 
     let status = child
         .wait()
         .map_err(|e| RuntimeError::exec_io_error(format!("git clone {}", proj.name), e))?;
+
+    if let Some(h) = stdout_handle {
+        for line in h
+            .join()
+            .map_err(|_| RuntimeError::Panic("stdout thread panicked".to_string()))??
+        {
+            output(&line);
+        }
+    }
+    if let Some(h) = stderr_handle {
+        for line in h
+            .join()
+            .map_err(|_| RuntimeError::Panic("stderr thread panicked".to_string()))??
+        {
+            output(&line);
+        }
+    }
 
     if !status.success() {
         return Err(RuntimeError::exec_exit_code(

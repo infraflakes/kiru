@@ -102,73 +102,41 @@ pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
     }
 }
 
-pub fn write_colored_line(line: &str, w: &mut impl Write) {
+fn colored_line_parts(line: &str) -> (usize, &'static str, &'static str, &str) {
     let trimmed = line.trim_start();
+    let indent = line.len() - trimmed.len();
 
     if !trimmed.contains(' ') && trimmed.contains('(') && trimmed.ends_with(')') {
-        let _ = write!(w, "{}{}{}", colors::EXEC_ANSI, line, colors::RESET);
-        return;
-    }
-
-    let (prefix, ansi_color) = if trimmed.starts_with("log  ") {
-        ("log  ", colors::LOG_ANSI)
-    } else if trimmed.starts_with("exec ") {
-        ("exec ", colors::EXEC_ANSI)
-    } else if trimmed.starts_with("cd   ") {
-        ("cd   ", colors::CD_ANSI)
-    } else if trimmed.starts_with("env  ") {
-        ("env  ", colors::ENV_ANSI)
+        (0, "", colors::EXEC_ANSI, line)
+    } else if let Some(rest) = trimmed.strip_prefix("log  ") {
+        (indent, "log  ", colors::LOG_ANSI, rest)
+    } else if let Some(rest) = trimmed.strip_prefix("exec ") {
+        (indent, "exec ", colors::EXEC_ANSI, rest)
+    } else if let Some(rest) = trimmed.strip_prefix("cd   ") {
+        (indent, "cd   ", colors::CD_ANSI, rest)
+    } else if let Some(rest) = trimmed.strip_prefix("env  ") {
+        (indent, "env  ", colors::ENV_ANSI, rest)
     } else {
-        let _ = write!(w, "{}{}{}", colors::TEXT_ANSI, line, colors::RESET);
-        return;
-    };
+        (0, "", colors::TEXT_ANSI, line)
+    }
+}
 
-    let indent = line.len() - trimmed.len();
+pub fn write_colored_line(line: &str, w: &mut impl Write) {
+    let (indent, prefix, color, rest) = colored_line_parts(line);
     if indent > 0 {
         let _ = write!(w, "{}", &line[..indent]);
     }
-    let _ = write!(
-        w,
-        "{}{}{}{}",
-        ansi_color,
-        prefix,
-        &trimmed[prefix.len()..],
-        colors::RESET
-    );
+    let _ = write!(w, "{}{}{}{}", color, prefix, rest, colors::RESET);
 }
 
 fn write_colored_line_buf(buf: &mut String, line: &str) {
-    let trimmed = line.trim_start();
-
-    if !trimmed.contains(' ') && trimmed.contains('(') && trimmed.ends_with(')') {
-        buf.push_str(colors::EXEC_ANSI);
-        buf.push_str(line);
-        buf.push_str(colors::RESET);
-        return;
-    }
-
-    let (prefix, ansi_color) = if trimmed.starts_with("log  ") {
-        ("log  ", colors::LOG_ANSI)
-    } else if trimmed.starts_with("exec ") {
-        ("exec ", colors::EXEC_ANSI)
-    } else if trimmed.starts_with("cd   ") {
-        ("cd   ", colors::CD_ANSI)
-    } else if trimmed.starts_with("env  ") {
-        ("env  ", colors::ENV_ANSI)
-    } else {
-        buf.push_str(colors::TEXT_ANSI);
-        buf.push_str(line);
-        buf.push_str(colors::RESET);
-        return;
-    };
-
-    let indent = line.len() - trimmed.len();
+    let (indent, prefix, color, rest) = colored_line_parts(line);
     if indent > 0 {
         buf.push_str(&line[..indent]);
     }
-    buf.push_str(ansi_color);
+    buf.push_str(color);
     buf.push_str(prefix);
-    buf.push_str(&trimmed[prefix.len()..]);
+    buf.push_str(rest);
     buf.push_str(colors::RESET);
 }
 

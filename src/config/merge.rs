@@ -41,6 +41,23 @@ fn collect_shell(programs: &[Program]) -> Result<String, ConfigError> {
     Ok(shell)
 }
 
+fn resolve_shell_var(shell: &str, resolved: &str) -> Result<String, ConfigError> {
+    if shell.is_empty() {
+        return Err(ConfigError::Validation(
+            "shell must be declared before using shell variables".to_string(),
+        ));
+    }
+    let out = shell::run_captured(
+        shell,
+        resolved,
+        None,
+        None,
+        Some(std::time::Duration::from_secs(30)),
+    )
+    .map_err(|e| ConfigError::Validation(e.to_string()))?;
+    Ok(out.stdout)
+}
+
 fn collect_global_vars(
     programs: &[Program],
     shell: &str,
@@ -66,20 +83,7 @@ fn collect_global_vars(
                     .map_err(ConfigError::Validation)?;
 
                 let final_value = if var_type == &VarType::Shell {
-                    if shell.is_empty() {
-                        return Err(ConfigError::Validation(
-                            "shell must be declared before using shell variables".to_string(),
-                        ));
-                    }
-                    let out = shell::run_captured(
-                        shell,
-                        &resolved,
-                        None,
-                        None,
-                        Some(std::time::Duration::from_secs(30)),
-                    )
-                    .map_err(|e| ConfigError::Validation(e.to_string()))?;
-                    out.stdout
+                    resolve_shell_var(shell, &resolved)?
                 } else {
                     resolved
                 };
@@ -157,8 +161,9 @@ fn collect_projects(
                         }
                     }
 
+                    let mut merged_vars = global_vars.clone();
                     for body_stmt in body {
-                        merge_project_body_stmt(&mut project, body_stmt, shell, global_vars)?;
+                        merge_project_body_stmt(&mut project, body_stmt, shell, &mut merged_vars)?;
                     }
 
                     projects.insert(name, project);
@@ -175,7 +180,7 @@ pub(crate) fn merge_project_body_stmt(
     project: &mut Project,
     stmt: Stmt,
     shell: &str,
-    global_vars: &HashMap<String, String>,
+    merged: &mut HashMap<String, String>,
 ) -> Result<(), ConfigError> {
     match stmt {
         Stmt::VarDecl {
@@ -190,29 +195,15 @@ pub(crate) fn merge_project_body_stmt(
                 )));
             }
 
-            let mut merged = global_vars.clone();
-            merged.extend(project.vars.clone());
-            let resolved = value.resolve(&merged).map_err(ConfigError::Validation)?;
+            let resolved = value.resolve(merged).map_err(ConfigError::Validation)?;
 
             let final_value = if var_type == VarType::Shell {
-                if shell.is_empty() {
-                    return Err(ConfigError::Validation(
-                        "shell must be declared before using shell variables".to_string(),
-                    ));
-                }
-                let out = shell::run_captured(
-                    shell,
-                    &resolved,
-                    None,
-                    None,
-                    Some(std::time::Duration::from_secs(30)),
-                )
-                .map_err(|e| ConfigError::Validation(e.to_string()))?;
-                out.stdout
+                resolve_shell_var(shell, &resolved)?
             } else {
                 resolved
             };
 
+            merged.insert(name.clone(), final_value.clone());
             project.vars.insert(name, final_value);
         }
         Stmt::FnDecl { name, body, .. } => {

@@ -88,7 +88,9 @@ pub(crate) fn resolve_include(
 
         for program in &programs {
             for stmt in &program.stmts {
-                merge_project_body_stmt(proj, stmt.clone(), &cfg.shell, &cfg.vars)?;
+                let mut merged = cfg.vars.clone();
+                merged.extend(proj.vars.clone());
+                merge_project_body_stmt(proj, stmt.clone(), &cfg.shell, &mut merged)?;
             }
         }
     }
@@ -188,7 +190,6 @@ fn validate_fn_vars(
                     let mut block_scope = scope.clone();
                     for pair in pairs {
                         validate_expr(&pair.value, fn_name, scope, errs, proj_name);
-                        block_scope.insert(pair.key.clone());
                     }
                     validate_fn_body(fn_name, body, &mut block_scope, errs, proj_name);
                 }
