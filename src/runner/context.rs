@@ -16,7 +16,10 @@ pub(crate) struct ExecContext<'a> {
     pub(super) cfg: &'a Config,
     pub(super) project: &'a Project,
     output: &'a mut Output,
+    /// Base variables (global + project). Scope layers pushed/popped for case arms and env blocks.
     pub(super) vars: HashMap<String, String>,
+    /// Scope stack for variable shadowing. Each layer shadows `vars` and higher layers.
+    pub(super) var_stack: Vec<HashMap<String, String>>,
     pub(super) env_stack: Vec<HashMap<String, String>>,
     pub(super) work_dir: PathBuf,
     pub(super) sys_env: Vec<(String, String)>,
@@ -31,6 +34,7 @@ impl<'a> ExecContext<'a> {
             project,
             output,
             vars,
+            var_stack: Vec::new(),
             env_stack: Vec::new(),
             work_dir: PathBuf::from(&cfg.sanctuary).join(&project.dir),
             sys_env: std::env::vars().collect(),
@@ -62,9 +66,9 @@ impl<'a> ExecContext<'a> {
                     let value = self.resolve_expr(condition)?;
                     for arm in arms {
                         if self.match_case_pattern(&arm.pattern, &value)? {
-                            let saved_vars = self.vars.clone();
+                            self.var_stack.push(HashMap::new());
                             let result = self.exec_fn_body(&arm.body);
-                            self.vars = saved_vars;
+                            self.var_stack.pop();
                             result?;
                             break;
                         }
@@ -73,6 +77,16 @@ impl<'a> ExecContext<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Look up a variable name, checking scope layers (top-to-bottom) then base vars.
+    fn resolve_var(&self, name: &str) -> Option<&String> {
+        for layer in self.var_stack.iter().rev() {
+            if let Some(val) = layer.get(name) {
+                return Some(val);
+            }
+        }
+        self.vars.get(name)
     }
 
     fn match_case_pattern(
@@ -86,7 +100,7 @@ impl<'a> ExecContext<'a> {
                 let mut resolved = String::new();
                 for part in parts {
                     if part.is_var {
-                        match self.vars.get(&part.value) {
+                        match self.resolve_var(&part.value) {
                             Some(v) => resolved.push_str(v),
                             None => {
                                 return Err(RuntimeError::Lookup(format!(
@@ -101,7 +115,7 @@ impl<'a> ExecContext<'a> {
                 }
                 Ok(value == resolved)
             }
-            CasePattern::VarRef { name } => match self.vars.get(name) {
+            CasePattern::VarRef { name } => match self.resolve_var(name) {
                 Some(v) => Ok(value == v),
                 None => Err(RuntimeError::Lookup(format!(
                     "undefined variable: ${}",
@@ -240,7 +254,11 @@ impl<'a> ExecContext<'a> {
             val
         };
 
-        self.vars.insert(name.to_string(), resolved);
+        if let Some(top) = self.var_stack.last_mut() {
+            top.insert(name.to_string(), resolved);
+        } else {
+            self.vars.insert(name.to_string(), resolved);
+        }
         Ok(())
     }
 
@@ -264,11 +282,9 @@ impl<'a> ExecContext<'a> {
             .map_err(RuntimeError::Io)?;
 
         self.env_stack.push(layer);
-
-        let saved_vars = self.vars.clone();
+        self.var_stack.push(HashMap::new());
         let result = self.exec_fn_body(body);
-
-        self.vars = saved_vars;
+        self.var_stack.pop();
         self.env_stack.pop();
 
         result
