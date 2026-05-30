@@ -106,7 +106,10 @@ pub fn run_captured(
                         if start.elapsed() >= dur {
                             let _ = child.kill();
                             let _ = child.wait();
-                            let (out, err) = read_output(&mut child);
+                            let (out, err) = read_output(&mut child).unwrap_or_else(|e| {
+                                eprintln!("[kiru] warning: failed to read output after timeout: {}", e);
+                                (Vec::new(), Vec::new())
+                            });
                             return Err(Error::Timeout {
                                 command: command.to_string(),
                                 partial_stdout: String::from_utf8_lossy(&out).into_owned(),
@@ -122,7 +125,11 @@ pub fn run_captured(
         None => child.wait().map_err(Error::Spawn)?,
     };
 
-    let (stdout_buf, stderr_buf) = read_output(&mut child);
+    let (stdout_buf, stderr_buf) = read_output(&mut child).map_err(|e| Error::Exit {
+        command: command.to_string(),
+        exit_code: None,
+        stderr: format!("failed to read output: {}", e),
+    })?;
     let stdout = String::from_utf8_lossy(&stdout_buf).trim_end().to_string();
     let stderr = String::from_utf8_lossy(&stderr_buf).to_string();
 
@@ -137,20 +144,14 @@ pub fn run_captured(
     Ok(Output { stdout })
 }
 
-fn read_output(child: &mut Child) -> (Vec<u8>, Vec<u8>) {
+fn read_output(child: &mut Child) -> std::io::Result<(Vec<u8>, Vec<u8>)> {
     let mut stdout_buf = Vec::new();
     let mut stderr_buf = Vec::new();
     if let Some(ref mut s) = child.stdout {
-        s.read_to_end(&mut stdout_buf).unwrap_or_else(|e| {
-            eprintln!("[kiru] warning: failed to read stdout: {}", e);
-            0
-        });
+        s.read_to_end(&mut stdout_buf)?;
     }
     if let Some(ref mut s) = child.stderr {
-        s.read_to_end(&mut stderr_buf).unwrap_or_else(|e| {
-            eprintln!("[kiru] warning: failed to read stderr: {}", e);
-            0
-        });
+        s.read_to_end(&mut stderr_buf)?;
     }
-    (stdout_buf, stderr_buf)
+    Ok((stdout_buf, stderr_buf))
 }
