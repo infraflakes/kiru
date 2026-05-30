@@ -1,5 +1,4 @@
 FROM rust:alpine AS builder
-RUN apk add --no-cache musl-dev gcc make
 WORKDIR /src
 COPY . .
 RUN cargo build --release --target x86_64-unknown-linux-musl
