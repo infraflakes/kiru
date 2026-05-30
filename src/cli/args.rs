@@ -9,10 +9,6 @@ pub struct Cli {
     #[arg(short, long, global = true)]
     pub config: Option<PathBuf>,
 
-    /// Use plain text output instead of TUI
-    #[arg(short, long, global = true)]
-    pub plain: bool,
-
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -23,18 +19,11 @@ pub enum Commands {
     Validate,
     /// Clone/sync project repositories
     Sync,
-    /// Run a sequential execution block
-    Seq {
-        /// Name of the sequential block to run
+    /// Run a run block
+    Run {
+        /// Name of the run block to execute
         name: String,
-        /// Project to run the seq in
-        project: String,
-    },
-    /// Run a parallel execution block
-    Par {
-        /// Name of the parallel block to run
-        name: String,
-        /// Project to run the par in
+        /// Project to run it in
         project: String,
     },
     /// Run a function directly

@@ -1,12 +1,11 @@
-pub(crate) mod context;
 pub(crate) mod error;
-pub(crate) mod resolver;
+pub(crate) mod executor;
 
 use crate::colors;
 use crate::config::Config;
-use context::ExecContext;
-pub use context::OutputCallback;
 use error::RuntimeError;
+use executor::ExecContext;
+pub use executor::OutputCallback;
 use std::io::{self, Write};
 use std::sync::Arc;
 
@@ -57,6 +56,7 @@ impl Runner {
         }
     }
 
+    #[allow(dead_code)]
     pub fn from_arc(cfg: Arc<Config>) -> Self {
         Runner {
             cfg,
@@ -84,79 +84,7 @@ impl Runner {
             .get(fn_name)
             .ok_or_else(|| RuntimeError::Lookup(format!("unknown function: {}", fn_name)))?;
 
-        let line = format!("{}({})", fn_name, project_name);
-        self.output
-            .writeln_colored(&line, colors::EXEC_ANSI)
-            .map_err(RuntimeError::Io)?;
-
         let mut ctx = ExecContext::new(&self.cfg, project, &mut self.output);
         ctx.exec_fn_body(fn_body)
-    }
-
-    pub fn run_seq(&mut self, seq_name: &str, project_name: &str) -> Result<(), RuntimeError> {
-        let fns = self
-            .cfg
-            .projects
-            .get(project_name)
-            .ok_or_else(|| RuntimeError::Lookup(format!("unknown project: {}", project_name)))?
-            .seqs
-            .get(seq_name)
-            .ok_or_else(|| RuntimeError::Lookup(format!("unknown seq: {}", seq_name)))?
-            .clone();
-
-        let line = format!("seq {} ({})", seq_name, project_name);
-        self.output.writeln(&line).map_err(RuntimeError::Io)?;
-
-        for fn_name in &fns {
-            self.execute_fn_call(fn_name, project_name)?;
-        }
-
-        Ok(())
-    }
-
-    pub fn run_par(&mut self, par_name: &str, project_name: &str) -> Result<(), RuntimeError> {
-        let project =
-            self.cfg.projects.get(project_name).ok_or_else(|| {
-                RuntimeError::Lookup(format!("unknown project: {}", project_name))
-            })?;
-
-        let fns = project
-            .pars
-            .get(par_name)
-            .ok_or_else(|| RuntimeError::Lookup(format!("unknown par: {}", par_name)))?;
-
-        let line = format!("par {} ({})", par_name, project_name);
-        self.output.writeln(&line).map_err(RuntimeError::Io)?;
-
-        let mut handles = Vec::new();
-        let cb = self.output.fork_callback();
-        for fn_name in fns {
-            let cfg = Arc::clone(&self.cfg);
-            let fn_name = fn_name.clone();
-            let project_name = project_name.to_string();
-            let cb = cb.clone();
-            handles.push(std::thread::spawn(move || {
-                let mut runner = Runner::from_arc(cfg);
-                if let Some(ref cb) = cb {
-                    runner = runner.with_output_callback(cb.clone());
-                }
-                runner.execute_fn_call(&fn_name, &project_name)
-            }));
-        }
-
-        let mut errors = Vec::new();
-        for handle in handles {
-            match handle.join() {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => errors.push(e.to_string()),
-                Err(_) => errors.push("par task panicked".to_string()),
-            }
-        }
-
-        if !errors.is_empty() {
-            return Err(RuntimeError::Other(errors.join("\n")));
-        }
-
-        Ok(())
     }
 }

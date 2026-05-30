@@ -3,6 +3,7 @@ mod colors;
 mod config;
 mod dsl;
 mod runner;
+mod shell;
 mod sync;
 mod tui;
 

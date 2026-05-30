@@ -19,15 +19,14 @@ pub enum TokenType {
     Var,
     StringKw,
     Fn,
-    Seq,
-    Par,
+    Run,
+    Arrow,
     Pr,
     Log,
     Exec,
     Cd,
     Env,
     Case,
-    PathLit(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -59,8 +58,7 @@ pub fn lookup_ident(ident: &str) -> TokenType {
         "string" => TokenType::StringKw,
         "pr" => TokenType::Pr,
         "fn" => TokenType::Fn,
-        "seq" => TokenType::Seq,
-        "par" => TokenType::Par,
+        "run" => TokenType::Run,
         "env" => TokenType::Env,
         "log" => TokenType::Log,
         "exec" => TokenType::Exec,

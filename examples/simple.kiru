@@ -1,29 +1,69 @@
+# kiru example — single project with build, test, and conditional logic
+#
+# This file demonstrates the core syntax: global vars, project declaration,
+# functions with exec/env/case/cd/log, and a run block with chains.
+
 shell = `bash`;
-var shell workdir = `echo $HOME/dev`;
+
+var shell workdir = `echo $HOME/dev/kiru-project`;
+var string app    = `myapp`;
+
 sanctuary = $workdir;
 
-pr kiru {
-    url = `git@github.com:infraflakes/kiru.git`;
-    dir = `kiru`;
-    sync = `ignore`;
+pr myapp {
+    url  = `git@github.com:yourname/myapp.git`;
+    dir  = `myapp`;
+    sync = `clone`;
+    branch = `main`;
+    include = `.kiru/main.kiru`;
+
+    # project-scoped variable
+    var string port = `3000`;
 
     fn check {
-        log `checking project...`;
-        exec `echo done`;
+        log `Checking ${app}...`;
+
+        # cd() resets relative to project dir
+        cd(`.`);
+
+        exec(`go fmt ./...`);
+        exec(`go vet ./...`);
     }
 
     fn build {
-        log `building...`;
-        exec `echo build complete`;
+        var shell os = `uname -s`;
+
+        # conditional branching with case
+        case $os {
+            `Linux` {
+                env [GOOS = `linux`, GOARCH = `amd64`] {
+                    exec(`go build -o bin/${app} .`);
+                };
+            };
+            `Darwin` {
+                cd(`cmd`);
+                exec(`go build -o ../bin/${app} .`);
+            };
+            _ {
+                log `unsupported OS: ${os}, falling back to native build`;
+                exec(`go build -o bin/${app} .`);
+            };
+        };
     }
 
-    seq pipeline {
-        check;
-        build;
+    fn test {
+        env [CGO_ENABLED = `0`] {
+            exec(`go test -race ./...`);
+        };
     }
 
-    par all {
-        check;
-        build;
+    fn lint {
+        exec(`golangci-lint run ./...`);
+    }
+
+    # run block with two concurrent chains
+    run all {
+        lint => check => build;
+        test;
     }
 }

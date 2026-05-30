@@ -1,8 +1,8 @@
 use crate::config::error::ConfigError;
 use crate::config::merge::merge_project_body_stmt;
 use crate::config::types::Config;
-use crate::dsl::ast::{CasePattern, Expr, FnStmt, Stmt};
-use std::collections::HashSet;
+use crate::dsl::ast::{CasePattern, Expr, FnStmt};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 pub(crate) fn validate_base(config: &Config) -> Result<(), ConfigError> {
@@ -53,7 +53,7 @@ pub(crate) fn validate_base(config: &Config) -> Result<(), ConfigError> {
     Ok(())
 }
 
-pub(crate) fn resolve_use(
+pub(crate) fn resolve_include(
     cfg: &mut Config,
     parse_recursive_fn: impl Fn(
         &Path,
@@ -62,7 +62,7 @@ pub(crate) fn resolve_use(
     ) -> Result<Vec<crate::dsl::ast::Program>, ConfigError>,
 ) -> Result<(), ConfigError> {
     for proj in cfg.projects.values_mut() {
-        let Some(use_file) = &proj.use_file else {
+        let Some(include_file) = &proj.include_file else {
             continue;
         };
 
@@ -70,11 +70,13 @@ pub(crate) fn resolve_use(
             continue;
         }
 
-        let use_path = PathBuf::from(&cfg.sanctuary).join(&proj.dir).join(use_file);
+        let use_path = PathBuf::from(&cfg.sanctuary)
+            .join(&proj.dir)
+            .join(include_file);
 
         if !use_path.exists() {
             return Err(ConfigError::Validation(format!(
-                "project {:?}: use file not found: {} (run 'kiru sync' first)",
+                "project {:?}: include file not found: {} (run 'kiru sync' first)",
                 proj.name,
                 use_path.display()
             )));
@@ -84,14 +86,11 @@ pub(crate) fn resolve_use(
         let mut recursion_stack = HashSet::new();
         let programs = parse_recursive_fn(&use_path, &mut loaded_files, &mut recursion_stack)?;
 
-        // Extract pr body declarations from use file into project scope
         for program in &programs {
+            let mut merged = cfg.vars.clone();
+            merged.extend(proj.vars.clone());
             for stmt in &program.stmts {
-                if let Stmt::ProjectDecl { body, .. } = stmt {
-                    for body_stmt in body.clone() {
-                        merge_project_body_stmt(proj, body_stmt, &cfg.shell)?;
-                    }
-                }
+                merge_project_body_stmt(proj, stmt.clone(), &cfg.shell, &mut merged)?;
             }
         }
     }
@@ -105,29 +104,20 @@ fn validate_full(cfg: &Config) -> Result<(), ConfigError> {
     let mut errs = Vec::new();
 
     for (proj_name, project) in &cfg.projects {
-        for (seq_name, fns) in &project.seqs {
-            for fn_name in fns {
-                if !project.functions.contains_key(fn_name) {
-                    errs.push(format!(
-                        "project {:?}: seq {:?} references unknown function {:?}",
-                        proj_name, seq_name, fn_name
-                    ));
+        for (run_name, chains) in &project.runs {
+            for chain in chains {
+                for fn_name in chain {
+                    if !project.functions.contains_key(fn_name) {
+                        errs.push(format!(
+                            "project {:?}: run {:?} references unknown function {:?}",
+                            proj_name, run_name, fn_name
+                        ));
+                    }
                 }
             }
         }
 
-        for (par_name, fns) in &project.pars {
-            for fn_name in fns {
-                if !project.functions.contains_key(fn_name) {
-                    errs.push(format!(
-                        "project {:?}: par {:?} references unknown function {:?}",
-                        proj_name, par_name, fn_name
-                    ));
-                }
-            }
-        }
-
-        validate_fn_vars(project, proj_name, &mut errs);
+        validate_fn_vars(project, &cfg.vars, proj_name, &mut errs);
     }
 
     if !errs.is_empty() {
@@ -139,6 +129,7 @@ fn validate_full(cfg: &Config) -> Result<(), ConfigError> {
 
 fn validate_fn_vars(
     project: &crate::config::types::Project,
+    global_vars: &HashMap<String, String>,
     proj_name: &str,
     errs: &mut Vec<String>,
 ) {
@@ -199,7 +190,6 @@ fn validate_fn_vars(
                     let mut block_scope = scope.clone();
                     for pair in pairs {
                         validate_expr(&pair.value, fn_name, scope, errs, proj_name);
-                        block_scope.insert(pair.key.clone());
                     }
                     validate_fn_body(fn_name, body, &mut block_scope, errs, proj_name);
                 }
@@ -237,7 +227,8 @@ fn validate_fn_vars(
     }
 
     for (fn_name, body) in &project.functions {
-        let mut scope: HashSet<String> = project.vars.keys().cloned().collect();
+        let mut scope: HashSet<String> = global_vars.keys().cloned().collect();
+        scope.extend(project.vars.keys().cloned());
         validate_fn_body(fn_name, body, &mut scope, errs, proj_name);
     }
 }

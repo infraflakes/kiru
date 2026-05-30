@@ -1,6 +1,6 @@
 use crate::dsl::token::{Token, TokenType};
 
-mod reader;
+mod tokenizer;
 
 #[derive(Debug)]
 pub struct Lexer {
@@ -113,20 +113,14 @@ impl Lexer {
                 )
             }
             Some('.') => {
-                if self.peek() == Some('/')
-                    || (self.peek() == Some('.') && self.input.get(self.read_pos + 1) == Some(&'/'))
-                {
-                    self.read_path()
-                } else {
-                    self.read_char();
-                    Token::new(
-                        TokenType::Illegal("unexpected character: .".to_string()),
-                        start_line,
-                        start_col,
-                        start_byte_offset,
-                        self.byte_offset - start_byte_offset,
-                    )
-                }
+                self.read_char();
+                Token::new(
+                    TokenType::Illegal("unexpected character: .".to_string()),
+                    start_line,
+                    start_col,
+                    start_byte_offset,
+                    self.byte_offset - start_byte_offset,
+                )
             }
             Some(';') => {
                 self.read_char();
@@ -150,13 +144,24 @@ impl Lexer {
             }
             Some('=') => {
                 self.read_char();
-                Token::new(
-                    TokenType::Assign,
-                    start_line,
-                    start_col,
-                    start_byte_offset,
-                    self.byte_offset - start_byte_offset,
-                )
+                if self.ch == Some('>') {
+                    self.read_char();
+                    Token::new(
+                        TokenType::Arrow,
+                        start_line,
+                        start_col,
+                        start_byte_offset,
+                        self.byte_offset - start_byte_offset,
+                    )
+                } else {
+                    Token::new(
+                        TokenType::Assign,
+                        start_line,
+                        start_col,
+                        start_byte_offset,
+                        self.byte_offset - start_byte_offset,
+                    )
+                }
             }
             Some('`') => self.read_backtick(),
             Some(c) if c.is_alphabetic() || c == '_' => self.read_ident(),

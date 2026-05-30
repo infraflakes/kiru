@@ -48,7 +48,7 @@ pub enum Stmt {
         value: Expr,
     },
     ImportDecl {
-        paths: Vec<String>,
+        path: Expr,
     },
     VarDecl {
         var_type: VarType,
@@ -64,13 +64,9 @@ pub enum Stmt {
         name: String,
         body: Vec<FnStmt>,
     },
-    SeqDecl {
+    RunDecl {
         name: String,
-        fns: Vec<String>,
-    },
-    ParDecl {
-        name: String,
-        fns: Vec<String>,
+        chains: Vec<Vec<String>>,
     },
 }
 

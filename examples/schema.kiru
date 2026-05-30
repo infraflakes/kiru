@@ -9,17 +9,17 @@
 #   - No escape sequences — what you type is what you get.
 #   - Variable interpolation inside backticks uses ${name} syntax.
 #   - All primitives are block-scoped with no leakage.
-#   - Global vars are isolated from project-scoped vars.
+#   - Global vars are accessible everywhere (including inside pr blocks).
+#   - Project-scoped vars are isolated to their project.
 #   - No cross-project execution — each project is self-contained.
 #
 # CLI usage:
 #   kiru sync                      Clone/sync all project repositories
-#   kiru seq <name> <project>      Run a sequential block in a project
-#   kiru par <name> <project>      Run a parallel block in a project
+#   kiru run <name> <project>      Run a run block in a project (interactive TUI)
 #   kiru fn <name> <project>       Run a function directly in a project
-#   kiru -c <path> <command>       Use a custom config file
 #   kiru validate                  Validate the configuration file
 #   kiru version                   Print version
+#   kiru -c <path> <command>       Use a custom config file
 #
 # Config discovery:
 #   By default kiru looks for ~/.config/kiru/config.kiru.
@@ -45,7 +45,8 @@ shell = `bash`;
 #             stores the stdout (trailing newline stripped)
 #
 # Global variables are resolved in declaration order.
-# Global vars CANNOT be referenced from inside pr blocks.
+# Global vars ARE accessible from inside pr blocks (function bodies,
+# project vars, and project fields).
 
 var shell workdir = `echo $HOME/dev`;
 var string port = `127.0.0.1:8080`;
@@ -82,17 +83,16 @@ import ./other_config.kiru;
 #   url    (required)  Git clone URL
 #   dir    (required)  Directory name relative to sanctuary (must be unique)
 #   sync   (optional)  `clone` (default) or `ignore`
-#   use    (optional)  Path to a .kiru file inside the project repo
+#   include (optional)  Path to a .kiru file inside the project repo
 #   branch (optional)  Branch to clone
 #
 # Inside a project block you can also declare:
 #   var <type> <name> = <value>;   Project-scoped variables
 #   fn <name> { ... }              Function declarations
-#   seq <name> { ... }             Sequential block (fn calls only)
-#   par <name> { ... }             Parallel block (fn calls only)
+#   run <name> { ... }             Orchestration block with chain syntax
 #
-# Project vars are isolated from global vars.
-# Seq/par can only call fns — no seq-ref or par-ref syntax.
+# Project vars are accessible only within this project's functions.
+# Global vars (top-level declarations) ARE accessible here.
 
 pr todo {
     url = `git@github.com:yourname/todo.git`;
@@ -102,56 +102,51 @@ pr todo {
     var shell version = `git describe --tags --always --dirty 2>/dev/null || echo dev`;
     var string app    = `todo`;
 
+    # Global vars like $port and $greeting are also accessible here
+
     fn build {
         log `Building ${app} at ${version}`;
-        # Check which OS we're on for conditional build flags
         var shell os = `uname -s`;
         case $os {
-            `Linux`   {
-                cd `cmd`;
-
-                exec `go build -ldflags='${version}' -o bin/${app} .`;
+            `Linux`  {
+                cd(`cmd`);
+                exec(`go build -ldflags='${version}' -o bin/${app} .`);
             };
-            `Darwin`  {
-                cd `cmd`;
-                exec `go build -ldflags='${version}' -o bin/${app} .`;
+            `Darwin` {
+                cd(`cmd`);
+                exec(`go build -ldflags='${version}' -o bin/${app} .`);
             };
-            _         { log `unsupported OS: ${os}`; };
+            _        { log `unsupported OS: ${os}`; };
         };
     }
 
     fn test {
-        env [CGO_ENABLED = `0`] {
-            exec `go test -race ./...`;
-            exec `go vet ./...`;
+        env [CGO_ENABLED = `0`, GOOS = `linux`] {
+            exec(`go test -race ./...`);
+            exec(`go vet ./...`);
         };
     }
 
     fn lint {
-        exec `golangci-lint run ./...`;
+        exec(`golangci-lint run ./...`);
     }
 
     fn check {
         log `Running checks...`;
-        exec `go fmt ./...`;
-        exec `go vet ./...`;
+        exec(`go fmt ./...`);
+        exec(`go vet ./...`);
     }
 
-    seq quality {
-        lint;
-        test;
+    # A run block with two chains, running concurrently:
+    #   chain 1: lint -> test -> build (sequential within the chain)
+    #   chain 2: check (single fn, runs concurrently with chain 1)
+    run quality {
+        lint => test => build;
+        check;
     }
 
-    seq release {
-        lint;
-        test;
-        build;
-    }
-
-    par ci {
-        build;
-        lint;
-        test;
+    run release {
+        lint => test => build;
     }
 }
 
@@ -159,11 +154,11 @@ pr calendar {
     url = `git@github.com:yourname/calendar.git`;
     dir = `calendar`;
     sync = `clone`;
-    use = `.kiru/main.kiru`;
+    include = `.kiru/main.kiru`;
     branch = `rust`;
 
-    # Use files can declare var/fn/seq/par that get merged into this project
-    # Use file path is relative to the project directory
+    # Include files can declare var/fn/run that get merged into this project
+    # Include file path is relative to the project directory
 }
 
 # 6. FUNCTION PRIMITIVES
@@ -174,11 +169,11 @@ pr calendar {
 #   cd <expr>;             Change cwd relative to project dir
 #   var <type> <n> = <v>;  Declare a scoped variable
 #   env [...] { ... };     Scoped environment variable block
-#   case <expr> { ... }; Conditional branching (first-match semantics)
+#   case <expr> { ... };   Conditional branching (first-match semantics)
 #
 # Variable interpolation:
 #   Use ${name} inside backticks to interpolate variables.
-#   Both project vars and fn-local vars are accessible.
+#   Both global vars, project vars, and fn-local vars are accessible.
 #   All variable references are validated at load time.
 #
 # Conditional branching with case:
@@ -197,11 +192,22 @@ pr calendar {
 #         _       { exec `${docker_bin} build .`; };
 #     };
 
-# 7. USE FILES
+# 7. INTERACTIVE TUI
 #
-# If a project declares `use`, that file is parsed after `kiru sync`.
-# Use files use the same grammar as any .kiru file.
-# A `pr { ... }` block in the use file has its body (var, fn, seq, par)
+# When running `kiru run`, an interactive TUI displays:
+#   - Chain headers with ├─/✓/✗ prefix showing chain status
+#   - Each task indented with │ pipe, showing live spinner, name, and status
+#   - Color-coded status: green (ok), red (failed), yellow (running), gray (pending/skipped)
+#   - Press q or Ctrl+C to abort
+#
+# After all tasks complete (or on abort), a colored ANSI dump is printed
+# showing full output per task with chain section separators.
+
+# 8. INCLUDE FILES
+#
+# If a project declares `include`, that file is parsed after `kiru sync`.
+# Include files use the same grammar as any .kiru file.
+# A `pr { ... }` block in the include file has its body (var, fn, run)
 # merged into the project's scope — allowing shared declarations across
 # multiple projects.
 
@@ -215,11 +221,11 @@ pr calendar {
 # importDecl   = "import" path ";" ;
 # varDecl      = "var" ( "string" | "shell" ) IDENT "=" expr ";" ;
 # projectDecl  = "pr" IDENT "{" { projectStmt } "}" ;
-# projectStmt  = projectField | varDecl | fnDecl | seqDecl | parDecl ;
+# projectStmt  = projectField | varDecl | fnDecl | runDecl ;
 # projectField = IDENT "=" expr ";" ;
 # fnDecl       = "fn" IDENT "{" { fnStmt } "}" ;
-# seqDecl      = "seq" IDENT "{" { IDENT ";" } "}" ;
-# parDecl      = "par" IDENT "{" { IDENT ";" } "}" ;
+# runDecl      = "run" IDENT "{" { chain ";" } "}" ;
+# chain        = IDENT ( "=>" IDENT )* ;
 #
 # fnStmt       = logStmt | execStmt | cdStmt | varDecl | envBlock | caseStmt ;
 # logStmt      = "log" expr ";" ;
@@ -236,5 +242,4 @@ pr calendar {
 # BACKTICK     = "`" { char | "${" IDENT "}" } "`" ;
 # path         = "./" { char } ;
 #
-# Keywords: shell sanctuary import var string pr fn seq par
-#           env log exec cd case
+# Keywords: shell sanctuary import var string pr fn run env log exec cd case

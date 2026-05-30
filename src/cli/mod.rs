@@ -22,7 +22,7 @@ fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Config> {
 
 fn load_config_and_resolve(config_arg: Option<PathBuf>) -> miette::Result<Config> {
     let mut config = load_config(config_arg)?;
-    match crate::config::resolve_uses(&mut config) {
+    match crate::config::resolve_includes(&mut config) {
         Ok(()) => {}
         Err(crate::config::ConfigError::ParseReports(reports)) => {
             return Err(print_parse_errors(reports));
@@ -55,10 +55,9 @@ pub fn run() -> miette::Result<()> {
 
     match cli.command {
         Commands::Validate => validate::run(cli.config),
-        Commands::Sync => sync::run(cli.config, cli.plain),
-        Commands::Seq { name, project } => exec::run_seq(cli.config, name, project, cli.plain),
-        Commands::Par { name, project } => exec::run_par(cli.config, name, project, cli.plain),
-        Commands::Fn { name, project } => exec::run_fn(cli.config, name, project, cli.plain),
+        Commands::Sync => sync::run(cli.config),
+        Commands::Run { name, project } => exec::run_run(cli.config, name, project),
+        Commands::Fn { name, project } => exec::run_fn(cli.config, name, project),
         Commands::Version => run_version(),
     }
 }

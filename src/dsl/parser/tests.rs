@@ -31,8 +31,7 @@ fn count_stmt_types(program: &Program) -> Vec<&'static str> {
             Stmt::VarDecl { .. } => "var",
             Stmt::ProjectDecl { .. } => "pr",
             Stmt::FnDecl { .. } => "fn",
-            Stmt::SeqDecl { .. } => "seq",
-            Stmt::ParDecl { .. } => "par",
+            Stmt::RunDecl { .. } => "run",
         })
         .collect()
 }
@@ -77,12 +76,16 @@ fn test_sanctuary_with_var_ref() {
 
 #[test]
 fn test_import_decl() {
-    let prog = parse_program("import ./other.kiru;").unwrap();
+    let prog = parse_program("import `./other.kiru`;").unwrap();
     assert_eq!(count_stmt_types(&prog), vec!["import"]);
     match &prog.stmts[0] {
-        Stmt::ImportDecl { paths, .. } => {
-            assert_eq!(paths, &vec!["./other.kiru".to_string()]);
-        }
+        Stmt::ImportDecl { path } => match path {
+            Expr::BacktickLit { parts } => {
+                let concat: String = parts.iter().map(|p| p.value.as_str()).collect();
+                assert_eq!(concat, "./other.kiru");
+            }
+            _ => panic!("expected BacktickLit"),
+        },
         _ => panic!("expected ImportDecl"),
     }
 }
@@ -147,7 +150,7 @@ fn test_var_invalid_type() {
 
 #[test]
 fn test_project_decl_with_fields() {
-    let input = "\npr todo {\n    url = `git@github.com:user/repo.git`;\n    dir = `todo`;\n    sync = `clone`;\n    use = `./main.kiru`;\n    branch = `main`;\n}";
+    let input = "\npr todo {\n    url = `git@github.com:user/repo.git`;\n    dir = `todo`;\n    sync = `clone`;\n    include = `./main.kiru`;\n    branch = `main`;\n}";
     let prog = parse_program(input).unwrap();
     assert_eq!(count_stmt_types(&prog), vec!["pr"]);
     match &prog.stmts[0] {
@@ -158,7 +161,7 @@ fn test_project_decl_with_fields() {
             assert_eq!(fields.len(), 5);
             assert!(body.is_empty());
             let keys: Vec<&str> = fields.iter().map(|f| f.key.as_str()).collect();
-            assert_eq!(keys, vec!["url", "dir", "sync", "use", "branch"]);
+            assert_eq!(keys, vec!["url", "dir", "sync", "include", "branch"]);
         }
         _ => panic!("expected ProjectDecl"),
     }
@@ -166,7 +169,7 @@ fn test_project_decl_with_fields() {
 
 #[test]
 fn test_project_decl_with_body_stmts() {
-    let input = "\npr todo {\n    url = `git@github.com:user/repo.git`;\n    dir = `todo`;\n    var string app = `todo`;\n    fn build {\n        log `building`;\n    }\n    seq release {\n        build;\n    }\n    par ci {\n        build;\n    }\n}";
+    let input = "\npr todo {\n    url = `git@github.com:user/repo.git`;\n    dir = `todo`;\n    var string app = `todo`;\n    fn build {\n        log `building`;\n    }\n    run release {\n        build;\n    }\n    run ci {\n        build;\n    }\n}";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
         Stmt::ProjectDecl {
@@ -177,8 +180,8 @@ fn test_project_decl_with_body_stmts() {
             assert_eq!(body.len(), 4);
             assert!(matches!(body[0], Stmt::VarDecl { .. }));
             assert!(matches!(body[1], Stmt::FnDecl { .. }));
-            assert!(matches!(body[2], Stmt::SeqDecl { .. }));
-            assert!(matches!(body[3], Stmt::ParDecl { .. }));
+            assert!(matches!(body[2], Stmt::RunDecl { .. }));
+            assert!(matches!(body[3], Stmt::RunDecl { .. }));
         }
         _ => panic!("expected ProjectDecl"),
     }
@@ -197,31 +200,21 @@ fn test_project_duplicate_fields() {
 }
 
 #[test]
-fn test_seq_par_only_allows_ident() {
-    let result = parse_program("seq s { 123; }");
+fn test_run_only_allows_ident() {
+    let result = parse_program("run s { 123; }");
     assert!(result.is_err());
 }
 
 #[test]
-fn test_par_ref_not_allowed() {
-    let result = parse_program("par p { par.x; }");
+fn test_run_ref_not_allowed() {
+    let result = parse_program("run p { run.x; }");
     assert!(result.is_err());
-    let errs = result.unwrap_err();
-    assert!(
-        errs.iter()
-            .any(|e| e.to_string().contains("expected shell"))
-    );
 }
 
 #[test]
-fn test_seq_ref_not_allowed() {
-    let result = parse_program("seq s { seq.x; }");
+fn test_run_name_ref_not_allowed() {
+    let result = parse_program("run s { s.x; }");
     assert!(result.is_err());
-    let errs = result.unwrap_err();
-    assert!(
-        errs.iter()
-            .any(|e| e.to_string().contains("expected shell"))
-    );
 }
 
 // --- Error recovery tests ---
@@ -241,14 +234,8 @@ fn test_missing_opening_brace_after_fn() {
 }
 
 #[test]
-fn test_missing_opening_brace_after_seq() {
-    let result = parse_program("seq bad");
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_missing_opening_brace_after_par() {
-    let result = parse_program("par bad");
+fn test_missing_opening_brace_after_run() {
+    let result = parse_program("run bad");
     assert!(result.is_err());
 }
 
@@ -270,8 +257,8 @@ fn test_unclosed_fn_brace() {
 }
 
 #[test]
-fn test_unclosed_seq_brace() {
-    let result = parse_program("seq s { check;");
+fn test_unclosed_run_brace() {
+    let result = parse_program("run s { check;");
     assert!(result.is_err());
 }
 
@@ -286,9 +273,9 @@ fn test_var_with_var_ref_value() {
 fn test_multiple_top_level_statements() {
     let input = "shell = `bash`;\n\
                  sanctuary = `/tmp`;\n\
-                 import ./other.kiru;\n\
+                 import `./other.kiru`;\n\
                  var string x = `hello`;\n\
-                  pr p { url = `u`; dir = `d`; fn f { log `hi`; } seq s { f; } }";
+                  pr p { url = `u`; dir = `d`; fn f { log `hi`; } run s { f; } }";
     let prog = parse_program(input).unwrap();
     assert_eq!(
         count_stmt_types(&prog),
@@ -304,10 +291,7 @@ fn test_error_recovery_skips_bad_stmt() {
             assert_eq!(prog.stmts.len(), 3);
         }
         Err(errs) => {
-            assert!(
-                errs.iter()
-                    .any(|e| e.to_string().contains("expected shell"))
-            );
+            assert!(errs.iter().any(|e| e.to_string().contains("expected log")));
         }
     }
 }
@@ -315,9 +299,9 @@ fn test_error_recovery_skips_bad_stmt() {
 #[test]
 fn test_import_path_types() {
     let inputs = vec![
-        "import ./foo.kiru;",
-        "import ../foo.kiru;",
-        "import ../../dir/foo.kiru;",
+        "import `./foo.kiru`;",
+        "import `../foo.kiru`;",
+        "import `../../dir/foo.kiru`;",
     ];
     for input in inputs {
         let result = parse_program(input);

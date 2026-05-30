@@ -30,50 +30,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_fn_var_decl(&mut self) -> Result<FnStmt, ParseError> {
-        self.advance();
-
-        let var_type = match &self.current_token().ty {
-            TokenType::StringKw => {
-                self.advance();
-                VarType::String
-            }
-            TokenType::Shell => {
-                self.advance();
-                VarType::Shell
-            }
-            _ => {
-                return Err(ParseError::new(
-                    self.eof_aware_span(),
-                    "expected 'string' or 'shell'".to_string(),
-                ));
-            }
-        };
-
-        let name = match &self.current_token().ty {
-            TokenType::Ident(n) => n.clone(),
-            ty if is_keyword_token(ty) => {
-                return Err(ParseError::new(
-                    self.eof_aware_span(),
-                    format!(
-                        "expected variable name, found {} (reserved keyword)",
-                        format_token(self.current_token())
-                    ),
-                ));
-            }
-            _ => {
-                return Err(ParseError::new(
-                    self.eof_aware_span(),
-                    "expected variable name".to_string(),
-                ));
-            }
-        };
-        self.advance();
-
-        self.expect_with_context(TokenType::Assign, "in variable declaration")?;
-
-        let value = self.parse_expr()?;
-        self.expect_with_context(TokenType::Semicolon, "after variable declaration")?;
-
+        let (var_type, name, value) = self.parse_var_decl_common()?;
         Ok(FnStmt::VarDecl {
             var_type,
             name,
@@ -142,7 +99,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_case_stmt(&mut self) -> Result<FnStmt, ParseError> {
-        self.advance(); // skip 'case'
+        self.advance();
 
         let condition = self.parse_expr()?;
 
@@ -201,14 +158,12 @@ impl Parser {
             }
             TokenType::Backtick(_) => {
                 let token = self.current_token().clone();
+                let TokenType::Backtick(content) = &token.ty else {
+                    unreachable!()
+                };
                 self.advance();
-                match &token.ty {
-                    TokenType::Backtick(content) => {
-                        let parts = parse_template_parts(content, token.offset)?;
-                        Ok(CasePattern::Literal { parts })
-                    }
-                    _ => unreachable!(),
-                }
+                let parts = parse_template_parts(content, token.offset)?;
+                Ok(CasePattern::Literal { parts })
             }
             _ => {
                 let tok = format_token(self.current_token());

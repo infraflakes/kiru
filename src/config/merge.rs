@@ -1,10 +1,8 @@
 use crate::config::error::ConfigError;
 use crate::config::types::{Config, Project};
 use crate::dsl::ast::{Expr, Program, Stmt, VarType};
+use crate::shell;
 use std::collections::HashMap;
-use std::io::Read;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
 
 pub(crate) fn merge(programs: Vec<Program>) -> Result<Config, ConfigError> {
     let shell = collect_shell(&programs)?;
@@ -43,6 +41,23 @@ fn collect_shell(programs: &[Program]) -> Result<String, ConfigError> {
     Ok(shell)
 }
 
+fn resolve_shell_var(shell: &str, resolved: &str) -> Result<String, ConfigError> {
+    if shell.is_empty() {
+        return Err(ConfigError::Validation(
+            "shell must be declared before using shell variables".to_string(),
+        ));
+    }
+    let out = shell::run_captured(
+        shell,
+        resolved,
+        None,
+        None,
+        Some(std::time::Duration::from_secs(30)),
+    )
+    .map_err(|e| ConfigError::Validation(e.to_string()))?;
+    Ok(out.stdout)
+}
+
 fn collect_global_vars(
     programs: &[Program],
     shell: &str,
@@ -68,12 +83,7 @@ fn collect_global_vars(
                     .map_err(ConfigError::Validation)?;
 
                 let final_value = if var_type == &VarType::Shell {
-                    if shell.is_empty() {
-                        return Err(ConfigError::Validation(
-                            "shell must be declared before using shell variables".to_string(),
-                        ));
-                    }
-                    execute_shell(shell, &resolved)?
+                    resolve_shell_var(shell, &resolved)?
                 } else {
                     resolved
                 };
@@ -120,12 +130,11 @@ fn collect_projects(
                         url: String::new(),
                         dir: String::new(),
                         sync: "clone".to_string(),
-                        use_file: None,
+                        include_file: None,
                         branch: String::new(),
                         vars: HashMap::new(),
                         functions: HashMap::new(),
-                        seqs: HashMap::new(),
-                        pars: HashMap::new(),
+                        runs: HashMap::new(),
                     };
 
                     for field in &fields {
@@ -137,9 +146,9 @@ fn collect_projects(
                             "url" => project.url = value,
                             "dir" => project.dir = value,
                             "sync" => project.sync = value,
-                            "use" => {
+                            "include" => {
                                 if !value.is_empty() {
-                                    project.use_file = Some(value);
+                                    project.include_file = Some(value);
                                 }
                             }
                             "branch" => project.branch = value,
@@ -152,8 +161,9 @@ fn collect_projects(
                         }
                     }
 
+                    let mut merged_vars = global_vars.clone();
                     for body_stmt in body {
-                        merge_project_body_stmt(&mut project, body_stmt, shell)?;
+                        merge_project_body_stmt(&mut project, body_stmt, shell, &mut merged_vars)?;
                     }
 
                     projects.insert(name, project);
@@ -170,6 +180,7 @@ pub(crate) fn merge_project_body_stmt(
     project: &mut Project,
     stmt: Stmt,
     shell: &str,
+    merged: &mut HashMap<String, String>,
 ) -> Result<(), ConfigError> {
     match stmt {
         Stmt::VarDecl {
@@ -184,21 +195,15 @@ pub(crate) fn merge_project_body_stmt(
                 )));
             }
 
-            let resolved = value
-                .resolve(&project.vars)
-                .map_err(ConfigError::Validation)?;
+            let resolved = value.resolve(merged).map_err(ConfigError::Validation)?;
 
             let final_value = if var_type == VarType::Shell {
-                if shell.is_empty() {
-                    return Err(ConfigError::Validation(
-                        "shell must be declared before using shell variables".to_string(),
-                    ));
-                }
-                execute_shell(shell, &resolved)?
+                resolve_shell_var(shell, &resolved)?
             } else {
                 resolved
             };
 
+            merged.insert(name.clone(), final_value.clone());
             project.vars.insert(name, final_value);
         }
         Stmt::FnDecl { name, body, .. } => {
@@ -210,105 +215,16 @@ pub(crate) fn merge_project_body_stmt(
             }
             project.functions.insert(name, body);
         }
-        Stmt::SeqDecl { name, fns, .. } => {
-            if project.seqs.contains_key(&name) {
+        Stmt::RunDecl { name, chains, .. } => {
+            if project.runs.contains_key(&name) {
                 return Err(ConfigError::Validation(format!(
-                    "duplicate seq in project '{}': {}",
+                    "duplicate run block in project '{}': {}",
                     project.name, name
                 )));
             }
-            project.seqs.insert(name, fns);
-        }
-        Stmt::ParDecl { name, fns, .. } => {
-            if project.pars.contains_key(&name) {
-                return Err(ConfigError::Validation(format!(
-                    "duplicate par in project '{}': {}",
-                    project.name, name
-                )));
-            }
-            project.pars.insert(name, fns);
+            project.runs.insert(name, chains);
         }
         _ => {}
     }
     Ok(())
-}
-
-const SHELL_TIMEOUT: Duration = Duration::from_secs(30);
-const POLL_INTERVAL: Duration = Duration::from_millis(50);
-
-fn collect_output(child: &mut std::process::Child) -> (Vec<u8>, Vec<u8>) {
-    let mut stdout_buf = Vec::new();
-    let mut stderr_buf = Vec::new();
-    let _ = child
-        .stdout
-        .as_mut()
-        .map(|s| s.read_to_end(&mut stdout_buf));
-    let _ = child
-        .stderr
-        .as_mut()
-        .map(|s| s.read_to_end(&mut stderr_buf));
-    (stdout_buf, stderr_buf)
-}
-
-pub(crate) fn execute_shell(shell: &str, command: &str) -> Result<String, ConfigError> {
-    let mut child = Command::new(shell)
-        .arg("-c")
-        .arg(command)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| ConfigError::Validation(format!("shell execution failed: {}", e)))?;
-
-    let start = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {
-                if start.elapsed() >= SHELL_TIMEOUT {
-                    child.kill().ok();
-                    child.wait().ok();
-                    let (stdout_buf, stderr_buf) = collect_output(&mut child);
-                    let stderr = String::from_utf8_lossy(&stderr_buf);
-                    let stdout = String::from_utf8_lossy(&stdout_buf);
-                    let detail = if stderr.trim().is_empty() {
-                        stdout.trim().to_string()
-                    } else {
-                        stderr.trim().to_string()
-                    };
-                    return if detail.is_empty() {
-                        Err(ConfigError::Validation(format!(
-                            "shell command timed out after {}s",
-                            SHELL_TIMEOUT.as_secs()
-                        )))
-                    } else {
-                        Err(ConfigError::Validation(format!(
-                            "shell command timed out after {}s: {}",
-                            SHELL_TIMEOUT.as_secs(),
-                            detail
-                        )))
-                    };
-                }
-                std::thread::sleep(POLL_INTERVAL);
-            }
-            Err(e) => {
-                return Err(ConfigError::Validation(format!(
-                    "shell execution failed: {}",
-                    e
-                )));
-            }
-        }
-    };
-
-    let (stdout_buf, stderr_buf) = collect_output(&mut child);
-
-    if !status.success() {
-        let stderr = String::from_utf8_lossy(&stderr_buf);
-        return Err(ConfigError::Validation(format!(
-            "shell command failed: {}",
-            stderr.trim()
-        )));
-    }
-
-    let stdout = String::from_utf8_lossy(&stdout_buf);
-    Ok(stdout.trim_end().to_string())
 }

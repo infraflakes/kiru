@@ -1,31 +1,8 @@
-use crate::config::{Config, Project};
+use crate::config::Project;
 use crate::runner::error::RuntimeError;
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
-
-pub fn sync_all(cfg: &Config, writer: &mut dyn Write) -> Result<(), RuntimeError> {
-    fs::create_dir_all(&cfg.sanctuary).map_err(|e| {
-        RuntimeError::Other(format!("cannot create sanctuary {}: {}", cfg.sanctuary, e))
-    })?;
-
-    for proj in cfg.projects.values() {
-        sync_project_inner(&cfg.sanctuary, proj, &mut |line: &str| {
-            let _ = writeln!(writer, "  {}", line);
-        })?;
-    }
-
-    let mut buf = Vec::new();
-    warn_unknown_repos_inner(&cfg.sanctuary, &cfg.projects, &mut |line: &str| {
-        buf.push(line.to_string());
-    })?;
-    for line in buf {
-        writeln!(writer, "{}", line).map_err(RuntimeError::Io)?;
-    }
-
-    Ok(())
-}
 
 fn sync_project_inner(
     sanctuary: &str,
@@ -56,6 +33,7 @@ fn sync_project_inner(
 
     use std::io::BufRead;
     use std::process::Stdio;
+    use std::thread;
 
     let mut child = Command::new("git")
         .args(&args)
@@ -64,22 +42,47 @@ fn sync_project_inner(
         .spawn()
         .map_err(|e| RuntimeError::exec_io_error(format!("git clone {}", proj.name), e))?;
 
-    if let Some(stdout) = child.stdout.take() {
-        for line in std::io::BufReader::new(stdout).lines() {
-            let line = line.map_err(RuntimeError::Io)?;
-            output(&format!("    {}", line));
-        }
-    }
-    if let Some(stderr) = child.stderr.take() {
-        for line in std::io::BufReader::new(stderr).lines() {
-            let line = line.map_err(RuntimeError::Io)?;
-            output(&line);
-        }
-    }
+    let stdout_handle = child.stdout.take().map(|s| {
+        thread::spawn(move || {
+            let mut lines = Vec::new();
+            for line in std::io::BufReader::new(s).lines() {
+                let line = line.map_err(RuntimeError::Io)?;
+                lines.push(format!("    {}", line));
+            }
+            Ok::<_, RuntimeError>(lines)
+        })
+    });
+    let stderr_handle = child.stderr.take().map(|s| {
+        thread::spawn(move || {
+            let mut lines = Vec::new();
+            for line in std::io::BufReader::new(s).lines() {
+                let line = line.map_err(RuntimeError::Io)?;
+                lines.push(line);
+            }
+            Ok::<_, RuntimeError>(lines)
+        })
+    });
 
     let status = child
         .wait()
         .map_err(|e| RuntimeError::exec_io_error(format!("git clone {}", proj.name), e))?;
+
+    if let Some(h) = stdout_handle {
+        for line in h
+            .join()
+            .map_err(|_| RuntimeError::Panic("stdout thread panicked".to_string()))??
+        {
+            output(&line);
+        }
+    }
+    if let Some(h) = stderr_handle {
+        for line in h
+            .join()
+            .map_err(|_| RuntimeError::Panic("stderr thread panicked".to_string()))??
+        {
+            output(&line);
+        }
+    }
 
     if !status.success() {
         return Err(RuntimeError::exec_exit_code(

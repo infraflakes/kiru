@@ -2,15 +2,11 @@ use super::*;
 
 impl Parser {
     pub(crate) fn parse_expr(&mut self) -> Result<Expr, ParseError> {
-        if matches!(self.current_token().ty, TokenType::Illegal(_)) {
+        if let TokenType::Illegal(m) = &self.current_token().ty {
             let token = self.current_token().clone();
-            let msg = match &token.ty {
-                TokenType::Illegal(m) => m.clone(),
-                _ => unreachable!(),
-            };
             return Err(ParseError::new(
                 SourceSpan::new(token.offset.into(), token.len),
-                msg,
+                m.clone(),
             ));
         }
         match &self.current_token().ty {
@@ -65,17 +61,12 @@ impl Parser {
 
     pub(crate) fn parse_backtick_expr(&mut self) -> Result<Expr, ParseError> {
         let token = self.current_token().clone();
-
-        match &token.ty {
-            TokenType::Backtick(content) => {
-                self.advance();
-
-                let parts = parse_template_parts(content, token.offset)?;
-
-                Ok(Expr::BacktickLit { parts })
-            }
-            _ => unreachable!(),
-        }
+        let TokenType::Backtick(content) = &token.ty else {
+            unreachable!("parse_backtick_expr called without Backtick token")
+        };
+        self.advance();
+        let parts = parse_template_parts(content, token.offset)?;
+        Ok(Expr::BacktickLit { parts })
     }
 
     pub(crate) fn parse_simple_backtick(&mut self) -> Result<String, ParseError> {

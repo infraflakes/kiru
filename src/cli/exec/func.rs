@@ -4,12 +4,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub fn run(
-    config_arg: Option<PathBuf>,
-    name: String,
-    project: String,
-    plain: bool,
-) -> miette::Result<()> {
+pub fn run(config_arg: Option<PathBuf>, name: String, project: String) -> miette::Result<()> {
     let config = load_config_and_resolve(config_arg)?;
 
     if !config.projects.contains_key(&project) {
@@ -24,22 +19,14 @@ pub fn run(
         ));
     }
 
-    if plain {
-        let mut runner = Runner::new(config);
-        runner
-            .execute_fn_call(&name, &project)
-            .map_err(|e| miette::miette!("{}", e))?;
-    } else {
-        let callback: OutputCallback = Arc::new(|line| {
-            let mut out = io::stdout().lock();
-            let _ = crate::tui::render::write_colored_line(&line, &mut out);
-            let _ = writeln!(out);
-        });
+    let callback: OutputCallback = Arc::new(|line| {
+        let mut out = io::stdout().lock();
+        crate::tui::render::write_colored_line(&line, &mut out);
+        let _ = writeln!(out);
+    });
 
-        let mut runner = Runner::new(config).with_output_callback(callback);
-        runner
-            .execute_fn_call(&name, &project)
-            .map_err(|e| miette::miette!("{}", e))?;
-    }
-    Ok(())
+    let mut runner = Runner::new(config).with_output_callback(callback);
+    runner
+        .execute_fn_call(&name, &project)
+        .map_err(|e| miette::miette!("{}", e))
 }
