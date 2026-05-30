@@ -1,7 +1,6 @@
 use super::context::ExecContext;
 use crate::dsl::ast::Expr;
 use crate::runner::error::RuntimeError;
-use std::collections::HashMap;
 
 impl<'a> ExecContext<'a> {
     /// Resolve an expression, checking scope layers before base vars.

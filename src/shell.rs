@@ -107,7 +107,10 @@ pub fn run_captured(
                             let _ = child.kill();
                             let _ = child.wait();
                             let (out, err) = read_output(&mut child).unwrap_or_else(|e| {
-                                eprintln!("[kiru] warning: failed to read output after timeout: {}", e);
+                                eprintln!(
+                                    "[kiru] warning: failed to read output after timeout: {}",
+                                    e
+                                );
                                 (Vec::new(), Vec::new())
                             });
                             return Err(Error::Timeout {

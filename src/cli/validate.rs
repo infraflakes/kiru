@@ -61,15 +61,6 @@ fn header_box(out: &mut String, box_w: usize, label_w: usize, cfg: &Config) {
     kv_row(out, box_w, label_w, "Shell", &cfg.shell, CYAN);
     kv_row(out, box_w, label_w, "Sanctuary", &cfg.sanctuary, CYAN);
 
-    if !cfg.vars.is_empty() {
-        let v = if cfg.vars.len() == 1 {
-            "1 global var".to_string()
-        } else {
-            format!("{} global vars", cfg.vars.len())
-        };
-        kv_row(out, box_w, label_w, "Vars", &v, YELLOW);
-    }
-
     out.push_str(&bot);
     out.push('\n');
 }
@@ -130,15 +121,12 @@ fn draw_project(out: &mut String, name: &str, proj: &crate::config::types::Proje
         project_field(out, indent, "include", u);
     }
 
-    let mut proj_vars: Vec<&String> = proj.vars.keys().collect();
-    proj_vars.sort_unstable();
     let mut proj_fns: Vec<&String> = proj.functions.keys().collect();
     proj_fns.sort_unstable();
     let mut proj_runs: Vec<&String> = proj.runs.keys().collect();
     proj_runs.sort_unstable();
 
-    let items: &[(&str, &Vec<&String>)] =
-        &[("var", &proj_vars), ("fn", &proj_fns), ("run", &proj_runs)];
+    let items: &[(&str, &Vec<&String>)] = &[("fn", &proj_fns), ("run", &proj_runs)];
 
     for (i, (label, names)) in items.iter().enumerate() {
         let last_item = i == items.len() - 1;
@@ -193,11 +181,10 @@ fn footer_bar(out: &mut String, cfg: &Config) {
 
     out.push_str(&style!(
         GRAY,
-        "  ─ {} projects · {} fns · {} runs · {} global vars ─\n",
+        "  ─ {} projects · {} functions · {} runs ─\n",
         cfg.projects.len(),
         total_fns,
         total_runs,
-        cfg.vars.len()
     ));
 }
 
