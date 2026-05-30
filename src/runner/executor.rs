@@ -246,6 +246,13 @@ impl<'a> ExecContext<'a> {
         let candidate = std::fs::canonicalize(&candidate)
             .map_err(|e| RuntimeError::Lookup(format!("cd {}: {}", resolved, e)))?;
 
+        if !candidate.is_dir() {
+            return Err(RuntimeError::Lookup(format!(
+                "cd {}: target is not a directory",
+                resolved
+            )));
+        }
+
         let base_canonical = std::fs::canonicalize(&base_dir)
             .map_err(|e| RuntimeError::Lookup(format!("cd {}: {}", resolved, e)))?;
 
