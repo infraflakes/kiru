@@ -6,7 +6,7 @@ use crate::runner::error::RuntimeError;
 use crate::shell;
 use std::collections::HashMap;
 use std::io::BufRead;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
@@ -39,6 +39,49 @@ impl<'a> ExecContext<'a> {
             work_dir: PathBuf::from(&cfg.sanctuary).join(&project.dir),
             sys_env: std::env::vars().collect(),
         }
+    }
+
+    /// Resolve an expression, checking scope layers before base vars.
+    pub(super) fn resolve_expr(&self, expr: &Expr) -> Result<String, RuntimeError> {
+        match expr {
+            Expr::VarRef { name } => self
+                .resolve_var(name)
+                .cloned()
+                .ok_or_else(|| RuntimeError::Lookup(format!("undefined variable: ${}", name))),
+            Expr::BacktickLit { parts } => {
+                let mut result = String::new();
+                for part in parts {
+                    if part.is_var {
+                        let val = self.resolve_var(&part.value).ok_or_else(|| {
+                            RuntimeError::Lookup(format!("undefined variable: ${}", part.value))
+                        })?;
+                        result.push_str(val);
+                    } else {
+                        result.push_str(&part.value);
+                    }
+                }
+                Ok(result)
+            }
+        }
+    }
+
+    /// Look up a variable name, checking scope layers (top-to-bottom) then base vars.
+    fn resolve_var(&self, name: &str) -> Option<&String> {
+        for layer in self.var_stack.iter().rev() {
+            if let Some(val) = layer.get(name) {
+                return Some(val);
+            }
+        }
+        self.vars.get(name)
+    }
+
+    pub(super) fn build_env(&self) -> impl Iterator<Item = (String, String)> + '_ {
+        let sys = self.sys_env.iter().map(|(k, v)| (k.clone(), v.clone()));
+        let overrides = self
+            .env_stack
+            .iter()
+            .flat_map(|layer| layer.iter().map(|(k, v)| (k.clone(), v.clone())));
+        sys.chain(overrides)
     }
 
     fn indent(&self, extra: usize) -> String {
@@ -77,16 +120,6 @@ impl<'a> ExecContext<'a> {
             }
         }
         Ok(())
-    }
-
-    /// Look up a variable name, checking scope layers (top-to-bottom) then base vars.
-    fn resolve_var(&self, name: &str) -> Option<&String> {
-        for layer in self.var_stack.iter().rev() {
-            if let Some(val) = layer.get(name) {
-                return Some(val);
-            }
-        }
-        self.vars.get(name)
     }
 
     fn match_case_pattern(
@@ -196,18 +229,34 @@ impl<'a> ExecContext<'a> {
     fn exec_cd(&mut self, arg: &Expr) -> Result<(), RuntimeError> {
         let resolved = self.resolve_expr(arg)?;
         let base_dir = PathBuf::from(&self.cfg.sanctuary).join(&self.project.dir);
-        self.work_dir = if resolved == "." {
-            base_dir
+
+        if Path::new(&resolved).is_absolute() {
+            return Err(RuntimeError::Lookup(format!(
+                "cd {}: absolute path not allowed (cannot escape sanctuary)",
+                resolved
+            )));
+        }
+
+        let candidate = if resolved == "." {
+            base_dir.clone()
         } else {
             base_dir.join(&resolved)
         };
 
-        if !self.work_dir.exists() {
+        let candidate = std::fs::canonicalize(&candidate)
+            .map_err(|e| RuntimeError::Lookup(format!("cd {}: {}", resolved, e)))?;
+
+        let base_canonical = std::fs::canonicalize(&base_dir)
+            .map_err(|e| RuntimeError::Lookup(format!("cd {}: {}", resolved, e)))?;
+
+        if !candidate.starts_with(&base_canonical) {
             return Err(RuntimeError::Lookup(format!(
-                "cd {}: directory does not exist",
+                "cd {}: path escapes project directory",
                 resolved
             )));
         }
+
+        self.work_dir = candidate;
 
         let indent = self.indent(0);
         let line = format!("{}cd   {}", indent, resolved);
@@ -319,224 +368,4 @@ fn write_output_lines(output: &mut Output, data: &[u8], indent: &str) -> Result<
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::dsl::ast::{CaseArm, TemplatePart};
-    use std::collections::HashMap;
-
-    fn test_context(vars: HashMap<String, String>) -> (Config, Project, Output) {
-        let project = Project {
-            name: "test".to_string(),
-            url: "http://example.com".to_string(),
-            dir: "test".to_string(),
-            sync: "clone".to_string(),
-            include_file: None,
-            branch: "main".to_string(),
-            vars,
-            functions: HashMap::new(),
-            runs: HashMap::new(),
-        };
-        let cfg = Config {
-            shell: "bash".to_string(),
-            sanctuary: "/tmp".to_string(),
-            projects: HashMap::new(),
-            vars: HashMap::new(),
-        };
-        (cfg, project, Output::Direct(Box::new(Vec::new())))
-    }
-
-    #[test]
-    fn test_match_literal_pattern() {
-        let vars = HashMap::new();
-        let (cfg, project, mut output) = test_context(vars);
-        let mut ctx = ExecContext::new(&cfg, &project, &mut output);
-        let pattern = CasePattern::Literal {
-            parts: vec![TemplatePart {
-                is_var: false,
-                value: "Linux".to_string(),
-            }],
-        };
-        assert!(ctx.match_case_pattern(&pattern, "Linux").unwrap());
-        assert!(!ctx.match_case_pattern(&pattern, "Darwin").unwrap());
-    }
-
-    #[test]
-    fn test_match_literal_with_interpolation() {
-        let mut vars = HashMap::new();
-        vars.insert("arch".to_string(), "amd64".to_string());
-        let (cfg, project, mut output) = test_context(vars);
-        let mut ctx = ExecContext::new(&cfg, &project, &mut output);
-        let pattern = CasePattern::Literal {
-            parts: vec![
-                TemplatePart {
-                    is_var: false,
-                    value: "linux/".to_string(),
-                },
-                TemplatePart {
-                    is_var: true,
-                    value: "arch".to_string(),
-                },
-            ],
-        };
-        assert!(ctx.match_case_pattern(&pattern, "linux/amd64").unwrap());
-        assert!(!ctx.match_case_pattern(&pattern, "linux/arm64").unwrap());
-    }
-
-    #[test]
-    fn test_match_varref_pattern() {
-        let mut vars = HashMap::new();
-        vars.insert("expected".to_string(), "hello".to_string());
-        let (cfg, project, mut output) = test_context(vars);
-        let mut ctx = ExecContext::new(&cfg, &project, &mut output);
-        let pattern = CasePattern::VarRef {
-            name: "expected".to_string(),
-        };
-        assert!(ctx.match_case_pattern(&pattern, "hello").unwrap());
-        assert!(!ctx.match_case_pattern(&pattern, "world").unwrap());
-    }
-
-    #[test]
-    fn test_match_default_pattern() {
-        let vars = HashMap::new();
-        let (cfg, project, mut output) = test_context(vars);
-        let mut ctx = ExecContext::new(&cfg, &project, &mut output);
-        let pattern = CasePattern::Default;
-        assert!(ctx.match_case_pattern(&pattern, "anything").unwrap());
-        assert!(ctx.match_case_pattern(&pattern, "").unwrap());
-    }
-
-    #[test]
-    fn test_match_empty_string() {
-        let vars = HashMap::new();
-        let (cfg, project, mut output) = test_context(vars);
-        let mut ctx = ExecContext::new(&cfg, &project, &mut output);
-        let pattern = CasePattern::Literal {
-            parts: vec![TemplatePart {
-                is_var: false,
-                value: "".to_string(),
-            }],
-        };
-        assert!(ctx.match_case_pattern(&pattern, "").unwrap());
-        assert!(!ctx.match_case_pattern(&pattern, "x").unwrap());
-    }
-
-    #[test]
-    fn test_match_undefined_var_in_literal_pattern() {
-        let vars = HashMap::new();
-        let (cfg, project, mut output) = test_context(vars);
-        let mut ctx = ExecContext::new(&cfg, &project, &mut output);
-        let pattern = CasePattern::Literal {
-            parts: vec![TemplatePart {
-                is_var: true,
-                value: "undefined".to_string(),
-            }],
-        };
-        let result = ctx.match_case_pattern(&pattern, "x");
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("undefined variable")
-        );
-    }
-
-    #[test]
-    fn test_match_undefined_var_in_varref_pattern() {
-        let vars = HashMap::new();
-        let (cfg, project, mut output) = test_context(vars);
-        let mut ctx = ExecContext::new(&cfg, &project, &mut output);
-        let pattern = CasePattern::VarRef {
-            name: "undefined".to_string(),
-        };
-        let result = ctx.match_case_pattern(&pattern, "x");
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("undefined variable")
-        );
-    }
-
-    #[test]
-    fn test_case_first_match_wins() {
-        let vars = HashMap::new();
-        let (cfg, project, mut output) = test_context(vars);
-        let mut ctx = ExecContext::new(&cfg, &project, &mut output);
-        let body = [FnStmt::Case {
-            condition: Expr::BacktickLit {
-                parts: vec![TemplatePart {
-                    is_var: false,
-                    value: "a".to_string(),
-                }],
-            },
-            arms: vec![
-                CaseArm {
-                    pattern: CasePattern::Literal {
-                        parts: vec![TemplatePart {
-                            is_var: false,
-                            value: "a".to_string(),
-                        }],
-                    },
-                    body: vec![FnStmt::Log {
-                        value: Expr::BacktickLit {
-                            parts: vec![TemplatePart {
-                                is_var: false,
-                                value: "first".to_string(),
-                            }],
-                        },
-                    }],
-                },
-                CaseArm {
-                    pattern: CasePattern::Default,
-                    body: vec![FnStmt::Log {
-                        value: Expr::BacktickLit {
-                            parts: vec![TemplatePart {
-                                is_var: false,
-                                value: "second".to_string(),
-                            }],
-                        },
-                    }],
-                },
-            ],
-        }];
-        ctx.exec_fn_body(&body).unwrap();
-        // Only the first arm should have executed (first-match semantics).
-        // We verify by checking no error was returned; the default arm
-        // should not have been reached since the first arm matched.
-    }
-
-    #[test]
-    fn test_case_no_match_does_nothing() {
-        let vars = HashMap::new();
-        let (cfg, project, mut output) = test_context(vars);
-        let mut ctx = ExecContext::new(&cfg, &project, &mut output);
-        let body = [FnStmt::Case {
-            condition: Expr::BacktickLit {
-                parts: vec![TemplatePart {
-                    is_var: false,
-                    value: "no-match".to_string(),
-                }],
-            },
-            arms: vec![CaseArm {
-                pattern: CasePattern::Literal {
-                    parts: vec![TemplatePart {
-                        is_var: false,
-                        value: "a".to_string(),
-                    }],
-                },
-                body: vec![FnStmt::Log {
-                    value: Expr::BacktickLit {
-                        parts: vec![TemplatePart {
-                            is_var: false,
-                            value: "should-not-run".to_string(),
-                        }],
-                    },
-                }],
-            }],
-        }];
-        // Should not error — no arm matches, but that's valid.
-        ctx.exec_fn_body(&body).unwrap();
-    }
-}
+mod tests;

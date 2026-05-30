@@ -213,7 +213,7 @@ fn test_run_ref_not_allowed() {
 
 #[test]
 fn test_run_name_ref_not_allowed() {
-    let result = parse_program("run s { run.x; }");
+    let result = parse_program("run s { s.x; }");
     assert!(result.is_err());
 }
 

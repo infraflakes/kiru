@@ -1,6 +1,7 @@
 use std::io::Read;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 #[derive(Debug)]
@@ -96,23 +97,45 @@ pub fn run_captured(
 
     let mut child = cmd.spawn().map_err(Error::Spawn)?;
 
-    let status = match timeout {
+    let (status, stdout_buf, stderr_buf) = match timeout {
         Some(dur) => {
             let start = Instant::now();
-            loop {
+
+            let stdout_buf = Arc::new(Mutex::new(Vec::new()));
+            let stderr_buf = Arc::new(Mutex::new(Vec::new()));
+
+            let stdout_reader = child.stdout.take().map(|s| {
+                let buf = Arc::clone(&stdout_buf);
+                std::thread::spawn(move || {
+                    let mut tmp = Vec::new();
+                    let _ = std::io::BufReader::new(s).read_to_end(&mut tmp);
+                    buf.lock().unwrap_or_else(|e| e.into_inner()).extend(tmp);
+                })
+            });
+            let stderr_reader = child.stderr.take().map(|s| {
+                let buf = Arc::clone(&stderr_buf);
+                std::thread::spawn(move || {
+                    let mut tmp = Vec::new();
+                    let _ = std::io::BufReader::new(s).read_to_end(&mut tmp);
+                    buf.lock().unwrap_or_else(|e| e.into_inner()).extend(tmp);
+                })
+            });
+
+            let status = loop {
                 match child.try_wait() {
                     Ok(Some(status)) => break status,
                     Ok(None) => {
                         if start.elapsed() >= dur {
                             let _ = child.kill();
                             let _ = child.wait();
-                            let (out, err) = read_output(&mut child).unwrap_or_else(|e| {
-                                eprintln!(
-                                    "[kiru] warning: failed to read output after timeout: {}",
-                                    e
-                                );
-                                (Vec::new(), Vec::new())
-                            });
+                            if let Some(h) = stdout_reader {
+                                let _ = h.join();
+                            }
+                            if let Some(h) = stderr_reader {
+                                let _ = h.join();
+                            }
+                            let out = stdout_buf.lock().unwrap_or_else(|e| e.into_inner());
+                            let err = stderr_buf.lock().unwrap_or_else(|e| e.into_inner());
                             return Err(Error::Timeout {
                                 command: command.to_string(),
                                 partial_stdout: String::from_utf8_lossy(&out).into_owned(),
@@ -121,18 +144,32 @@ pub fn run_captured(
                         }
                         std::thread::sleep(Duration::from_millis(50));
                     }
-                    Err(e) => return Err(Error::Spawn(e)),
+                    Err(e) => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(Error::Spawn(e));
+                    }
                 }
+            };
+
+            if let Some(h) = stdout_reader {
+                let _ = h.join();
             }
+            if let Some(h) = stderr_reader {
+                let _ = h.join();
+            }
+
+            let out = stdout_buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            let err = stderr_buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
+
+            (status, out, err)
         }
-        None => child.wait().map_err(Error::Spawn)?,
+        None => {
+            let output = child.wait_with_output().map_err(Error::Spawn)?;
+            (output.status, output.stdout, output.stderr)
+        }
     };
 
-    let (stdout_buf, stderr_buf) = read_output(&mut child).map_err(|e| Error::Exit {
-        command: command.to_string(),
-        exit_code: None,
-        stderr: format!("failed to read output: {}", e),
-    })?;
     let stdout = String::from_utf8_lossy(&stdout_buf).trim_end().to_string();
     let stderr = String::from_utf8_lossy(&stderr_buf).to_string();
 
@@ -145,16 +182,4 @@ pub fn run_captured(
     }
 
     Ok(Output { stdout })
-}
-
-fn read_output(child: &mut Child) -> std::io::Result<(Vec<u8>, Vec<u8>)> {
-    let mut stdout_buf = Vec::new();
-    let mut stderr_buf = Vec::new();
-    if let Some(ref mut s) = child.stdout {
-        s.read_to_end(&mut stdout_buf)?;
-    }
-    if let Some(ref mut s) = child.stderr {
-        s.read_to_end(&mut stderr_buf)?;
-    }
-    Ok((stdout_buf, stderr_buf))
 }

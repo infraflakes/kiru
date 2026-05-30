@@ -358,8 +358,9 @@ where
         let height: u16 = model
             .chains
             .iter()
-            .map(|c| 1u16 + c.task_count as u16)
-            .sum();
+            .map(|c| 1u16.saturating_add(c.task_count as u16))
+            .try_fold(0u16, |acc, h| acc.checked_add(h))
+            .unwrap_or(u16::MAX);
         let model = Arc::new(Mutex::new(model));
         let (tx, rx) = mpsc::unbounded_channel();
         let tui = tokio::spawn(run_tui(model, rx, height));

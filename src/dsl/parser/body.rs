@@ -99,7 +99,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_case_stmt(&mut self) -> Result<FnStmt, ParseError> {
-        self.advance(); // skip 'case'
+        self.advance();
 
         let condition = self.parse_expr()?;
 

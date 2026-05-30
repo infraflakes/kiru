@@ -1,6 +1,6 @@
 use super::super::load_config_and_resolve;
 use crate::runner::Output;
-use crate::runner::context::ExecContext;
+use crate::runner::executor::ExecContext;
 use crate::tui::{self, TaskStatus, TuiEvent};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -55,7 +55,7 @@ pub fn run(config_arg: Option<PathBuf>, name: String, project: String) -> miette
                 let start_index = base_index;
                 let chain_len = chain.len();
 
-                let handle = tokio::task::spawn_blocking(move || {
+                let handle = tokio::task::spawn_blocking(move || -> Result<(), ()> {
                     let current_task = Arc::new(AtomicUsize::new(0));
                     let cb = {
                         let tx = tx.clone();
@@ -98,7 +98,7 @@ pub fn run(config_arg: Option<PathBuf>, name: String, project: String) -> miette
                                         ),
                                     );
                                 }
-                                return;
+                                return Err(());
                             }
                         };
 
@@ -125,21 +125,31 @@ pub fn run(config_arg: Option<PathBuf>, name: String, project: String) -> miette
                                         TuiEvent::UpdateStatus(skip_idx, TaskStatus::Skipped),
                                     );
                                 }
-                                return;
+                                return Err(());
                             }
                         }
                     }
+
+                    Ok(())
                 });
 
                 chain_handles.push(handle);
                 base_index += chain_len;
             }
 
+            let mut any_err = false;
             for handle in chain_handles {
-                let _ = handle.await;
+                match handle.await {
+                    Ok(Ok(())) => {}
+                    _ => any_err = true,
+                }
             }
 
-            Ok(())
+            if any_err {
+                Err(miette::miette!("one or more chain tasks failed"))
+            } else {
+                Ok(())
+            }
         }
     })?;
     Ok(())

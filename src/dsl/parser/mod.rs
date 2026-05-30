@@ -4,11 +4,11 @@ use crate::dsl::lexer::Lexer;
 use crate::dsl::token::{Token, TokenType};
 use miette::SourceSpan;
 
+mod body;
+mod chain;
+mod decl;
 mod expr;
-mod fn_body;
-mod fn_run;
 mod project;
-mod stmts;
 
 #[cfg(test)]
 mod tests;

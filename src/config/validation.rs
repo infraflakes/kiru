@@ -87,9 +87,9 @@ pub(crate) fn resolve_include(
         let programs = parse_recursive_fn(&use_path, &mut loaded_files, &mut recursion_stack)?;
 
         for program in &programs {
+            let mut merged = cfg.vars.clone();
+            merged.extend(proj.vars.clone());
             for stmt in &program.stmts {
-                let mut merged = cfg.vars.clone();
-                merged.extend(proj.vars.clone());
                 merge_project_body_stmt(proj, stmt.clone(), &cfg.shell, &mut merged)?;
             }
         }

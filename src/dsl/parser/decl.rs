@@ -1,6 +1,46 @@
 use super::*;
 
 impl Parser {
+    pub(crate) fn parse_shell_decl(&mut self) -> Result<Stmt, ParseError> {
+        self.advance();
+
+        self.expect_with_context(TokenType::Assign, "after `shell`")?;
+
+        let value = self.parse_simple_backtick()?;
+        self.expect_with_context(TokenType::Semicolon, "after shell declaration")?;
+
+        Ok(Stmt::ShellDecl { value })
+    }
+
+    pub(crate) fn parse_sanctuary_decl(&mut self) -> Result<Stmt, ParseError> {
+        self.advance();
+
+        self.expect_with_context(TokenType::Assign, "after `sanctuary`")?;
+
+        let value = self.parse_expr()?;
+        self.expect_with_context(TokenType::Semicolon, "after sanctuary declaration")?;
+
+        Ok(Stmt::SanctuaryDecl { value })
+    }
+
+    pub(crate) fn parse_import_decl(&mut self) -> Result<Stmt, ParseError> {
+        self.advance();
+
+        let path = self.parse_expr()?;
+        self.expect_with_context(TokenType::Semicolon, "after import path")?;
+
+        Ok(Stmt::ImportDecl { path })
+    }
+
+    pub(crate) fn parse_var_decl(&mut self) -> Result<Stmt, ParseError> {
+        let (var_type, name, value) = self.parse_var_decl_common()?;
+        Ok(Stmt::VarDecl {
+            var_type,
+            name,
+            value,
+        })
+    }
+
     pub(crate) fn parse_fn_decl(&mut self) -> Result<Stmt, ParseError> {
         self.advance();
 
@@ -75,35 +115,5 @@ impl Parser {
         self.expect_with_context(TokenType::RBrace, "to close run block body")?;
 
         Ok(Stmt::RunDecl { name, chains })
-    }
-
-    fn parse_chain(&mut self) -> Result<Vec<String>, ParseError> {
-        let mut fns = Vec::new();
-        fns.push(self.parse_block_fn_name_in_run()?);
-
-        while self.current_token().ty == TokenType::Arrow {
-            self.advance();
-            fns.push(self.parse_block_fn_name_in_run()?);
-        }
-
-        self.expect_with_context(TokenType::Semicolon, "after run chain")?;
-        Ok(fns)
-    }
-
-    fn parse_block_fn_name_in_run(&mut self) -> Result<String, ParseError> {
-        match &self.current_token().ty {
-            TokenType::Ident(n) => {
-                let name = n.clone();
-                self.advance();
-                Ok(name)
-            }
-            _ => Err(ParseError::new(
-                self.eof_aware_span(),
-                format!(
-                    "expected function name in run block, found {}",
-                    format_token(self.current_token())
-                ),
-            )),
-        }
     }
 }

@@ -87,7 +87,7 @@ pr todo {
     fn test {
         env [
             CGO_ENABLED = `0`,
-            GOPATH = `$HOME/go`;
+            GOPATH = `$HOME/go`
         ] {
             exec(`go test -race ./...`);
             exec(`go vet ./...`);
@@ -110,7 +110,7 @@ pr todo {
 |-------------|-------------|
 | `shell = \`...\`;` | required, must be first. declares the shell for `exec` and `var shell` |
 | `sanctuary = \`...\` \| $var;` | required. absolute path to workspace root |
-| `import ./path;` | import other `.kiru` files, relative paths only |
+| `` import `./path`; `` | import other `.kiru` files, relative paths only |
 | `var string name = \`...\` \| $var;` | string variable (global or project-scoped) |
 | `var shell name = \`...\`;` | runs content via declared shell, stores stdout |
 | `pr name { ... }` | project declaration |

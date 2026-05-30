@@ -14,7 +14,7 @@ impl fmt::Display for ConfigError {
             ConfigError::Io(e) => write!(f, "IO error: {}", e),
             ConfigError::ParseReports(reports) => {
                 for report in reports {
-                    writeln!(f, "{:?}", report)?;
+                    writeln!(f, "{}", report)?;
                 }
                 Ok(())
             }

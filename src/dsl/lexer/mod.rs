@@ -1,6 +1,6 @@
 use crate::dsl::token::{Token, TokenType};
 
-mod reader;
+mod tokenizer;
 
 #[derive(Debug)]
 pub struct Lexer {

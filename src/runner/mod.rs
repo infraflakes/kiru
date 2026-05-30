@@ -1,12 +1,11 @@
-pub(crate) mod context;
 pub(crate) mod error;
-pub(crate) mod resolver;
+pub(crate) mod executor;
 
 use crate::colors;
 use crate::config::Config;
-use context::ExecContext;
-pub use context::OutputCallback;
 use error::RuntimeError;
+use executor::ExecContext;
+pub use executor::OutputCallback;
 use std::io::{self, Write};
 use std::sync::Arc;
 
