@@ -55,7 +55,7 @@ pub fn run(config_arg: Option<PathBuf>, name: String, project: String) -> miette
                 let start_index = base_index;
                 let chain_len = chain.len();
 
-                let handle = tokio::spawn(async move {
+                let handle = tokio::task::spawn_blocking(move || {
                     let current_task = Arc::new(AtomicUsize::new(0));
                     let cb = {
                         let tx = tx.clone();
