@@ -109,12 +109,12 @@ pr todo {
         var shell os = `uname -s`;
         case $os {
             `Linux`  {
-                cd(`cmd`);
-                exec(`go build -ldflags='${version}' -o bin/${app} .`);
+                cd `cmd`;
+                exec `go build -ldflags='${version}' -o bin/${app} .`;
             };
             `Darwin` {
-                cd(`cmd`);
-                exec(`go build -ldflags='${version}' -o bin/${app} .`);
+                cd `cmd`;
+                exec `go build -ldflags='${version}' -o bin/${app} .`;
             };
             _        { log `unsupported OS: ${os}`; };
         };
@@ -122,19 +122,19 @@ pr todo {
 
     fn test {
         env [CGO_ENABLED = `0`, GOOS = `linux`] {
-            exec(`go test -race ./...`);
-            exec(`go vet ./...`);
+            exec `go test -race ./...`;
+            exec `go vet ./...`;
         };
     }
 
     fn lint {
-        exec(`golangci-lint run ./...`);
+        exec `golangci-lint run ./...`;
     }
 
     fn check {
         log `Running checks...`;
-        exec(`go fmt ./...`);
-        exec(`go vet ./...`);
+        exec `go fmt ./...`;
+        exec `go vet ./...`;
     }
 
     # A run block with two chains, running concurrently:

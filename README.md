@@ -73,12 +73,12 @@ pr todo {
         var shell os = `uname -s`;
         case $os {
             `Linux`  {
-                cd(`cmd`);
-                exec(`go build -ldflags='${version}' -o bin/${app} .`);
+                cd `cmd`;
+                exec `go build -ldflags='${version}' -o bin/${app} .`;
             };
             `Darwin` {
-                cd(`cmd`);
-                exec(`go build -ldflags='${version}' -o bin/${app} .`);
+                cd `cmd`;
+                exec `go build -ldflags='${version}' -o bin/${app} .`;
             };
             _        { log `unsupported OS: ${os}`; };
         };
@@ -89,8 +89,8 @@ pr todo {
             CGO_ENABLED = `0`,
             GOPATH = `$HOME/go`
         ] {
-            exec(`go test -race ./...`);
-            exec(`go vet ./...`);
+            exec `go test -race ./...`;
+            exec `go vet ./...`;
         };
     }
 
@@ -137,9 +137,9 @@ pr todo {
 
 | primitive | description |
 |-----------|-------------|
-| `exec(\`...\`);` | run command via declared shell. non-zero exit fails the block |
-| `cd(\`...\`);` | change cwd relative to project dir. cannot escape project dir |
-| `log(\`...\`);` | print to TUI output. never fails |
+| `exec \`...\`;` | run command via declared shell. non-zero exit fails the block |
+| `cd \`...\`;` | change cwd relative to project dir. cannot escape project dir |
+| `log \`...\`;` | print to TUI output. never fails |
 | `env [...] { };` | scoped env vars. inner `env` overrides outer. no leakage |
 | `var <type> name = ...;` | fn-local variable. shadows outer var with same name |
 | `case <expr> { ... };` | conditional branching. first-matching arm wins |
@@ -180,7 +180,7 @@ Chains are separated by `;`. Each chain runs sequentially; chains run concurrent
 
 | delimiter | job |
 |-----------|-----|
-| `()` | primitive args — `exec()`, `cd()`, `log()` |
+| no parens | primitives are bare keywords — `exec`, `cd`, `log` |
 | `[]` | typed list — `env[]` |
 | `{}` | statement block |
 | `;` | statement terminator inside `{}` and run chain separator |
@@ -215,11 +215,11 @@ If a project declares `include`, that file is parsed after `kiru sync` clones th
 # calendar/.kiru/main.kiru
 
 fn build {
-    exec(`pnpm build`);
+    exec `pnpm build`;
 }
 
 fn dev {
-    exec(`pnpm dev`);
+    exec `pnpm dev`;
 }
 ```
 

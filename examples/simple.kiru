@@ -23,11 +23,11 @@ pr myapp {
     fn check {
         log `Checking ${app}...`;
 
-        # cd() resets relative to project dir
-        cd(`.`);
+        # cd resets relative to project dir
+        cd `.`;
 
-        exec(`go fmt ./...`);
-        exec(`go vet ./...`);
+        exec `go fmt ./...`;
+        exec `go vet ./...`;
     }
 
     fn build {
@@ -37,28 +37,28 @@ pr myapp {
         case $os {
             `Linux` {
                 env [GOOS = `linux`, GOARCH = `amd64`] {
-                    exec(`go build -o bin/${app} .`);
+                    exec `go build -o bin/${app} .`;
                 };
             };
             `Darwin` {
-                cd(`cmd`);
-                exec(`go build -o ../bin/${app} .`);
+                cd `cmd`;
+                exec `go build -o ../bin/${app} .`;
             };
             _ {
                 log `unsupported OS: ${os}, falling back to native build`;
-                exec(`go build -o bin/${app} .`);
+                exec `go build -o bin/${app} .`;
             };
         };
     }
 
     fn test {
         env [CGO_ENABLED = `0`] {
-            exec(`go test -race ./...`);
+            exec `go test -race ./...`;
         };
     }
 
     fn lint {
-        exec(`golangci-lint run ./...`);
+        exec `golangci-lint run ./...`;
     }
 
     # run block with two concurrent chains
