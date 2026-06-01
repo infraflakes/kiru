@@ -33,6 +33,11 @@ fn fail {
 }
 
 fn build {
+  log `Building kiru cli!`;
+  exec `cargo build --release`;
+}
+
+fn build_with_container {
   var shell docker_bin = `command -v docker >/dev/null 2>&1 && echo "docker" || { command -v podman >/dev/null 2>&1 && echo "podman"; }`;
   case $docker_bin {
     `docker` {
