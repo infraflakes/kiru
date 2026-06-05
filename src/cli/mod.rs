@@ -68,10 +68,10 @@ fn get_config_path(config_arg: Option<PathBuf>) -> PathBuf {
     }
 
     if let Some(config_dir) = dirs::config_dir() {
-        return config_dir.join("kiru").join("config.kiru");
+        return config_dir.join("kiru").join("main.kiru");
     }
 
-    PathBuf::from("config.kiru")
+    PathBuf::from("main.kiru")
 }
 
 fn run_version() -> miette::Result<()> {

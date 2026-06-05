@@ -22,7 +22,7 @@
 #   kiru -c <path> <command>       Use a custom config file
 #
 # Config discovery:
-#   By default kiru looks for ~/.config/kiru/config.kiru.
+#   By default kiru looks for ~/.config/kiru/main.kiru.
 #   Use -c or --config to override.
 
 # 1. SHELL DECLARATION (required, must be first)

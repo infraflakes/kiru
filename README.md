@@ -43,7 +43,7 @@ kiru -c <path> <command>        use a custom config file
 kiru --config <path> <command>  same as -c
 ```
 
-Config is discovered at `~/.config/kiru/config.kiru` by default. Override with `-c`.
+Config is discovered at `~/.config/kiru/main.kiru` by default. Override with `-c`.
 
 ---
 
