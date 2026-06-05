@@ -5,7 +5,7 @@
     <a href="https://github.com/infraflakes/kiru/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/infraflakes/kiru?logo=github"></a>
 </p>
 
-<img src="./examples/tui_example.png" alt="TUI" width="600">
+<img src="./examples/kiru.png" alt="TUI" width="600">
 
 ---
 
