@@ -11,12 +11,10 @@ use std::path::PathBuf;
 
 fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Config> {
     let config_path = get_config_path(config_arg);
-    load(&config_path).map_err(|e| {
-        if let ConfigError::ParseReports(reports) = e {
-            print_parse_errors(reports)
-        } else {
-            miette::miette!("{}", e)
-        }
+    load(&config_path).map_err(|e| match e {
+        ConfigError::ParseReports(reports) => print_parse_errors(reports),
+        ConfigError::ValidationReport(report) => report,
+        _ => miette::miette!("{}", e),
     })
 }
 
@@ -26,6 +24,9 @@ fn load_config_and_resolve(config_arg: Option<PathBuf>) -> miette::Result<Config
         Ok(()) => {}
         Err(crate::config::ConfigError::ParseReports(reports)) => {
             return Err(print_parse_errors(reports));
+        }
+        Err(crate::config::ConfigError::ValidationReport(report)) => {
+            return Err(report);
         }
         Err(e) => {
             return Err(miette::miette!("{}", e));
@@ -67,11 +68,7 @@ fn get_config_path(config_arg: Option<PathBuf>) -> PathBuf {
         return path;
     }
 
-    if let Some(config_dir) = dirs::config_dir() {
-        return config_dir.join("kiru").join("main.kiru");
-    }
-
-    PathBuf::from("main.kiru")
+    crate::config::default_config_path()
 }
 
 fn run_version() -> miette::Result<()> {

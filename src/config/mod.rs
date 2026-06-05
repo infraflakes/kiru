@@ -5,6 +5,7 @@ pub(crate) mod validation;
 
 pub use error::ConfigError;
 pub use types::{Config, Project};
+pub use validation::is_sanctuary_disabled;
 
 use crate::dsl::ast::{Expr, Program, Stmt};
 use crate::dsl::lexer::Lexer;
@@ -29,6 +30,21 @@ pub fn load(entry_path: &Path) -> Result<Config, ConfigError> {
     validation::validate_base(&config)?;
 
     Ok(config)
+}
+
+pub fn default_config_path() -> PathBuf {
+    if is_sanctuary_disabled()
+        && let Ok(cwd) = std::env::current_dir()
+    {
+        let local = cwd.join(".kiru").join("main.kiru");
+        if local.exists() {
+            return local;
+        }
+    }
+    if let Some(config_dir) = dirs::config_dir() {
+        return config_dir.join("kiru").join("main.kiru");
+    }
+    PathBuf::from("main.kiru")
 }
 
 pub fn resolve_includes(cfg: &mut Config) -> Result<(), ConfigError> {
@@ -76,10 +92,14 @@ fn parse_recursive(
     })?;
 
     let source_name = canon_path.display().to_string();
+    let source_text = data.clone();
     let lexer = Lexer::new(data);
     let mut parser = Parser::new(lexer);
     let program = match parser.parse() {
-        Ok(prog) => prog,
+        Ok(mut prog) => {
+            prog.set_source(source_name, source_text);
+            prog
+        }
         Err(errors) => {
             recursion_stack.remove(&canon_path);
             let source = parser.into_source();
@@ -103,7 +123,7 @@ fn parse_recursive(
     for stmt in &program.stmts {
         if let Stmt::ImportDecl { path } = stmt {
             let rel_path = match path {
-                Expr::BacktickLit { parts } => {
+                Expr::BacktickLit { parts, .. } => {
                     let mut s = String::new();
                     for part in parts {
                         if part.is_var {
@@ -116,7 +136,7 @@ fn parse_recursive(
                     }
                     s
                 }
-                Expr::VarRef { name } => {
+                Expr::VarRef { name, .. } => {
                     return Err(ConfigError::Validation(format!(
                         "variable reference in import path is not supported: ${}",
                         name

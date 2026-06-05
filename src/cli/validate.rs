@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 const BOLD: &str = "\x1b[1m";
-const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[33m";
 const CYAN: &str = "\x1b[36m";
 const GRAY: &str = "\x1b[90m";
@@ -27,25 +26,46 @@ pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
 
 fn format_config(cfg: &Config) -> String {
     let mut out = String::new();
+    out.push('\n');
     let box_w = 62usize;
     let label_w = 14usize;
 
-    header_box(&mut out, box_w, label_w, cfg);
+    let is_standalone = crate::config::is_sanctuary_disabled();
 
-    let mut sorted: Vec<(&String, &crate::config::types::Project)> = cfg.projects.iter().collect();
-    sorted.sort_by(|a, b| a.0.cmp(b.0));
+    if !is_standalone {
+        header_box(&mut out, box_w, label_w, cfg);
+    } else {
+        let key_styled = style!(GRAY, "Shell");
+        let val_styled = style!(CYAN, "{}", &cfg.shell);
+        out.push_str(&format!("  {}:  {}\n\n", key_styled, val_styled));
+    }
 
-    out.push_str(&format!(
-        "\n  {}  {}\n\n",
-        style!(BOLD, "Projects"),
-        style!(YELLOW, "{}", sorted.len())
-    ));
+    if is_standalone {
+        let mut fns: Vec<&String> = cfg.functions.keys().collect();
+        fns.sort_unstable();
+        let mut runs: Vec<&String> = cfg.runs.keys().collect();
+        runs.sort_unstable();
 
-    for (i, (name, proj)) in sorted.iter().enumerate() {
-        draw_project(&mut out, name, proj, i == sorted.len() - 1);
+        draw_standalone(&mut out, &fns, &runs);
+        out.push('\n');
+    } else {
+        let mut sorted: Vec<(&String, &crate::config::types::Project)> =
+            cfg.projects.iter().collect();
+        sorted.sort_by(|a, b| a.0.cmp(b.0));
+
+        out.push_str(&format!(
+            "\n  {}  {}\n\n",
+            style!(BOLD, "Projects"),
+            style!(YELLOW, "{}", sorted.len())
+        ));
+
+        for (i, (name, proj)) in sorted.iter().enumerate() {
+            draw_project(&mut out, name, proj, i == sorted.len() - 1);
+        }
     }
 
     footer_bar(&mut out, cfg);
+    out.push('\n');
     out
 }
 
@@ -57,7 +77,6 @@ fn header_box(out: &mut String, box_w: usize, label_w: usize, cfg: &Config) {
     out.push_str(&top);
     out.push('\n');
 
-    kv_row(out, box_w, label_w, "Status", "●  Valid", GREEN);
     kv_row(out, box_w, label_w, "Shell", &cfg.shell, CYAN);
     kv_row(out, box_w, label_w, "Sanctuary", &cfg.sanctuary, CYAN);
 
@@ -94,6 +113,27 @@ fn kv_row(
         val_styled,
         " ".repeat(pad),
     ));
+}
+
+// ── Standalone pseudo-project (SANCTUARY=0) ───────────────
+
+fn draw_standalone(out: &mut String, fns: &[&String], runs: &[&String]) {
+    let items: &[(&str, &[&String])] = &[("fn", fns), ("run", runs)];
+
+    for (label, names) in items {
+        let styled_label = style!(YELLOW, "{}", label);
+        if names.is_empty() {
+            out.push_str(&format!("  {}:  {}\n", styled_label, style!(GRAY, "—")));
+        } else {
+            let count = style!(GRAY, "({})", names.len());
+            let joined = names
+                .iter()
+                .map(|n| style!(BOLD, "{}", n))
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!("  {}:  {}  {}\n", styled_label, joined, count));
+        }
+    }
 }
 
 // ── Project tree ──────────────────────────────────────────
@@ -178,14 +218,29 @@ fn draw_item_line(out: &mut String, indent: &str, conn: &str, label: &str, names
 fn footer_bar(out: &mut String, cfg: &Config) {
     let total_fns: usize = cfg.projects.values().map(|p| p.functions.len()).sum();
     let total_runs: usize = cfg.projects.values().map(|p| p.runs.len()).sum();
+    let standalone_fns = cfg.functions.len();
+    let standalone_runs = cfg.runs.len();
 
-    out.push_str(&style!(
-        GRAY,
-        "  ─ {} projects · {} functions · {} runs ─\n",
-        cfg.projects.len(),
-        total_fns,
-        total_runs,
-    ));
+    let is_standalone = crate::config::is_sanctuary_disabled() && cfg.projects.is_empty();
+    let fn_count = total_fns + standalone_fns;
+    let run_count = total_runs + standalone_runs;
+
+    if is_standalone {
+        out.push_str(&style!(
+            GRAY,
+            "  ─ {} functions · {} runs ─\n",
+            fn_count,
+            run_count,
+        ));
+    } else {
+        out.push_str(&style!(
+            GRAY,
+            "  ─ {} projects · {} functions · {} runs ─\n",
+            cfg.projects.len(),
+            fn_count,
+            run_count,
+        ));
+    }
 }
 
 // ── Display / pager ───────────────────────────────────────

@@ -32,6 +32,11 @@
 #   - `var shell` declarations (backtick-wrapped commands)
 #
 # Must appear before any `var shell` or `fn` declaration.
+#
+# Shell can be declared at global scope (top-level) or inside a `pr` block
+# (project-scoped). If a project defines its own `shell`, it overrides the
+# global shell for that project's functions. Duplicate declarations at the
+# same scope produce an error.
 
 shell = `bash`;
 
@@ -203,7 +208,42 @@ pr calendar {
 # After all tasks complete (or on abort), a colored ANSI dump is printed
 # showing full output per task with chain section separators.
 
-# 8. INCLUDE FILES
+# 8. CI/CD MODE (SANCTUARY=0)
+#
+# When the SANCTUARY=0 environment variable is set, kiru operates in
+# standalone mode without a sanctuary directory or project scope.
+# This is useful for CI/CD pipelines that cannot set up a sanctuary.
+#
+# In this mode:
+#   - Config is read from .kiru/main.kiru in the current directory
+#     (instead of ~/.config/kiru/main.kiru)
+#   - sanctuary declaration is not required
+#   - pr blocks are not required
+#   - Top-level fn and run declarations are used directly
+#   - shell must be declared at the top of the file
+#   - kiru fn <name> and kiru run <name> work without a project argument
+#   - kiru sync is not available
+#
+# Example standalone config for CI/CD:
+#
+#   shell = `bash`;
+#
+#   fn build {
+#       exec `cargo build --release`;
+#   }
+#
+#   fn test {
+#       exec `cargo test`;
+#   }
+#
+#   run all {
+#       build => test;
+#   }
+#
+# Usage: SANCTUARY=0 kiru run all
+#        SANCTUARY=0 kiru fn build
+
+# 9. INCLUDE FILES
 #
 # If a project declares `include`, that file is parsed after `kiru sync`.
 # Include files use the same grammar as any .kiru file.
@@ -211,17 +251,18 @@ pr calendar {
 # merged into the project's scope — allowing shared declarations across
 # multiple projects.
 
-# GRAMMAR SUMMARY (EBNF)
+# 10. GRAMMAR SUMMARY (EBNF)
 #
 # program      = { statement } ;
-# statement    = shellDecl | sanctuaryDecl | importDecl | varDecl | projectDecl ;
+# statement    = shellDecl | sanctuaryDecl | importDecl | varDecl
+#              | projectDecl | fnDecl | runDecl ;
 #
 # shellDecl    = "shell" "=" BACKTICK ";" ;
 # sanctuaryDecl = "sanctuary" "=" ( BACKTICK | "$" IDENT ) ";" ;
 # importDecl   = "import" path ";" ;
 # varDecl      = "var" ( "string" | "shell" ) IDENT "=" expr ";" ;
 # projectDecl  = "pr" IDENT "{" { projectStmt } "}" ;
-# projectStmt  = projectField | varDecl | fnDecl | runDecl ;
+# projectStmt  = shellDecl | projectField | varDecl | fnDecl | runDecl ;
 # projectField = IDENT "=" expr ";" ;
 # fnDecl       = "fn" IDENT "{" { fnStmt } "}" ;
 # runDecl      = "run" IDENT "{" { chain ";" } "}" ;

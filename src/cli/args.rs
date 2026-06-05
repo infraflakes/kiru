@@ -23,15 +23,15 @@ pub enum Commands {
     Run {
         /// Name of the run block to execute
         name: String,
-        /// Project to run it in
-        project: String,
+        /// Project to run it in (omit in SANCTUARY=0 mode)
+        project: Option<String>,
     },
     /// Run a function directly
     Fn {
         /// Name of the function to run
         name: String,
-        /// Project to run the function in
-        project: String,
+        /// Project to run the function in (omit in SANCTUARY=0 mode)
+        project: Option<String>,
     },
     /// Print the version number
     Version,

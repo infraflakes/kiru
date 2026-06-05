@@ -12,6 +12,8 @@ impl Parser {
         match &self.current_token().ty {
             TokenType::Backtick(_) => self.parse_backtick_expr(),
             TokenType::Dollar => {
+                let offset = self.current_token().offset;
+                let len = self.current_token().len;
                 self.advance();
 
                 let name = match &self.current_token().ty {
@@ -34,7 +36,7 @@ impl Parser {
                 };
                 self.advance();
 
-                Ok(Expr::VarRef { name })
+                Ok(Expr::VarRef { name, offset, len })
             }
             _ => {
                 let is_underscore = matches!(
@@ -64,14 +66,16 @@ impl Parser {
         let TokenType::Backtick(content) = &token.ty else {
             unreachable!("parse_backtick_expr called without Backtick token")
         };
+        let offset = token.offset;
+        let len = token.len;
         self.advance();
         let parts = parse_template_parts(content, token.offset)?;
-        Ok(Expr::BacktickLit { parts })
+        Ok(Expr::BacktickLit { parts, offset, len })
     }
 
     pub(crate) fn parse_simple_backtick(&mut self) -> Result<String, ParseError> {
         let expr = self.parse_backtick_expr()?;
-        if let Expr::BacktickLit { parts } = &expr {
+        if let Expr::BacktickLit { parts, .. } = &expr {
             let concat: String = parts.iter().map(|p| p.value.as_str()).collect();
             Ok(concat)
         } else {

@@ -2,7 +2,48 @@ use super::*;
 use crate::runner::Runner;
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
+
+/// Serializes tests that read or modify the SANCTUARY env var.
+static SANCTUARY_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+/// Run a closure with SANCTUARY set to `val`, restoring the original value
+/// afterward. Serializes via SANCTUARY_MUTEX so no parallel test observes
+/// the temporary env var.
+fn with_sanctuary<R>(val: &str, f: impl FnOnce() -> R) -> R {
+    let _guard = SANCTUARY_MUTEX.lock().unwrap();
+    let prev = std::env::var("SANCTUARY").ok();
+    unsafe {
+        std::env::set_var("SANCTUARY", val);
+    }
+    let result = f();
+    match prev {
+        Some(v) => unsafe {
+            std::env::set_var("SANCTUARY", v);
+        },
+        None => unsafe {
+            std::env::remove_var("SANCTUARY");
+        },
+    }
+    result
+}
+
+/// Run a closure with SANCTUARY removed from the environment, restoring
+/// the original value afterward. Serializes via SANCTUARY_MUTEX.
+fn without_sanctuary<R>(f: impl FnOnce() -> R) -> R {
+    let _guard = SANCTUARY_MUTEX.lock().unwrap();
+    let prev = std::env::var("SANCTUARY").ok();
+    unsafe {
+        std::env::remove_var("SANCTUARY");
+    }
+    let result = f();
+    if let Some(v) = prev {
+        unsafe {
+            std::env::set_var("SANCTUARY", v);
+        }
+    }
+    result
+}
 
 fn load_full(entry_path: &Path) -> Result<Config, ConfigError> {
     let mut cfg = load(entry_path)?;
@@ -225,101 +266,113 @@ pr test { url = `http://example.com`; dir = `test`; }\
 
 #[test]
 fn test_missing_sanctuary() {
-    let dir = tempfile::TempDir::new().unwrap();
-    write_config(
-        dir.path(),
-        "main.kiru",
-        "\
+    without_sanctuary(|| {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
 shell = `bash`;\n\
 pr test { url = `http://example.com`; dir = `test`; }\
 ",
-    );
-    let err = load(&dir.path().join("main.kiru")).unwrap_err();
-    assert!(err.to_string().contains("sanctuary"), "got: {}", err);
+        );
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(err.to_string().contains("sanctuary"), "got: {}", err);
+    })
 }
 
 #[test]
 fn test_sanctuary_absolute_path() {
-    let dir = tempfile::TempDir::new().unwrap();
-    write_config(
-        dir.path(),
-        "main.kiru",
-        "\
+    without_sanctuary(|| {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
 shell = `bash`;\n\
 sanctuary = `relative/path`;\
 ",
-    );
-    let err = load(&dir.path().join("main.kiru")).unwrap_err();
-    assert!(err.to_string().contains("absolute"), "got: {}", err);
+        );
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(err.to_string().contains("absolute"), "got: {}", err);
+    })
 }
 
 #[test]
 fn test_missing_url() {
-    let dir = tempfile::TempDir::new().unwrap();
-    write_config(
-        dir.path(),
-        "main.kiru",
-        "\
+    without_sanctuary(|| {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
 pr p { dir = `d`; }\
 ",
-    );
-    let err = load(&dir.path().join("main.kiru")).unwrap_err();
-    assert!(err.to_string().contains("url is required"), "got: {}", err);
+        );
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(err.to_string().contains("url is required"), "got: {}", err);
+    })
 }
 
 #[test]
 fn test_missing_dir() {
-    let dir = tempfile::TempDir::new().unwrap();
-    write_config(
-        dir.path(),
-        "main.kiru",
-        "\
+    without_sanctuary(|| {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
 pr p { url = `u`; }\
 ",
-    );
-    let err = load(&dir.path().join("main.kiru")).unwrap_err();
-    assert!(err.to_string().contains("dir is required"), "got: {}", err);
+        );
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(err.to_string().contains("dir is required"), "got: {}", err);
+    })
 }
 
 #[test]
 fn test_duplicate_dir() {
-    let dir = tempfile::TempDir::new().unwrap();
-    write_config(
-        dir.path(),
-        "main.kiru",
-        "\
+    without_sanctuary(|| {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
 pr a { url = `ua`; dir = `shared`; }\n\
 pr b { url = `ub`; dir = `shared`; }\
 ",
-    );
-    let err = load(&dir.path().join("main.kiru")).unwrap_err();
-    assert!(
-        err.to_string().contains("duplicate directory"),
-        "got: {}",
-        err
-    );
+        );
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(
+            err.to_string().contains("duplicate directory"),
+            "got: {}",
+            err
+        );
+    })
 }
 
 #[test]
 fn test_invalid_sync_value() {
-    let dir = tempfile::TempDir::new().unwrap();
-    write_config(
-        dir.path(),
-        "main.kiru",
-        "\
+    without_sanctuary(|| {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
 shell = `bash`;\n\
 sanctuary = `/tmp`;\n\
 pr p { url = `u`; dir = `d`; sync = `invalid`; }\
 ",
-    );
-    let err = load(&dir.path().join("main.kiru")).unwrap_err();
-    assert!(err.to_string().contains("sync"), "got: {}", err);
+        );
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(err.to_string().contains("sync"), "got: {}", err);
+    })
 }
 
 #[test]
@@ -831,4 +884,249 @@ pr test {{\n\
     let cfg = load(&dir.path().join("main.kiru")).unwrap();
     let mut runner = Runner::from_arc(Arc::new(cfg));
     runner.execute_fn_call("deploy", "test").unwrap();
+}
+
+// --- Top-level fn/run collection (SANCTUARY=0 ready) ---
+
+#[test]
+fn test_top_level_fn_collection() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+shell = `bash`;\n\
+sanctuary = `/tmp`;\n\
+fn build { log `building`; }\n\
+fn test { exec `check`; }\n\
+",
+    );
+    let cfg = load(&dir.path().join("main.kiru")).unwrap();
+    assert!(cfg.functions.contains_key("build"));
+    assert!(cfg.functions.contains_key("test"));
+    assert_eq!(cfg.functions.len(), 2);
+}
+
+#[test]
+fn test_top_level_run_collection() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+shell = `bash`;\n\
+sanctuary = `/tmp`;\n\
+fn build { log `x`; }\n\
+fn test { log `y`; }\n\
+run all { build => test; }\n\
+run ci { build; }\n\
+",
+    );
+    let cfg = load(&dir.path().join("main.kiru")).unwrap();
+    assert!(cfg.runs.contains_key("all"));
+    assert!(cfg.runs.contains_key("ci"));
+    assert_eq!(cfg.runs.len(), 2);
+    assert_eq!(cfg.runs["all"], vec![vec!["build", "test"]]);
+}
+
+#[test]
+fn test_top_level_duplicate_fn() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+shell = `bash`;\n\
+sanctuary = `/tmp`;\n\
+fn dup { log `a`; }\n\
+fn dup { log `b`; }\n\
+",
+    );
+    let err = load(&dir.path().join("main.kiru")).unwrap_err();
+    assert!(err.to_string().contains("duplicate"), "got: {}", err);
+}
+
+#[test]
+fn test_top_level_duplicate_run() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+shell = `bash`;\n\
+sanctuary = `/tmp`;\n\
+fn x { log `a`; }\n\
+run dup { x; }\n\
+run dup { x; }\n\
+",
+    );
+    let err = load(&dir.path().join("main.kiru")).unwrap_err();
+    assert!(err.to_string().contains("duplicate"), "got: {}", err);
+}
+
+#[test]
+fn test_top_level_run_validates_function_refs() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+shell = `bash`;\n\
+sanctuary = `/tmp`;\n\
+run bad { nonexistent; }\n\
+",
+    );
+    let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
+    assert!(err.to_string().contains("unknown function"), "got: {}", err);
+}
+
+#[test]
+fn test_top_level_fn_var_validation() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+shell = `bash`;\n\
+sanctuary = `/tmp`;\n\
+fn bad { log $undefined; }\n\
+",
+    );
+    let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
+    assert!(
+        err.to_string().contains("undefined variable"),
+        "got: {}",
+        err
+    );
+}
+
+// --- Project-scoped shell ---
+
+#[test]
+fn test_project_scoped_shell() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+shell = `bash`;\n\
+sanctuary = `/tmp`;\n\
+pr test {\n\
+    url = `u`;\n\
+    dir = `d`;\n\
+    shell = `zsh`;\n\
+    fn build { log `x`; }\n\
+}\n\
+",
+    );
+    let cfg = load(&dir.path().join("main.kiru")).unwrap();
+    assert_eq!(cfg.projects["test"].shell.as_deref(), Some("zsh"));
+}
+
+#[test]
+fn test_duplicate_shell_in_project() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+shell = `bash`;\n\
+sanctuary = `/tmp`;\n\
+pr test {\n\
+    url = `u`;\n\
+    dir = `d`;\n\
+    shell = `zsh`;\n\
+    shell = `fish`;\n\
+}\n\
+",
+    );
+    let err = load(&dir.path().join("main.kiru")).unwrap_err();
+    assert!(err.to_string().contains("duplicate shell"), "got: {}", err);
+}
+
+#[test]
+fn test_global_and_project_shell_coexist() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+shell = `bash`;\n\
+sanctuary = `/tmp`;\n\
+pr a {\n\
+    url = `ua`;\n\
+    dir = `da`;\n\
+    shell = `zsh`;\n\
+    fn afn { log `a`; }\n\
+}\n\
+pr b {\n\
+    url = `ub`;\n\
+    dir = `db`;\n\
+    fn bfn { log `b`; }\n\
+}\n\
+",
+    );
+    let cfg = load_full(&dir.path().join("main.kiru")).unwrap();
+    assert_eq!(cfg.projects["a"].shell.as_deref(), Some("zsh"));
+    assert_eq!(cfg.projects["b"].shell, None);
+    assert_eq!(cfg.shell, "bash");
+}
+
+// --- SANCTUARY=0 standalone mode (env var required) ---
+
+#[test]
+fn test_standalone_config_no_sanctuary() {
+    with_sanctuary("0", || {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+shell = `bash`;\n\
+fn build { log `building`; }\n\
+fn test { exec `check`; }\n\
+run all { build => test; }\n\
+",
+        );
+        let cfg = load(&dir.path().join("main.kiru")).unwrap();
+        assert_eq!(cfg.sanctuary, "");
+        assert!(cfg.functions.contains_key("build"));
+        assert!(cfg.functions.contains_key("test"));
+        assert!(cfg.runs.contains_key("all"));
+        assert!(cfg.projects.is_empty());
+    })
+}
+
+#[test]
+fn test_standalone_config_needs_shell() {
+    with_sanctuary("0", || {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+fn build { log `x`; }\n\
+",
+        );
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(err.to_string().contains("shell"), "got: {}", err);
+    })
+}
+
+#[test]
+fn test_standalone_duplicate_shell() {
+    with_sanctuary("0", || {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+shell = `bash`;\n\
+shell = `zsh`;\n\
+fn x { log `a`; }\n\
+",
+        );
+        let err = load(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(err.to_string().contains("duplicate shell"), "got: {}", err);
+    })
 }

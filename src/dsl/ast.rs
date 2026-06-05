@@ -1,16 +1,31 @@
 #[derive(Debug, Clone)]
 pub enum Expr {
-    BacktickLit { parts: Vec<TemplatePart> },
-    VarRef { name: String },
+    BacktickLit {
+        parts: Vec<TemplatePart>,
+        offset: usize,
+        len: usize,
+    },
+    VarRef {
+        name: String,
+        offset: usize,
+        len: usize,
+    },
 }
 
 impl Expr {
+    pub fn span(&self) -> (usize, usize) {
+        match self {
+            Expr::BacktickLit { offset, len, .. } => (*offset, *len),
+            Expr::VarRef { offset, len, .. } => (*offset, *len),
+        }
+    }
+
     pub fn resolve(
         &self,
         vars: &std::collections::HashMap<String, String>,
     ) -> Result<String, String> {
         match self {
-            Expr::BacktickLit { parts } => {
+            Expr::BacktickLit { parts, .. } => {
                 let mut result = String::new();
                 for part in parts {
                     if part.is_var {
@@ -24,7 +39,7 @@ impl Expr {
                 }
                 Ok(result)
             }
-            Expr::VarRef { name } => match vars.get(name) {
+            Expr::VarRef { name, .. } => match vars.get(name) {
                 Some(value) => Ok(value.clone()),
                 None => Err(format!("undefined variable: ${}", name)),
             },
@@ -43,6 +58,8 @@ pub struct TemplatePart {
 pub enum Stmt {
     ShellDecl {
         value: String,
+        offset: usize,
+        len: usize,
     },
     SanctuaryDecl {
         value: Expr,
@@ -54,19 +71,27 @@ pub enum Stmt {
         var_type: VarType,
         name: String,
         value: Expr,
+        offset: usize,
+        len: usize,
     },
     ProjectDecl {
         name: String,
         fields: Vec<ProjectField>,
         body: Vec<Stmt>,
+        offset: usize,
+        len: usize,
     },
     FnDecl {
         name: String,
         body: Vec<FnStmt>,
+        offset: usize,
+        len: usize,
     },
     RunDecl {
         name: String,
         chains: Vec<Vec<String>>,
+        offset: usize,
+        len: usize,
     },
 }
 
@@ -130,10 +155,21 @@ pub struct EnvPair {
 #[derive(Debug, Clone)]
 pub struct Program {
     pub stmts: Vec<Stmt>,
+    pub source_name: String,
+    pub source_text: String,
 }
 
 impl Program {
     pub fn new() -> Self {
-        Self { stmts: Vec::new() }
+        Self {
+            stmts: Vec::new(),
+            source_name: String::new(),
+            source_text: String::new(),
+        }
+    }
+
+    pub fn set_source(&mut self, name: String, text: String) {
+        self.source_name = name;
+        self.source_text = text;
     }
 }

@@ -2,6 +2,8 @@ use super::*;
 
 impl Parser {
     pub(crate) fn parse_project_decl(&mut self) -> Result<Stmt, ParseError> {
+        let offset = self.current_token().offset;
+        let len = self.current_token().len;
         self.advance(); // skip 'pr'
 
         let name = match &self.current_token().ty {
@@ -31,7 +33,7 @@ impl Parser {
 
         while self.current_token().ty != TokenType::RBrace {
             match &self.current_token().ty {
-                TokenType::Var | TokenType::Fn | TokenType::Run => {
+                TokenType::Var | TokenType::Fn | TokenType::Run | TokenType::Shell => {
                     body.push(self.parse_project_body_stmt()?);
                 }
                 _ => {
@@ -67,6 +69,12 @@ impl Parser {
 
         self.expect_with_context(TokenType::RBrace, "to close project body")?;
 
-        Ok(Stmt::ProjectDecl { name, fields, body })
+        Ok(Stmt::ProjectDecl {
+            name,
+            fields,
+            body,
+            offset,
+            len,
+        })
     }
 }
