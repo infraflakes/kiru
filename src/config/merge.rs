@@ -64,11 +64,6 @@ fn collect_shell(programs: &[Program]) -> Result<String, ConfigError> {
             }
         }
     }
-    if shell.is_empty() {
-        return Err(ConfigError::Validation(
-            "shell declaration is required".to_string(),
-        ));
-    }
     Ok(shell)
 }
 
@@ -340,9 +335,9 @@ pub(crate) fn merge_project_body_stmt(
                 let (o, l) = value.span();
                 spanned_err(e, source_name, source_text, o, l)
             })?;
-            let effective_shell = resolve_project_shell(project, global_shell)?;
 
             let final_value = if var_type == VarType::Shell {
+                let effective_shell = resolve_project_shell(project, global_shell)?;
                 resolve_shell_var(&effective_shell, &resolved)?
             } else {
                 resolved

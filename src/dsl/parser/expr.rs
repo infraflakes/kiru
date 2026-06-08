@@ -12,8 +12,7 @@ impl Parser {
         match &self.current_token().ty {
             TokenType::Backtick(_) => self.parse_backtick_expr(),
             TokenType::Dollar => {
-                let offset = self.current_token().offset;
-                let len = self.current_token().len;
+                let start_offset = self.current_token().offset;
                 self.advance();
 
                 let name = match &self.current_token().ty {
@@ -34,9 +33,14 @@ impl Parser {
                         ));
                     }
                 };
+                let name_end = self.current_token().offset + self.current_token().len;
                 self.advance();
 
-                Ok(Expr::VarRef { name, offset, len })
+                Ok(Expr::VarRef {
+                    name,
+                    offset: start_offset,
+                    len: name_end - start_offset,
+                })
             }
             _ => {
                 let is_underscore = matches!(

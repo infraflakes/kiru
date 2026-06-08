@@ -8,15 +8,16 @@ use std::sync::{Arc, LazyLock, Mutex};
 static SANCTUARY_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// Run a closure with SANCTUARY set to `val`, restoring the original value
-/// afterward. Serializes via SANCTUARY_MUTEX so no parallel test observes
-/// the temporary env var.
+/// afterward. Holds SANCTUARY_MUTEX across the call and uses catch_unwind
+/// so that a panic inside f() neither leaks the modified env var nor poisons
+/// the mutex.
 fn with_sanctuary<R>(val: &str, f: impl FnOnce() -> R) -> R {
     let _guard = SANCTUARY_MUTEX.lock().unwrap();
     let prev = std::env::var("SANCTUARY").ok();
     unsafe {
         std::env::set_var("SANCTUARY", val);
     }
-    let result = f();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
     match prev {
         Some(v) => unsafe {
             std::env::set_var("SANCTUARY", v);
@@ -25,24 +26,34 @@ fn with_sanctuary<R>(val: &str, f: impl FnOnce() -> R) -> R {
             std::env::remove_var("SANCTUARY");
         },
     }
-    result
+    drop(_guard);
+    match result {
+        Ok(r) => r,
+        Err(e) => std::panic::resume_unwind(e),
+    }
 }
 
 /// Run a closure with SANCTUARY removed from the environment, restoring
-/// the original value afterward. Serializes via SANCTUARY_MUTEX.
+/// the original value afterward. Holds SANCTUARY_MUTEX across the call
+/// and uses catch_unwind so that a panic inside f() neither leaks the
+/// modified env var nor poisons the mutex.
 fn without_sanctuary<R>(f: impl FnOnce() -> R) -> R {
     let _guard = SANCTUARY_MUTEX.lock().unwrap();
     let prev = std::env::var("SANCTUARY").ok();
     unsafe {
         std::env::remove_var("SANCTUARY");
     }
-    let result = f();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
     if let Some(v) = prev {
         unsafe {
             std::env::set_var("SANCTUARY", v);
         }
     }
-    result
+    drop(_guard);
+    match result {
+        Ok(r) => r,
+        Err(e) => std::panic::resume_unwind(e),
+    }
 }
 
 fn load_full(entry_path: &Path) -> Result<Config, ConfigError> {
