@@ -84,7 +84,18 @@ impl Runner {
             .get(fn_name)
             .ok_or_else(|| RuntimeError::Lookup(format!("unknown function: {}", fn_name)))?;
 
-        let mut ctx = ExecContext::new(&self.cfg, project, &mut self.output);
+        let mut ctx = ExecContext::new(&self.cfg, Some(project), &mut self.output);
+        ctx.exec_fn_body(fn_body)
+    }
+
+    pub fn execute_standalone_fn(&mut self, fn_name: &str) -> Result<(), RuntimeError> {
+        let fn_body = self
+            .cfg
+            .functions
+            .get(fn_name)
+            .ok_or_else(|| RuntimeError::Lookup(format!("unknown function: {}", fn_name)))?;
+
+        let mut ctx = ExecContext::new(&self.cfg, None, &mut self.output);
         ctx.exec_fn_body(fn_body)
     }
 }

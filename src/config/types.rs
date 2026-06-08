@@ -9,6 +9,7 @@ pub struct Project {
     pub sync: String,
     pub include_file: Option<String>,
     pub branch: String,
+    pub shell: Option<String>,
     pub vars: HashMap<String, String>,
     pub functions: HashMap<String, Vec<FnStmt>>,
     pub runs: HashMap<String, Vec<Vec<String>>>,
@@ -20,4 +21,6 @@ pub struct Config {
     pub sanctuary: String,
     pub projects: HashMap<String, Project>,
     pub vars: HashMap<String, String>,
+    pub functions: HashMap<String, Vec<FnStmt>>,
+    pub runs: HashMap<String, Vec<Vec<String>>>,
 }

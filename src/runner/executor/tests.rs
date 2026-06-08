@@ -10,6 +10,7 @@ fn test_context(vars: HashMap<String, String>) -> (Config, Project, Output) {
         sync: "clone".to_string(),
         include_file: None,
         branch: "main".to_string(),
+        shell: None,
         vars,
         functions: HashMap::new(),
         runs: HashMap::new(),
@@ -19,6 +20,8 @@ fn test_context(vars: HashMap<String, String>) -> (Config, Project, Output) {
         sanctuary: "/tmp".to_string(),
         projects: HashMap::new(),
         vars: HashMap::new(),
+        functions: HashMap::new(),
+        runs: HashMap::new(),
     };
     (cfg, project, Output::Direct(Box::new(Vec::new())))
 }
@@ -27,7 +30,7 @@ fn test_context(vars: HashMap<String, String>) -> (Config, Project, Output) {
 fn test_match_literal_pattern() {
     let vars = HashMap::new();
     let (cfg, project, mut output) = test_context(vars);
-    let mut ctx = ExecContext::new(&cfg, &project, &mut output);
+    let mut ctx = ExecContext::new(&cfg, Some(&project), &mut output);
     let pattern = CasePattern::Literal {
         parts: vec![TemplatePart {
             is_var: false,
@@ -43,7 +46,7 @@ fn test_match_literal_with_interpolation() {
     let mut vars = HashMap::new();
     vars.insert("arch".to_string(), "amd64".to_string());
     let (cfg, project, mut output) = test_context(vars);
-    let mut ctx = ExecContext::new(&cfg, &project, &mut output);
+    let mut ctx = ExecContext::new(&cfg, Some(&project), &mut output);
     let pattern = CasePattern::Literal {
         parts: vec![
             TemplatePart {
@@ -65,7 +68,7 @@ fn test_match_varref_pattern() {
     let mut vars = HashMap::new();
     vars.insert("expected".to_string(), "hello".to_string());
     let (cfg, project, mut output) = test_context(vars);
-    let mut ctx = ExecContext::new(&cfg, &project, &mut output);
+    let mut ctx = ExecContext::new(&cfg, Some(&project), &mut output);
     let pattern = CasePattern::VarRef {
         name: "expected".to_string(),
     };
@@ -77,7 +80,7 @@ fn test_match_varref_pattern() {
 fn test_match_default_pattern() {
     let vars = HashMap::new();
     let (cfg, project, mut output) = test_context(vars);
-    let mut ctx = ExecContext::new(&cfg, &project, &mut output);
+    let mut ctx = ExecContext::new(&cfg, Some(&project), &mut output);
     let pattern = CasePattern::Default;
     assert!(ctx.match_case_pattern(&pattern, "anything").unwrap());
     assert!(ctx.match_case_pattern(&pattern, "").unwrap());
@@ -87,7 +90,7 @@ fn test_match_default_pattern() {
 fn test_match_empty_string() {
     let vars = HashMap::new();
     let (cfg, project, mut output) = test_context(vars);
-    let mut ctx = ExecContext::new(&cfg, &project, &mut output);
+    let mut ctx = ExecContext::new(&cfg, Some(&project), &mut output);
     let pattern = CasePattern::Literal {
         parts: vec![TemplatePart {
             is_var: false,
@@ -102,7 +105,7 @@ fn test_match_empty_string() {
 fn test_match_undefined_var_in_literal_pattern() {
     let vars = HashMap::new();
     let (cfg, project, mut output) = test_context(vars);
-    let mut ctx = ExecContext::new(&cfg, &project, &mut output);
+    let mut ctx = ExecContext::new(&cfg, Some(&project), &mut output);
     let pattern = CasePattern::Literal {
         parts: vec![TemplatePart {
             is_var: true,
@@ -123,7 +126,7 @@ fn test_match_undefined_var_in_literal_pattern() {
 fn test_match_undefined_var_in_varref_pattern() {
     let vars = HashMap::new();
     let (cfg, project, mut output) = test_context(vars);
-    let mut ctx = ExecContext::new(&cfg, &project, &mut output);
+    let mut ctx = ExecContext::new(&cfg, Some(&project), &mut output);
     let pattern = CasePattern::VarRef {
         name: "undefined".to_string(),
     };
@@ -141,9 +144,11 @@ fn test_match_undefined_var_in_varref_pattern() {
 fn test_case_first_match_wins() {
     let vars = HashMap::new();
     let (cfg, project, mut output) = test_context(vars);
-    let mut ctx = ExecContext::new(&cfg, &project, &mut output);
+    let mut ctx = ExecContext::new(&cfg, Some(&project), &mut output);
     let body = [FnStmt::Case {
         condition: Expr::BacktickLit {
+            offset: 0,
+            len: 0,
             parts: vec![TemplatePart {
                 is_var: false,
                 value: "a".to_string(),
@@ -159,6 +164,8 @@ fn test_case_first_match_wins() {
                 },
                 body: vec![FnStmt::Log {
                     value: Expr::BacktickLit {
+                        offset: 0,
+                        len: 0,
                         parts: vec![TemplatePart {
                             is_var: false,
                             value: "first".to_string(),
@@ -170,6 +177,8 @@ fn test_case_first_match_wins() {
                 pattern: CasePattern::Default,
                 body: vec![FnStmt::Log {
                     value: Expr::BacktickLit {
+                        offset: 0,
+                        len: 0,
                         parts: vec![TemplatePart {
                             is_var: false,
                             value: "second".to_string(),
@@ -186,9 +195,11 @@ fn test_case_first_match_wins() {
 fn test_case_no_match_does_nothing() {
     let vars = HashMap::new();
     let (cfg, project, mut output) = test_context(vars);
-    let mut ctx = ExecContext::new(&cfg, &project, &mut output);
+    let mut ctx = ExecContext::new(&cfg, Some(&project), &mut output);
     let body = [FnStmt::Case {
         condition: Expr::BacktickLit {
+            offset: 0,
+            len: 0,
             parts: vec![TemplatePart {
                 is_var: false,
                 value: "no-match".to_string(),
@@ -203,6 +214,8 @@ fn test_case_no_match_does_nothing() {
             },
             body: vec![FnStmt::Log {
                 value: Expr::BacktickLit {
+                    offset: 0,
+                    len: 0,
                     parts: vec![TemplatePart {
                         is_var: false,
                         value: "should-not-run".to_string(),

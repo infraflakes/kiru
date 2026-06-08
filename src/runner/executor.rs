@@ -14,7 +14,7 @@ pub type OutputCallback = Arc<dyn Fn(String) + Send + Sync>;
 
 pub(crate) struct ExecContext<'a> {
     pub(super) cfg: &'a Config,
-    pub(super) project: &'a Project,
+    pub(super) project: Option<&'a Project>,
     output: &'a mut Output,
     /// Base variables (global + project). Scope layers pushed/popped for case arms and env blocks.
     pub(super) vars: HashMap<String, String>,
@@ -26,9 +26,19 @@ pub(crate) struct ExecContext<'a> {
 }
 
 impl<'a> ExecContext<'a> {
-    pub(crate) fn new(cfg: &'a Config, project: &'a Project, output: &'a mut Output) -> Self {
+    pub(crate) fn new(
+        cfg: &'a Config,
+        project: Option<&'a Project>,
+        output: &'a mut Output,
+    ) -> Self {
         let mut vars = cfg.vars.clone();
-        vars.extend(project.vars.clone());
+        if let Some(proj) = project {
+            vars.extend(proj.vars.clone());
+        }
+        let work_dir = match project {
+            Some(proj) => PathBuf::from(&cfg.sanctuary).join(&proj.dir),
+            None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        };
         ExecContext {
             cfg,
             project,
@@ -36,19 +46,29 @@ impl<'a> ExecContext<'a> {
             vars,
             var_stack: Vec::new(),
             env_stack: Vec::new(),
-            work_dir: PathBuf::from(&cfg.sanctuary).join(&project.dir),
+            work_dir,
             sys_env: std::env::vars().collect(),
         }
+    }
+
+    /// Resolve which shell to use — project scope first, then global.
+    pub(super) fn effective_shell(&self) -> &str {
+        if let Some(proj) = self.project
+            && let Some(ref s) = proj.shell
+        {
+            return s;
+        }
+        &self.cfg.shell
     }
 
     /// Resolve an expression, checking scope layers before base vars.
     pub(super) fn resolve_expr(&self, expr: &Expr) -> Result<String, RuntimeError> {
         match expr {
-            Expr::VarRef { name } => self
+            Expr::VarRef { name, .. } => self
                 .resolve_var(name)
                 .cloned()
                 .ok_or_else(|| RuntimeError::Lookup(format!("undefined variable: ${}", name))),
-            Expr::BacktickLit { parts } => {
+            Expr::BacktickLit { parts, .. } => {
                 let mut result = String::new();
                 for part in parts {
                     if part.is_var {
@@ -176,7 +196,8 @@ impl<'a> ExecContext<'a> {
             .writeln_colored(&line, colors::EXEC_ANSI)
             .map_err(RuntimeError::Io)?;
 
-        let mut child = Command::new(&self.cfg.shell)
+        let shell = self.effective_shell().to_string();
+        let mut child = Command::new(&shell)
             .arg("-c")
             .arg(&cmd_str)
             .current_dir(&self.work_dir)
@@ -228,11 +249,14 @@ impl<'a> ExecContext<'a> {
 
     fn exec_cd(&mut self, arg: &Expr) -> Result<(), RuntimeError> {
         let resolved = self.resolve_expr(arg)?;
-        let base_dir = PathBuf::from(&self.cfg.sanctuary).join(&self.project.dir);
+        let base_dir = match self.project {
+            Some(proj) => PathBuf::from(&self.cfg.sanctuary).join(&proj.dir),
+            None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        };
 
         if Path::new(&resolved).is_absolute() {
             return Err(RuntimeError::Lookup(format!(
-                "cd {}: absolute path not allowed (cannot escape sanctuary)",
+                "cd {}: absolute path not allowed",
                 resolved
             )));
         }
@@ -253,14 +277,16 @@ impl<'a> ExecContext<'a> {
             )));
         }
 
-        let base_canonical = std::fs::canonicalize(&base_dir)
-            .map_err(|e| RuntimeError::Lookup(format!("cd {}: {}", resolved, e)))?;
-
-        if !candidate.starts_with(&base_canonical) {
-            return Err(RuntimeError::Lookup(format!(
-                "cd {}: path escapes project directory",
-                resolved
-            )));
+        if let Some(proj) = self.project {
+            let base_canonical = PathBuf::from(&self.cfg.sanctuary).join(&proj.dir);
+            let base_canonical = std::fs::canonicalize(&base_canonical)
+                .map_err(|e| RuntimeError::Lookup(format!("cd {}: {}", resolved, e)))?;
+            if !candidate.starts_with(&base_canonical) {
+                return Err(RuntimeError::Lookup(format!(
+                    "cd {}: path escapes project directory",
+                    resolved
+                )));
+            }
         }
 
         self.work_dir = candidate;
@@ -282,29 +308,24 @@ impl<'a> ExecContext<'a> {
         let val = self.resolve_expr(value)?;
 
         let resolved = if var_type == &crate::dsl::ast::VarType::Shell {
+            let shell = self.effective_shell().to_string();
             let env_map: HashMap<String, String> = self.build_env().collect();
-            let out = shell::run_captured(
-                &self.cfg.shell,
-                &val,
-                Some(&self.work_dir),
-                Some(&env_map),
-                None,
-            )
-            .map_err(|e| match e {
-                shell::Error::Spawn(io_err) => RuntimeError::exec_io_error(&val, io_err),
-                shell::Error::Exit {
-                    stderr, exit_code, ..
-                } => RuntimeError::Exec {
-                    cmd: val.clone(),
-                    exit_code,
-                    detail: stderr,
-                },
-                shell::Error::Timeout { partial_stderr, .. } => RuntimeError::Exec {
-                    cmd: val.clone(),
-                    exit_code: None,
-                    detail: format!("timed out: {}", partial_stderr),
-                },
-            })?;
+            let out = shell::run_captured(&shell, &val, Some(&self.work_dir), Some(&env_map), None)
+                .map_err(|e| match e {
+                    shell::Error::Spawn(io_err) => RuntimeError::exec_io_error(&val, io_err),
+                    shell::Error::Exit {
+                        stderr, exit_code, ..
+                    } => RuntimeError::Exec {
+                        cmd: val.clone(),
+                        exit_code,
+                        detail: stderr,
+                    },
+                    shell::Error::Timeout { partial_stderr, .. } => RuntimeError::Exec {
+                        cmd: val.clone(),
+                        exit_code: None,
+                        detail: format!("timed out: {}", partial_stderr),
+                    },
+                })?;
             out.stdout
         } else {
             val

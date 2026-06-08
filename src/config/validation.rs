@@ -5,6 +5,10 @@ use crate::dsl::ast::{CasePattern, Expr, FnStmt};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+pub fn is_sanctuary_disabled() -> bool {
+    std::env::var("SANCTUARY").as_deref() == Ok("0")
+}
+
 pub(crate) fn validate_base(config: &Config) -> Result<(), ConfigError> {
     let mut errs = Vec::new();
 
@@ -12,7 +16,9 @@ pub(crate) fn validate_base(config: &Config) -> Result<(), ConfigError> {
         errs.push("shell declaration is required".to_string());
     }
 
-    if config.sanctuary.is_empty() {
+    if is_sanctuary_disabled() {
+        // SANCTUARY=0 mode: sanctuary and project fields are optional
+    } else if config.sanctuary.is_empty() {
         errs.push("sanctuary declaration is required".to_string());
     } else if !Path::new(&config.sanctuary).is_absolute() {
         errs.push(format!(
@@ -21,27 +27,29 @@ pub(crate) fn validate_base(config: &Config) -> Result<(), ConfigError> {
         ));
     }
 
-    let mut dirs = std::collections::HashSet::new();
-    for proj in config.projects.values() {
-        if proj.url.is_empty() {
-            errs.push(format!("project {:?}: url is required", proj.name));
-        }
-        if proj.dir.is_empty() {
-            errs.push(format!("project {:?}: dir is required", proj.name));
-        }
-        if !dirs.insert(&proj.dir) {
-            errs.push(format!(
-                "project {:?}: duplicate directory {:?}",
-                proj.name, proj.dir
-            ));
-        }
-        match proj.sync.as_str() {
-            "clone" | "ignore" => {}
-            other => {
+    if !is_sanctuary_disabled() {
+        let mut dirs = std::collections::HashSet::new();
+        for proj in config.projects.values() {
+            if proj.url.is_empty() {
+                errs.push(format!("project {:?}: url is required", proj.name));
+            }
+            if proj.dir.is_empty() {
+                errs.push(format!("project {:?}: dir is required", proj.name));
+            }
+            if !dirs.insert(&proj.dir) {
                 errs.push(format!(
-                    "project {:?}: invalid sync value {:?} (expected 'clone' or 'ignore')",
-                    proj.name, other
+                    "project {:?}: duplicate directory {:?}",
+                    proj.name, proj.dir
                 ));
+            }
+            match proj.sync.as_str() {
+                "clone" | "ignore" => {}
+                other => {
+                    errs.push(format!(
+                        "project {:?}: invalid sync value {:?} (expected 'clone' or 'ignore')",
+                        proj.name, other
+                    ));
+                }
             }
         }
     }
@@ -90,7 +98,14 @@ pub(crate) fn resolve_include(
             let mut merged = cfg.vars.clone();
             merged.extend(proj.vars.clone());
             for stmt in &program.stmts {
-                merge_project_body_stmt(proj, stmt.clone(), &cfg.shell, &mut merged)?;
+                merge_project_body_stmt(
+                    proj,
+                    stmt.clone(),
+                    &cfg.shell,
+                    &mut merged,
+                    &program.source_name,
+                    &program.source_text,
+                )?;
             }
         }
     }
@@ -102,6 +117,23 @@ pub(crate) fn resolve_include(
 
 fn validate_full(cfg: &Config) -> Result<(), ConfigError> {
     let mut errs = Vec::new();
+
+    for (run_name, chains) in &cfg.runs {
+        for chain in chains {
+            for fn_name in chain {
+                if !cfg.functions.contains_key(fn_name) {
+                    errs.push(format!(
+                        "top-level run {:?} references unknown function {:?}",
+                        run_name, fn_name
+                    ));
+                }
+            }
+        }
+    }
+
+    if !cfg.functions.is_empty() {
+        validate_top_level_fn_vars(cfg, &mut errs);
+    }
 
     for (proj_name, project) in &cfg.projects {
         for (run_name, chains) in &project.runs {
@@ -127,105 +159,117 @@ fn validate_full(cfg: &Config) -> Result<(), ConfigError> {
     Ok(())
 }
 
+fn validate_top_level_fn_vars(cfg: &Config, errs: &mut Vec<String>) {
+    let global_scope: HashSet<String> = cfg.vars.keys().cloned().collect();
+    for (fn_name, body) in &cfg.functions {
+        let mut scope = global_scope.clone();
+        validate_fn_body(fn_name, body, &mut scope, errs, "(top-level)");
+    }
+}
+
+fn validate_expr(
+    expr: &Expr,
+    fn_name: &str,
+    scope: &HashSet<String>,
+    errs: &mut Vec<String>,
+    proj_name: &str,
+) {
+    match expr {
+        Expr::VarRef { name, .. } => {
+            if !scope.contains(name) {
+                errs.push(format!(
+                    "project {:?}: fn {:?}: undefined variable ${}",
+                    proj_name, fn_name, name
+                ));
+            }
+        }
+        Expr::BacktickLit { parts, .. } => {
+            for part in parts {
+                if part.is_var {
+                    let var_name = part.value.trim_start_matches('$');
+                    if !scope.contains(var_name) {
+                        errs.push(format!(
+                            "project {:?}: fn {:?}: undefined variable ${}",
+                            proj_name, fn_name, var_name
+                        ));
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn validate_fn_body(
+    fn_name: &str,
+    body: &[FnStmt],
+    scope: &mut HashSet<String>,
+    errs: &mut Vec<String>,
+    proj_name: &str,
+) {
+    for stmt in body {
+        match stmt {
+            FnStmt::VarDecl { name, value, .. } => {
+                validate_expr(value, fn_name, scope, errs, proj_name);
+                if !scope.insert(name.clone()) {
+                    errs.push(format!(
+                        "project {:?}: fn {:?}: duplicate variable {:?}",
+                        proj_name, fn_name, name
+                    ));
+                }
+            }
+            FnStmt::Log { value, .. } => validate_expr(value, fn_name, scope, errs, proj_name),
+            FnStmt::Exec { value, .. } => validate_expr(value, fn_name, scope, errs, proj_name),
+            FnStmt::Cd { arg, .. } => validate_expr(arg, fn_name, scope, errs, proj_name),
+            FnStmt::EnvBlock { pairs, body, .. } => {
+                let mut block_scope = scope.clone();
+                for pair in pairs {
+                    validate_expr(&pair.value, fn_name, scope, errs, proj_name);
+                }
+                validate_fn_body(fn_name, body, &mut block_scope, errs, proj_name);
+            }
+            FnStmt::Case { condition, arms } => {
+                validate_expr(condition, fn_name, scope, errs, proj_name);
+                for arm in arms {
+                    match &arm.pattern {
+                        CasePattern::VarRef { name } => {
+                            validate_expr(
+                                &Expr::VarRef {
+                                    name: name.clone(),
+                                    offset: 0,
+                                    len: 0,
+                                },
+                                fn_name,
+                                scope,
+                                errs,
+                                proj_name,
+                            );
+                        }
+                        CasePattern::Literal { parts } => {
+                            for part in parts {
+                                if part.is_var && !scope.contains(&part.value) {
+                                    errs.push(format!(
+                                        "project {:?}: fn {:?}: undefined variable ${}",
+                                        proj_name, fn_name, part.value
+                                    ));
+                                }
+                            }
+                        }
+                        CasePattern::Default => {}
+                    }
+                    let mut arm_scope = scope.clone();
+                    validate_fn_body(fn_name, &arm.body, &mut arm_scope, errs, proj_name);
+                }
+            }
+        }
+    }
+}
+
 fn validate_fn_vars(
     project: &crate::config::types::Project,
     global_vars: &HashMap<String, String>,
     proj_name: &str,
     errs: &mut Vec<String>,
 ) {
-    fn validate_expr(
-        expr: &Expr,
-        fn_name: &str,
-        scope: &HashSet<String>,
-        errs: &mut Vec<String>,
-        proj_name: &str,
-    ) {
-        match expr {
-            Expr::VarRef { name, .. } => {
-                if !scope.contains(name) {
-                    errs.push(format!(
-                        "project {:?}: fn {:?}: undefined variable ${}",
-                        proj_name, fn_name, name
-                    ));
-                }
-            }
-            Expr::BacktickLit { parts, .. } => {
-                for part in parts {
-                    if part.is_var {
-                        let var_name = part.value.trim_start_matches('$');
-                        if !scope.contains(var_name) {
-                            errs.push(format!(
-                                "project {:?}: fn {:?}: undefined variable ${}",
-                                proj_name, fn_name, var_name
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn validate_fn_body(
-        fn_name: &str,
-        body: &[FnStmt],
-        scope: &mut HashSet<String>,
-        errs: &mut Vec<String>,
-        proj_name: &str,
-    ) {
-        for stmt in body {
-            match stmt {
-                FnStmt::VarDecl { name, value, .. } => {
-                    validate_expr(value, fn_name, scope, errs, proj_name);
-                    if !scope.insert(name.clone()) {
-                        errs.push(format!(
-                            "project {:?}: fn {:?}: duplicate variable {:?}",
-                            proj_name, fn_name, name
-                        ));
-                    }
-                }
-                FnStmt::Log { value, .. } => validate_expr(value, fn_name, scope, errs, proj_name),
-                FnStmt::Exec { value, .. } => validate_expr(value, fn_name, scope, errs, proj_name),
-                FnStmt::Cd { arg, .. } => validate_expr(arg, fn_name, scope, errs, proj_name),
-                FnStmt::EnvBlock { pairs, body, .. } => {
-                    let mut block_scope = scope.clone();
-                    for pair in pairs {
-                        validate_expr(&pair.value, fn_name, scope, errs, proj_name);
-                    }
-                    validate_fn_body(fn_name, body, &mut block_scope, errs, proj_name);
-                }
-                FnStmt::Case { condition, arms } => {
-                    validate_expr(condition, fn_name, scope, errs, proj_name);
-                    for arm in arms {
-                        match &arm.pattern {
-                            CasePattern::VarRef { name } => {
-                                validate_expr(
-                                    &Expr::VarRef { name: name.clone() },
-                                    fn_name,
-                                    scope,
-                                    errs,
-                                    proj_name,
-                                );
-                            }
-                            CasePattern::Literal { parts } => {
-                                for part in parts {
-                                    if part.is_var && !scope.contains(&part.value) {
-                                        errs.push(format!(
-                                            "project {:?}: fn {:?}: undefined variable ${}",
-                                            proj_name, fn_name, part.value
-                                        ));
-                                    }
-                                }
-                            }
-                            CasePattern::Default => {}
-                        }
-                        let mut arm_scope = scope.clone();
-                        validate_fn_body(fn_name, &arm.body, &mut arm_scope, errs, proj_name);
-                    }
-                }
-            }
-        }
-    }
-
     for (fn_name, body) in &project.functions {
         let mut scope: HashSet<String> = global_vars.keys().cloned().collect();
         scope.extend(project.vars.keys().cloned());

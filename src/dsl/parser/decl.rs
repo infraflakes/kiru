@@ -2,6 +2,8 @@ use super::*;
 
 impl Parser {
     pub(crate) fn parse_shell_decl(&mut self) -> Result<Stmt, ParseError> {
+        let offset = self.current_token().offset;
+        let len = self.current_token().len;
         self.advance();
 
         self.expect_with_context(TokenType::Assign, "after `shell`")?;
@@ -9,7 +11,7 @@ impl Parser {
         let value = self.parse_simple_backtick()?;
         self.expect_with_context(TokenType::Semicolon, "after shell declaration")?;
 
-        Ok(Stmt::ShellDecl { value })
+        Ok(Stmt::ShellDecl { value, offset, len })
     }
 
     pub(crate) fn parse_sanctuary_decl(&mut self) -> Result<Stmt, ParseError> {
@@ -33,15 +35,21 @@ impl Parser {
     }
 
     pub(crate) fn parse_var_decl(&mut self) -> Result<Stmt, ParseError> {
+        let offset = self.current_token().offset;
+        let len = self.current_token().len;
         let (var_type, name, value) = self.parse_var_decl_common()?;
         Ok(Stmt::VarDecl {
             var_type,
             name,
             value,
+            offset,
+            len,
         })
     }
 
     pub(crate) fn parse_fn_decl(&mut self) -> Result<Stmt, ParseError> {
+        let offset = self.current_token().offset;
+        let len = self.current_token().len;
         self.advance();
 
         let name = match &self.current_token().ty {
@@ -73,10 +81,17 @@ impl Parser {
 
         self.expect_with_context(TokenType::RBrace, "to close function body")?;
 
-        Ok(Stmt::FnDecl { name, body })
+        Ok(Stmt::FnDecl {
+            name,
+            body,
+            offset,
+            len,
+        })
     }
 
     pub(crate) fn parse_run_decl(&mut self) -> Result<Stmt, ParseError> {
+        let offset = self.current_token().offset;
+        let len = self.current_token().len;
         self.advance();
 
         let name = match &self.current_token().ty {
@@ -114,6 +129,11 @@ impl Parser {
 
         self.expect_with_context(TokenType::RBrace, "to close run block body")?;
 
-        Ok(Stmt::RunDecl { name, chains })
+        Ok(Stmt::RunDecl {
+            name,
+            chains,
+            offset,
+            len,
+        })
     }
 }

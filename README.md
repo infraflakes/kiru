@@ -5,7 +5,7 @@
     <a href="https://github.com/infraflakes/kiru/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/infraflakes/kiru?logo=github"></a>
 </p>
 
-<img src="./examples/tui_example.png" alt="TUI" width="600">
+<img src="./examples/kiru.png" alt="TUI" width="600">
 
 ---
 
@@ -43,7 +43,9 @@ kiru -c <path> <command>        use a custom config file
 kiru --config <path> <command>  same as -c
 ```
 
-Config is discovered at `~/.config/kiru/config.kiru` by default. Override with `-c`.
+Config is discovered at `~/.config/kiru/main.kiru` by default.
+When `SANCTUARY=0` and `./.kiru/main.kiru` exists, that local file is preferred.
+Override either behavior with `-c`.
 
 ---
 

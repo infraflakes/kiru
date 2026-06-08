@@ -80,7 +80,7 @@ fn test_import_decl() {
     assert_eq!(count_stmt_types(&prog), vec!["import"]);
     match &prog.stmts[0] {
         Stmt::ImportDecl { path } => match path {
-            Expr::BacktickLit { parts } => {
+            Expr::BacktickLit { parts, .. } => {
                 let concat: String = parts.iter().map(|p| p.value.as_str()).collect();
                 assert_eq!(concat, "./other.kiru");
             }

@@ -136,6 +136,7 @@ impl Parser {
             ));
         }
         match self.current_token().ty {
+            TokenType::Shell => self.parse_shell_decl(),
             TokenType::Var => self.parse_var_decl(),
             TokenType::Fn => self.parse_fn_decl(),
             TokenType::Run => self.parse_run_decl(),
@@ -153,7 +154,7 @@ impl Parser {
                     Err(ParseError::new(
                         self.eof_aware_span(),
                         format!(
-                            "expected shell, sanctuary, import, var, pr, fn, or run, found {}",
+                            "expected shell, var, fn, or run, found {}",
                             format_token(self.current_token())
                         ),
                     ))

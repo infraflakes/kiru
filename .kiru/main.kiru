@@ -1,3 +1,5 @@
+shell = `bash`;
+
 import `run.kiru`;
 
 fn init {
