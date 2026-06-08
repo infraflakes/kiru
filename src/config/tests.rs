@@ -75,14 +75,14 @@ fn test_load_basic() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp/dev`;\n\
 var string a = `hello`;\n\
 pr test { url = `http://example.com`; dir = `test`; }\n\
 ",
     );
     let cfg = load(&dir.path().join("main.kiru")).unwrap();
-    assert_eq!(cfg.shell, "bash");
+    assert_eq!(cfg.shell, "sh");
     assert_eq!(cfg.sanctuary, "/tmp/dev");
     assert_eq!(cfg.vars.get("a").unwrap(), "hello");
     assert!(cfg.projects.contains_key("test"));
@@ -96,7 +96,7 @@ fn test_load_with_project_body() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp/dev`;\n\
 pr test {\n\
     url = `http://example.com`;\n\
@@ -126,7 +126,7 @@ fn test_import_resolution() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 import `./other.kiru`;\n\
 var string x = $extra;\
@@ -142,12 +142,12 @@ fn test_circular_import() {
     write_config(
         dir.path(),
         "a.kiru",
-        "shell = `bash`; import `./b.kiru`; sanctuary = `/tmp`;",
+        "shell = `sh`; import `./b.kiru`; sanctuary = `/tmp`;",
     );
     write_config(
         dir.path(),
         "b.kiru",
-        "shell = `bash`; import `./a.kiru`; sanctuary = `/tmp`;",
+        "shell = `sh`; import `./a.kiru`; sanctuary = `/tmp`;",
     );
     let err = load(&dir.path().join("a.kiru")).unwrap_err();
     let err_str = err.to_string();
@@ -165,7 +165,7 @@ fn test_duplicate_sanctuary() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 sanctuary = `/other`;\
 ",
@@ -185,7 +185,7 @@ fn test_duplicate_variable_decl() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 var string x = `a`;\n\
 var string x = `b`;\
@@ -206,7 +206,7 @@ fn test_duplicate_project() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr p1 { url = `u`; dir = `d1`; }\n\
 pr p1 { url = `u2`; dir = `d2`; }\
@@ -227,7 +227,7 @@ fn test_variable_chain_resolution() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 var string a = `x`;\n\
 var string b = $a;\n\
@@ -247,7 +247,7 @@ fn test_undefined_variable() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 var string x = $missing;\
 ",
@@ -283,7 +283,7 @@ fn test_missing_sanctuary() {
             dir.path(),
             "main.kiru",
             "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 pr test { url = `http://example.com`; dir = `test`; }\
 ",
         );
@@ -300,7 +300,7 @@ fn test_sanctuary_absolute_path() {
             dir.path(),
             "main.kiru",
             "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `relative/path`;\
 ",
         );
@@ -317,7 +317,7 @@ fn test_missing_url() {
             dir.path(),
             "main.kiru",
             "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr p { dir = `d`; }\
 ",
@@ -335,7 +335,7 @@ fn test_missing_dir() {
             dir.path(),
             "main.kiru",
             "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr p { url = `u`; }\
 ",
@@ -353,7 +353,7 @@ fn test_duplicate_dir() {
             dir.path(),
             "main.kiru",
             "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr a { url = `ua`; dir = `shared`; }\n\
 pr b { url = `ub`; dir = `shared`; }\
@@ -376,7 +376,7 @@ fn test_invalid_sync_value() {
             dir.path(),
             "main.kiru",
             "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr p { url = `u`; dir = `d`; sync = `invalid`; }\
 ",
@@ -401,12 +401,12 @@ fn test_only_shell_and_sanctuary() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\
 ",
     );
     let cfg = load(&dir.path().join("main.kiru")).unwrap();
-    assert_eq!(cfg.shell, "bash");
+    assert_eq!(cfg.shell, "sh");
     assert_eq!(cfg.sanctuary, "/tmp");
 }
 
@@ -417,7 +417,7 @@ fn test_interpolation_in_backtick() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 var string name = `world`;\n\
 var string greeting = `hello ${name}`;\
@@ -434,7 +434,7 @@ fn test_project_field_with_var_ref() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 var string myurl = `http://example.com`;\n\
 pr x { url = $myurl; dir = `d`; }\
@@ -451,7 +451,7 @@ fn test_duplicate_fn_in_project() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
@@ -476,7 +476,7 @@ fn test_duplicate_run_in_project() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
@@ -502,7 +502,7 @@ fn test_duplicate_par_in_project() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
@@ -529,7 +529,7 @@ fn test_multi_file_parse_order() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 import `./a.kiru`;\n\
 var string b = $a;\
@@ -546,7 +546,7 @@ fn test_undefined_var_in_fn_body() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
@@ -570,7 +570,7 @@ fn test_run_reference_validation() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
@@ -592,7 +592,7 @@ fn test_valid_run_references() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
@@ -613,7 +613,7 @@ fn test_duplicate_var_in_fn_body() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
@@ -653,7 +653,7 @@ run usepar { usefn; }\
         "main.kiru",
         &format!(
             "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `{}`;\n\
 pr test {{ url = `http://example.com`; dir = `test`; include = `use.kiru`; }}\
 ",
@@ -676,7 +676,7 @@ fn test_include_file_not_found() {
         "main.kiru",
         &format!(
             "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `{}`;\n\
 pr test {{ url = `http://example.com`; dir = `test`; include = `nonexistent.kiru`; }}\
 ",
@@ -700,7 +700,7 @@ fn test_include_file_sync_ignore_skips() {
         "main.kiru",
         &format!(
             "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `{}`;\n\
 pr test {{ url = `http://example.com`; dir = `test`; sync = `ignore`; include = `use.kiru`; }}\
 ",
@@ -718,7 +718,7 @@ fn test_shell_exec_resolution() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 var shell test_var = `echo hello`;\
 ",
@@ -735,7 +735,7 @@ fn test_sanctuary_with_var_ref() {
         "main.kiru",
         &format!(
             "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 var shell workdir = `echo {}`;\n\
 sanctuary = $workdir;\
 ",
@@ -753,7 +753,7 @@ fn test_project_var_chain_resolution() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
@@ -776,7 +776,7 @@ fn test_project_var_sees_global() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 var string global_var = `global`;\n\
 pr test {\n\
@@ -797,7 +797,7 @@ fn test_undefined_var_in_case_condition() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
@@ -821,7 +821,7 @@ fn test_undefined_var_in_case_varref_pattern() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
@@ -846,7 +846,7 @@ fn test_case_runtime_matching_arm() {
         "main.kiru",
         &format!(
             "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `{}`;\n\
 pr test {{\n\
     url = `http://example.com`;\n\
@@ -876,7 +876,7 @@ fn test_case_runtime_no_match() {
         "main.kiru",
         &format!(
             "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `{}`;\n\
 pr test {{\n\
     url = `http://example.com`;\n\
@@ -906,7 +906,7 @@ fn test_top_level_fn_collection() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 fn build { log `building`; }\n\
 fn test { exec `check`; }\n\
@@ -925,7 +925,7 @@ fn test_top_level_run_collection() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 fn build { log `x`; }\n\
 fn test { log `y`; }\n\
@@ -947,7 +947,7 @@ fn test_top_level_duplicate_fn() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 fn dup { log `a`; }\n\
 fn dup { log `b`; }\n\
@@ -964,7 +964,7 @@ fn test_top_level_duplicate_run() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 fn x { log `a`; }\n\
 run dup { x; }\n\
@@ -982,7 +982,7 @@ fn test_top_level_run_validates_function_refs() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 run bad { nonexistent; }\n\
 ",
@@ -998,7 +998,7 @@ fn test_top_level_fn_var_validation() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 fn bad { log $undefined; }\n\
 ",
@@ -1020,7 +1020,7 @@ fn test_project_scoped_shell() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
@@ -1041,7 +1041,7 @@ fn test_duplicate_shell_in_project() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
@@ -1062,7 +1062,7 @@ fn test_global_and_project_shell_coexist() {
         dir.path(),
         "main.kiru",
         "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr a {\n\
     url = `ua`;\n\
@@ -1080,7 +1080,7 @@ pr b {\n\
     let cfg = load_full(&dir.path().join("main.kiru")).unwrap();
     assert_eq!(cfg.projects["a"].shell.as_deref(), Some("zsh"));
     assert_eq!(cfg.projects["b"].shell, None);
-    assert_eq!(cfg.shell, "bash");
+    assert_eq!(cfg.shell, "sh");
 }
 
 // --- SANCTUARY=0 standalone mode (env var required) ---
@@ -1093,7 +1093,7 @@ fn test_standalone_config_no_sanctuary() {
             dir.path(),
             "main.kiru",
             "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 fn build { log `building`; }\n\
 fn test { exec `check`; }\n\
 run all { build => test; }\n\
@@ -1132,7 +1132,7 @@ fn test_standalone_duplicate_shell() {
             dir.path(),
             "main.kiru",
             "\
-shell = `bash`;\n\
+shell = `sh`;\n\
 shell = `zsh`;\n\
 fn x { log `a`; }\n\
 ",

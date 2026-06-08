@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.kiru/**'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.kiru/**'
+      - '.github/workflows/ci.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: rust:alpine
+    steps:
+      - name: Install Build Dependencies
+        run: apk add --no-cache git
+
+      - name: Install Rust Tools
+        run: |
+          rustup component add clippy rustfmt
+
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Run CI via Kiru
+        run: SANCTUARY=0 cargo run -- run ci

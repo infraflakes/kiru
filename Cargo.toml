@@ -25,5 +25,3 @@ tempfile = "3.27"
 version = "0.29"
 default-features = false
 features = ["event-stream"]
-
-

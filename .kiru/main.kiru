@@ -1,9 +1,9 @@
-shell = `bash`;
+shell = `sh`;
 
 import `run.kiru`;
 
 fn init {
-  exec `nix develop -c cargo check`;
+  exec `cargo check`;
 }
 
 fn clean {
@@ -14,15 +14,15 @@ fn clean {
 
 fn fmt {
   log `Formatting the codebase...`;
-  exec `nix develop -c cargo clippy --fix --allow-dirty`;
-  exec `nix develop -c cargo fmt`;
+  exec `cargo clippy --fix --allow-dirty`;
+  exec `cargo fmt`;
 }
 
 fn test {
   log `Testing the codebase!`;
-  exec `nix develop -c cargo test`;
-  exec `nix develop -c cargo clippy`;
-  exec `nix develop -c cargo fmt --check`;
+  exec `cargo test`;
+  exec `cargo clippy`;
+  exec `cargo fmt --check`;
 }
 fn fail {
   log `Failing the task!`;
@@ -30,7 +30,7 @@ fn fail {
     CGO_ENABLED = `0`,
     GOPATH = `$HOME/.local/share/go`
   ] {
-    exec `nix develop -c go build ./...`;
+    exec `go build ./...`;
   };
 }
 

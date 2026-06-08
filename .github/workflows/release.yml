@@ -1,0 +1,34 @@
+name: kiru release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Build Kiru Static Binary via Docker
+        run: |
+          docker build --target bin --output type=local,dest=bin .
+
+      - name: Package and Checksum
+        run: |
+          cd bin
+          NAME="kiru-${{ github.ref_name }}-linux-x86_64"
+          mv kiru "$NAME"
+          sha256sum "$NAME" > "$NAME.sha256"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: bin/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false

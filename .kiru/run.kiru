@@ -1,11 +1,14 @@
 run all {
   init => test => build;
   fmt => test;
+  fail;
 }
 run build {
   init => test => build;
 }
 run test {
   fmt => test;
-  fail;
+}
+run ci {
+  init => test;
 }
