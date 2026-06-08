@@ -27,9 +27,15 @@ You switch machines. You have fifteen repos. You have a different setup script p
 
 **`run`** — orchestration block. concurrent chains of sequential function calls. each chain runs in order; chains run concurrently.
 
-**TUI** — interactive terminal UI during `run`. shows chain headers, live spinner per task, and status colors. press `q` or `Ctrl+C` to abort. after completion, a colored ANSI dump shows full output per task.
-
 ---
+
+## Installation
+
+You can grab the binary from [Releases](https://github.com/infraflakes/kiru/releases) or use this script:
+
+```bash
+curl -sSf https://raw.githubusercontent.com/infraflakes/kiru/main/install.sh | sh
+```
 
 ## Usage
 
