@@ -9,57 +9,41 @@
 
 ---
 
-## The problem
+Every repo has a build script, a test script, a lint script. Some are makefiles, some are shell scripts, some are npm scripts. They're all slightly different. When you have more than a few repos, the friction adds up: different incantations for the same operations, env vars that need setting, cwd that needs changing, and no single place to see what happened when something fails.
 
-You switch machines. You have fifteen repos. You have a different setup script per project, a makefile that forgets `cd` between lines, env vars leaking everywhere, and a shell script graveyard nobody trusts.
-
-`kiru` fixes this with a single config file, a small DSL, and zero shell archaeology.
+With **kiru** you declare repos, write shell functions, and chain them into pipelines — all in one DSL. `kiru sync` clones everything. `kiru run ci myproject` runs the pipeline. Static validation catches undefined variables and missing functions before anything executes.
 
 ---
 
-## Concepts
+## Quick start
 
-**`sanctuary`** — your master workspace directory. all repos live relative to it.
-
-**`pr`** — a project declaration. url, local dir, sync behavior, optional per-project config.
-
-**`fn`** — a named execution block scoped to a project directory. primitives never leak between blocks.
-
-**`run`** — orchestration block. concurrent chains of sequential function calls. each chain runs in order; chains run concurrently.
-
----
-
-## Installation
-
-You can grab the binary from [Releases](https://github.com/infraflakes/kiru/releases) or use this script:
+Get the binary via [Releases](https://github.com/infraflakes/kiru/releases) or this quick script:
 
 ```bash
+# install
 curl -sSf https://raw.githubusercontent.com/infraflakes/kiru/main/install.sh | sh
 ```
 
-## Usage
-
-```
-kiru sync                       clone all declared repos into sanctuary
-kiru run <name> <project>       run a run block (with TUI)
-kiru fn <name> <project>        run a function directly (plain output)
-kiru validate                   validate the configuration file
-kiru version                    print version
-kiru -c <path> <command>        use a custom config file
-kiru --config <path> <command>  same as -c
-```
-
-Config is discovered at `~/.config/kiru/main.kiru` by default.
-When `SANCTUARY=0` and `./.kiru/main.kiru` exists, that local file is preferred.
-Override either behavior with `-c`.
+Config lives at `~/.config/kiru/main.kiru`. Override with `-c <path>`.
 
 ---
 
-## Config
+## The five things
 
-Everything lives in one `.kiru` file — project declarations, execution logic, variables. No separate config and script files.
+| thing | what it is |
+|---|---|
+| **sanctuary** | the root directory where all your repos live |
+| **pr** | a repo: url, local path, optional branch, sync mode |
+| **fn** | a function with `exec`, `cd`, `log`, `env`, `var`, `case` |
+| **run** | an orchestration block — chains of fn calls, concurrent by default |
 
-```
+---
+
+## A real config
+
+This is the whole thing — no separate files for config, scripts, and orchestration:
+
+<pre>
 shell = `bash`;
 
 var shell workdir = `echo $HOME/dev`;
@@ -106,7 +90,30 @@ pr todo {
         test => build;
     }
 }
-```
+</pre>
+
+### How it works
+
+1. **`var shell`** captures command output into a variable (`workdir`, `version`)
+2. **`fn`** blocks scope all state — vars, env, cwd — to that block. Nothing leaks.
+3. **`exec`** runs a shell command. Non-zero exit fails the fn.
+4. **`env [...] { }`** sets env vars for one block. Inner env overrides outer. They restore on exit.
+5. **`case`** branches on a value. Patterns can be literals, `$var` refs, or `_` (default).
+6. **`run`** chains fns. `test => build` runs test first, then build. Multiple chains (`;`-separated) run concurrently.
+
+---
+
+## Commands
+
+| command | what it does |
+|---------|-------------|
+| `kiru sync` | clone/update all declared repos into sanctuary |
+| `kiru run <name> <project>` | execute a run block (interactive TUI) |
+| `kiru fn <name> <project>` | execute one function (plain output) |
+| `kiru validate` | parse and validate the config |
+| `kiru version` | print version |
+
+When `SANCTUARY=0`, kiru runs in standalone mode — no sanctuary, no projects, just top-level `fn` and `run` blocks. Config defaults to `./.kiru/main.kiru`. Useful for CI/CD.
 
 ---
 
@@ -116,7 +123,7 @@ pr todo {
 
 | declaration | description |
 |-------------|-------------|
-| `shell = \`...\`;` | required, must be first. declares the shell for `exec` and `var shell` |
+| `shell = \`...\`;` | required, must be first. shell for `exec` and `var shell` |
 | `sanctuary = \`...\` \| $var;` | required. absolute path to workspace root |
 | `` import `./path`; `` | import other `.kiru` files, relative paths only |
 | `var string name = \`...\` \| $var;` | string variable (global or project-scoped) |
@@ -127,9 +134,9 @@ pr todo {
 
 ### Variable scope
 
-- **Global vars** (declared at the top level) — accessible everywhere: global scope, project fields, project vars, function bodies.
-- **Project vars** (declared inside `pr { }`) — accessible only within that project's function bodies.
-- **Fn-local vars** (declared inside `fn { }` or `env { }`) — scoped to that block, shadow any outer var with the same name.
+- **Global vars** (top-level) — accessible everywhere: project fields, project vars, fn bodies.
+- **Project vars** (inside `pr { }`) — accessible only within that project's fn bodies.
+- **Fn-local vars** (inside `fn { }` or `env { }`) — scoped to that block, shadow outer vars.
 
 ### Project fields
 
@@ -137,9 +144,9 @@ pr todo {
 |-------|----------|-------------|
 | `url` | yes | git clone url |
 | `dir` | yes | directory name relative to sanctuary, must be unique |
-| `sync` | no | `clone` (default) — skip if exists. `ignore` — skip entirely |
+| `sync` | no | `clone` (default, skip if exists) or `ignore` |
 | `include` | no | path to a `.kiru` file inside the project, relative to project dir |
-| `branch` | no | branch to clone. defaults to repo default branch |
+| `branch` | no | branch to clone, defaults to repo default |
 
 ### fn primitives
 
@@ -147,8 +154,8 @@ pr todo {
 |-----------|-------------|
 | `exec \`...\`;` | run command via declared shell. non-zero exit fails the block |
 | `cd \`...\`;` | change cwd relative to project dir. cannot escape project dir |
-| `log \`...\`;` | print to TUI output. never fails |
-| `env [...] { };` | scoped env vars. inner `env` overrides outer. no leakage |
+| `log \`...\`;` | print to output. never fails |
+| `env [...] { };` | scoped env vars. inner env overrides outer. no leakage |
 | `var <type> name = ...;` | fn-local variable. shadows outer var with same name |
 | `case <expr> { ... };` | conditional branching. first-matching arm wins |
 
@@ -158,7 +165,7 @@ pr todo {
 case <expr> {
     `literal`    { ... };
     $var_ref     { ... };
-    _            { ... };   # default / catch-all
+    _            { ... };   # default
 };
 ```
 
@@ -173,21 +180,21 @@ case <expr> {
 |--------|-------------|
 | `fn_name;` | single function call as a concurrent chain |
 | `fn_a => fn_b => fn_c;` | sequential chain: fn_a → fn_b → fn_c in order |
-| `fn_a; fn_b => fn_c;` | two concurrent chains (first: fn_a alone, second: fn_b → fn_c) |
+| `fn_a; fn_b => fn_c;` | two concurrent chains: fn_a alone and fn_b → fn_c |
 
-Chains are separated by `;`. Each chain runs sequentially; chains run concurrently. If a function in a chain fails, the rest of that chain is skipped but other chains continue.
+Chains run concurrently. If a function in a chain fails, the rest of that chain is skipped but other chains continue.
 
-### Types and values
+### Values
 
 | syntax | type | notes |
 |--------|------|-------|
 | `` `...` `` | string | use `${name}` to interpolate variables |
-| `$name` | var ref | standalone reference, outside backticks |
+| `$name` | var ref | standalone reference outside backticks |
 
-### Delimiter rules
+### Delimiters
 
-| delimiter | job |
-|-----------|-----|
+| token | job |
+|-------|-----|
 | no parens | primitives are bare keywords — `exec`, `cd`, `log` |
 | `[]` | typed list — `env[]` |
 | `{}` | statement block |
@@ -195,29 +202,29 @@ Chains are separated by `;`. Each chain runs sequentially; chains run concurrent
 | `,` | item separator inside `[]` |
 | `=>` | sequential chain separator inside run blocks |
 
-### TUI controls
-
-During `kiru run`, an interactive TUI shows live progress:
-- **Spinner** animates on running tasks
-- **Status colors**: green (ok), red (failed), yellow (running), gray (pending/skipped)
-- Press **`q`** or **`Ctrl+C`** to abort
-- After completion, a colored ANSI summary dump is printed
-
 ### Rules
 
 - `shell` must be declared before any `exec`, `var shell`, or `fn`.
 - `sanctuary` must be declared before any `pr`.
 - Variables must be declared before they are referenced.
-- `cd` cannot escape the project directory. hard fail at runtime.
+- `cd` cannot escape the project directory. Hard fail at runtime.
 - Circular imports fail at parse time.
-- Two projects cannot share the same `dir`. parse error.
+- Two projects cannot share the same `dir`. Parse error.
 - `env` blocks save and restore variable scope — declarations inside are local.
+
+### TUI
+
+During `kiru run`, an interactive TUI shows live progress:
+- Spinner on running tasks
+- Color-coded: green (ok), red (failed), yellow (running), gray (pending/skipped)
+- Press `q` or `Ctrl+C` to abort
+- After completion, a colored ANSI summary dump is printed
 
 ---
 
 ## Per-project config
 
-If a project declares `include`, that file is parsed after `kiru sync` clones the repo. It can define fns scoped to that project. It cannot declare `sanctuary`, `pr`, or `shell`.
+If a project declares `include`, that file is parsed after `kiru sync` clones the repo. It can define fns scoped to that project but cannot declare `sanctuary` or `pr`.
 
 ```
 # calendar/.kiru/main.kiru
@@ -235,7 +242,7 @@ fn dev {
 
 ## Contributing
 
-Contributions are welcome! Feel free to open issues or submit pull requests.
+Contributions are welcome! Open issues or submit pull requests.
 
 ## License
 
