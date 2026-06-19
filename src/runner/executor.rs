@@ -51,14 +51,8 @@ impl<'a> ExecContext<'a> {
         }
     }
 
-    /// Resolve which shell to use — project scope first, then global.
-    pub(super) fn effective_shell(&self) -> &str {
-        if let Some(proj) = self.project
-            && let Some(ref s) = proj.shell
-        {
-            return s;
-        }
-        &self.cfg.shell
+    fn current_shell() -> String {
+        std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string())
     }
 
     /// Resolve an expression, checking scope layers before base vars.
@@ -196,7 +190,7 @@ impl<'a> ExecContext<'a> {
             .writeln_colored(&line, colors::EXEC_ANSI)
             .map_err(RuntimeError::Io)?;
 
-        let shell = self.effective_shell().to_string();
+        let shell = Self::current_shell();
         let mut child = Command::new(&shell)
             .arg("-c")
             .arg(&cmd_str)
@@ -308,9 +302,8 @@ impl<'a> ExecContext<'a> {
         let val = self.resolve_expr(value)?;
 
         let resolved = if var_type == &crate::dsl::ast::VarType::Shell {
-            let shell = self.effective_shell().to_string();
             let env_map: HashMap<String, String> = self.build_env().collect();
-            let out = shell::run_captured(&shell, &val, Some(&self.work_dir), Some(&env_map), None)
+            let out = shell::run_captured(&val, Some(&self.work_dir), Some(&env_map), None)
                 .map_err(|e| match e {
                     shell::Error::Spawn(io_err) => RuntimeError::exec_io_error(&val, io_err),
                     shell::Error::Exit {

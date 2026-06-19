@@ -1,7 +1,6 @@
 use crate::config::error::{ConfigError, SpannedValidationError};
 use crate::config::types::{Config, Project};
 use crate::dsl::ast::{Expr, FnStmt, Program, Stmt, VarType};
-use crate::shell;
 use std::collections::HashMap;
 
 fn spanned_err(
@@ -19,10 +18,9 @@ fn spanned_err(
 }
 
 pub(crate) fn merge(programs: Vec<Program>) -> Result<Config, ConfigError> {
-    let shell = collect_shell(&programs)?;
-    let global_vars = collect_global_vars(&programs, &shell)?;
+    let global_vars = collect_global_vars(&programs)?;
     let (sanctuary_expr, projects, config_fns, config_runs) =
-        collect_projects(programs, &global_vars, &shell)?;
+        collect_projects(programs, &global_vars)?;
 
     let sanctuary = match sanctuary_expr {
         Some(ref expr) => expr
@@ -32,7 +30,6 @@ pub(crate) fn merge(programs: Vec<Program>) -> Result<Config, ConfigError> {
     };
 
     Ok(Config {
-        shell,
         sanctuary,
         projects,
         vars: global_vars,
@@ -41,40 +38,8 @@ pub(crate) fn merge(programs: Vec<Program>) -> Result<Config, ConfigError> {
     })
 }
 
-fn collect_shell(programs: &[Program]) -> Result<String, ConfigError> {
-    let mut shell = String::new();
-    for program in programs {
-        for stmt in &program.stmts {
-            if let Stmt::ShellDecl {
-                value, offset, len, ..
-            } = stmt
-            {
-                if !shell.is_empty() {
-                    // Report on the duplicate
-                    let (off, ln) = (*offset, *len);
-                    return Err(spanned_err(
-                        "duplicate shell declaration".to_string(),
-                        &program.source_name,
-                        &program.source_text,
-                        off,
-                        ln,
-                    ));
-                }
-                shell = value.clone();
-            }
-        }
-    }
-    Ok(shell)
-}
-
-fn resolve_shell_var(shell: &str, resolved: &str) -> Result<String, ConfigError> {
-    if shell.is_empty() {
-        return Err(ConfigError::Validation(
-            "shell must be declared before using shell variables".to_string(),
-        ));
-    }
-    let out = shell::run_captured(
-        shell,
+fn resolve_shell_var(resolved: &str) -> Result<String, ConfigError> {
+    let out = crate::shell::run_captured(
         resolved,
         None,
         None,
@@ -84,10 +49,7 @@ fn resolve_shell_var(shell: &str, resolved: &str) -> Result<String, ConfigError>
     Ok(out.stdout)
 }
 
-fn collect_global_vars(
-    programs: &[Program],
-    shell: &str,
-) -> Result<HashMap<String, String>, ConfigError> {
+fn collect_global_vars(programs: &[Program]) -> Result<HashMap<String, String>, ConfigError> {
     let mut global_vars = HashMap::new();
     for program in programs {
         for stmt in &program.stmts {
@@ -116,7 +78,7 @@ fn collect_global_vars(
                 })?;
 
                 let final_value = if var_type == &VarType::Shell {
-                    resolve_shell_var(shell, &resolved)?
+                    resolve_shell_var(&resolved)?
                 } else {
                     resolved
                 };
@@ -132,7 +94,6 @@ fn collect_global_vars(
 fn collect_projects(
     programs: Vec<Program>,
     global_vars: &HashMap<String, String>,
-    global_shell: &str,
 ) -> Result<
     (
         Option<Expr>,
@@ -150,7 +111,6 @@ fn collect_projects(
     for program in programs {
         for stmt in program.stmts {
             match stmt {
-                Stmt::ShellDecl { .. } => {}
                 Stmt::SanctuaryDecl { value } => {
                     if sanctuary_expr.is_some() {
                         return Err(ConfigError::Validation(
@@ -184,7 +144,6 @@ fn collect_projects(
                         sync: "clone".to_string(),
                         include_file: None,
                         branch: String::new(),
-                        shell: None,
                         vars: HashMap::new(),
                         functions: HashMap::new(),
                         runs: HashMap::new(),
@@ -219,7 +178,6 @@ fn collect_projects(
                         merge_project_body_stmt(
                             &mut project,
                             body_stmt,
-                            global_shell,
                             &mut merged_vars,
                             &program.source_name,
                             &program.source_text,
@@ -272,29 +230,9 @@ fn collect_projects(
     Ok((sanctuary_expr, projects, config_fns, config_runs))
 }
 
-pub(crate) fn resolve_project_shell(
-    project: &Project,
-    global_shell: &str,
-) -> Result<String, ConfigError> {
-    match &project.shell {
-        Some(s) => Ok(s.clone()),
-        None => {
-            if global_shell.is_empty() {
-                Err(ConfigError::Validation(format!(
-                    "project '{}': no shell declared (global shell is empty)",
-                    project.name
-                )))
-            } else {
-                Ok(global_shell.to_string())
-            }
-        }
-    }
-}
-
 pub(crate) fn merge_project_body_stmt(
     project: &mut Project,
     stmt: Stmt,
-    global_shell: &str,
     merged: &mut HashMap<String, String>,
     source_name: &str,
     source_text: &str,
@@ -303,18 +241,6 @@ pub(crate) fn merge_project_body_stmt(
         spanned_err(msg, source_name, source_text, offset, len)
     };
     match stmt {
-        Stmt::ShellDecl {
-            value, offset, len, ..
-        } => {
-            if project.shell.is_some() {
-                return Err(make_err(
-                    format!("duplicate shell declaration in project '{}'", project.name),
-                    offset,
-                    len,
-                ));
-            }
-            project.shell = Some(value);
-        }
         Stmt::VarDecl {
             name,
             value,
@@ -337,8 +263,7 @@ pub(crate) fn merge_project_body_stmt(
             })?;
 
             let final_value = if var_type == VarType::Shell {
-                let effective_shell = resolve_project_shell(project, global_shell)?;
-                resolve_shell_var(&effective_shell, &resolved)?
+                resolve_shell_var(&resolved)?
             } else {
                 resolved
             };

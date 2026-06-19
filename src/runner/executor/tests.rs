@@ -10,13 +10,11 @@ fn test_context(vars: HashMap<String, String>) -> (Config, Project, Output) {
         sync: "clone".to_string(),
         include_file: None,
         branch: "main".to_string(),
-        shell: None,
         vars,
         functions: HashMap::new(),
         runs: HashMap::new(),
     };
     let cfg = Config {
-        shell: "bash".to_string(),
         sanctuary: "/tmp".to_string(),
         projects: HashMap::new(),
         vars: HashMap::new(),

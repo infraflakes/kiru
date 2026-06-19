@@ -56,11 +56,6 @@ pub struct TemplatePart {
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone)]
 pub enum Stmt {
-    ShellDecl {
-        value: String,
-        offset: usize,
-        len: usize,
-    },
     SanctuaryDecl {
         value: Expr,
     },

@@ -25,28 +25,13 @@
 #   By default kiru looks for ~/.config/kiru/main.kiru.
 #   Use -c or --config to override.
 
-# 1. SHELL DECLARATION (required, must be first)
-#
-# Declares which shell to use for:
-#   - `exec` calls inside functions
-#   - `var shell` declarations (backtick-wrapped commands)
-#
-# Must appear before any `var shell` or `fn` declaration.
-#
-# Shell can be declared at global scope (top-level) or inside a `pr` block
-# (project-scoped). If a project defines its own `shell`, it overrides the
-# global shell for that project's functions. Duplicate declarations at the
-# same scope produce an error.
-
-shell = `bash`;
-
-# 2. VARIABLE DECLARATIONS (global scope)
+# 1. VARIABLE DECLARATIONS (global scope)
 #
 # Syntax: var <type> <name> = <value>;
 #
 # Types:
 #   string  — stores the backtick content as-is
-#   shell   — executes the backtick content via the declared shell,
+#   shell   — executes the backtick content via the user's shell ($SHELL),
 #             stores the stdout (trailing newline stripped)
 #
 # Global variables are resolved in declaration order.
@@ -75,7 +60,7 @@ sanctuary = $workdir;
 # Only relative paths are supported.
 # Circular imports are detected and rejected at parse time.
 
-import ./other_config.kiru;
+import `other_config.kiru`;
 
 # 5. PROJECT DECLARATIONS
 #
@@ -170,7 +155,7 @@ pr calendar {
 #
 # Available inside fn { ... }:
 #   log <expr>;            Print a message
-#   exec <expr>;           Run a shell command via the declared shell
+#   exec <expr>;           Run a shell command via the user's shell ($SHELL)
 #   cd <expr>;             Change cwd relative to project dir
 #   var <type> <n> = <v>;  Declare a scoped variable
 #   env [...] { ... };     Scoped environment variable block
@@ -220,13 +205,10 @@ pr calendar {
 #   - sanctuary declaration is not required
 #   - pr blocks are not required
 #   - Top-level fn and run declarations are used directly
-#   - shell must be declared at the top of the file
 #   - kiru fn <name> and kiru run <name> work without a project argument
 #   - kiru sync is not available
 #
 # Example standalone config for CI/CD:
-#
-#   shell = `bash`;
 #
 #   fn build {
 #       exec `cargo build --release`;
@@ -254,15 +236,14 @@ pr calendar {
 # 10. GRAMMAR SUMMARY (EBNF)
 #
 # program      = { statement } ;
-# statement    = shellDecl | sanctuaryDecl | importDecl | varDecl
+# statement    = sanctuaryDecl | importDecl | varDecl
 #              | projectDecl | fnDecl | runDecl ;
 #
-# shellDecl    = "shell" "=" BACKTICK ";" ;
 # sanctuaryDecl = "sanctuary" "=" ( BACKTICK | "$" IDENT ) ";" ;
 # importDecl   = "import" path ";" ;
 # varDecl      = "var" ( "string" | "shell" ) IDENT "=" expr ";" ;
 # projectDecl  = "pr" IDENT "{" { projectStmt } "}" ;
-# projectStmt  = shellDecl | projectField | varDecl | fnDecl | runDecl ;
+# projectStmt  = projectField | varDecl | fnDecl | runDecl ;
 # projectField = IDENT "=" expr ";" ;
 # fnDecl       = "fn" IDENT "{" { fnStmt } "}" ;
 # runDecl      = "run" IDENT "{" { chain ";" } "}" ;
@@ -283,4 +264,4 @@ pr calendar {
 # BACKTICK     = "`" { char | "${" IDENT "}" } "`" ;
 # path         = "./" { char } ;
 #
-# Keywords: shell sanctuary import var string pr fn run env log exec cd case
+# Keywords: sanctuary import var string pr fn run env log exec cd case

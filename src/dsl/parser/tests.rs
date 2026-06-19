@@ -25,7 +25,6 @@ fn count_stmt_types(program: &Program) -> Vec<&'static str> {
         .stmts
         .iter()
         .map(|s| match s {
-            Stmt::ShellDecl { .. } => "shell",
             Stmt::SanctuaryDecl { .. } => "sanctuary",
             Stmt::ImportDecl { .. } => "import",
             Stmt::VarDecl { .. } => "var",
@@ -34,16 +33,6 @@ fn count_stmt_types(program: &Program) -> Vec<&'static str> {
             Stmt::RunDecl { .. } => "run",
         })
         .collect()
-}
-
-#[test]
-fn test_shell_decl() {
-    let prog = parse_program("shell = `bash`;").unwrap();
-    assert_eq!(count_stmt_types(&prog), vec!["shell"]);
-    match &prog.stmts[0] {
-        Stmt::ShellDecl { value, .. } => assert_eq!(value, "bash"),
-        _ => panic!("expected ShellDecl"),
-    }
 }
 
 #[test]
@@ -116,8 +105,8 @@ fn test_var_string_decl() {
 
 #[test]
 fn test_var_shell_decl() {
-    let prog = parse_program("shell = `bash`;\nvar shell x = `echo hello`;").unwrap();
-    match &prog.stmts[1] {
+    let prog = parse_program("var shell x = `echo hello`;").unwrap();
+    match &prog.stmts[0] {
         Stmt::VarDecl { var_type, name, .. } => {
             assert_eq!(*var_type, VarType::Shell);
             assert_eq!(name, "x");
@@ -246,7 +235,7 @@ fn test_unexpected_token_at_top_level() {
     let errs = result.unwrap_err();
     assert!(
         errs.iter()
-            .any(|e| e.to_string().contains("expected shell"))
+            .any(|e| e.to_string().contains("expected sanctuary"))
     );
 }
 
@@ -271,24 +260,23 @@ fn test_var_with_var_ref_value() {
 
 #[test]
 fn test_multiple_top_level_statements() {
-    let input = "shell = `bash`;\n\
-                 sanctuary = `/tmp`;\n\
-                 import `./other.kiru`;\n\
-                 var string x = `hello`;\n\
-                  pr p { url = `u`; dir = `d`; fn f { log `hi`; } run s { f; } }";
+    let input = "sanctuary = `/tmp`;\n\
+                  import `./other.kiru`;\n\
+                  var string x = `hello`;\n\
+                   pr p { url = `u`; dir = `d`; fn f { log `hi`; } run s { f; } }";
     let prog = parse_program(input).unwrap();
     assert_eq!(
         count_stmt_types(&prog),
-        vec!["shell", "sanctuary", "import", "var", "pr"]
+        vec!["sanctuary", "import", "var", "pr"]
     );
 }
 
 #[test]
 fn test_error_recovery_skips_bad_stmt() {
-    let result = parse_program("shell = `bash`;\nfn bad { unknown }\nsanctuary = `/tmp`;");
+    let result = parse_program("sanctuary = `/tmp`;\nfn bad { unknown }");
     match result {
         Ok(prog) => {
-            assert_eq!(prog.stmts.len(), 3);
+            assert_eq!(prog.stmts.len(), 2);
         }
         Err(errs) => {
             assert!(errs.iter().any(|e| e.to_string().contains("expected log")));

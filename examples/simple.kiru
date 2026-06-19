@@ -3,8 +3,6 @@
 # This file demonstrates the core syntax: global vars, project declaration,
 # functions with exec/env/case/cd/log, and a run block with chains.
 
-shell = `bash`;
-
 var shell workdir = `echo $HOME/dev/kiru-project`;
 var string app    = `myapp`;
 

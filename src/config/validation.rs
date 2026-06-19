@@ -12,10 +12,6 @@ pub fn is_sanctuary_disabled() -> bool {
 pub(crate) fn validate_base(config: &Config) -> Result<(), ConfigError> {
     let mut errs = Vec::new();
 
-    if config.shell.is_empty() {
-        errs.push("shell declaration is required".to_string());
-    }
-
     if is_sanctuary_disabled() {
         // SANCTUARY=0 mode: sanctuary and project fields are optional
     } else if config.sanctuary.is_empty() {
@@ -101,7 +97,6 @@ pub(crate) fn resolve_include(
                 merge_project_body_stmt(
                     proj,
                     stmt.clone(),
-                    &cfg.shell,
                     &mut merged,
                     &program.source_name,
                     &program.source_text,

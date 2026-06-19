@@ -34,10 +34,6 @@ fn format_config(cfg: &Config) -> String {
 
     if !is_standalone {
         header_box(&mut out, box_w, label_w, cfg);
-    } else {
-        let key_styled = style!(GRAY, "Shell");
-        let val_styled = style!(CYAN, "{}", &cfg.shell);
-        out.push_str(&format!("  {}:  {}\n\n", key_styled, val_styled));
     }
 
     if is_standalone {
@@ -77,7 +73,6 @@ fn header_box(out: &mut String, box_w: usize, label_w: usize, cfg: &Config) {
     out.push_str(&top);
     out.push('\n');
 
-    kv_row(out, box_w, label_w, "Shell", &cfg.shell, CYAN);
     kv_row(out, box_w, label_w, "Sanctuary", &cfg.sanctuary, CYAN);
 
     out.push_str(&bot);

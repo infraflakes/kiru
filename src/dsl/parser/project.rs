@@ -33,7 +33,7 @@ impl Parser {
 
         while self.current_token().ty != TokenType::RBrace {
             match &self.current_token().ty {
-                TokenType::Var | TokenType::Fn | TokenType::Run | TokenType::Shell => {
+                TokenType::Var | TokenType::Fn | TokenType::Run => {
                     body.push(self.parse_project_body_stmt()?);
                 }
                 _ => {

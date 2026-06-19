@@ -1,4 +1,3 @@
-shell = `bash`;
 var shell workdir = `echo $HOME/dev`;
 sanctuary = $workdir;
 

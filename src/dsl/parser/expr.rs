@@ -76,16 +76,6 @@ impl Parser {
         let parts = parse_template_parts(content, token.offset)?;
         Ok(Expr::BacktickLit { parts, offset, len })
     }
-
-    pub(crate) fn parse_simple_backtick(&mut self) -> Result<String, ParseError> {
-        let expr = self.parse_backtick_expr()?;
-        if let Expr::BacktickLit { parts, .. } = &expr {
-            let concat: String = parts.iter().map(|p| p.value.as_str()).collect();
-            Ok(concat)
-        } else {
-            Ok(String::new())
-        }
-    }
 }
 
 pub(crate) fn parse_template_parts(

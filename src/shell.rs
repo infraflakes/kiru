@@ -76,12 +76,12 @@ impl std::error::Error for Error {
 }
 
 pub fn run_captured(
-    shell: &str,
     command: &str,
     dir: Option<&Path>,
     env: Option<&std::collections::HashMap<String, String>>,
     timeout: Option<Duration>,
 ) -> Result<Output, Error> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
     let mut cmd = Command::new(shell);
     cmd.arg("-c")
         .arg(command)

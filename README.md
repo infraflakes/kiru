@@ -44,8 +44,6 @@ Config lives at `~/.config/kiru/main.kiru`. Override with `-c <path>`.
 This is the whole thing — no separate files for config, scripts, and orchestration:
 
 <pre>
-shell = `bash`;
-
 var shell workdir = `echo $HOME/dev`;
 var string app    = `todo`;
 
@@ -123,11 +121,11 @@ When `SANCTUARY=0`, kiru runs in standalone mode — no sanctuary, no projects, 
 
 | declaration | description |
 |-------------|-------------|
-| `shell = \`...\`;` | required, must be first. shell for `exec` and `var shell` |
+| _(no shell declaration needed)_ | uses `$SHELL` from environment |
 | `sanctuary = \`...\` \| $var;` | required. absolute path to workspace root |
 | `` import `./path`; `` | import other `.kiru` files, relative paths only |
 | `var string name = \`...\` \| $var;` | string variable (global or project-scoped) |
-| `var shell name = \`...\`;` | runs content via declared shell, stores stdout |
+| `var shell name = \`...\`;` | runs content via `$SHELL`, stores stdout |
 | `pr name { ... }` | project declaration |
 | `fn name { ... }` | execution block |
 | `run name { ... }` | orchestration block with chain syntax |
@@ -152,7 +150,7 @@ When `SANCTUARY=0`, kiru runs in standalone mode — no sanctuary, no projects, 
 
 | primitive | description |
 |-----------|-------------|
-| `exec \`...\`;` | run command via declared shell. non-zero exit fails the block |
+| `exec \`...\`;` | run command via `$SHELL`. non-zero exit fails the block |
 | `cd \`...\`;` | change cwd relative to project dir. cannot escape project dir |
 | `log \`...\`;` | print to output. never fails |
 | `env [...] { };` | scoped env vars. inner env overrides outer. no leakage |
@@ -204,7 +202,7 @@ Chains run concurrently. If a function in a chain fails, the rest of that chain 
 
 ### Rules
 
-- `shell` must be declared before any `exec`, `var shell`, or `fn`.
+- `exec` and `var shell` use the user's current shell (`$SHELL`, fallback `sh`).
 - `sanctuary` must be declared before any `pr`.
 - Variables must be declared before they are referenced.
 - `cd` cannot escape the project directory. Hard fail at runtime.
