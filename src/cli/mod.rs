@@ -32,6 +32,10 @@ fn load_config_and_resolve(config_arg: Option<PathBuf>) -> miette::Result<Config
             return Err(miette::miette!("{}", e));
         }
     }
+    crate::config::validate(&config).map_err(|e| match e {
+        crate::config::ConfigError::ValidationReport(report) => report,
+        _ => miette::miette!("{}", e),
+    })?;
     Ok(config)
 }
 

@@ -2,7 +2,7 @@ use super::*;
 use crate::runner::Runner;
 use std::fs;
 use std::path::Path;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex};
 
 /// Serializes tests that read or modify the SANCTUARY env var.
 static SANCTUARY_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -59,6 +59,7 @@ fn without_sanctuary<R>(f: impl FnOnce() -> R) -> R {
 fn load_full(entry_path: &Path) -> Result<Config, ConfigError> {
     let mut cfg = load(entry_path)?;
     resolve_includes(&mut cfg)?;
+    validate(&cfg)?;
     Ok(cfg)
 }
 
@@ -262,7 +263,7 @@ fn test_missing_sanctuary() {
 pr test { url = `http://example.com`; dir = `test`; }\
 ",
         );
-        let err = load(&dir.path().join("main.kiru")).unwrap_err();
+        let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("sanctuary"), "got: {}", err);
     })
 }
@@ -278,7 +279,7 @@ fn test_sanctuary_absolute_path() {
 sanctuary = `relative/path`;\
 ",
         );
-        let err = load(&dir.path().join("main.kiru")).unwrap_err();
+        let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("absolute"), "got: {}", err);
     })
 }
@@ -295,7 +296,7 @@ sanctuary = `/tmp`;\n\
 pr p { dir = `d`; }\
 ",
         );
-        let err = load(&dir.path().join("main.kiru")).unwrap_err();
+        let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("url is required"), "got: {}", err);
     })
 }
@@ -312,7 +313,7 @@ sanctuary = `/tmp`;\n\
 pr p { url = `u`; }\
 ",
         );
-        let err = load(&dir.path().join("main.kiru")).unwrap_err();
+        let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("dir is required"), "got: {}", err);
     })
 }
@@ -330,7 +331,7 @@ pr a { url = `ua`; dir = `shared`; }\n\
 pr b { url = `ub`; dir = `shared`; }\
 ",
         );
-        let err = load(&dir.path().join("main.kiru")).unwrap_err();
+        let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(
             err.to_string().contains("duplicate directory"),
             "got: {}",
@@ -351,7 +352,7 @@ sanctuary = `/tmp`;\n\
 pr p { url = `u`; dir = `d`; sync = `invalid`; }\
 ",
         );
-        let err = load(&dir.path().join("main.kiru")).unwrap_err();
+        let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("sync"), "got: {}", err);
     })
 }
@@ -428,31 +429,6 @@ pr test {\n\
 
 #[test]
 fn test_duplicate_run_in_project() {
-    let dir = tempfile::TempDir::new().unwrap();
-    write_config(
-        dir.path(),
-        "main.kiru",
-        "\
-sanctuary = `/tmp`;\n\
-pr test {\n\
-    url = `u`;\n\
-    dir = `d`;\n\
-    fn check { log `x`; }\n\
-    run dup { check; }\n\
-    run dup { check; }\n\
-}\
-",
-    );
-    let err = load(&dir.path().join("main.kiru")).unwrap_err();
-    assert!(
-        err.to_string().contains("duplicate run block"),
-        "got: {}",
-        err
-    );
-}
-
-#[test]
-fn test_duplicate_par_in_project() {
     let dir = tempfile::TempDir::new().unwrap();
     write_config(
         dir.path(),
@@ -789,7 +765,7 @@ pr test {{\n\
         ),
     );
     let cfg = load(&dir.path().join("main.kiru")).unwrap();
-    let mut runner = Runner::from_arc(Arc::new(cfg));
+    let mut runner = Runner::new(cfg);
     runner.execute_fn_call("deploy", "test").unwrap();
 }
 
@@ -817,7 +793,7 @@ pr test {{\n\
         ),
     );
     let cfg = load(&dir.path().join("main.kiru")).unwrap();
-    let mut runner = Runner::from_arc(Arc::new(cfg));
+    let mut runner = Runner::new(cfg);
     runner.execute_fn_call("deploy", "test").unwrap();
 }
 

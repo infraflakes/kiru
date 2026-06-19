@@ -3,7 +3,7 @@ use crate::dsl::token::{Token, TokenType};
 mod tokenizer;
 
 #[derive(Debug)]
-pub struct Lexer {
+pub(crate) struct Lexer {
     pub(super) input: Vec<char>,
     pub(super) pos: usize,
     pub(super) read_pos: usize,
@@ -14,7 +14,7 @@ pub struct Lexer {
 }
 
 impl Lexer {
-    pub fn new(input: String) -> Self {
+    pub(crate) fn new(input: String) -> Self {
         let mut lexer = Self {
             input: input.chars().collect(),
             pos: 0,
@@ -32,11 +32,11 @@ impl Lexer {
         self.input.into_iter().collect()
     }
 
-    pub fn source_len(&self) -> usize {
+    pub(crate) fn source_len(&self) -> usize {
         self.input.iter().map(|c| c.len_utf8()).sum()
     }
 
-    pub fn next_token(&mut self) -> Token {
+    pub(crate) fn next_token(&mut self) -> Token {
         loop {
             self.skip_whitespace();
             if self.ch != Some('#') {

@@ -5,12 +5,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 #[derive(Debug)]
-pub struct Output {
-    pub stdout: String,
+pub(crate) struct Output {
+    pub(crate) stdout: String,
 }
 
 #[derive(Debug)]
-pub enum Error {
+pub(crate) enum Error {
     Spawn(std::io::Error),
     Exit {
         command: String,
@@ -75,7 +75,7 @@ impl std::error::Error for Error {
     }
 }
 
-pub fn run_captured(
+pub(crate) fn run_captured(
     command: &str,
     dir: Option<&Path>,
     env: Option<&std::collections::HashMap<String, String>>,

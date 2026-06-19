@@ -6,6 +6,7 @@ pub(crate) mod validation;
 pub use error::ConfigError;
 pub use types::{Config, Project};
 pub use validation::is_sanctuary_disabled;
+pub use validation::validate;
 
 use crate::dsl::ast::{Expr, Program, Stmt};
 use crate::dsl::lexer::Lexer;
@@ -27,7 +28,6 @@ pub fn load(entry_path: &Path) -> Result<Config, ConfigError> {
     let programs = parse_recursive(&abs_path, &mut loaded_files, &mut recursion_stack)?;
 
     let config = merge::merge(programs)?;
-    validation::validate_base(&config)?;
 
     Ok(config)
 }

@@ -2,59 +2,11 @@ use crate::config::error::ConfigError;
 use crate::config::merge::merge_project_body_stmt;
 use crate::config::types::Config;
 use crate::dsl::ast::{CasePattern, Expr, FnStmt};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 pub fn is_sanctuary_disabled() -> bool {
     std::env::var("SANCTUARY").as_deref() == Ok("0")
-}
-
-pub(crate) fn validate_base(config: &Config) -> Result<(), ConfigError> {
-    let mut errs = Vec::new();
-
-    if is_sanctuary_disabled() {
-        // SANCTUARY=0 mode: sanctuary and project fields are optional
-    } else if config.sanctuary.is_empty() {
-        errs.push("sanctuary declaration is required".to_string());
-    } else if !Path::new(&config.sanctuary).is_absolute() {
-        errs.push(format!(
-            "sanctuary path must be absolute: {}",
-            config.sanctuary
-        ));
-    }
-
-    if !is_sanctuary_disabled() {
-        let mut dirs = std::collections::HashSet::new();
-        for proj in config.projects.values() {
-            if proj.url.is_empty() {
-                errs.push(format!("project {:?}: url is required", proj.name));
-            }
-            if proj.dir.is_empty() {
-                errs.push(format!("project {:?}: dir is required", proj.name));
-            }
-            if !dirs.insert(&proj.dir) {
-                errs.push(format!(
-                    "project {:?}: duplicate directory {:?}",
-                    proj.name, proj.dir
-                ));
-            }
-            match proj.sync.as_str() {
-                "clone" | "ignore" => {}
-                other => {
-                    errs.push(format!(
-                        "project {:?}: invalid sync value {:?} (expected 'clone' or 'ignore')",
-                        proj.name, other
-                    ));
-                }
-            }
-        }
-    }
-
-    if !errs.is_empty() {
-        return Err(ConfigError::Validation(errs.join("\n")));
-    }
-
-    Ok(())
 }
 
 pub(crate) fn resolve_include(
@@ -105,46 +57,61 @@ pub(crate) fn resolve_include(
         }
     }
 
-    validate_full(cfg)?;
-
     Ok(())
 }
 
-fn validate_full(cfg: &Config) -> Result<(), ConfigError> {
+pub fn validate(cfg: &Config) -> Result<(), ConfigError> {
     let mut errs = Vec::new();
 
-    for (run_name, chains) in &cfg.runs {
-        for chain in chains {
-            for fn_name in chain {
-                if !cfg.functions.contains_key(fn_name) {
+    if is_sanctuary_disabled() {
+        // SANCTUARY=0 mode: sanctuary and project fields are optional
+    } else if cfg.sanctuary.is_empty() {
+        errs.push("sanctuary declaration is required".to_string());
+    } else if !Path::new(&cfg.sanctuary).is_absolute() {
+        errs.push(format!(
+            "sanctuary path must be absolute: {}",
+            cfg.sanctuary
+        ));
+    }
+
+    if !is_sanctuary_disabled() {
+        let mut dirs = std::collections::HashSet::new();
+        for proj in cfg.projects.values() {
+            if proj.url.is_empty() {
+                errs.push(format!("project {:?}: url is required", proj.name));
+            }
+            if proj.dir.is_empty() {
+                errs.push(format!("project {:?}: dir is required", proj.name));
+            }
+            if !dirs.insert(&proj.dir) {
+                errs.push(format!(
+                    "project {:?}: duplicate directory {:?}",
+                    proj.name, proj.dir
+                ));
+            }
+            match proj.sync.as_str() {
+                "clone" | "ignore" => {}
+                other => {
                     errs.push(format!(
-                        "top-level run {:?} references unknown function {:?}",
-                        run_name, fn_name
+                        "project {:?}: invalid sync value {:?} (expected 'clone' or 'ignore')",
+                        proj.name, other
                     ));
                 }
             }
         }
     }
 
-    if !cfg.functions.is_empty() {
-        validate_top_level_fn_vars(cfg, &mut errs);
-    }
+    validate_run_refs(&cfg.runs, &cfg.functions, "top-level", &mut errs);
+
+    let global_scope: HashSet<String> = cfg.vars.keys().cloned().collect();
+    validate_fn_bodies(&cfg.functions, &global_scope, "(top-level)", &mut errs);
 
     for (proj_name, project) in &cfg.projects {
-        for (run_name, chains) in &project.runs {
-            for chain in chains {
-                for fn_name in chain {
-                    if !project.functions.contains_key(fn_name) {
-                        errs.push(format!(
-                            "project {:?}: run {:?} references unknown function {:?}",
-                            proj_name, run_name, fn_name
-                        ));
-                    }
-                }
-            }
-        }
+        validate_run_refs(&project.runs, &project.functions, proj_name, &mut errs);
 
-        validate_fn_vars(project, &cfg.vars, proj_name, &mut errs);
+        let mut scope: HashSet<String> = global_scope.clone();
+        scope.extend(project.vars.keys().cloned());
+        validate_fn_bodies(&project.functions, &scope, proj_name, &mut errs);
     }
 
     if !errs.is_empty() {
@@ -154,11 +121,35 @@ fn validate_full(cfg: &Config) -> Result<(), ConfigError> {
     Ok(())
 }
 
-fn validate_top_level_fn_vars(cfg: &Config, errs: &mut Vec<String>) {
-    let global_scope: HashSet<String> = cfg.vars.keys().cloned().collect();
-    for (fn_name, body) in &cfg.functions {
-        let mut scope = global_scope.clone();
-        validate_fn_body(fn_name, body, &mut scope, errs, "(top-level)");
+fn validate_run_refs(
+    runs: &std::collections::HashMap<String, Vec<Vec<String>>>,
+    functions: &std::collections::HashMap<String, Vec<FnStmt>>,
+    prefix: &str,
+    errs: &mut Vec<String>,
+) {
+    for (run_name, chains) in runs {
+        for chain in chains {
+            for fn_name in chain {
+                if !functions.contains_key(fn_name) {
+                    errs.push(format!(
+                        "{}: run {:?} references unknown function {:?}",
+                        prefix, run_name, fn_name
+                    ));
+                }
+            }
+        }
+    }
+}
+
+fn validate_fn_bodies(
+    functions: &std::collections::HashMap<String, Vec<FnStmt>>,
+    initial_scope: &HashSet<String>,
+    proj_name: &str,
+    errs: &mut Vec<String>,
+) {
+    for (fn_name, body) in functions {
+        let mut scope = initial_scope.clone();
+        validate_fn_body(fn_name, body, &mut scope, errs, proj_name);
     }
 }
 
@@ -256,18 +247,5 @@ fn validate_fn_body(
                 }
             }
         }
-    }
-}
-
-fn validate_fn_vars(
-    project: &crate::config::types::Project,
-    global_vars: &HashMap<String, String>,
-    proj_name: &str,
-    errs: &mut Vec<String>,
-) {
-    for (fn_name, body) in &project.functions {
-        let mut scope: HashSet<String> = global_vars.keys().cloned().collect();
-        scope.extend(project.vars.keys().cloned());
-        validate_fn_body(fn_name, body, &mut scope, errs, proj_name);
     }
 }

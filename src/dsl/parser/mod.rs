@@ -13,14 +13,14 @@ mod project;
 #[cfg(test)]
 mod tests;
 
-pub struct Parser {
+pub(crate) struct Parser {
     lexer: Lexer,
     current: Token,
     source_len: usize,
 }
 
 impl Parser {
-    pub fn new(mut lexer: Lexer) -> Self {
+    pub(crate) fn new(mut lexer: Lexer) -> Self {
         let source_len = lexer.source_len();
         let current = lexer.next_token();
         Parser {
@@ -67,7 +67,7 @@ impl Parser {
         }
     }
 
-    pub fn parse(&mut self) -> Result<Program, Vec<ParseError>> {
+    pub(crate) fn parse(&mut self) -> Result<Program, Vec<ParseError>> {
         let mut program = Program::new();
         let mut errors = Vec::new();
 

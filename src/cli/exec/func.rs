@@ -13,6 +13,12 @@ pub fn run(
 
     let is_standalone = crate::config::is_sanctuary_disabled() && config.projects.is_empty();
 
+    let callback: OutputCallback = Arc::new(|line| {
+        let mut out = io::stdout().lock();
+        crate::tui::render::write_colored_line(&line, &mut out);
+        let _ = writeln!(out);
+    });
+
     match project {
         Some(ref proj) => {
             if is_standalone {
@@ -31,12 +37,6 @@ pub fn run(
                 ));
             }
 
-            let callback: OutputCallback = Arc::new(|line| {
-                let mut out = io::stdout().lock();
-                crate::tui::render::write_colored_line(&line, &mut out);
-                let _ = writeln!(out);
-            });
-
             let mut runner = Runner::new(config).with_output_callback(callback);
             runner
                 .execute_fn_call(&name, proj)
@@ -49,12 +49,6 @@ pub fn run(
                     name
                 ));
             }
-
-            let callback: OutputCallback = Arc::new(|line| {
-                let mut out = io::stdout().lock();
-                crate::tui::render::write_colored_line(&line, &mut out);
-                let _ = writeln!(out);
-            });
 
             let mut runner = Runner::new(config).with_output_callback(callback);
             runner

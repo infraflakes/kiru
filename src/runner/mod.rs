@@ -8,7 +8,7 @@ use crate::colors;
 use crate::config::Config;
 use error::RuntimeError;
 use executor::ExecContext;
-pub use executor::OutputCallback;
+pub(crate) use executor::OutputCallback;
 use std::io::{self, Write};
 use std::sync::Arc;
 
@@ -46,33 +46,25 @@ impl Output {
     }
 }
 
-pub struct Runner {
+pub(crate) struct Runner {
     cfg: Arc<Config>,
     output: Output,
 }
 
 impl Runner {
-    pub fn new(cfg: Config) -> Self {
+    pub(crate) fn new(cfg: Config) -> Self {
         Runner {
             cfg: Arc::new(cfg),
             output: Output::Direct(Box::new(io::stdout())),
         }
     }
 
-    #[allow(dead_code)]
-    pub fn from_arc(cfg: Arc<Config>) -> Self {
-        Runner {
-            cfg,
-            output: Output::Direct(Box::new(io::stdout())),
-        }
-    }
-
-    pub fn with_output_callback(mut self, callback: OutputCallback) -> Self {
+    pub(crate) fn with_output_callback(mut self, callback: OutputCallback) -> Self {
         self.output = Output::Callback(callback);
         self
     }
 
-    pub fn execute_fn_call(
+    pub(crate) fn execute_fn_call(
         &mut self,
         fn_name: &str,
         project_name: &str,
@@ -91,7 +83,7 @@ impl Runner {
         ctx.exec_fn_body(fn_body)
     }
 
-    pub fn execute_standalone_fn(&mut self, fn_name: &str) -> Result<(), RuntimeError> {
+    pub(crate) fn execute_standalone_fn(&mut self, fn_name: &str) -> Result<(), RuntimeError> {
         let fn_body = self
             .cfg
             .functions
