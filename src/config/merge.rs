@@ -149,7 +149,20 @@ fn collect_projects(
                         runs: HashMap::new(),
                     };
 
+                    let mut seen_fields = std::collections::HashSet::new();
                     for field in &fields {
+                        if !seen_fields.insert(field.key.as_str()) {
+                            return Err(spanned_err(
+                                format!(
+                                    "duplicate field '{}' in project '{}'",
+                                    field.key, name
+                                ),
+                                &program.source_name,
+                                &program.source_text,
+                                field.value.span().0,
+                                field.value.span().1,
+                            ));
+                        }
                         let value = field.value.resolve(global_vars).map_err(|e| {
                             let (o, l) = field.value.span();
                             spanned_err(e, &program.source_name, &program.source_text, o, l)

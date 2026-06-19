@@ -103,6 +103,15 @@ impl<'a> ExecContext<'a> {
     }
 
     pub(crate) fn exec_fn_body(&mut self, body: &[FnStmt]) -> Result<(), RuntimeError> {
+        let saved_work_dir = self.work_dir.clone();
+        self.var_stack.push(HashMap::new());
+        let result = self.exec_fn_body_inner(body);
+        self.var_stack.pop();
+        self.work_dir = saved_work_dir;
+        result
+    }
+
+    fn exec_fn_body_inner(&mut self, body: &[FnStmt]) -> Result<(), RuntimeError> {
         for stmt in body {
             match stmt {
                 FnStmt::Log { value, .. } => self.exec_log(value)?,

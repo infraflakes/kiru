@@ -358,6 +358,27 @@ pr p { url = `u`; dir = `d`; sync = `invalid`; }\
 }
 
 #[test]
+fn test_duplicate_project_field() {
+    without_sanctuary(|| {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+sanctuary = `/tmp`;\n\
+pr p { url = `u`; dir = `d`; include = `a.kiru`; include = `b.kiru`; }\
+",
+        );
+        let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(
+            err.to_string().contains("duplicate field"),
+            "got: {}",
+            err
+        );
+    })
+}
+
+#[test]
 fn test_only_sanctuary() {
     let dir = tempfile::TempDir::new().unwrap();
     write_config(

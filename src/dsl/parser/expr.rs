@@ -56,8 +56,8 @@ impl Parser {
                     Err(ParseError::new(
                         self.eof_aware_span(),
                         format!(
-                            "unexpected token in expression: {:?}",
-                            self.current_token().ty
+                            "expected backtick string, found {}",
+                            format_token(self.current_token())
                         ),
                     ))
                 }
