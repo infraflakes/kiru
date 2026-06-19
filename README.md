@@ -11,7 +11,7 @@
 
 Every repo has a build script, a test script, a lint script. Some are makefiles, some are shell scripts, some are npm scripts. They're all slightly different. When you have more than a few repos, the friction adds up: different incantations for the same operations, env vars that need setting, cwd that needs changing, and no single place to see what happened when something fails.
 
-With **kiru** you declare repos, write shell functions, and chain them into pipelines — all in one DSL. `kiru sync` clones everything. `kiru run ci myproject` runs the pipeline. Static validation catches undefined variables and missing functions before anything executes.
+With **kiru** you declare repos, write shell functions, and chain them into pipelines, all in one DSL. `kiru sync` clones everything. `kiru run ci myproject` runs the pipeline. Static validation catches undefined variables and missing functions before anything executes.
 
 ---
 
@@ -28,22 +28,22 @@ Config lives at `~/.config/kiru/main.kiru`. Override with `-c <path>`.
 
 ---
 
-## The five things
+## The four things
 
 | thing | what it is |
 |---|---|
 | **sanctuary** | the root directory where all your repos live |
 | **pr** | a repo: url, local path, optional branch, sync mode |
-| **fn** | a function with `exec`, `cd`, `log`, `env`, `var`, `case` |
+| **fn** | a function with execution primitives `exec`, `cd`, `log`, `env`, `var`, `case` |
 | **run** | an orchestration block — chains of fn calls, concurrent by default |
 
 ---
 
-## A real config
+## An example:
 
-This is the whole thing — no separate files for config, scripts, and orchestration:
+This is the whole thing! No separate files for config, scripts, and orchestration:
 
-<pre>
+```kiru
 var shell workdir = `echo $HOME/dev`;
 var string app    = `todo`;
 
@@ -88,7 +88,7 @@ pr todo {
         test => build;
     }
 }
-</pre>
+```
 
 ### How it works
 
@@ -121,7 +121,6 @@ When `SANCTUARY=0`, kiru runs in standalone mode — no sanctuary, no projects, 
 
 | declaration | description |
 |-------------|-------------|
-| _(no shell declaration needed)_ | uses `$SHELL` from environment |
 | `sanctuary = \`...\` \| $var;` | required. absolute path to workspace root |
 | `` import `./path`; `` | import other `.kiru` files, relative paths only |
 | `var string name = \`...\` \| $var;` | string variable (global or project-scoped) |
