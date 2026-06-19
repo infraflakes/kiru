@@ -1,5 +1,7 @@
 use super::*;
-use crate::dsl::ast::{CaseArm, TemplatePart};
+use crate::config::{Config, Project};
+use crate::dsl::ast::{CaseArm, CasePattern, Expr, FnStmt, TemplatePart};
+use crate::runner::executor::ExecContext;
 use std::collections::HashMap;
 
 fn test_context(vars: HashMap<String, String>) -> (Config, Project, Output) {

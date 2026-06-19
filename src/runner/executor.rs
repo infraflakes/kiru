@@ -136,7 +136,7 @@ impl<'a> ExecContext<'a> {
         Ok(())
     }
 
-    fn match_case_pattern(
+    pub(super) fn match_case_pattern(
         &mut self,
         pattern: &CasePattern,
         value: &str,
@@ -387,6 +387,3 @@ fn write_output_lines(output: &mut Output, data: &[u8], indent: &str) -> Result<
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests;

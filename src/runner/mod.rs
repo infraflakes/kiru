@@ -1,6 +1,9 @@
 pub(crate) mod error;
 pub(crate) mod executor;
 
+#[cfg(test)]
+mod tests;
+
 use crate::colors;
 use crate::config::Config;
 use error::RuntimeError;
