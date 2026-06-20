@@ -45,7 +45,7 @@ var string greeting = `hello world`;
 # Reference a previously declared variable with $name:
 var string port_copy = $port;
 
-# 3. SANCTUARY (required)
+# 2. SANCTUARY (required)
 #
 # The root directory where all project repositories live.
 # Must be an absolute path.
@@ -54,15 +54,16 @@ var string port_copy = $port;
 
 sanctuary = $workdir;
 
-# 4. IMPORTS
+# 3. IMPORTS (optional)
 #
 # Import other .kiru files to split config across multiple files.
-# Only relative paths are supported.
+# Paths are resolved relative to the current file's directory
+# (no ./ prefix required — `others.kiru` and `./others.kiru` are equivalent).
 # Circular imports are detected and rejected at parse time.
 
-import `other_config.kiru`;
+import `others.kiru`;
 
-# 5. PROJECT DECLARATIONS
+# 4. PROJECT DECLARATIONS
 #
 # Syntax: pr <name> { ... }
 #
@@ -90,7 +91,7 @@ pr todo {
     sync = `clone`;
 
     var shell version = `git describe --tags --always --dirty 2>/dev/null || echo dev`;
-    var string app    = `todo`;
+    var string app = `todo`;
 
     # Global vars like $port and $greeting are also accessible here
 
@@ -128,7 +129,7 @@ pr todo {
     }
 
     # A run block with two chains, running concurrently:
-    #   chain 1: lint -> test -> build (sequential within the chain)
+    #   chain 1: lint => test => build (sequential within the chain)
     #   chain 2: check (single fn, runs concurrently with chain 1)
     run quality {
         lint => test => build;
@@ -147,24 +148,39 @@ pr calendar {
     include = `.kiru/main.kiru`;
     branch = `rust`;
 
-    # Include files can declare var/fn/run that get merged into this project
-    # Include file path is relative to the project directory
+    # Include files can declare var/fn/run that get merged into this project.
+    # Include file path is relative to the project directory.
 }
 
-# 6. FUNCTION PRIMITIVES
+# 5. FUNCTION PRIMITIVES
 #
 # Available inside fn { ... }:
 #   log <expr>;            Print a message
 #   exec <expr>;           Run a shell command via the user's shell ($SHELL)
-#   cd <expr>;             Change cwd relative to project dir
+#   cd <expr>;             Change cwd relative to current working dir (cumulative)
 #   var <type> <n> = <v>;  Declare a scoped variable
 #   env [...] { ... };     Scoped environment variable block
 #   case <expr> { ... };   Conditional branching (first-match semantics)
 #
 # Variable interpolation:
 #   Use ${name} inside backticks to interpolate variables.
-#   Both global vars, project vars, and fn-local vars are accessible.
+#   Lookup order: fn-local vars → project vars → global vars.
 #   All variable references are validated at load time.
+#
+# Variable scoping:
+#   - var_stack[-1] (current fn/block body) → var_stack[-2] (case arm
+#     or env block) → self.vars (global + project vars). Each layer
+#     shadows the parent.
+#   - fn calls are fully isolated: work_dir and var_stack are saved
+#     and restored on entry/exit. Nothing leaks across calls.
+#   - env blocks push/pop both an env layer and a var layer, so
+#     declarations inside env are local to that block.
+#
+# cd semantics:
+#   - Relative paths are resolved against the current working directory
+#     (which starts at the project dir and changes cumulatively).
+#   - Absolute paths are rejected.
+#   - Cannot escape the project directory.
 #
 # Conditional branching with case:
 #   - Condition is an expression (backtick or $var reference)
@@ -182,18 +198,7 @@ pr calendar {
 #         _       { exec `${docker_bin} build .`; };
 #     };
 
-# 7. INTERACTIVE TUI
-#
-# When running `kiru run`, an interactive TUI displays:
-#   - Chain headers with ├─/✓/✗ prefix showing chain status
-#   - Each task indented with │ pipe, showing live spinner, name, and status
-#   - Color-coded status: green (ok), red (failed), yellow (running), gray (pending/skipped)
-#   - Press q or Ctrl+C to abort
-#
-# After all tasks complete (or on abort), a colored ANSI dump is printed
-# showing full output per task with chain section separators.
-
-# 8. CI/CD MODE (SANCTUARY=0)
+# 6. CI/CD MODE (SANCTUARY=0)
 #
 # When the SANCTUARY=0 environment variable is set, kiru operates in
 # standalone mode without a sanctuary directory or project scope.
@@ -225,43 +230,12 @@ pr calendar {
 # Usage: SANCTUARY=0 kiru run all
 #        SANCTUARY=0 kiru fn build
 
-# 9. INCLUDE FILES
+# 7. INCLUDE FILES
 #
 # If a project declares `include`, that file is parsed after `kiru sync`.
 # Include files use the same grammar as any .kiru file.
-# A `pr { ... }` block in the include file has its body (var, fn, run)
-# merged into the project's scope — allowing shared declarations across
-# multiple projects.
+# They can declare var, fn, and run blocks that get merged into the
+# project's scope — allowing shared declarations across multiple projects.
+#
+# Include files cannot declare sanctuary, pr, or import.
 
-# 10. GRAMMAR SUMMARY (EBNF)
-#
-# program      = { statement } ;
-# statement    = sanctuaryDecl | importDecl | varDecl
-#              | projectDecl | fnDecl | runDecl ;
-#
-# sanctuaryDecl = "sanctuary" "=" ( BACKTICK | "$" IDENT ) ";" ;
-# importDecl   = "import" path ";" ;
-# varDecl      = "var" ( "string" | "shell" ) IDENT "=" expr ";" ;
-# projectDecl  = "pr" IDENT "{" { projectStmt } "}" ;
-# projectStmt  = projectField | varDecl | fnDecl | runDecl ;
-# projectField = IDENT "=" expr ";" ;
-# fnDecl       = "fn" IDENT "{" { fnStmt } "}" ;
-# runDecl      = "run" IDENT "{" { chain ";" } "}" ;
-# chain        = IDENT ( "=>" IDENT )* ;
-#
-# fnStmt       = logStmt | execStmt | cdStmt | varDecl | envBlock | caseStmt ;
-# logStmt      = "log" expr ";" ;
-# execStmt     = "exec" expr ";" ;
-# cdStmt       = "cd" expr ";" ;
-# envBlock     = "env" "[" envPair { "," envPair } [ "," ] "]"
-#                "{" { fnStmt } "}" ";" ;
-# caseStmt     = "case" expr "{" { caseArm } "}" ";" ;
-# caseArm      = pattern "{" { fnStmt } "}" ";" ;
-# pattern      = BACKTICK | "$" IDENT | "_" ;
-# envPair      = IDENT "=" expr ;
-#
-# expr         = BACKTICK | "$" IDENT ;
-# BACKTICK     = "`" { char | "${" IDENT "}" } "`" ;
-# path         = "./" { char } ;
-#
-# Keywords: sanctuary import var string pr fn run env log exec cd case

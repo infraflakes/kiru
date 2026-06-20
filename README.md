@@ -93,7 +93,7 @@ pr todo {
 ### How it works
 
 1. **`var shell`** captures command output into a variable (`workdir`, `version`)
-2. **`fn`** blocks scope all state — vars, env, cwd — to that block. Nothing leaks.
+2. **`fn`** blocks scope vars and cwd — nothing leaks across calls.
 3. **`exec`** runs a shell command. Non-zero exit fails the fn.
 4. **`env [...] { }`** sets env vars for one block. Inner env overrides outer. They restore on exit.
 5. **`case`** branches on a value. Patterns can be literals, `$var` refs, or `_` (default).
@@ -122,7 +122,7 @@ When `SANCTUARY=0`, kiru runs in standalone mode — no sanctuary, no projects, 
 | declaration | description |
 |-------------|-------------|
 | `sanctuary = \`...\` \| $var;` | required. absolute path to workspace root |
-| `` import `./path`; `` | import other `.kiru` files, relative paths only |
+| `` import `path`; `` | import other `.kiru` files, resolved relative to current file's directory |
 | `var string name = \`...\` \| $var;` | string variable (global or project-scoped) |
 | `var shell name = \`...\`;` | runs content via `$SHELL`, stores stdout |
 | `pr name { ... }` | project declaration |
@@ -132,8 +132,8 @@ When `SANCTUARY=0`, kiru runs in standalone mode — no sanctuary, no projects, 
 ### Variable scope
 
 - **Global vars** (top-level) — accessible everywhere: project fields, project vars, fn bodies.
-- **Project vars** (inside `pr { }`) — accessible only within that project's fn bodies.
-- **Fn-local vars** (inside `fn { }` or `env { }`) — scoped to that block, shadow outer vars.
+- **Project vars** (inside `pr { }`) — accessible within that project's fn bodies, shadow globals.
+- **Local vars** (inside `fn { }`, `env { }`, or case arms) — scoped to that block, shadow project and global vars.
 
 ### Project fields
 
@@ -150,26 +150,11 @@ When `SANCTUARY=0`, kiru runs in standalone mode — no sanctuary, no projects, 
 | primitive | description |
 |-----------|-------------|
 | `exec \`...\`;` | run command via `$SHELL`. non-zero exit fails the block |
-| `cd \`...\`;` | change cwd relative to project dir. cannot escape project dir |
+| `cd \`...\`;` | change cwd relative to current working directory (cumulative). cannot escape project dir |
 | `log \`...\`;` | print to output. never fails |
 | `env [...] { };` | scoped env vars. inner env overrides outer. no leakage |
 | `var <type> name = ...;` | fn-local variable. shadows outer var with same name |
 | `case <expr> { ... };` | conditional branching. first-matching arm wins |
-
-### case statement
-
-```
-case <expr> {
-    `literal`    { ... };
-    $var_ref     { ... };
-    _            { ... };   # default
-};
-```
-
-- Condition is an expression (backtick or `$var` reference)
-- Patterns support `${interpolation}` inside backticks
-- First matching arm wins; execution continues after the `case` block
-- Each arm body ends with `;`; the entire `case` block ends with `;`
 
 ### run block
 
@@ -180,24 +165,6 @@ case <expr> {
 | `fn_a; fn_b => fn_c;` | two concurrent chains: fn_a alone and fn_b → fn_c |
 
 Chains run concurrently. If a function in a chain fails, the rest of that chain is skipped but other chains continue.
-
-### Values
-
-| syntax | type | notes |
-|--------|------|-------|
-| `` `...` `` | string | use `${name}` to interpolate variables |
-| `$name` | var ref | standalone reference outside backticks |
-
-### Delimiters
-
-| token | job |
-|-------|-----|
-| no parens | primitives are bare keywords — `exec`, `cd`, `log` |
-| `[]` | typed list — `env[]` |
-| `{}` | statement block |
-| `;` | statement terminator inside `{}` and run chain separator |
-| `,` | item separator inside `[]` |
-| `=>` | sequential chain separator inside run blocks |
 
 ### Rules
 
@@ -216,24 +183,6 @@ During `kiru run`, an interactive TUI shows live progress:
 - Color-coded: green (ok), red (failed), yellow (running), gray (pending/skipped)
 - Press `q` or `Ctrl+C` to abort
 - After completion, a colored ANSI summary dump is printed
-
----
-
-## Per-project config
-
-If a project declares `include`, that file is parsed after `kiru sync` clones the repo. It can define fns scoped to that project but cannot declare `sanctuary` or `pr`.
-
-```
-# calendar/.kiru/main.kiru
-
-fn build {
-    exec `pnpm build`;
-}
-
-fn dev {
-    exec `pnpm dev`;
-}
-```
 
 ---
 

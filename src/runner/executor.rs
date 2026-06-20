@@ -252,10 +252,6 @@ impl<'a> ExecContext<'a> {
 
     fn exec_cd(&mut self, arg: &Expr) -> Result<(), RuntimeError> {
         let resolved = self.resolve_expr(arg)?;
-        let base_dir = match self.project {
-            Some(proj) => PathBuf::from(&self.cfg.sanctuary).join(&proj.dir),
-            None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-        };
 
         if Path::new(&resolved).is_absolute() {
             return Err(RuntimeError::Lookup(format!(
@@ -264,11 +260,7 @@ impl<'a> ExecContext<'a> {
             )));
         }
 
-        let candidate = if resolved == "." {
-            base_dir.clone()
-        } else {
-            base_dir.join(&resolved)
-        };
+        let candidate = self.work_dir.join(&resolved);
 
         let candidate = std::fs::canonicalize(&candidate)
             .map_err(|e| RuntimeError::Lookup(format!("cd {}: {}", resolved, e)))?;
