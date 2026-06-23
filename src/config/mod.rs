@@ -8,7 +8,8 @@ pub use types::{Config, Project};
 pub use validation::is_sanctuary_disabled;
 pub use validation::validate;
 
-use crate::dsl::ast::{Expr, Program, Stmt};
+use crate::dsl::ast::{Program, Stmt};
+use crate::ir::Expr;
 use crate::dsl::lexer::Lexer;
 use crate::dsl::parser::Parser;
 use std::collections::HashSet;

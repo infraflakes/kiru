@@ -1,6 +1,6 @@
 use super::*;
 use crate::config::{Config, Project};
-use crate::dsl::ast::{CaseArm, CasePattern, Expr, FnStmt, TemplatePart};
+use crate::ir::{CaseArm, CasePattern, Expr, FnStmt, TemplatePart};
 use crate::runner::executor::ExecContext;
 use std::collections::HashMap;
 

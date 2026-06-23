@@ -370,11 +370,7 @@ pr p { url = `u`; dir = `d`; include = `a.kiru`; include = `b.kiru`; }\
 ",
         );
         let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(
-            err.to_string().contains("duplicate field"),
-            "got: {}",
-            err
-        );
+        assert!(err.to_string().contains("duplicate field"), "got: {}", err);
     })
 }
 

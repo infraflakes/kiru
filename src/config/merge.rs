@@ -1,6 +1,7 @@
 use crate::config::error::{ConfigError, SpannedValidationError};
 use crate::config::types::{Config, Project};
-use crate::dsl::ast::{Expr, FnStmt, Program, Stmt, VarType};
+use crate::dsl::ast::{Program, Stmt};
+use crate::ir::{Expr, FnStmt, VarType};
 use std::collections::HashMap;
 
 fn spanned_err(
@@ -153,10 +154,7 @@ fn collect_projects(
                     for field in &fields {
                         if !seen_fields.insert(field.key.as_str()) {
                             return Err(spanned_err(
-                                format!(
-                                    "duplicate field '{}' in project '{}'",
-                                    field.key, name
-                                ),
+                                format!("duplicate field '{}' in project '{}'", field.key, name),
                                 &program.source_name,
                                 &program.source_text,
                                 field.value.span().0,

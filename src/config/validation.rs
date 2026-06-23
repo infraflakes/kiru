@@ -1,7 +1,7 @@
 use crate::config::error::ConfigError;
 use crate::config::merge::merge_project_body_stmt;
 use crate::config::types::Config;
-use crate::dsl::ast::{CasePattern, Expr, FnStmt};
+use crate::ir::{CasePattern, Expr, FnStmt};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 

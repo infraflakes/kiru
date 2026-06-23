@@ -1,6 +1,6 @@
 use crate::colors;
 use crate::config::{Config, Project};
-use crate::dsl::ast::{CasePattern, Expr, FnStmt};
+use crate::ir::{CasePattern, Expr, FnStmt};
 use crate::runner::Output;
 use crate::runner::error::RuntimeError;
 use crate::shell;
@@ -298,11 +298,11 @@ impl<'a> ExecContext<'a> {
         &mut self,
         name: &str,
         value: &Expr,
-        var_type: &crate::dsl::ast::VarType,
+        var_type: &crate::ir::VarType,
     ) -> Result<(), RuntimeError> {
         let val = self.resolve_expr(value)?;
 
-        let resolved = if var_type == &crate::dsl::ast::VarType::Shell {
+        let resolved = if var_type == &crate::ir::VarType::Shell {
             let env_map: HashMap<String, String> = self.build_env().collect();
             let out = shell::run_captured(&val, Some(&self.work_dir), Some(&env_map), None)
                 .map_err(|e| match e {
@@ -335,7 +335,7 @@ impl<'a> ExecContext<'a> {
 
     fn exec_env_block(
         &mut self,
-        pairs: &[crate::dsl::ast::EnvPair],
+        pairs: &[crate::ir::EnvPair],
         body: &[FnStmt],
     ) -> Result<(), RuntimeError> {
         let mut layer = HashMap::new();

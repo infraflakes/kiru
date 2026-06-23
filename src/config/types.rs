@@ -1,4 +1,4 @@
-use crate::dsl::ast::FnStmt;
+use crate::ir::FnStmt;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
