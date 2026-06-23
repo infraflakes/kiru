@@ -7,7 +7,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Clear, Paragraph},
 };
-use std::io::Write;
+
 
 const SEPARATOR_WIDTH: usize = 78;
 
@@ -102,35 +102,8 @@ pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
     }
 }
 
-fn colored_line_parts(line: &str) -> (usize, &'static str, &'static str, &str) {
-    let trimmed = line.trim_start();
-    let indent = line.len() - trimmed.len();
-
-    if !trimmed.contains(' ') && trimmed.contains('(') && trimmed.ends_with(')') {
-        (0, "", colors::EXEC_ANSI, line)
-    } else if let Some(rest) = trimmed.strip_prefix("log  ") {
-        (indent, "log  ", colors::LOG_ANSI, rest)
-    } else if let Some(rest) = trimmed.strip_prefix("exec ") {
-        (indent, "exec ", colors::EXEC_ANSI, rest)
-    } else if let Some(rest) = trimmed.strip_prefix("cd   ") {
-        (indent, "cd   ", colors::CD_ANSI, rest)
-    } else if let Some(rest) = trimmed.strip_prefix("env  ") {
-        (indent, "env  ", colors::ENV_ANSI, rest)
-    } else {
-        (0, "", colors::TEXT_ANSI, line)
-    }
-}
-
-pub fn write_colored_line(line: &str, w: &mut impl Write) {
-    let (indent, prefix, color, rest) = colored_line_parts(line);
-    if indent > 0 {
-        let _ = write!(w, "{}", &line[..indent]);
-    }
-    let _ = write!(w, "{}{}{}{}", color, prefix, rest, colors::RESET);
-}
-
 fn write_colored_line_buf(buf: &mut String, line: &str) {
-    let (indent, prefix, color, rest) = colored_line_parts(line);
+    let (indent, prefix, color, rest) = colors::colored_line_parts(line);
     if indent > 0 {
         buf.push_str(&line[..indent]);
     }

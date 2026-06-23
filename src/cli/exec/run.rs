@@ -1,6 +1,5 @@
 use super::super::load_config_and_resolve;
-use crate::runner::Output;
-use crate::runner::executor::ExecContext;
+use crate::runner::Runner;
 use crate::tui::{self, TaskStatus, TuiEvent};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -49,44 +48,15 @@ fn run_project_chains(
                             tui::send_event(&tx, TuiEvent::AppendOutput(idx, line))
                         }
                     };
-                    let mut output = Output::Callback(Arc::new(cb));
-
-                    let project_entry = config.projects.get(&project).unwrap();
-                    let mut ctx = ExecContext::new(&config, Some(project_entry), &mut output);
+                    let mut runner =
+                        Runner::new((*config).clone()).with_output_callback(Arc::new(cb));
 
                     for (fi, fn_name) in chain.iter().enumerate() {
                         let task_idx = start_index + fi;
                         current_task.store(task_idx, Ordering::Relaxed);
                         tui::send_event(&tx, TuiEvent::UpdateStatus(task_idx, TaskStatus::Running));
 
-                        let fn_body = match project_entry.functions.get(fn_name) {
-                            Some(b) => b.clone(),
-                            None => {
-                                tui::send_event(
-                                    &tx,
-                                    TuiEvent::AppendOutput(
-                                        task_idx,
-                                        format!("Error: unknown function '{}'", fn_name),
-                                    ),
-                                );
-                                tui::send_event(
-                                    &tx,
-                                    TuiEvent::UpdateStatus(task_idx, TaskStatus::Error),
-                                );
-                                for remaining in fi + 1..chain.len() {
-                                    tui::send_event(
-                                        &tx,
-                                        TuiEvent::UpdateStatus(
-                                            start_index + remaining,
-                                            TaskStatus::Skipped,
-                                        ),
-                                    );
-                                }
-                                return Err(());
-                            }
-                        };
-
-                        match ctx.exec_fn_body(&fn_body) {
+                        match runner.execute_fn_call(fn_name, &project) {
                             Ok(()) => {
                                 tui::send_event(
                                     &tx,
@@ -175,43 +145,15 @@ fn run_standalone_chains(
                             tui::send_event(&tx, TuiEvent::AppendOutput(idx, line))
                         }
                     };
-                    let mut output = Output::Callback(Arc::new(cb));
-
-                    let mut ctx = ExecContext::new(&config, None, &mut output);
+                    let mut runner =
+                        Runner::new((*config).clone()).with_output_callback(Arc::new(cb));
 
                     for (fi, fn_name) in chain.iter().enumerate() {
                         let task_idx = start_index + fi;
                         current_task.store(task_idx, Ordering::Relaxed);
                         tui::send_event(&tx, TuiEvent::UpdateStatus(task_idx, TaskStatus::Running));
 
-                        let fn_body = match config.functions.get(fn_name) {
-                            Some(b) => b.clone(),
-                            None => {
-                                tui::send_event(
-                                    &tx,
-                                    TuiEvent::AppendOutput(
-                                        task_idx,
-                                        format!("Error: unknown function '{}'", fn_name),
-                                    ),
-                                );
-                                tui::send_event(
-                                    &tx,
-                                    TuiEvent::UpdateStatus(task_idx, TaskStatus::Error),
-                                );
-                                for remaining in fi + 1..chain.len() {
-                                    tui::send_event(
-                                        &tx,
-                                        TuiEvent::UpdateStatus(
-                                            start_index + remaining,
-                                            TaskStatus::Skipped,
-                                        ),
-                                    );
-                                }
-                                return Err(());
-                            }
-                        };
-
-                        match ctx.exec_fn_body(&fn_body) {
+                        match runner.execute_standalone_fn(fn_name) {
                             Ok(()) => {
                                 tui::send_event(
                                     &tx,

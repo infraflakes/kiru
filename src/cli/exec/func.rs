@@ -15,7 +15,7 @@ pub fn run(
 
     let callback: OutputCallback = Arc::new(|line| {
         let mut out = io::stdout().lock();
-        crate::tui::render::write_colored_line(&line, &mut out);
+        crate::colors::write_colored_line(&line, &mut out);
         let _ = writeln!(out);
     });
 

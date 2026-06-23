@@ -12,8 +12,12 @@ pub(crate) use executor::OutputCallback;
 use std::io::{self, Write};
 use std::sync::Arc;
 
+/// `Output` is `Send` when `Callback` variant is used at runtime.
+/// `Direct` variant uses `Box<dyn Write + Send>` to satisfy the bound.
+type SendWriter = Box<dyn Write + Send>;
+
 pub(crate) enum Output {
-    Direct(Box<dyn Write>),
+    Direct(SendWriter),
     Callback(OutputCallback),
 }
 
@@ -55,7 +59,7 @@ impl Runner {
     pub(crate) fn new(cfg: Config) -> Self {
         Runner {
             cfg: Arc::new(cfg),
-            output: Output::Direct(Box::new(io::stdout())),
+            output: Output::Direct(Box::new(io::stdout()) as SendWriter),
         }
     }
 
