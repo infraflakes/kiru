@@ -9,9 +9,9 @@ pub use validation::is_sanctuary_disabled;
 pub use validation::validate;
 
 use crate::dsl::ast::{Program, Stmt};
-use crate::ir::Expr;
 use crate::dsl::lexer::Lexer;
 use crate::dsl::parser::Parser;
+use crate::ir::Expr;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 

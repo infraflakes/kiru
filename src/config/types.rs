@@ -10,6 +10,7 @@ pub struct Project {
     pub include_file: Option<String>,
     pub branch: String,
     pub vars: HashMap<String, String>,
+    pub shell_vars: HashMap<String, String>,
     pub functions: HashMap<String, Vec<FnStmt>>,
     pub runs: HashMap<String, Vec<Vec<String>>>,
 }
@@ -19,6 +20,7 @@ pub struct Config {
     pub sanctuary: String,
     pub projects: HashMap<String, Project>,
     pub vars: HashMap<String, String>,
+    pub shell_vars: HashMap<String, String>,
     pub functions: HashMap<String, Vec<FnStmt>>,
     pub runs: HashMap<String, Vec<Vec<String>>>,
 }

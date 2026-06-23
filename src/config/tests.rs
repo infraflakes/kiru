@@ -659,7 +659,7 @@ fn test_sanctuary_with_var_ref() {
         "main.kiru",
         &format!(
             "\
-var shell workdir = `echo {}`;\n\
+var string workdir = `{}`;\n\
 sanctuary = $workdir;\
 ",
             dir.path().display()

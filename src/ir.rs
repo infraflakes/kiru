@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 #[derive(Debug, Clone)]
 pub enum Expr {
     BacktickLit {
@@ -21,29 +19,6 @@ impl Expr {
             Expr::VarRef { offset, len, .. } => (*offset, *len),
         }
     }
-
-    pub fn resolve(&self, vars: &HashMap<String, String>) -> Result<String, String> {
-        match self {
-            Expr::BacktickLit { parts, .. } => {
-                let mut result = String::new();
-                for part in parts {
-                    if part.is_var {
-                        match vars.get(&part.value) {
-                            Some(value) => result.push_str(value),
-                            None => return Err(format!("undefined variable: ${}", part.value)),
-                        }
-                    } else {
-                        result.push_str(&part.value);
-                    }
-                }
-                Ok(result)
-            }
-            Expr::VarRef { name, .. } => match vars.get(name) {
-                Some(value) => Ok(value.clone()),
-                None => Err(format!("undefined variable: ${}", name)),
-            },
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -61,12 +36,28 @@ pub enum VarType {
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone)]
 pub enum FnStmt {
-    Log { value: Expr },
-    Exec { value: Expr },
-    Cd { value: Expr },
-    VarDecl { var_type: VarType, name: String, value: Expr },
-    EnvBlock { pairs: Vec<EnvPair>, body: Vec<FnStmt> },
-    Case { condition: Expr, arms: Vec<CaseArm> },
+    Log {
+        value: Expr,
+    },
+    Exec {
+        value: Expr,
+    },
+    Cd {
+        value: Expr,
+    },
+    VarDecl {
+        var_type: VarType,
+        name: String,
+        value: Expr,
+    },
+    EnvBlock {
+        pairs: Vec<EnvPair>,
+        body: Vec<FnStmt>,
+    },
+    Case {
+        condition: Expr,
+        arms: Vec<CaseArm>,
+    },
 }
 
 #[derive(Debug, Clone)]

@@ -8,7 +8,6 @@ use ratatui::{
     widgets::{Clear, Paragraph},
 };
 
-
 const SEPARATOR_WIDTH: usize = 78;
 
 fn task_marker(task: &Task, spinner_idx: usize) -> String {

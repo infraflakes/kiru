@@ -16,8 +16,10 @@ pub(crate) struct ExecContext<'a> {
     pub(super) cfg: &'a Config,
     pub(super) project: Option<&'a Project>,
     output: &'a mut Output,
-    /// Base variables (global + project). Scope layers pushed/popped for case arms and env blocks.
+    /// Base variables (global + project string vars + cached shell var results).
     pub(super) vars: HashMap<String, String>,
+    /// Unresolved shell var commands (global + project). Executed on first access.
+    pub(super) shell_vars: HashMap<String, String>,
     /// Scope stack for variable shadowing. Each layer shadows `vars` and higher layers.
     pub(super) var_stack: Vec<HashMap<String, String>>,
     pub(super) env_stack: Vec<HashMap<String, String>>,
@@ -32,8 +34,10 @@ impl<'a> ExecContext<'a> {
         output: &'a mut Output,
     ) -> Self {
         let mut vars = cfg.vars.clone();
+        let mut shell_vars = cfg.shell_vars.clone();
         if let Some(proj) = project {
             vars.extend(proj.vars.clone());
+            shell_vars.extend(proj.shell_vars.clone());
         }
         let work_dir = match project {
             Some(proj) => PathBuf::from(&cfg.sanctuary).join(&proj.dir),
@@ -44,6 +48,7 @@ impl<'a> ExecContext<'a> {
             project,
             output,
             vars,
+            shell_vars,
             var_stack: Vec::new(),
             env_stack: Vec::new(),
             work_dir,
@@ -56,20 +61,19 @@ impl<'a> ExecContext<'a> {
     }
 
     /// Resolve an expression, checking scope layers before base vars.
-    pub(super) fn resolve_expr(&self, expr: &Expr) -> Result<String, RuntimeError> {
+    pub(super) fn resolve_expr(&mut self, expr: &Expr) -> Result<String, RuntimeError> {
         match expr {
             Expr::VarRef { name, .. } => self
-                .resolve_var(name)
-                .cloned()
+                .resolve_var(name)?
                 .ok_or_else(|| RuntimeError::Lookup(format!("undefined variable: ${}", name))),
             Expr::BacktickLit { parts, .. } => {
                 let mut result = String::new();
                 for part in parts {
                     if part.is_var {
-                        let val = self.resolve_var(&part.value).ok_or_else(|| {
+                        let val = self.resolve_var(&part.value)?.ok_or_else(|| {
                             RuntimeError::Lookup(format!("undefined variable: ${}", part.value))
                         })?;
-                        result.push_str(val);
+                        result.push_str(&val);
                     } else {
                         result.push_str(&part.value);
                     }
@@ -79,14 +83,40 @@ impl<'a> ExecContext<'a> {
         }
     }
 
-    /// Look up a variable name, checking scope layers (top-to-bottom) then base vars.
-    fn resolve_var(&self, name: &str) -> Option<&String> {
+    /// Look up a variable name, checking scope layers (top-to-bottom) then base/shell vars.
+    /// Shell vars are lazily executed on first access and cached in `self.vars`.
+    fn resolve_var(&mut self, name: &str) -> Result<Option<String>, RuntimeError> {
         for layer in self.var_stack.iter().rev() {
             if let Some(val) = layer.get(name) {
-                return Some(val);
+                return Ok(Some(val.clone()));
             }
         }
-        self.vars.get(name)
+        if let Some(val) = self.vars.get(name) {
+            return Ok(Some(val.clone()));
+        }
+        if let Some(cmd) = self.shell_vars.remove(name) {
+            let env_map: HashMap<String, String> = self.build_env().collect();
+            let out = shell::run_captured(&cmd, Some(&self.work_dir), Some(&env_map), None)
+                .map_err(|e| match e {
+                    shell::Error::Spawn(io_err) => RuntimeError::exec_io_error(&cmd, io_err),
+                    shell::Error::Exit {
+                        stderr, exit_code, ..
+                    } => RuntimeError::Exec {
+                        cmd: cmd.clone(),
+                        exit_code,
+                        detail: stderr,
+                    },
+                    shell::Error::Timeout { partial_stderr, .. } => RuntimeError::Exec {
+                        cmd: cmd.clone(),
+                        exit_code: None,
+                        detail: format!("timed out: {}", partial_stderr),
+                    },
+                })?;
+            let val = out.stdout;
+            self.vars.insert(name.to_string(), val.clone());
+            return Ok(Some(val));
+        }
+        Ok(None)
     }
 
     pub(super) fn build_env(&self) -> impl Iterator<Item = (String, String)> + '_ {
@@ -156,28 +186,22 @@ impl<'a> ExecContext<'a> {
                 let mut resolved = String::new();
                 for part in parts {
                     if part.is_var {
-                        match self.resolve_var(&part.value) {
-                            Some(v) => resolved.push_str(v),
-                            None => {
-                                return Err(RuntimeError::Lookup(format!(
-                                    "undefined variable: ${}",
-                                    part.value
-                                )));
-                            }
-                        }
+                        let v = self.resolve_var(&part.value)?.ok_or_else(|| {
+                            RuntimeError::Lookup(format!("undefined variable: ${}", part.value))
+                        })?;
+                        resolved.push_str(&v);
                     } else {
                         resolved.push_str(&part.value);
                     }
                 }
                 Ok(value == resolved)
             }
-            CasePattern::VarRef { name } => match self.resolve_var(name) {
-                Some(v) => Ok(value == v),
-                None => Err(RuntimeError::Lookup(format!(
-                    "undefined variable: ${}",
-                    name
-                ))),
-            },
+            CasePattern::VarRef { name } => {
+                let v = self.resolve_var(name)?.ok_or_else(|| {
+                    RuntimeError::Lookup(format!("undefined variable: ${}", name))
+                })?;
+                Ok(value == v)
+            }
         }
     }
 

@@ -45,11 +45,14 @@ pub(crate) fn resolve_include(
         for program in &programs {
             let mut merged = cfg.vars.clone();
             merged.extend(proj.vars.clone());
+            let mut merged_shell = cfg.shell_vars.clone();
+            merged_shell.extend(proj.shell_vars.clone());
             for stmt in &program.stmts {
                 merge_project_body_stmt(
                     proj,
                     stmt.clone(),
                     &mut merged,
+                    &mut merged_shell,
                     &program.source_name,
                     &program.source_text,
                 )?;
@@ -103,7 +106,8 @@ pub fn validate(cfg: &Config) -> Result<(), ConfigError> {
 
     validate_run_refs(&cfg.runs, &cfg.functions, "top-level", &mut errs);
 
-    let global_scope: HashSet<String> = cfg.vars.keys().cloned().collect();
+    let mut global_scope: HashSet<String> = cfg.vars.keys().cloned().collect();
+    global_scope.extend(cfg.shell_vars.keys().cloned());
     validate_fn_bodies(&cfg.functions, &global_scope, "(top-level)", &mut errs);
 
     for (proj_name, project) in &cfg.projects {
@@ -111,6 +115,7 @@ pub fn validate(cfg: &Config) -> Result<(), ConfigError> {
 
         let mut scope: HashSet<String> = global_scope.clone();
         scope.extend(project.vars.keys().cloned());
+        scope.extend(project.shell_vars.keys().cloned());
         validate_fn_bodies(&project.functions, &scope, proj_name, &mut errs);
     }
 

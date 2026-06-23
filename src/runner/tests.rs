@@ -13,6 +13,7 @@ fn test_context(vars: HashMap<String, String>) -> (Config, Project, Output) {
         include_file: None,
         branch: "main".to_string(),
         vars,
+        shell_vars: HashMap::new(),
         functions: HashMap::new(),
         runs: HashMap::new(),
     };
@@ -20,6 +21,7 @@ fn test_context(vars: HashMap<String, String>) -> (Config, Project, Output) {
         sanctuary: "/tmp".to_string(),
         projects: HashMap::new(),
         vars: HashMap::new(),
+        shell_vars: HashMap::new(),
         functions: HashMap::new(),
         runs: HashMap::new(),
     };
