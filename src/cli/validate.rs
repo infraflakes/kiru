@@ -73,7 +73,7 @@ fn header_box(out: &mut String, box_w: usize, label_w: usize, cfg: &Config) {
     out.push_str(&top);
     out.push('\n');
 
-    kv_row(out, box_w, label_w, "Sanctuary", &cfg.sanctuary, CYAN);
+    key_value_row(out, box_w, label_w, "Sanctuary", &cfg.sanctuary, CYAN);
 
     out.push_str(&bot);
     out.push('\n');
@@ -83,7 +83,7 @@ fn header_box(out: &mut String, box_w: usize, label_w: usize, cfg: &Config) {
 ///
 /// `val_plain` is the unstyled text used for alignment calculation;
 /// `val_color` is the ANSI colour code applied only to the value.
-fn kv_row(
+fn key_value_row(
     out: &mut String,
     box_w: usize,
     label_w: usize,

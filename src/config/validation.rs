@@ -205,7 +205,7 @@ fn validate_fn_body(
             }
             FnStmt::Log { value, .. } => validate_expr(value, fn_name, scope, errs, proj_name),
             FnStmt::Exec { value, .. } => validate_expr(value, fn_name, scope, errs, proj_name),
-            FnStmt::Cd { arg, .. } => validate_expr(arg, fn_name, scope, errs, proj_name),
+            FnStmt::Cd { value, .. } => validate_expr(value, fn_name, scope, errs, proj_name),
             FnStmt::EnvBlock { pairs, body, .. } => {
                 let mut block_scope = scope.clone();
                 for pair in pairs {

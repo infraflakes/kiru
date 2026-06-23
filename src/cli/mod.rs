@@ -61,8 +61,8 @@ pub fn run() -> miette::Result<()> {
     match cli.command {
         Commands::Validate => validate::run(cli.config),
         Commands::Sync => sync::run(cli.config),
-        Commands::Run { name, project } => exec::run_run(cli.config, name, project),
-        Commands::Fn { name, project } => exec::run_fn(cli.config, name, project),
+        Commands::Run { name, project } => exec::execute_run_block(cli.config, name, project),
+        Commands::Fn { name, project } => exec::execute_function(cli.config, name, project),
         Commands::Version => run_version(),
     }
 }

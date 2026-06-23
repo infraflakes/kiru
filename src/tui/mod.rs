@@ -333,7 +333,7 @@ pub async fn run_tui(
     }
 
     let guard = Model::lock(&model);
-    let dump = render::dump_final(&guard);
+    let dump = render::format_final_output(&guard);
     drop(guard);
     let mut out = io::stdout().lock();
     out.write_all(dump.as_bytes())?;

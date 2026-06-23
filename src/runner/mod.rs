@@ -42,7 +42,7 @@ impl Output {
         }
     }
 
-    fn fork_callback(&self) -> Option<OutputCallback> {
+    fn clone_callback(&self) -> Option<OutputCallback> {
         match self {
             Output::Callback(cb) => Some(Arc::clone(cb)),
             Output::Direct(_) => None,

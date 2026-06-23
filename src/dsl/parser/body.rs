@@ -1,4 +1,4 @@
-use super::expr::parse_template_parts;
+use super::expr::parse_interpolation_parts;
 use super::*;
 
 impl Parser {
@@ -26,7 +26,7 @@ impl Parser {
         let arg = self.parse_expr()?;
         self.expect_with_context(TokenType::Semicolon, "after `cd`")?;
 
-        Ok(FnStmt::Cd { arg })
+        Ok(FnStmt::Cd { value: arg })
     }
 
     pub(crate) fn parse_fn_var_decl(&mut self) -> Result<FnStmt, ParseError> {
@@ -162,7 +162,7 @@ impl Parser {
                     unreachable!()
                 };
                 self.advance();
-                let parts = parse_template_parts(content, token.offset)?;
+                let parts = parse_interpolation_parts(content, token.offset)?;
                 Ok(CasePattern::Literal { parts })
             }
             _ => {

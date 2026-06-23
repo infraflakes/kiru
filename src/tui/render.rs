@@ -131,7 +131,7 @@ fn write_separator(buf: &mut String, label: &str) {
     buf.push('\n');
 }
 
-pub fn dump_final(model: &Model) -> String {
+pub fn format_final_output(model: &Model) -> String {
     let mut buf = String::new();
     buf.push('\n');
 

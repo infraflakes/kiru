@@ -73,7 +73,7 @@ impl Parser {
         let mut errors = Vec::new();
 
         while self.current_token().ty != TokenType::EOF {
-            match self.parse_toplevel_stmt() {
+            match self.parse_top_level_stmt() {
                 Ok(stmt) => program.stmts.push(stmt),
                 Err(e) => {
                     errors.push(e);
@@ -89,7 +89,7 @@ impl Parser {
         }
     }
 
-    fn parse_toplevel_stmt(&mut self) -> Result<Stmt, ParseError> {
+    fn parse_top_level_stmt(&mut self) -> Result<Stmt, ParseError> {
         if let TokenType::Illegal(m) = &self.current_token().ty {
             let token = self.current_token().clone();
             return Err(ParseError::new(

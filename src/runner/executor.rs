@@ -22,7 +22,7 @@ pub(crate) struct ExecContext<'a> {
     pub(super) var_stack: Vec<HashMap<String, String>>,
     pub(super) env_stack: Vec<HashMap<String, String>>,
     pub(super) work_dir: PathBuf,
-    pub(super) sys_env: Vec<(String, String)>,
+    pub(super) env_vars: Vec<(String, String)>,
 }
 
 impl<'a> ExecContext<'a> {
@@ -47,7 +47,7 @@ impl<'a> ExecContext<'a> {
             var_stack: Vec::new(),
             env_stack: Vec::new(),
             work_dir,
-            sys_env: std::env::vars().collect(),
+            env_vars: std::env::vars().collect(),
         }
     }
 
@@ -90,7 +90,7 @@ impl<'a> ExecContext<'a> {
     }
 
     pub(super) fn build_env(&self) -> impl Iterator<Item = (String, String)> + '_ {
-        let sys = self.sys_env.iter().map(|(k, v)| (k.clone(), v.clone()));
+        let sys = self.env_vars.iter().map(|(k, v)| (k.clone(), v.clone()));
         let overrides = self
             .env_stack
             .iter()
@@ -115,8 +115,8 @@ impl<'a> ExecContext<'a> {
         for stmt in body {
             match stmt {
                 FnStmt::Log { value, .. } => self.exec_log(value)?,
-                FnStmt::Exec { value, .. } => self.exec_exec(value)?,
-                FnStmt::Cd { arg, .. } => self.exec_cd(arg)?,
+                FnStmt::Exec { value, .. } => self.exec_command(value)?,
+                FnStmt::Cd { value, .. } => self.exec_cd(value)?,
                 FnStmt::VarDecl {
                     name,
                     value,
@@ -191,7 +191,7 @@ impl<'a> ExecContext<'a> {
         Ok(())
     }
 
-    fn exec_exec(&mut self, value: &Expr) -> Result<(), RuntimeError> {
+    fn exec_command(&mut self, value: &Expr) -> Result<(), RuntimeError> {
         let cmd_str = self.resolve_expr(value)?;
         let indent = self.indent(0);
         let line = format!("{}exec {}", indent, cmd_str);
@@ -212,7 +212,7 @@ impl<'a> ExecContext<'a> {
 
         let indent = self.indent(1);
 
-        let status = match self.output.fork_callback() {
+        let status = match self.output.clone_callback() {
             Some(cb) => {
                 let stdout_thread =
                     spawn_stream_reader(child.stdout.take(), indent.clone(), cb.clone());

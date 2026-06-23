@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 #[derive(Debug)]
-pub(crate) struct Output {
+pub(crate) struct ShellVarValue {
     pub(crate) stdout: String,
 }
 
@@ -80,7 +80,7 @@ pub(crate) fn run_captured(
     dir: Option<&Path>,
     env: Option<&std::collections::HashMap<String, String>>,
     timeout: Option<Duration>,
-) -> Result<Output, Error> {
+) -> Result<ShellVarValue, Error> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
     let mut cmd = Command::new(shell);
     cmd.arg("-c")
@@ -181,5 +181,5 @@ pub(crate) fn run_captured(
         });
     }
 
-    Ok(Output { stdout })
+    Ok(ShellVarValue { stdout })
 }

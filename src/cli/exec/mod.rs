@@ -1,5 +1,5 @@
 mod func;
 mod run;
 
-pub use func::run as run_fn;
-pub use run::run as run_run;
+pub use func::execute_function;
+pub use run::execute_run_block;

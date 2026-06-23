@@ -206,7 +206,7 @@ fn run_standalone_chains(
     Ok(())
 }
 
-pub fn run(
+pub fn execute_run_block(
     config_arg: Option<PathBuf>,
     name: String,
     project: Option<String>,

@@ -4,7 +4,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub fn run(
+pub fn execute_function(
     config_arg: Option<PathBuf>,
     name: String,
     project: Option<String>,

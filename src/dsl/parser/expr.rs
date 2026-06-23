@@ -73,15 +73,15 @@ impl Parser {
         let offset = token.offset;
         let len = token.len;
         self.advance();
-        let parts = parse_template_parts(content, token.offset)?;
+        let parts = parse_interpolation_parts(content, token.offset)?;
         Ok(Expr::BacktickLit { parts, offset, len })
     }
 }
 
-pub(crate) fn parse_template_parts(
+pub(crate) fn parse_interpolation_parts(
     content: &str,
     offset: usize,
-) -> Result<Vec<TemplatePart>, ParseError> {
+) -> Result<Vec<InterpolationPart>, ParseError> {
     let mut parts = Vec::new();
     let mut current = String::new();
     let mut chars = content.char_indices().peekable();
@@ -91,7 +91,7 @@ pub(crate) fn parse_template_parts(
             chars.next();
 
             if !current.is_empty() {
-                parts.push(TemplatePart {
+                parts.push(InterpolationPart {
                     is_var: false,
                     value: current.clone(),
                 });
@@ -119,7 +119,7 @@ pub(crate) fn parse_template_parts(
                 ));
             }
 
-            parts.push(TemplatePart {
+            parts.push(InterpolationPart {
                 is_var: true,
                 value: var_name,
             });
@@ -129,7 +129,7 @@ pub(crate) fn parse_template_parts(
     }
 
     if !current.is_empty() {
-        parts.push(TemplatePart {
+        parts.push(InterpolationPart {
             is_var: false,
             value: current,
         });

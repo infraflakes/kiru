@@ -3,7 +3,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub enum Expr {
     BacktickLit {
-        parts: Vec<TemplatePart>,
+        parts: Vec<InterpolationPart>,
         offset: usize,
         len: usize,
     },
@@ -47,7 +47,7 @@ impl Expr {
 }
 
 #[derive(Debug, Clone)]
-pub struct TemplatePart {
+pub struct InterpolationPart {
     pub is_var: bool,
     pub value: String,
 }
@@ -63,7 +63,7 @@ pub enum VarType {
 pub enum FnStmt {
     Log { value: Expr },
     Exec { value: Expr },
-    Cd { arg: Expr },
+    Cd { value: Expr },
     VarDecl { var_type: VarType, name: String, value: Expr },
     EnvBlock { pairs: Vec<EnvPair>, body: Vec<FnStmt> },
     Case { condition: Expr, arms: Vec<CaseArm> },
@@ -71,7 +71,7 @@ pub enum FnStmt {
 
 #[derive(Debug, Clone)]
 pub enum CasePattern {
-    Literal { parts: Vec<TemplatePart> },
+    Literal { parts: Vec<InterpolationPart> },
     VarRef { name: String },
     Default,
 }
