@@ -1,9 +1,9 @@
 use super::exec;
 use crate::colors;
 use crate::config::{Config, Project};
+use crate::dsl::{CaseMatch, Expr, FnStmt};
 use crate::runner::Output;
 use crate::runner::error::RuntimeError;
-use crate::shared_syntax_types::{CaseMatch, Expr, FnStmt};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -257,11 +257,11 @@ impl<'a> ExecContext<'a> {
         &mut self,
         name: &str,
         value: &Expr,
-        var_type: &crate::shared_syntax_types::VarType,
+        var_type: &crate::dsl::VarType,
     ) -> Result<(), RuntimeError> {
         let val = self.resolve_expr(value)?;
 
-        let resolved = if var_type == &crate::shared_syntax_types::VarType::Shell {
+        let resolved = if var_type == &crate::dsl::VarType::Shell {
             let env_map: HashMap<String, String> = self.build_env().collect();
             let out = exec::exec_and_get_stdout(&val, Some(&self.work_dir), Some(&env_map), None)
                 .map_err(|e| match e {
@@ -294,7 +294,7 @@ impl<'a> ExecContext<'a> {
 
     fn exec_env_block(
         &mut self,
-        pairs: &[crate::shared_syntax_types::EnvPair],
+        pairs: &[crate::dsl::EnvPair],
         body: &[FnStmt],
     ) -> Result<(), RuntimeError> {
         let mut layer = HashMap::new();

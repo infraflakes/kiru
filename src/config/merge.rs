@@ -1,8 +1,8 @@
 use crate::config::error::{ConfigError, SpannedValidationError};
 use crate::config::types::{Config, Project};
 use crate::dsl::ast::{Program, Stmt};
+use crate::dsl::{Expr, FnStmt, VarType};
 use crate::runner;
-use crate::shared_syntax_types::{Expr, FnStmt, VarType};
 use std::collections::HashMap;
 use std::path::Path;
 

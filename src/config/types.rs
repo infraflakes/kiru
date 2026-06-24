@@ -1,4 +1,4 @@
-use crate::shared_syntax_types::FnStmt;
+use crate::dsl::FnStmt;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]

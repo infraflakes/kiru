@@ -1,4 +1,4 @@
-use crate::shared_syntax_types::{Expr, FnStmt, VarType};
+use crate::dsl::{Expr, FnStmt, VarType};
 
 #[derive(Debug, Clone)]
 pub enum Stmt {

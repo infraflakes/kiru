@@ -3,7 +3,6 @@ mod colors;
 mod config;
 mod dsl;
 mod runner;
-mod shared_syntax_types;
 mod sync;
 mod tui;
 

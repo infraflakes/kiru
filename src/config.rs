@@ -8,10 +8,10 @@ pub use types::{Config, Project};
 pub use validation::is_sanctuary_disabled;
 pub use validation::validate;
 
+use crate::dsl::Expr;
 use crate::dsl::ast::{Program, Stmt};
 use crate::dsl::lexer::Lexer;
 use crate::dsl::parser::Parser;
-use crate::shared_syntax_types::Expr;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 

@@ -6,10 +6,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::colors;
+use crate::dsl::Expr;
 use crate::runner::Output;
 use crate::runner::OutputCallback;
 use crate::runner::error::RuntimeError;
-use crate::shared_syntax_types::Expr;
 
 use super::parse::ExecContext;
 

@@ -2,7 +2,7 @@ use crate::dsl::ast::*;
 use crate::dsl::error::{ParseError, format_token, format_token_type, is_keyword_token};
 use crate::dsl::lexer::Lexer;
 use crate::dsl::token::{Token, TokenType};
-use crate::shared_syntax_types::*;
+use crate::dsl::*;
 use miette::SourceSpan;
 
 mod body;
