@@ -1,0 +1,93 @@
+(* ──────────────────────────────────────────────────────────────────── *)
+(*  kiru DSL — EBNF Grammar                                          *)
+(*  This is the authoritative grammar of the kiru configuration DSL.  *)
+(*  Tokens are defined at the lexical level; comments (# ...) and     *)
+(*  whitespace are ignored between tokens.                            *)
+(* ──────────────────────────────────────────────────────────────────── *)
+
+(* ═══════════════════════════════════════════════════════════════════ *)
+(*  PROGRAM (top-level)                                               *)
+(* ═══════════════════════════════════════════════════════════════════ *)
+
+program          = { statement } ;
+statement        = sanctuary_decl | import_decl | var_decl
+                 | project_decl | fn_decl | run_decl ;
+
+(* ═══════════════════════════════════════════════════════════════════ *)
+(*  SIMPLE DECLARATIONS                                               *)
+(* ═══════════════════════════════════════════════════════════════════ *)
+
+sanctuary_decl   = "sanctuary" "=" expr ";" ;
+import_decl      = "import"     expr ";" ;
+var_decl         = "var" type ident "=" expr ";" ;
+type             = "string" | "shell" ;
+
+(* ═══════════════════════════════════════════════════════════════════ *)
+(*  PROJECT BLOCK                                                     *)
+(* ═══════════════════════════════════════════════════════════════════ *)
+
+project_decl     = "pr" ident "{" { project_stmt } "}" ;
+project_stmt     = field_decl | var_decl | fn_decl | run_decl ;
+field_decl       = ident "=" expr ";" ;
+
+(* Note: recognised field names are url, dir, sync, branch, include.  *)
+(* The parser accepts any ident — invalid names are caught at merge.  *)
+
+(* ═══════════════════════════════════════════════════════════════════ *)
+(*  FUNCTION BLOCK                                                    *)
+(* ═══════════════════════════════════════════════════════════════════ *)
+
+fn_decl          = "fn" ident "{" { fn_stmt } "}" ;
+fn_stmt          = log_stmt | exec_stmt | cd_stmt
+                 | var_decl | env_block | case_stmt ;
+
+log_stmt         = "log"  expr ";" ;
+exec_stmt        = "exec" expr ";" ;
+cd_stmt          = "cd"   expr ";" ;
+
+(* ── env block ──────────────────────────────────────────────────── *)
+
+env_block        = "env" "[" [ env_pairs ] "]" "{" { fn_stmt } "}" ";" ;
+env_pairs        = env_pair { "," env_pair } [ "," ] ;
+env_pair         = ident "=" expr ;
+
+(* ── case block ─────────────────────────────────────────────────── *)
+
+case_stmt        = "case" expr "{" case_arm { case_arm } "}" ";" ;
+case_arm         = case_match "{" { fn_stmt } "}" ";" ;
+case_match       = backtick_expr    (* literal — exact string match   *)
+                 | var_ref          (* variable reference             *)
+                 | "_" ;            (* default / catch-all            *)
+
+(* ═══════════════════════════════════════════════════════════════════ *)
+(*  RUN BLOCK                                                         *)
+(* ═══════════════════════════════════════════════════════════════════ *)
+
+run_decl         = "run" ident "{" chain { chain } "}" ;
+chain            = ident { "=>" ident } ";" ;
+
+(* ═══════════════════════════════════════════════════════════════════ *)
+(*  EXPRESSIONS                                                       *)
+(* ═══════════════════════════════════════════════════════════════════ *)
+
+expr             = backtick_expr | var_ref ;
+var_ref          = "$" ident ;
+
+backtick_expr    = "`" { interpolation | raw_char } "`" ;
+interpolation    = "${" ident "}" ;
+
+(* ═══════════════════════════════════════════════════════════════════ *)
+(*  LEXICAL TOKENS                                                    *)
+(* ═══════════════════════════════════════════════════════════════════ *)
+
+ident            = letter { letter | digit | "_" } ;
+letter           = "A" | "B" | … | "Z" | "a" | "b" | … | "z" ;
+digit            = "0" | "1" | … | "9" ;
+raw_char         = ? any character except "`" and "$" ? ;
+
+(* Key identifiers are reserved and cannot be used as user-defined    *)
+(* names: sanctuary import var string shell pr fn run log exec cd     *)
+(* env case.                                                          *)
+(*                                                                    *)
+(* Comments start with # and run to end of line.                      *)
+(* ──────────────────────────────────────────────────────────────────── *)
