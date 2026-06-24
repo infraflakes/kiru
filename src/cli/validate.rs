@@ -73,7 +73,7 @@ fn header_box(out: &mut String, box_w: usize, label_w: usize, cfg: &Sanctuary) {
     out.push_str(&top);
     out.push('\n');
 
-    key_value_row(out, box_w, label_w, "Sanctuary", &cfg.sanctuary, CYAN);
+    key_value_row(out, box_w, label_w, "Sanctuary", &cfg.sanctuary_path, CYAN);
 
     out.push_str(&bot);
     out.push('\n');

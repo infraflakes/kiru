@@ -18,7 +18,7 @@ fn test_context(vars: HashMap<String, String>) -> (Sanctuary, Project, OutputTar
         runs: HashMap::new(),
     };
     let cfg = Sanctuary {
-        sanctuary: "/tmp".to_string(),
+        sanctuary_path: "/tmp".to_string(),
         projects: HashMap::new(),
         vars: HashMap::new(),
         shell_vars: HashMap::new(),

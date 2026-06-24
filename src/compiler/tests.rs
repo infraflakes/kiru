@@ -82,7 +82,7 @@ pr test { url = `http://example.com`; dir = `test`; }\n\
 ",
     );
     let cfg = compile(&dir.path().join("main.kiru")).unwrap();
-    assert_eq!(cfg.sanctuary, "/tmp/dev");
+    assert_eq!(cfg.sanctuary_path, "/tmp/dev");
     assert_eq!(cfg.vars.get("a").unwrap(), "hello");
     assert!(cfg.projects.contains_key("test"));
     assert_eq!(cfg.projects["test"].url, "http://example.com");
@@ -385,7 +385,7 @@ sanctuary = `/tmp`;\
 ",
     );
     let cfg = compile(&dir.path().join("main.kiru")).unwrap();
-    assert_eq!(cfg.sanctuary, "/tmp");
+    assert_eq!(cfg.sanctuary_path, "/tmp");
 }
 
 #[test]
@@ -666,7 +666,7 @@ sanctuary = $workdir;\
         ),
     );
     let cfg = compile(&dir.path().join("main.kiru")).unwrap();
-    assert_eq!(cfg.sanctuary, dir.path().to_str().unwrap());
+    assert_eq!(cfg.sanctuary_path, dir.path().to_str().unwrap());
 }
 
 #[test]
@@ -938,7 +938,7 @@ run all { build => test; }\n\
 ",
         );
         let cfg = compile(&dir.path().join("main.kiru")).unwrap();
-        assert_eq!(cfg.sanctuary, "");
+        assert_eq!(cfg.sanctuary_path, "");
         assert!(cfg.functions.contains_key("build"));
         assert!(cfg.functions.contains_key("test"));
         assert!(cfg.runs.contains_key("all"));

@@ -17,7 +17,7 @@ pub struct Project {
 
 #[derive(Debug, Clone)]
 pub struct Sanctuary {
-    pub sanctuary: String,
+    pub sanctuary_path: String,
     pub projects: HashMap<String, Project>,
     pub vars: HashMap<String, String>,
     pub shell_vars: HashMap<String, String>,

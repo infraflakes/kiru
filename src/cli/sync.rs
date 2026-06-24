@@ -15,7 +15,7 @@ pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
         .iter()
         .map(|name| (name.clone(), vec![name.clone()]))
         .collect();
-    let sanctuary = config.sanctuary.clone();
+    let sanctuary = config.sanctuary_path.clone();
     let projects = Arc::new(config.projects);
 
     if let Err(e) = tui::run_tui_with(chain_pairs, move |tx| {

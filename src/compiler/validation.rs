@@ -26,7 +26,7 @@ pub(crate) fn resolve_include(
             continue;
         }
 
-        let use_path = PathBuf::from(&cfg.sanctuary)
+        let use_path = PathBuf::from(&cfg.sanctuary_path)
             .join(&proj.dir)
             .join(include_file);
 
@@ -68,12 +68,12 @@ pub fn validate(cfg: &Sanctuary) -> Result<(), CompileError> {
 
     if is_sanctuary_disabled() {
         // SANCTUARY=0 mode: sanctuary and project fields are optional
-    } else if cfg.sanctuary.is_empty() {
+    } else if cfg.sanctuary_path.is_empty() {
         errs.push("sanctuary declaration is required".to_string());
-    } else if !Path::new(&cfg.sanctuary).is_absolute() {
+    } else if !Path::new(&cfg.sanctuary_path).is_absolute() {
         errs.push(format!(
             "sanctuary path must be absolute: {}",
-            cfg.sanctuary
+            cfg.sanctuary_path
         ));
     }
 

@@ -88,7 +88,7 @@ pub(crate) fn merge(programs: Vec<Program>) -> Result<Sanctuary, CompileError> {
     let (sanctuary_expr, projects, config_fns, config_runs) =
         collect_projects(programs, &mut global_vars, &mut global_shell_vars)?;
 
-    let sanctuary = match sanctuary_expr {
+    let sanctuary_path = match sanctuary_expr {
         Some(ref expr) => {
             resolve_expr_merged(expr, &mut global_vars, &mut global_shell_vars, "", "")?
         }
@@ -96,7 +96,7 @@ pub(crate) fn merge(programs: Vec<Program>) -> Result<Sanctuary, CompileError> {
     };
 
     Ok(Sanctuary {
-        sanctuary,
+        sanctuary_path,
         projects,
         vars: global_vars,
         shell_vars: global_shell_vars,
