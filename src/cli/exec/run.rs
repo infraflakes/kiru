@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn run_project_chains(
-    config: Arc<crate::compiler::Config>,
+    config: Arc<crate::compiler::Sanctuary>,
     project: &str,
     chains: Vec<Vec<String>>,
 ) -> miette::Result<()> {
@@ -110,7 +110,7 @@ fn run_project_chains(
 }
 
 fn run_standalone_chains(
-    config: Arc<crate::compiler::Config>,
+    config: Arc<crate::compiler::Sanctuary>,
     chains: Vec<Vec<String>>,
 ) -> miette::Result<()> {
     let (chain_pairs, chain_tasks): (Vec<_>, Vec<_>) = chains

@@ -1,6 +1,6 @@
-use crate::compiler::error::ConfigError;
+use crate::compiler::error::CompileError;
 use crate::compiler::merge::merge_project_body_stmt;
-use crate::compiler::types::Config;
+use crate::compiler::types::Sanctuary;
 use crate::dsl::{CaseMatch, Expr, FnStmt};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -10,13 +10,13 @@ pub fn is_sanctuary_disabled() -> bool {
 }
 
 pub(crate) fn resolve_include(
-    cfg: &mut Config,
+    cfg: &mut Sanctuary,
     parse_recursive_fn: impl Fn(
         &Path,
         &mut HashSet<PathBuf>,
         &mut HashSet<PathBuf>,
-    ) -> Result<Vec<crate::dsl::ast::Program>, ConfigError>,
-) -> Result<(), ConfigError> {
+    ) -> Result<Vec<crate::dsl::ast::Program>, CompileError>,
+) -> Result<(), CompileError> {
     for proj in cfg.projects.values_mut() {
         let Some(include_file) = &proj.include_file else {
             continue;
@@ -31,7 +31,7 @@ pub(crate) fn resolve_include(
             .join(include_file);
 
         if !use_path.exists() {
-            return Err(ConfigError::Validation(format!(
+            return Err(CompileError::Validation(format!(
                 "project {:?}: include file not found: {} (run 'kiru sync' first)",
                 proj.name,
                 use_path.display()
@@ -63,7 +63,7 @@ pub(crate) fn resolve_include(
     Ok(())
 }
 
-pub fn validate(cfg: &Config) -> Result<(), ConfigError> {
+pub fn validate(cfg: &Sanctuary) -> Result<(), CompileError> {
     let mut errs = Vec::new();
 
     if is_sanctuary_disabled() {
@@ -120,7 +120,7 @@ pub fn validate(cfg: &Config) -> Result<(), ConfigError> {
     }
 
     if !errs.is_empty() {
-        return Err(ConfigError::Validation(errs.join("\n")));
+        return Err(CompileError::Validation(errs.join("\n")));
     }
 
     Ok(())

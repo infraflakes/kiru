@@ -1,10 +1,10 @@
-use super::*;
-use crate::compiler::{Config, Project};
+use crate::compiler::{Project, Sanctuary};
 use crate::dsl::{CaseMatch, CaseScope, Expr, FnStmt, InterpolationPart};
+use crate::runner::output::OutputTarget;
 use crate::runner::parse::ExecContext;
 use std::collections::HashMap;
 
-fn test_context(vars: HashMap<String, String>) -> (Config, Project, Output) {
+fn test_context(vars: HashMap<String, String>) -> (Sanctuary, Project, OutputTarget) {
     let project = Project {
         name: "test".to_string(),
         url: "http://example.com".to_string(),
@@ -17,7 +17,7 @@ fn test_context(vars: HashMap<String, String>) -> (Config, Project, Output) {
         functions: HashMap::new(),
         runs: HashMap::new(),
     };
-    let cfg = Config {
+    let cfg = Sanctuary {
         sanctuary: "/tmp".to_string(),
         projects: HashMap::new(),
         vars: HashMap::new(),
@@ -25,7 +25,7 @@ fn test_context(vars: HashMap<String, String>) -> (Config, Project, Output) {
         functions: HashMap::new(),
         runs: HashMap::new(),
     };
-    (cfg, project, Output::Direct(Box::new(Vec::new())))
+    (cfg, project, OutputTarget::Direct(Box::new(Vec::new())))
 }
 
 #[test]

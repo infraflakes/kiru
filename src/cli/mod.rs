@@ -5,27 +5,27 @@ mod validate;
 
 pub use args::{Cli, Commands};
 
-use crate::compiler::{Config, ConfigError, load};
+use crate::compiler::{CompileError, Sanctuary, compile};
 use clap::Parser;
 use std::path::PathBuf;
 
-fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Config> {
+fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Sanctuary> {
     let config_path = get_config_path(config_arg);
-    load(&config_path).map_err(|e| match e {
-        ConfigError::ParseReports(reports) => print_parse_errors(reports),
-        ConfigError::ValidationReport(report) => report,
+    compile(&config_path).map_err(|e| match e {
+        CompileError::ParseReports(reports) => print_parse_errors(reports),
+        CompileError::ValidationReport(report) => report,
         _ => miette::miette!("{}", e),
     })
 }
 
-fn load_config_and_resolve(config_arg: Option<PathBuf>) -> miette::Result<Config> {
+fn load_config_and_resolve(config_arg: Option<PathBuf>) -> miette::Result<Sanctuary> {
     let mut config = load_config(config_arg)?;
     match crate::compiler::resolve_includes(&mut config) {
         Ok(()) => {}
-        Err(crate::compiler::ConfigError::ParseReports(reports)) => {
+        Err(crate::compiler::CompileError::ParseReports(reports)) => {
             return Err(print_parse_errors(reports));
         }
-        Err(crate::compiler::ConfigError::ValidationReport(report)) => {
+        Err(crate::compiler::CompileError::ValidationReport(report)) => {
             return Err(report);
         }
         Err(e) => {
@@ -33,7 +33,7 @@ fn load_config_and_resolve(config_arg: Option<PathBuf>) -> miette::Result<Config
         }
     }
     crate::compiler::validate(&config).map_err(|e| match e {
-        crate::compiler::ConfigError::ValidationReport(report) => report,
+        crate::compiler::CompileError::ValidationReport(report) => report,
         _ => miette::miette!("{}", e),
     })?;
     Ok(config)
@@ -72,7 +72,18 @@ fn get_config_path(config_arg: Option<PathBuf>) -> PathBuf {
         return path;
     }
 
-    crate::compiler::default_config_path()
+    if crate::compiler::is_sanctuary_disabled()
+        && let Ok(cwd) = std::env::current_dir()
+    {
+        let local = cwd.join(".kiru").join("main.kiru");
+        if local.exists() {
+            return local;
+        }
+    }
+    if let Some(config_dir) = dirs::config_dir() {
+        return config_dir.join("kiru").join("main.kiru");
+    }
+    PathBuf::from("main.kiru")
 }
 
 fn run_version() -> miette::Result<()> {

@@ -1,5 +1,5 @@
-use crate::compiler::error::{ConfigError, SpannedValidationError};
-use crate::compiler::types::{Config, Project};
+use crate::compiler::error::{CompileError, SpannedValidationError};
+use crate::compiler::types::{Project, Sanctuary};
 use crate::dsl::ast::{Program, Stmt};
 use crate::dsl::{Expr, FnStmt, VarType};
 use crate::runner;
@@ -12,8 +12,8 @@ fn spanned_err(
     source_text: &str,
     offset: usize,
     len: usize,
-) -> ConfigError {
-    ConfigError::ValidationReport(miette::Report::new(SpannedValidationError {
+) -> CompileError {
+    CompileError::ValidationReport(miette::Report::new(SpannedValidationError {
         message: msg,
         span: miette::SourceSpan::new(offset.into(), len.max(1)),
         source_code: miette::NamedSource::new(source_name, source_text.to_string()),
@@ -28,7 +28,7 @@ fn resolve_expr_merged(
     shell_vars: &mut HashMap<String, String>,
     source_name: &str,
     source_text: &str,
-) -> Result<String, ConfigError> {
+) -> Result<String, CompileError> {
     let err_for =
         |msg: String, o: usize, l: usize| spanned_err(msg, source_name, source_text, o, l);
     match expr {
@@ -75,15 +75,15 @@ fn resolve_shell_and_cache(
     name: &str,
     cmd: &str,
     vars: &mut HashMap<String, String>,
-) -> Result<(), ConfigError> {
+) -> Result<(), CompileError> {
     let out =
         runner::exec_and_get_stdout(cmd, None::<&Path>, None::<&HashMap<String, String>>, None)
-            .map_err(|e| ConfigError::Validation(format!("shell var ${} failed: {}", name, e)))?;
+            .map_err(|e| CompileError::Validation(format!("shell var ${} failed: {}", name, e)))?;
     vars.insert(name.to_string(), out.stdout);
     Ok(())
 }
 
-pub(crate) fn merge(programs: Vec<Program>) -> Result<Config, ConfigError> {
+pub(crate) fn merge(programs: Vec<Program>) -> Result<Sanctuary, CompileError> {
     let (mut global_vars, mut global_shell_vars) = collect_global_vars(&programs)?;
     let (sanctuary_expr, projects, config_fns, config_runs) =
         collect_projects(programs, &mut global_vars, &mut global_shell_vars)?;
@@ -95,7 +95,7 @@ pub(crate) fn merge(programs: Vec<Program>) -> Result<Config, ConfigError> {
         None => String::new(),
     };
 
-    Ok(Config {
+    Ok(Sanctuary {
         sanctuary,
         projects,
         vars: global_vars,
@@ -107,7 +107,7 @@ pub(crate) fn merge(programs: Vec<Program>) -> Result<Config, ConfigError> {
 
 fn collect_global_vars(
     programs: &[Program],
-) -> Result<(HashMap<String, String>, HashMap<String, String>), ConfigError> {
+) -> Result<(HashMap<String, String>, HashMap<String, String>), CompileError> {
     let mut vars = HashMap::new();
     let mut shell_vars = HashMap::new();
     for program in programs {
@@ -162,7 +162,7 @@ fn collect_projects(
         HashMap<String, Vec<FnStmt>>,
         HashMap<String, Vec<Vec<String>>>,
     ),
-    ConfigError,
+    CompileError,
 > {
     let mut sanctuary_expr: Option<Expr> = None;
     let mut projects: HashMap<String, Project> = HashMap::new();
@@ -174,7 +174,7 @@ fn collect_projects(
             match stmt {
                 Stmt::SanctuaryDecl { value } => {
                     if sanctuary_expr.is_some() {
-                        return Err(ConfigError::Validation(
+                        return Err(CompileError::Validation(
                             "duplicate sanctuary declaration".to_string(),
                         ));
                     }
@@ -240,7 +240,7 @@ fn collect_projects(
                             }
                             "branch" => project.branch = value,
                             _ => {
-                                return Err(ConfigError::Validation(format!(
+                                return Err(CompileError::Validation(format!(
                                     "unknown project field: {}",
                                     field.key
                                 )));
@@ -314,8 +314,8 @@ pub(crate) fn merge_project_body_stmt(
     merged_shell_vars: &mut HashMap<String, String>,
     source_name: &str,
     source_text: &str,
-) -> Result<(), ConfigError> {
-    let make_err = |msg: String, offset: usize, len: usize| -> ConfigError {
+) -> Result<(), CompileError> {
+    let make_err = |msg: String, offset: usize, len: usize| -> CompileError {
         spanned_err(msg, source_name, source_text, offset, len)
     };
     match stmt {

@@ -1,5 +1,5 @@
 use super::load_config_and_resolve;
-use crate::compiler::types::Config;
+use crate::compiler::types::Sanctuary;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -24,7 +24,7 @@ pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
     Ok(())
 }
 
-fn format_config(cfg: &Config) -> String {
+fn format_config(cfg: &Sanctuary) -> String {
     let mut out = String::new();
     out.push('\n');
     let box_w = 62usize;
@@ -67,8 +67,8 @@ fn format_config(cfg: &Config) -> String {
 
 // ── Header box ────────────────────────────────────────────
 
-fn header_box(out: &mut String, box_w: usize, label_w: usize, cfg: &Config) {
-    let top = format!("  ╭─{:=^width$}─╮", " Config ", width = box_w - 2);
+fn header_box(out: &mut String, box_w: usize, label_w: usize, cfg: &Sanctuary) {
+    let top = format!("  ╭─{:=^width$}─╮", " Sanctuary ", width = box_w - 2);
     let bot = format!("  ╰─{:=^width$}─╯", "", width = box_w - 2);
     out.push_str(&top);
     out.push('\n');
@@ -210,7 +210,7 @@ fn draw_item_line(out: &mut String, indent: &str, conn: &str, label: &str, names
 
 // ── Footer ────────────────────────────────────────────────
 
-fn footer_bar(out: &mut String, cfg: &Config) {
+fn footer_bar(out: &mut String, cfg: &Sanctuary) {
     let total_fns: usize = cfg.projects.values().map(|p| p.functions.len()).sum();
     let total_runs: usize = cfg.projects.values().map(|p| p.runs.len()).sum();
     let standalone_fns = cfg.functions.len();

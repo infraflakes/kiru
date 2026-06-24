@@ -1,9 +1,9 @@
 use super::colors;
 use super::exec;
-use crate::compiler::{Config, Project};
+use crate::compiler::{Project, Sanctuary};
 use crate::dsl::{CaseMatch, Expr, FnStmt};
-use crate::runner::Output;
 use crate::runner::error::RuntimeError;
+use crate::runner::output::OutputTarget;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -11,9 +11,9 @@ use std::sync::Arc;
 pub type OutputCallback = Arc<dyn Fn(String) + Send + Sync>;
 
 pub(crate) struct ExecContext<'a> {
-    pub(super) cfg: &'a Config,
+    pub(super) cfg: &'a Sanctuary,
     pub(super) project: Option<&'a Project>,
-    pub(crate) output: &'a mut Output,
+    pub(crate) output: &'a mut OutputTarget,
     /// Base variables (global + project string vars + cached shell var results).
     pub(super) vars: HashMap<String, String>,
     /// Unresolved shell var commands (global + project). Executed on first access.
@@ -27,9 +27,9 @@ pub(crate) struct ExecContext<'a> {
 
 impl<'a> ExecContext<'a> {
     pub(crate) fn new(
-        cfg: &'a Config,
+        cfg: &'a Sanctuary,
         project: Option<&'a Project>,
-        output: &'a mut Output,
+        output: &'a mut OutputTarget,
     ) -> Self {
         let mut vars = cfg.vars.clone();
         let mut shell_vars = cfg.shell_vars.clone();

@@ -16,7 +16,7 @@ pub struct Project {
 }
 
 #[derive(Debug, Clone)]
-pub struct Config {
+pub struct Sanctuary {
     pub sanctuary: String,
     pub projects: HashMap<String, Project>,
     pub vars: HashMap<String, String>,

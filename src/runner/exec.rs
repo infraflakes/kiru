@@ -7,9 +7,9 @@ use std::time::{Duration, Instant};
 
 use super::colors;
 use crate::dsl::Expr;
-use crate::runner::Output;
 use crate::runner::OutputCallback;
 use crate::runner::error::RuntimeError;
+use crate::runner::output::OutputTarget;
 
 use super::parse::ExecContext;
 
@@ -281,7 +281,11 @@ fn spawn_stream_reader<R: std::io::Read + Send + 'static>(
     })
 }
 
-fn write_output_lines(output: &mut Output, data: &[u8], indent: &str) -> Result<(), RuntimeError> {
+fn write_output_lines(
+    output: &mut OutputTarget,
+    data: &[u8],
+    indent: &str,
+) -> Result<(), RuntimeError> {
     for line in std::io::BufReader::new(data).lines() {
         let line = line.map_err(RuntimeError::Io)?;
         output
