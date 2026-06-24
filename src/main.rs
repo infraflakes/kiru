@@ -1,10 +1,7 @@
 mod cli;
-mod colors;
 mod config;
 mod dsl;
 mod runner;
-mod sync;
-mod tui;
 
 fn main() {
     if let Err(e) = cli::run() {

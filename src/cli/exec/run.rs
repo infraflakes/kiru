@@ -1,6 +1,6 @@
 use super::super::load_config_and_resolve;
 use crate::runner::Runner;
-use crate::tui::{self, TaskStatus, TuiEvent};
+use crate::runner::tui::{self, TaskStatus, TuiEvent};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};

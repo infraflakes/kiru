@@ -130,7 +130,7 @@ pub enum TaskStatus {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct Task {
+pub(crate) struct Task {
     pub name: String,
     pub status: TaskStatus,
     pub output: Vec<String>,
@@ -138,7 +138,7 @@ pub(super) struct Task {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct Chain {
+pub(crate) struct Chain {
     pub label: String,
     pub task_start: usize,
     pub task_count: usize,

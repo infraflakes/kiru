@@ -1,4 +1,5 @@
 use super::super::load_config_and_resolve;
+use crate::runner::colors;
 use crate::runner::{OutputCallback, Runner};
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -15,7 +16,7 @@ pub fn execute_function(
 
     let callback: OutputCallback = Arc::new(|line| {
         let mut out = io::stdout().lock();
-        crate::colors::write_colored_line(&line, &mut out);
+        colors::write_colored_line(&line, &mut out);
         let _ = writeln!(out);
     });
 

@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::colors;
+use super::colors;
 use crate::dsl::Expr;
 use crate::runner::Output;
 use crate::runner::OutputCallback;

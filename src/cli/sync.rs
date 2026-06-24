@@ -1,6 +1,6 @@
 use super::load_config;
-use crate::sync;
-use crate::tui::{self, TaskStatus, TuiEvent};
+use crate::runner::sync;
+use crate::runner::tui::{self, TaskStatus, TuiEvent};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -28,7 +28,10 @@ pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
                 let proj = match projects.get(proj_name) {
                     Some(p) => p.clone(),
                     None => {
-                        crate::tui::send_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Error));
+                        crate::runner::tui::send_event(
+                            &tx,
+                            TuiEvent::UpdateStatus(i, TaskStatus::Error),
+                        );
                         continue;
                     }
                 };
@@ -37,12 +40,12 @@ pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
                 let idx = i;
 
                 let handle = tokio::task::spawn_blocking(move || {
-                    crate::tui::send_event(
+                    crate::runner::tui::send_event(
                         &tx_cb,
                         TuiEvent::UpdateStatus(idx, TaskStatus::Running),
                     );
                     sync::sync_project_with_callback(&sanctuary, &proj, |line: &str| {
-                        crate::tui::send_event(
+                        crate::runner::tui::send_event(
                             &tx_cb,
                             TuiEvent::AppendOutput(idx, line.to_string()),
                         );
@@ -55,21 +58,30 @@ pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
             for (i, handle) in join_handles {
                 match handle.await {
                     Ok(Ok(())) => {
-                        crate::tui::send_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Success));
+                        crate::runner::tui::send_event(
+                            &tx,
+                            TuiEvent::UpdateStatus(i, TaskStatus::Success),
+                        );
                     }
                     Ok(Err(e)) => {
-                        crate::tui::send_event(
+                        crate::runner::tui::send_event(
                             &tx,
                             TuiEvent::AppendOutput(i, format!("Error: {}", e)),
                         );
-                        crate::tui::send_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Error));
+                        crate::runner::tui::send_event(
+                            &tx,
+                            TuiEvent::UpdateStatus(i, TaskStatus::Error),
+                        );
                     }
                     Err(e) => {
-                        crate::tui::send_event(
+                        crate::runner::tui::send_event(
                             &tx,
                             TuiEvent::AppendOutput(i, format!("Task panicked: {}", e)),
                         );
-                        crate::tui::send_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Error));
+                        crate::runner::tui::send_event(
+                            &tx,
+                            TuiEvent::UpdateStatus(i, TaskStatus::Error),
+                        );
                     }
                 }
             }
@@ -86,7 +98,7 @@ pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
             match warn_result {
                 Ok(Err(e)) => {
                     if has_tasks {
-                        crate::tui::send_event(
+                        crate::runner::tui::send_event(
                             &tx,
                             TuiEvent::AppendOutput(0, format!("Warning: {}", e)),
                         );
@@ -96,7 +108,7 @@ pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
                 }
                 Err(e) => {
                     if has_tasks {
-                        crate::tui::send_event(
+                        crate::runner::tui::send_event(
                             &tx,
                             TuiEvent::AppendOutput(
                                 0,

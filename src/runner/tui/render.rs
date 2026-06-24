@@ -1,5 +1,5 @@
 use super::{MAX_PANEL_HEIGHT, Model, SPINNER_FRAMES, Task, TaskStatus};
-use crate::colors;
+use crate::runner::colors;
 use ratatui::{
     Frame,
     layout::Rect,
