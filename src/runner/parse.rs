@@ -1,13 +1,11 @@
+use super::exec;
 use crate::colors;
 use crate::config::{Config, Project};
-use crate::ir::{CasePattern, Expr, FnStmt};
 use crate::runner::Output;
 use crate::runner::error::RuntimeError;
-use crate::shell;
+use crate::shared_syntax_types::{CaseMatch, Expr, FnStmt};
 use std::collections::HashMap;
-use std::io::BufRead;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 pub type OutputCallback = Arc<dyn Fn(String) + Send + Sync>;
@@ -15,7 +13,7 @@ pub type OutputCallback = Arc<dyn Fn(String) + Send + Sync>;
 pub(crate) struct ExecContext<'a> {
     pub(super) cfg: &'a Config,
     pub(super) project: Option<&'a Project>,
-    output: &'a mut Output,
+    pub(crate) output: &'a mut Output,
     /// Base variables (global + project string vars + cached shell var results).
     pub(super) vars: HashMap<String, String>,
     /// Unresolved shell var commands (global + project). Executed on first access.
@@ -56,10 +54,6 @@ impl<'a> ExecContext<'a> {
         }
     }
 
-    fn current_shell() -> String {
-        std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string())
-    }
-
     /// Resolve an expression, checking scope layers before base vars.
     pub(super) fn resolve_expr(&mut self, expr: &Expr) -> Result<String, RuntimeError> {
         match expr {
@@ -96,22 +90,22 @@ impl<'a> ExecContext<'a> {
         }
         if let Some(cmd) = self.shell_vars.remove(name) {
             let env_map: HashMap<String, String> = self.build_env().collect();
-            let out = shell::run_captured(&cmd, Some(&self.work_dir), Some(&env_map), None)
+            let out = exec::exec_and_get_stdout(&cmd, Some(&self.work_dir), Some(&env_map), None)
                 .map_err(|e| match e {
-                    shell::Error::Spawn(io_err) => RuntimeError::exec_io_error(&cmd, io_err),
-                    shell::Error::Exit {
-                        stderr, exit_code, ..
-                    } => RuntimeError::Exec {
-                        cmd: cmd.clone(),
-                        exit_code,
-                        detail: stderr,
-                    },
-                    shell::Error::Timeout { partial_stderr, .. } => RuntimeError::Exec {
-                        cmd: cmd.clone(),
-                        exit_code: None,
-                        detail: format!("timed out: {}", partial_stderr),
-                    },
-                })?;
+                exec::Error::Spawn(io_err) => RuntimeError::exec_io_error(&cmd, io_err),
+                exec::Error::Exit {
+                    stderr, exit_code, ..
+                } => RuntimeError::Exec {
+                    cmd: cmd.clone(),
+                    exit_code,
+                    detail: stderr,
+                },
+                exec::Error::Timeout { partial_stderr, .. } => RuntimeError::Exec {
+                    cmd: cmd.clone(),
+                    exit_code: None,
+                    detail: format!("timed out: {}", partial_stderr),
+                },
+            })?;
             let val = out.stdout;
             self.vars.insert(name.to_string(), val.clone());
             return Ok(Some(val));
@@ -128,7 +122,7 @@ impl<'a> ExecContext<'a> {
         sys.chain(overrides)
     }
 
-    fn indent(&self, extra: usize) -> String {
+    pub(super) fn indent(&self, extra: usize) -> String {
         "  ".repeat(self.env_stack.len() + extra)
     }
 
@@ -158,12 +152,12 @@ impl<'a> ExecContext<'a> {
                     body: block_body,
                     ..
                 } => self.exec_env_block(pairs, block_body)?,
-                FnStmt::Case { condition, arms } => {
+                FnStmt::Case { condition, scopes } => {
                     let value = self.resolve_expr(condition)?;
-                    for arm in arms {
-                        if self.match_case_pattern(&arm.pattern, &value)? {
+                    for branch in scopes {
+                        if self.match_case_pattern(&branch.pattern, &value)? {
                             self.var_stack.push(HashMap::new());
-                            let result = self.exec_fn_body(&arm.body);
+                            let result = self.exec_fn_body(&branch.body);
                             self.var_stack.pop();
                             result?;
                             break;
@@ -177,12 +171,12 @@ impl<'a> ExecContext<'a> {
 
     pub(super) fn match_case_pattern(
         &mut self,
-        pattern: &CasePattern,
+        pattern: &CaseMatch,
         value: &str,
     ) -> Result<bool, RuntimeError> {
         match pattern {
-            CasePattern::Default => Ok(true),
-            CasePattern::Literal { parts } => {
+            CaseMatch::Default => Ok(true),
+            CaseMatch::Literal { parts } => {
                 let mut resolved = String::new();
                 for part in parts {
                     if part.is_var {
@@ -196,7 +190,7 @@ impl<'a> ExecContext<'a> {
                 }
                 Ok(value == resolved)
             }
-            CasePattern::VarRef { name } => {
+            CaseMatch::VarRef { name } => {
                 let v = self.resolve_var(name)?.ok_or_else(|| {
                     RuntimeError::Lookup(format!("undefined variable: ${}", name))
                 })?;
@@ -212,65 +206,6 @@ impl<'a> ExecContext<'a> {
         self.output
             .writeln_colored(&line, colors::LOG_ANSI)
             .map_err(RuntimeError::Io)?;
-        Ok(())
-    }
-
-    fn exec_command(&mut self, value: &Expr) -> Result<(), RuntimeError> {
-        let cmd_str = self.resolve_expr(value)?;
-        let indent = self.indent(0);
-        let line = format!("{}exec {}", indent, cmd_str);
-        self.output
-            .writeln_colored(&line, colors::EXEC_ANSI)
-            .map_err(RuntimeError::Io)?;
-
-        let shell = Self::current_shell();
-        let mut child = Command::new(&shell)
-            .arg("-c")
-            .arg(&cmd_str)
-            .current_dir(&self.work_dir)
-            .envs(self.build_env())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| RuntimeError::exec_io_error(&cmd_str, e))?;
-
-        let indent = self.indent(1);
-
-        let status = match self.output.clone_callback() {
-            Some(cb) => {
-                let stdout_thread =
-                    spawn_stream_reader(child.stdout.take(), indent.clone(), cb.clone());
-                let stderr_thread = spawn_stream_reader(child.stderr.take(), indent, cb);
-
-                let status = child
-                    .wait()
-                    .map_err(|e| RuntimeError::exec_io_error(&cmd_str, e))?;
-
-                if let Some(result) = stdout_thread.map(|h| h.join()) {
-                    result
-                        .map_err(|_| RuntimeError::Panic("stdout reader panicked".to_string()))??;
-                }
-                if let Some(result) = stderr_thread.map(|h| h.join()) {
-                    result
-                        .map_err(|_| RuntimeError::Panic("stderr reader panicked".to_string()))??;
-                }
-
-                status
-            }
-            None => {
-                let output = child
-                    .wait_with_output()
-                    .map_err(|e| RuntimeError::exec_io_error(&cmd_str, e))?;
-                write_output_lines(self.output, &output.stdout, &indent)?;
-                write_output_lines(self.output, &output.stderr, &indent)?;
-                output.status
-            }
-        };
-
-        if !status.success() {
-            return Err(RuntimeError::exec_exit_code(cmd_str, status.code()));
-        }
-
         Ok(())
     }
 
@@ -322,28 +257,28 @@ impl<'a> ExecContext<'a> {
         &mut self,
         name: &str,
         value: &Expr,
-        var_type: &crate::ir::VarType,
+        var_type: &crate::shared_syntax_types::VarType,
     ) -> Result<(), RuntimeError> {
         let val = self.resolve_expr(value)?;
 
-        let resolved = if var_type == &crate::ir::VarType::Shell {
+        let resolved = if var_type == &crate::shared_syntax_types::VarType::Shell {
             let env_map: HashMap<String, String> = self.build_env().collect();
-            let out = shell::run_captured(&val, Some(&self.work_dir), Some(&env_map), None)
+            let out = exec::exec_and_get_stdout(&val, Some(&self.work_dir), Some(&env_map), None)
                 .map_err(|e| match e {
-                    shell::Error::Spawn(io_err) => RuntimeError::exec_io_error(&val, io_err),
-                    shell::Error::Exit {
-                        stderr, exit_code, ..
-                    } => RuntimeError::Exec {
-                        cmd: val.clone(),
-                        exit_code,
-                        detail: stderr,
-                    },
-                    shell::Error::Timeout { partial_stderr, .. } => RuntimeError::Exec {
-                        cmd: val.clone(),
-                        exit_code: None,
-                        detail: format!("timed out: {}", partial_stderr),
-                    },
-                })?;
+                exec::Error::Spawn(io_err) => RuntimeError::exec_io_error(&val, io_err),
+                exec::Error::Exit {
+                    stderr, exit_code, ..
+                } => RuntimeError::Exec {
+                    cmd: val.clone(),
+                    exit_code,
+                    detail: stderr,
+                },
+                exec::Error::Timeout { partial_stderr, .. } => RuntimeError::Exec {
+                    cmd: val.clone(),
+                    exit_code: None,
+                    detail: format!("timed out: {}", partial_stderr),
+                },
+            })?;
             out.stdout
         } else {
             val
@@ -359,7 +294,7 @@ impl<'a> ExecContext<'a> {
 
     fn exec_env_block(
         &mut self,
-        pairs: &[crate::ir::EnvPair],
+        pairs: &[crate::shared_syntax_types::EnvPair],
         body: &[FnStmt],
     ) -> Result<(), RuntimeError> {
         let mut layer = HashMap::new();
@@ -384,31 +319,4 @@ impl<'a> ExecContext<'a> {
 
         result
     }
-}
-
-fn spawn_stream_reader<R: std::io::Read + Send + 'static>(
-    stream: Option<R>,
-    indent: String,
-    cb: OutputCallback,
-) -> Option<std::thread::JoinHandle<Result<(), RuntimeError>>> {
-    stream.map(|s| {
-        std::thread::spawn(move || {
-            let reader = std::io::BufReader::new(s);
-            for line in reader.lines() {
-                let line = line.map_err(RuntimeError::Io)?;
-                cb([indent.as_str(), line.as_str()].concat());
-            }
-            Ok(())
-        })
-    })
-}
-
-fn write_output_lines(output: &mut Output, data: &[u8], indent: &str) -> Result<(), RuntimeError> {
-    for line in std::io::BufReader::new(data).lines() {
-        let line = line.map_err(RuntimeError::Io)?;
-        output
-            .writeln(&[indent, &line].concat())
-            .map_err(RuntimeError::Io)?;
-    }
-    Ok(())
 }

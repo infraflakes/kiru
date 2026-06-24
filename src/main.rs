@@ -2,9 +2,8 @@ mod cli;
 mod colors;
 mod config;
 mod dsl;
-mod ir;
 mod runner;
-mod shell;
+mod shared_syntax_types;
 mod sync;
 mod tui;
 

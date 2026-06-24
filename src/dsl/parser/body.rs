@@ -105,9 +105,9 @@ impl Parser {
 
         self.expect_with_context(TokenType::LBrace, "to open case arms")?;
 
-        let mut arms = Vec::new();
+        let mut scopes = Vec::new();
         while self.current_token().ty != TokenType::RBrace {
-            let pattern = self.parse_case_pattern()?;
+            let pattern = self.parse_case_match()?;
 
             self.expect_with_context(TokenType::LBrace, "after case pattern")?;
             let mut body = Vec::new();
@@ -118,20 +118,20 @@ impl Parser {
 
             self.expect_with_context(TokenType::Semicolon, "after case arm")?;
 
-            arms.push(CaseArm { pattern, body });
+            scopes.push(CaseScope { pattern, body });
         }
         self.expect_with_context(TokenType::RBrace, "to close case block")?;
 
         self.expect_with_context(TokenType::Semicolon, "after case block")?;
 
-        Ok(FnStmt::Case { condition, arms })
+        Ok(FnStmt::Case { condition, scopes })
     }
 
-    fn parse_case_pattern(&mut self) -> Result<CasePattern, ParseError> {
+    fn parse_case_match(&mut self) -> Result<CaseMatch, ParseError> {
         match &self.current_token().ty {
             TokenType::Ident(s) if s == "_" => {
                 self.advance();
-                Ok(CasePattern::Default)
+                Ok(CaseMatch::Default)
             }
             TokenType::Dollar => {
                 self.advance();
@@ -154,7 +154,7 @@ impl Parser {
                     }
                 };
                 self.advance();
-                Ok(CasePattern::VarRef { name })
+                Ok(CaseMatch::VarRef { name })
             }
             TokenType::Backtick(_) => {
                 let token = self.current_token().clone();
@@ -163,7 +163,7 @@ impl Parser {
                 };
                 self.advance();
                 let parts = parse_interpolation_parts(content, token.offset)?;
-                Ok(CasePattern::Literal { parts })
+                Ok(CaseMatch::Literal { parts })
             }
             _ => {
                 let tok = format_token(self.current_token());

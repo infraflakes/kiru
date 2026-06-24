@@ -1,14 +1,17 @@
 pub(crate) mod error;
-pub(crate) mod executor;
+pub(crate) mod exec;
+pub(crate) mod parse;
 
 #[cfg(test)]
 mod tests;
 
+pub(crate) use exec::exec_and_get_stdout;
+
 use crate::colors;
 use crate::config::Config;
 use error::RuntimeError;
-use executor::ExecContext;
-pub(crate) use executor::OutputCallback;
+use parse::ExecContext;
+pub(crate) use parse::OutputCallback;
 use std::io::{self, Write};
 use std::sync::Arc;
 
@@ -42,7 +45,7 @@ impl Output {
         }
     }
 
-    fn clone_callback(&self) -> Option<OutputCallback> {
+    pub(crate) fn clone_callback(&self) -> Option<OutputCallback> {
         match self {
             Output::Callback(cb) => Some(Arc::clone(cb)),
             Output::Direct(_) => None,

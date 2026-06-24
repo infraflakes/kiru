@@ -1,8 +1,8 @@
 use crate::config::error::{ConfigError, SpannedValidationError};
 use crate::config::types::{Config, Project};
 use crate::dsl::ast::{Program, Stmt};
-use crate::ir::{Expr, FnStmt, VarType};
-use crate::shell;
+use crate::runner;
+use crate::shared_syntax_types::{Expr, FnStmt, VarType};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -76,8 +76,9 @@ fn resolve_shell_and_cache(
     cmd: &str,
     vars: &mut HashMap<String, String>,
 ) -> Result<(), ConfigError> {
-    let out = shell::run_captured(cmd, None::<&Path>, None::<&HashMap<String, String>>, None)
-        .map_err(|e| ConfigError::Validation(format!("shell var ${} failed: {}", name, e)))?;
+    let out =
+        runner::exec_and_get_stdout(cmd, None::<&Path>, None::<&HashMap<String, String>>, None)
+            .map_err(|e| ConfigError::Validation(format!("shell var ${} failed: {}", name, e)))?;
     vars.insert(name.to_string(), out.stdout);
     Ok(())
 }

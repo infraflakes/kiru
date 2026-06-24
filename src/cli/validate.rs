@@ -283,6 +283,9 @@ fn pipe_to_pager(output: &str) -> miette::Result<()> {
         .map_err(|e| miette::miette!("pager exited with error: {}", e))?;
 
     if !status.success() {
+        if status.code().is_none() {
+            std::process::exit(130);
+        }
         return Err(miette::miette!(
             "pager '{}' exited with code {:?}",
             pager,

@@ -1,7 +1,7 @@
 use super::*;
 use crate::config::{Config, Project};
-use crate::ir::{CaseArm, CasePattern, Expr, FnStmt, InterpolationPart};
-use crate::runner::executor::ExecContext;
+use crate::runner::parse::ExecContext;
+use crate::shared_syntax_types::{CaseMatch, CaseScope, Expr, FnStmt, InterpolationPart};
 use std::collections::HashMap;
 
 fn test_context(vars: HashMap<String, String>) -> (Config, Project, Output) {
@@ -33,7 +33,7 @@ fn test_match_literal_pattern() {
     let vars = HashMap::new();
     let (cfg, project, mut output) = test_context(vars);
     let mut ctx = ExecContext::new(&cfg, Some(&project), &mut output);
-    let pattern = CasePattern::Literal {
+    let pattern = CaseMatch::Literal {
         parts: vec![InterpolationPart {
             is_var: false,
             value: "Linux".to_string(),
@@ -49,7 +49,7 @@ fn test_match_literal_with_interpolation() {
     vars.insert("arch".to_string(), "amd64".to_string());
     let (cfg, project, mut output) = test_context(vars);
     let mut ctx = ExecContext::new(&cfg, Some(&project), &mut output);
-    let pattern = CasePattern::Literal {
+    let pattern = CaseMatch::Literal {
         parts: vec![
             InterpolationPart {
                 is_var: false,
@@ -71,7 +71,7 @@ fn test_match_varref_pattern() {
     vars.insert("expected".to_string(), "hello".to_string());
     let (cfg, project, mut output) = test_context(vars);
     let mut ctx = ExecContext::new(&cfg, Some(&project), &mut output);
-    let pattern = CasePattern::VarRef {
+    let pattern = CaseMatch::VarRef {
         name: "expected".to_string(),
     };
     assert!(ctx.match_case_pattern(&pattern, "hello").unwrap());
@@ -83,7 +83,7 @@ fn test_match_default_pattern() {
     let vars = HashMap::new();
     let (cfg, project, mut output) = test_context(vars);
     let mut ctx = ExecContext::new(&cfg, Some(&project), &mut output);
-    let pattern = CasePattern::Default;
+    let pattern = CaseMatch::Default;
     assert!(ctx.match_case_pattern(&pattern, "anything").unwrap());
     assert!(ctx.match_case_pattern(&pattern, "").unwrap());
 }
@@ -93,7 +93,7 @@ fn test_match_empty_string() {
     let vars = HashMap::new();
     let (cfg, project, mut output) = test_context(vars);
     let mut ctx = ExecContext::new(&cfg, Some(&project), &mut output);
-    let pattern = CasePattern::Literal {
+    let pattern = CaseMatch::Literal {
         parts: vec![InterpolationPart {
             is_var: false,
             value: "".to_string(),
@@ -108,7 +108,7 @@ fn test_match_undefined_var_in_literal_pattern() {
     let vars = HashMap::new();
     let (cfg, project, mut output) = test_context(vars);
     let mut ctx = ExecContext::new(&cfg, Some(&project), &mut output);
-    let pattern = CasePattern::Literal {
+    let pattern = CaseMatch::Literal {
         parts: vec![InterpolationPart {
             is_var: true,
             value: "undefined".to_string(),
@@ -129,7 +129,7 @@ fn test_match_undefined_var_in_varref_pattern() {
     let vars = HashMap::new();
     let (cfg, project, mut output) = test_context(vars);
     let mut ctx = ExecContext::new(&cfg, Some(&project), &mut output);
-    let pattern = CasePattern::VarRef {
+    let pattern = CaseMatch::VarRef {
         name: "undefined".to_string(),
     };
     let result = ctx.match_case_pattern(&pattern, "x");
@@ -156,9 +156,9 @@ fn test_case_first_match_wins() {
                 value: "a".to_string(),
             }],
         },
-        arms: vec![
-            CaseArm {
-                pattern: CasePattern::Literal {
+        scopes: vec![
+            CaseScope {
+                pattern: CaseMatch::Literal {
                     parts: vec![InterpolationPart {
                         is_var: false,
                         value: "a".to_string(),
@@ -175,8 +175,8 @@ fn test_case_first_match_wins() {
                     },
                 }],
             },
-            CaseArm {
-                pattern: CasePattern::Default,
+            CaseScope {
+                pattern: CaseMatch::Default,
                 body: vec![FnStmt::Log {
                     value: Expr::BacktickLit {
                         offset: 0,
@@ -207,8 +207,8 @@ fn test_case_no_match_does_nothing() {
                 value: "no-match".to_string(),
             }],
         },
-        arms: vec![CaseArm {
-            pattern: CasePattern::Literal {
+        scopes: vec![CaseScope {
+            pattern: CaseMatch::Literal {
                 parts: vec![InterpolationPart {
                     is_var: false,
                     value: "a".to_string(),
