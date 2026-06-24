@@ -1,6 +1,6 @@
-use crate::config::error::ConfigError;
-use crate::config::merge::merge_project_body_stmt;
-use crate::config::types::Config;
+use crate::compiler::error::ConfigError;
+use crate::compiler::merge::merge_project_body_stmt;
+use crate::compiler::types::Config;
 use crate::dsl::{CaseMatch, Expr, FnStmt};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

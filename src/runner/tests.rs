@@ -1,5 +1,5 @@
 use super::*;
-use crate::config::{Config, Project};
+use crate::compiler::{Config, Project};
 use crate::dsl::{CaseMatch, CaseScope, Expr, FnStmt, InterpolationPart};
 use crate::runner::parse::ExecContext;
 use std::collections::HashMap;

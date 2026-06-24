@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn run_project_chains(
-    config: Arc<crate::config::Config>,
+    config: Arc<crate::compiler::Config>,
     project: &str,
     chains: Vec<Vec<String>>,
 ) -> miette::Result<()> {
@@ -110,7 +110,7 @@ fn run_project_chains(
 }
 
 fn run_standalone_chains(
-    config: Arc<crate::config::Config>,
+    config: Arc<crate::compiler::Config>,
     chains: Vec<Vec<String>>,
 ) -> miette::Result<()> {
     let (chain_pairs, chain_tasks): (Vec<_>, Vec<_>) = chains
@@ -213,7 +213,7 @@ pub fn execute_run_block(
 ) -> miette::Result<()> {
     let config = load_config_and_resolve(config_arg)?;
 
-    let is_standalone = crate::config::is_sanctuary_disabled() && config.projects.is_empty();
+    let is_standalone = crate::compiler::is_sanctuary_disabled() && config.projects.is_empty();
 
     match project {
         Some(ref proj) => {

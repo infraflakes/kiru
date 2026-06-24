@@ -1,5 +1,5 @@
-use crate::config::error::{ConfigError, SpannedValidationError};
-use crate::config::types::{Config, Project};
+use crate::compiler::error::{ConfigError, SpannedValidationError};
+use crate::compiler::types::{Config, Project};
 use crate::dsl::ast::{Program, Stmt};
 use crate::dsl::{Expr, FnStmt, VarType};
 use crate::runner;

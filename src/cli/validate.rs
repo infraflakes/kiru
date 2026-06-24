@@ -1,5 +1,5 @@
 use super::load_config_and_resolve;
-use crate::config::types::Config;
+use crate::compiler::types::Config;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -30,7 +30,7 @@ fn format_config(cfg: &Config) -> String {
     let box_w = 62usize;
     let label_w = 14usize;
 
-    let is_standalone = crate::config::is_sanctuary_disabled();
+    let is_standalone = crate::compiler::is_sanctuary_disabled();
 
     if !is_standalone {
         header_box(&mut out, box_w, label_w, cfg);
@@ -45,7 +45,7 @@ fn format_config(cfg: &Config) -> String {
         draw_standalone(&mut out, &fns, &runs);
         out.push('\n');
     } else {
-        let mut sorted: Vec<(&String, &crate::config::types::Project)> =
+        let mut sorted: Vec<(&String, &crate::compiler::types::Project)> =
             cfg.projects.iter().collect();
         sorted.sort_by(|a, b| a.0.cmp(b.0));
 
@@ -133,7 +133,7 @@ fn draw_standalone(out: &mut String, fns: &[&String], runs: &[&String]) {
 
 // ── Project tree ──────────────────────────────────────────
 
-fn draw_project(out: &mut String, name: &str, proj: &crate::config::types::Project, last: bool) {
+fn draw_project(out: &mut String, name: &str, proj: &crate::compiler::types::Project, last: bool) {
     let branch = if last { "└" } else { "├" };
     out.push_str(&format!(
         "  {}── {}\n",
@@ -216,7 +216,7 @@ fn footer_bar(out: &mut String, cfg: &Config) {
     let standalone_fns = cfg.functions.len();
     let standalone_runs = cfg.runs.len();
 
-    let is_standalone = crate::config::is_sanctuary_disabled() && cfg.projects.is_empty();
+    let is_standalone = crate::compiler::is_sanctuary_disabled() && cfg.projects.is_empty();
     let fn_count = total_fns + standalone_fns;
     let run_count = total_runs + standalone_runs;
 

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
-    if crate::config::is_sanctuary_disabled() {
+    if crate::compiler::is_sanctuary_disabled() {
         return Err(miette::miette!("sync is not available in SANCTUARY=0 mode"));
     }
     let config = load_config(config_arg)?;

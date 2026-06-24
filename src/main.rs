@@ -1,5 +1,5 @@
 mod cli;
-mod config;
+mod compiler;
 mod dsl;
 mod runner;
 

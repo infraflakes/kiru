@@ -1,6 +1,6 @@
 use super::colors;
 use super::exec;
-use crate::config::{Config, Project};
+use crate::compiler::{Config, Project};
 use crate::dsl::{CaseMatch, Expr, FnStmt};
 use crate::runner::Output;
 use crate::runner::error::RuntimeError;

@@ -5,7 +5,7 @@ mod validate;
 
 pub use args::{Cli, Commands};
 
-use crate::config::{Config, ConfigError, load};
+use crate::compiler::{Config, ConfigError, load};
 use clap::Parser;
 use std::path::PathBuf;
 
@@ -20,20 +20,20 @@ fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Config> {
 
 fn load_config_and_resolve(config_arg: Option<PathBuf>) -> miette::Result<Config> {
     let mut config = load_config(config_arg)?;
-    match crate::config::resolve_includes(&mut config) {
+    match crate::compiler::resolve_includes(&mut config) {
         Ok(()) => {}
-        Err(crate::config::ConfigError::ParseReports(reports)) => {
+        Err(crate::compiler::ConfigError::ParseReports(reports)) => {
             return Err(print_parse_errors(reports));
         }
-        Err(crate::config::ConfigError::ValidationReport(report)) => {
+        Err(crate::compiler::ConfigError::ValidationReport(report)) => {
             return Err(report);
         }
         Err(e) => {
             return Err(miette::miette!("{}", e));
         }
     }
-    crate::config::validate(&config).map_err(|e| match e {
-        crate::config::ConfigError::ValidationReport(report) => report,
+    crate::compiler::validate(&config).map_err(|e| match e {
+        crate::compiler::ConfigError::ValidationReport(report) => report,
         _ => miette::miette!("{}", e),
     })?;
     Ok(config)
@@ -72,7 +72,7 @@ fn get_config_path(config_arg: Option<PathBuf>) -> PathBuf {
         return path;
     }
 
-    crate::config::default_config_path()
+    crate::compiler::default_config_path()
 }
 
 fn run_version() -> miette::Result<()> {

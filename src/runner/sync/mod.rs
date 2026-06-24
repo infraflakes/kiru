@@ -1,4 +1,4 @@
-use crate::config::Project;
+use crate::compiler::Project;
 use crate::runner::error::RuntimeError;
 use std::fs;
 use std::path::PathBuf;

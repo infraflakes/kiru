@@ -10,7 +10,7 @@ mod tests;
 
 pub(crate) use exec::exec_and_get_stdout;
 
-use crate::config::Config;
+use crate::compiler::Config;
 use error::RuntimeError;
 use parse::ExecContext;
 pub(crate) use parse::OutputCallback;
