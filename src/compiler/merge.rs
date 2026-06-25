@@ -1,8 +1,20 @@
-use crate::config::error::{ConfigError, SpannedValidationError};
-use crate::config::types::{Config, Project};
-use crate::dsl::ast::{Expr, FnStmt, Program, Stmt, VarType};
-use crate::shell;
+use crate::compiler::error::{CompileError, SpannedValidationError};
+use crate::compiler::types::{Project, Sanctuary};
+use crate::dsl::ast::{Program, Stmt};
+use crate::dsl::{Expr, FnStmt, VarType};
+use crate::runner;
 use std::collections::HashMap;
+
+type VarsResult = Result<(HashMap<String, String>, HashMap<String, String>), CompileError>;
+type ProjectsResult = Result<
+    (
+        Option<Expr>,
+        HashMap<String, Project>,
+        HashMap<String, Vec<FnStmt>>,
+        HashMap<String, Vec<Vec<String>>>,
+    ),
+    CompileError,
+>;
 
 fn spanned_err(
     msg: String,
@@ -10,88 +22,102 @@ fn spanned_err(
     source_text: &str,
     offset: usize,
     len: usize,
-) -> ConfigError {
-    ConfigError::ValidationReport(miette::Report::new(SpannedValidationError {
+) -> CompileError {
+    CompileError::ValidationReport(miette::Report::new(SpannedValidationError {
         message: msg,
         span: miette::SourceSpan::new(offset.into(), len.max(1)),
         source_code: miette::NamedSource::new(source_name, source_text.to_string()),
     }))
 }
 
-pub(crate) fn merge(programs: Vec<Program>) -> Result<Config, ConfigError> {
-    let shell = collect_shell(&programs)?;
-    let global_vars = collect_global_vars(&programs, &shell)?;
-    let (sanctuary_expr, projects, config_fns, config_runs) =
-        collect_projects(programs, &global_vars, &shell)?;
+fn resolve_expr_merged(
+    expr: &Expr,
+    vars: &mut HashMap<String, String>,
+    shell_vars: &mut HashMap<String, String>,
+    source_name: &str,
+    source_text: &str,
+) -> Result<String, CompileError> {
+    let err_for =
+        |msg: String, o: usize, l: usize| spanned_err(msg, source_name, source_text, o, l);
+    match expr {
+        Expr::VarRef { name, offset, len } => {
+            if let Some(val) = vars.get(name) {
+                return Ok(val.clone());
+            }
+            if let Some(cmd) = shell_vars.remove(name) {
+                resolve_shell_and_cache(name, &cmd, vars)?;
+                return Ok(vars[name].clone());
+            }
+            Err(err_for(
+                format!("undefined variable: ${}", name),
+                *offset,
+                *len,
+            ))
+        }
+        Expr::BacktickLit { parts, offset, len } => {
+            let mut result = String::new();
+            for part in parts {
+                if part.is_var {
+                    if let Some(val) = vars.get(&part.value) {
+                        result.push_str(val);
+                    } else if let Some(cmd) = shell_vars.remove(&part.value) {
+                        resolve_shell_and_cache(&part.value, &cmd, vars)?;
+                        result.push_str(&vars[&part.value]);
+                    } else {
+                        return Err(err_for(
+                            format!("undefined variable: ${}", part.value),
+                            *offset,
+                            *len,
+                        ));
+                    }
+                } else {
+                    result.push_str(&part.value);
+                }
+            }
+            Ok(result)
+        }
+    }
+}
 
-    let sanctuary = match sanctuary_expr {
-        Some(ref expr) => expr
-            .resolve(&global_vars)
-            .map_err(ConfigError::Validation)?,
+fn resolve_shell_and_cache(
+    name: &str,
+    cmd: &str,
+    vars: &mut HashMap<String, String>,
+) -> Result<(), CompileError> {
+    let out = runner::exec_and_get_stdout(cmd, None, None)
+        .map_err(|e| CompileError::Validation(format!("shell var ${} failed: {}", name, e)))?;
+    vars.insert(name.to_string(), out.stdout);
+    Ok(())
+}
+
+pub(crate) fn merge(programs: Vec<Program>) -> Result<Sanctuary, CompileError> {
+    let (mut global_vars, mut global_shell_vars) = collect_global_vars(&programs)?;
+    let (sanctuary_expr, projects, config_fns, config_runs) =
+        collect_projects(programs, &mut global_vars, &mut global_shell_vars)?;
+
+    let sanctuary_path = match sanctuary_expr {
+        Some(ref expr) => {
+            resolve_expr_merged(expr, &mut global_vars, &mut global_shell_vars, "", "")?
+        }
         None => String::new(),
     };
 
-    Ok(Config {
-        shell,
-        sanctuary,
+    Ok(Sanctuary {
+        sanctuary_path,
         projects,
         vars: global_vars,
+        shell_vars: global_shell_vars,
         functions: config_fns,
         runs: config_runs,
     })
 }
 
-fn collect_shell(programs: &[Program]) -> Result<String, ConfigError> {
-    let mut shell = String::new();
+fn collect_global_vars(programs: &[Program]) -> VarsResult {
+    let mut vars = HashMap::new();
+    let mut shell_vars = HashMap::new();
     for program in programs {
         for stmt in &program.stmts {
-            if let Stmt::ShellDecl {
-                value, offset, len, ..
-            } = stmt
-            {
-                if !shell.is_empty() {
-                    // Report on the duplicate
-                    let (off, ln) = (*offset, *len);
-                    return Err(spanned_err(
-                        "duplicate shell declaration".to_string(),
-                        &program.source_name,
-                        &program.source_text,
-                        off,
-                        ln,
-                    ));
-                }
-                shell = value.clone();
-            }
-        }
-    }
-    Ok(shell)
-}
-
-fn resolve_shell_var(shell: &str, resolved: &str) -> Result<String, ConfigError> {
-    if shell.is_empty() {
-        return Err(ConfigError::Validation(
-            "shell must be declared before using shell variables".to_string(),
-        ));
-    }
-    let out = shell::run_captured(
-        shell,
-        resolved,
-        None,
-        None,
-        Some(std::time::Duration::from_secs(30)),
-    )
-    .map_err(|e| ConfigError::Validation(e.to_string()))?;
-    Ok(out.stdout)
-}
-
-fn collect_global_vars(
-    programs: &[Program],
-    shell: &str,
-) -> Result<HashMap<String, String>, ConfigError> {
-    let mut global_vars = HashMap::new();
-    for program in programs {
-        for stmt in &program.stmts {
-            if let Stmt::VarDecl {
+            if let Stmt::Var {
                 name,
                 value,
                 var_type,
@@ -100,7 +126,7 @@ fn collect_global_vars(
                 ..
             } = stmt
             {
-                if global_vars.contains_key(name) {
+                if vars.contains_key(name) || shell_vars.contains_key(name) {
                     return Err(spanned_err(
                         format!("duplicate variable: {}", name),
                         &program.source_name,
@@ -110,38 +136,30 @@ fn collect_global_vars(
                     ));
                 }
 
-                let resolved = value.resolve(&global_vars).map_err(|e| {
-                    let (o, l) = value.span();
-                    spanned_err(e, &program.source_name, &program.source_text, o, l)
-                })?;
+                let resolved = resolve_expr_merged(
+                    value,
+                    &mut vars,
+                    &mut shell_vars,
+                    &program.source_name,
+                    &program.source_text,
+                )?;
 
-                let final_value = if var_type == &VarType::Shell {
-                    resolve_shell_var(shell, &resolved)?
+                if var_type == &VarType::Shell {
+                    shell_vars.insert(name.clone(), resolved);
                 } else {
-                    resolved
-                };
-
-                global_vars.insert(name.clone(), final_value);
+                    vars.insert(name.clone(), resolved);
+                }
             }
         }
     }
-    Ok(global_vars)
+    Ok((vars, shell_vars))
 }
 
-#[allow(clippy::type_complexity)]
 fn collect_projects(
     programs: Vec<Program>,
-    global_vars: &HashMap<String, String>,
-    global_shell: &str,
-) -> Result<
-    (
-        Option<Expr>,
-        HashMap<String, Project>,
-        HashMap<String, Vec<FnStmt>>,
-        HashMap<String, Vec<Vec<String>>>,
-    ),
-    ConfigError,
-> {
+    global_vars: &mut HashMap<String, String>,
+    global_shell_vars: &mut HashMap<String, String>,
+) -> ProjectsResult {
     let mut sanctuary_expr: Option<Expr> = None;
     let mut projects: HashMap<String, Project> = HashMap::new();
     let mut config_fns: HashMap<String, Vec<FnStmt>> = HashMap::new();
@@ -150,16 +168,15 @@ fn collect_projects(
     for program in programs {
         for stmt in program.stmts {
             match stmt {
-                Stmt::ShellDecl { .. } => {}
-                Stmt::SanctuaryDecl { value } => {
+                Stmt::Sanctuary { value } => {
                     if sanctuary_expr.is_some() {
-                        return Err(ConfigError::Validation(
+                        return Err(CompileError::Validation(
                             "duplicate sanctuary declaration".to_string(),
                         ));
                     }
                     sanctuary_expr = Some(value);
                 }
-                Stmt::ProjectDecl {
+                Stmt::Project {
                     name,
                     fields,
                     body,
@@ -184,17 +201,30 @@ fn collect_projects(
                         sync: "clone".to_string(),
                         include_file: None,
                         branch: String::new(),
-                        shell: None,
                         vars: HashMap::new(),
+                        shell_vars: HashMap::new(),
                         functions: HashMap::new(),
                         runs: HashMap::new(),
                     };
 
+                    let mut seen_fields = std::collections::HashSet::new();
                     for field in &fields {
-                        let value = field.value.resolve(global_vars).map_err(|e| {
-                            let (o, l) = field.value.span();
-                            spanned_err(e, &program.source_name, &program.source_text, o, l)
-                        })?;
+                        if !seen_fields.insert(field.key.as_str()) {
+                            return Err(spanned_err(
+                                format!("duplicate field '{}' in project '{}'", field.key, name),
+                                &program.source_name,
+                                &program.source_text,
+                                field.value.span().0,
+                                field.value.span().1,
+                            ));
+                        }
+                        let value = resolve_expr_merged(
+                            &field.value,
+                            global_vars,
+                            global_shell_vars,
+                            &program.source_name,
+                            &program.source_text,
+                        )?;
                         match field.key.as_str() {
                             "url" => project.url = value,
                             "dir" => project.dir = value,
@@ -206,7 +236,7 @@ fn collect_projects(
                             }
                             "branch" => project.branch = value,
                             _ => {
-                                return Err(ConfigError::Validation(format!(
+                                return Err(CompileError::Validation(format!(
                                     "unknown project field: {}",
                                     field.key
                                 )));
@@ -215,12 +245,13 @@ fn collect_projects(
                     }
 
                     let mut merged_vars = global_vars.clone();
+                    let mut merged_shell_vars = global_shell_vars.clone();
                     for body_stmt in body {
                         merge_project_body_stmt(
                             &mut project,
                             body_stmt,
-                            global_shell,
                             &mut merged_vars,
+                            &mut merged_shell_vars,
                             &program.source_name,
                             &program.source_text,
                         )?;
@@ -228,7 +259,7 @@ fn collect_projects(
 
                     projects.insert(name, project);
                 }
-                Stmt::FnDecl {
+                Stmt::Fn {
                     name,
                     body,
                     offset,
@@ -246,7 +277,7 @@ fn collect_projects(
                     }
                     config_fns.insert(name, body);
                 }
-                Stmt::RunDecl {
+                Stmt::Run {
                     name,
                     chains,
                     offset,
@@ -272,50 +303,19 @@ fn collect_projects(
     Ok((sanctuary_expr, projects, config_fns, config_runs))
 }
 
-pub(crate) fn resolve_project_shell(
-    project: &Project,
-    global_shell: &str,
-) -> Result<String, ConfigError> {
-    match &project.shell {
-        Some(s) => Ok(s.clone()),
-        None => {
-            if global_shell.is_empty() {
-                Err(ConfigError::Validation(format!(
-                    "project '{}': no shell declared (global shell is empty)",
-                    project.name
-                )))
-            } else {
-                Ok(global_shell.to_string())
-            }
-        }
-    }
-}
-
 pub(crate) fn merge_project_body_stmt(
     project: &mut Project,
     stmt: Stmt,
-    global_shell: &str,
     merged: &mut HashMap<String, String>,
+    merged_shell_vars: &mut HashMap<String, String>,
     source_name: &str,
     source_text: &str,
-) -> Result<(), ConfigError> {
-    let make_err = |msg: String, offset: usize, len: usize| -> ConfigError {
+) -> Result<(), CompileError> {
+    let make_err = |msg: String, offset: usize, len: usize| -> CompileError {
         spanned_err(msg, source_name, source_text, offset, len)
     };
     match stmt {
-        Stmt::ShellDecl {
-            value, offset, len, ..
-        } => {
-            if project.shell.is_some() {
-                return Err(make_err(
-                    format!("duplicate shell declaration in project '{}'", project.name),
-                    offset,
-                    len,
-                ));
-            }
-            project.shell = Some(value);
-        }
-        Stmt::VarDecl {
+        Stmt::Var {
             name,
             value,
             var_type,
@@ -323,7 +323,7 @@ pub(crate) fn merge_project_body_stmt(
             len,
             ..
         } => {
-            if project.vars.contains_key(&name) {
+            if project.vars.contains_key(&name) || project.shell_vars.contains_key(&name) {
                 return Err(make_err(
                     format!("duplicate variable in project '{}': {}", project.name, name),
                     offset,
@@ -331,22 +331,18 @@ pub(crate) fn merge_project_body_stmt(
                 ));
             }
 
-            let resolved = value.resolve(merged).map_err(|e| {
-                let (o, l) = value.span();
-                spanned_err(e, source_name, source_text, o, l)
-            })?;
+            let resolved =
+                resolve_expr_merged(&value, merged, merged_shell_vars, source_name, source_text)?;
 
-            let final_value = if var_type == VarType::Shell {
-                let effective_shell = resolve_project_shell(project, global_shell)?;
-                resolve_shell_var(&effective_shell, &resolved)?
+            if var_type == VarType::Shell {
+                merged_shell_vars.insert(name.clone(), resolved.clone());
+                project.shell_vars.insert(name.clone(), resolved);
             } else {
-                resolved
-            };
-
-            merged.insert(name.clone(), final_value.clone());
-            project.vars.insert(name, final_value);
+                merged.insert(name.clone(), resolved.clone());
+                project.vars.insert(name, resolved);
+            }
         }
-        Stmt::FnDecl {
+        Stmt::Fn {
             name,
             body,
             offset,
@@ -362,7 +358,7 @@ pub(crate) fn merge_project_body_stmt(
             }
             project.functions.insert(name, body);
         }
-        Stmt::RunDecl {
+        Stmt::Run {
             name,
             chains,
             offset,

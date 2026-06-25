@@ -1,5 +1,5 @@
 use super::load_config_and_resolve;
-use crate::config::types::Config;
+use crate::compiler::types::Sanctuary;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -24,20 +24,16 @@ pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
     Ok(())
 }
 
-fn format_config(cfg: &Config) -> String {
+fn format_config(cfg: &Sanctuary) -> String {
     let mut out = String::new();
     out.push('\n');
     let box_w = 62usize;
     let label_w = 14usize;
 
-    let is_standalone = crate::config::is_sanctuary_disabled();
+    let is_standalone = crate::compiler::is_sanctuary_disabled();
 
     if !is_standalone {
         header_box(&mut out, box_w, label_w, cfg);
-    } else {
-        let key_styled = style!(GRAY, "Shell");
-        let val_styled = style!(CYAN, "{}", &cfg.shell);
-        out.push_str(&format!("  {}:  {}\n\n", key_styled, val_styled));
     }
 
     if is_standalone {
@@ -49,7 +45,7 @@ fn format_config(cfg: &Config) -> String {
         draw_standalone(&mut out, &fns, &runs);
         out.push('\n');
     } else {
-        let mut sorted: Vec<(&String, &crate::config::types::Project)> =
+        let mut sorted: Vec<(&String, &crate::compiler::types::Project)> =
             cfg.projects.iter().collect();
         sorted.sort_by(|a, b| a.0.cmp(b.0));
 
@@ -71,14 +67,13 @@ fn format_config(cfg: &Config) -> String {
 
 // ── Header box ────────────────────────────────────────────
 
-fn header_box(out: &mut String, box_w: usize, label_w: usize, cfg: &Config) {
-    let top = format!("  ╭─{:=^width$}─╮", " Config ", width = box_w - 2);
+fn header_box(out: &mut String, box_w: usize, label_w: usize, cfg: &Sanctuary) {
+    let top = format!("  ╭─{:=^width$}─╮", " Sanctuary ", width = box_w - 2);
     let bot = format!("  ╰─{:=^width$}─╯", "", width = box_w - 2);
     out.push_str(&top);
     out.push('\n');
 
-    kv_row(out, box_w, label_w, "Shell", &cfg.shell, CYAN);
-    kv_row(out, box_w, label_w, "Sanctuary", &cfg.sanctuary, CYAN);
+    key_value_row(out, box_w, label_w, "Sanctuary", &cfg.sanctuary_path, CYAN);
 
     out.push_str(&bot);
     out.push('\n');
@@ -88,7 +83,7 @@ fn header_box(out: &mut String, box_w: usize, label_w: usize, cfg: &Config) {
 ///
 /// `val_plain` is the unstyled text used for alignment calculation;
 /// `val_color` is the ANSI colour code applied only to the value.
-fn kv_row(
+fn key_value_row(
     out: &mut String,
     box_w: usize,
     label_w: usize,
@@ -138,7 +133,7 @@ fn draw_standalone(out: &mut String, fns: &[&String], runs: &[&String]) {
 
 // ── Project tree ──────────────────────────────────────────
 
-fn draw_project(out: &mut String, name: &str, proj: &crate::config::types::Project, last: bool) {
+fn draw_project(out: &mut String, name: &str, proj: &crate::compiler::types::Project, last: bool) {
     let branch = if last { "└" } else { "├" };
     out.push_str(&format!(
         "  {}── {}\n",
@@ -215,13 +210,13 @@ fn draw_item_line(out: &mut String, indent: &str, conn: &str, label: &str, names
 
 // ── Footer ────────────────────────────────────────────────
 
-fn footer_bar(out: &mut String, cfg: &Config) {
+fn footer_bar(out: &mut String, cfg: &Sanctuary) {
     let total_fns: usize = cfg.projects.values().map(|p| p.functions.len()).sum();
     let total_runs: usize = cfg.projects.values().map(|p| p.runs.len()).sum();
     let standalone_fns = cfg.functions.len();
     let standalone_runs = cfg.runs.len();
 
-    let is_standalone = crate::config::is_sanctuary_disabled() && cfg.projects.is_empty();
+    let is_standalone = crate::compiler::is_sanctuary_disabled();
     let fn_count = total_fns + standalone_fns;
     let run_count = total_runs + standalone_runs;
 
@@ -288,6 +283,9 @@ fn pipe_to_pager(output: &str) -> miette::Result<()> {
         .map_err(|e| miette::miette!("pager exited with error: {}", e))?;
 
     if !status.success() {
+        if status.code().is_none() {
+            std::process::exit(130);
+        }
         return Err(miette::miette!(
             "pager '{}' exited with code {:?}",
             pager,

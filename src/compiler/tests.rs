@@ -2,7 +2,7 @@ use super::*;
 use crate::runner::Runner;
 use std::fs;
 use std::path::Path;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex};
 
 /// Serializes tests that read or modify the SANCTUARY env var.
 static SANCTUARY_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -56,9 +56,14 @@ fn without_sanctuary<R>(f: impl FnOnce() -> R) -> R {
     }
 }
 
-fn load_full(entry_path: &Path) -> Result<Config, ConfigError> {
-    let mut cfg = load(entry_path)?;
+fn compile_no_shell(entry_path: &Path) -> Result<Sanctuary, CompileError> {
+    compile(entry_path)
+}
+
+fn compile_full(entry_path: &Path) -> Result<Sanctuary, CompileError> {
+    let mut cfg = compile(entry_path)?;
     resolve_includes(&mut cfg)?;
+    validate(&cfg)?;
     Ok(cfg)
 }
 
@@ -75,15 +80,13 @@ fn test_load_basic() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp/dev`;\n\
 var string a = `hello`;\n\
 pr test { url = `http://example.com`; dir = `test`; }\n\
 ",
     );
-    let cfg = load(&dir.path().join("main.kiru")).unwrap();
-    assert_eq!(cfg.shell, "sh");
-    assert_eq!(cfg.sanctuary, "/tmp/dev");
+    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+    assert_eq!(cfg.sanctuary_path, "/tmp/dev");
     assert_eq!(cfg.vars.get("a").unwrap(), "hello");
     assert!(cfg.projects.contains_key("test"));
     assert_eq!(cfg.projects["test"].url, "http://example.com");
@@ -96,7 +99,6 @@ fn test_load_with_project_body() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp/dev`;\n\
 pr test {\n\
     url = `http://example.com`;\n\
@@ -108,7 +110,7 @@ pr test {\n\
 }\n\
 ",
     );
-    let cfg = load(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
     let proj = &cfg.projects["test"];
     assert_eq!(proj.vars.get("app").unwrap(), "todo");
     assert!(proj.functions.contains_key("build"));
@@ -126,13 +128,12 @@ fn test_import_resolution() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 import `./other.kiru`;\n\
 var string x = $extra;\
 ",
     );
-    let cfg = load(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
     assert_eq!(cfg.vars.get("x").unwrap(), "from-other");
 }
 
@@ -142,14 +143,14 @@ fn test_circular_import() {
     write_config(
         dir.path(),
         "a.kiru",
-        "shell = `sh`; import `./b.kiru`; sanctuary = `/tmp`;",
+        "import `./b.kiru`; sanctuary = `/tmp`;",
     );
     write_config(
         dir.path(),
         "b.kiru",
-        "shell = `sh`; import `./a.kiru`; sanctuary = `/tmp`;",
+        "import `./a.kiru`; sanctuary = `/tmp`;",
     );
-    let err = load(&dir.path().join("a.kiru")).unwrap_err();
+    let err = compile_no_shell(&dir.path().join("a.kiru")).unwrap_err();
     let err_str = err.to_string();
     assert!(
         err_str.contains("circular") || err_str.contains("Circular"),
@@ -165,12 +166,11 @@ fn test_duplicate_sanctuary() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 sanctuary = `/other`;\
 ",
     );
-    let err = load(&dir.path().join("main.kiru")).unwrap_err();
+    let err = compile_no_shell(&dir.path().join("main.kiru")).unwrap_err();
     assert!(
         err.to_string().contains("duplicate sanctuary"),
         "got: {}",
@@ -185,13 +185,12 @@ fn test_duplicate_variable_decl() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 var string x = `a`;\n\
 var string x = `b`;\
 ",
     );
-    let err = load(&dir.path().join("main.kiru")).unwrap_err();
+    let err = compile_no_shell(&dir.path().join("main.kiru")).unwrap_err();
     assert!(
         err.to_string().contains("duplicate variable"),
         "got: {}",
@@ -206,13 +205,12 @@ fn test_duplicate_project() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr p1 { url = `u`; dir = `d1`; }\n\
 pr p1 { url = `u2`; dir = `d2`; }\
 ",
     );
-    let err = load(&dir.path().join("main.kiru")).unwrap_err();
+    let err = compile_no_shell(&dir.path().join("main.kiru")).unwrap_err();
     assert!(
         err.to_string().contains("duplicate project"),
         "got: {}",
@@ -227,14 +225,13 @@ fn test_variable_chain_resolution() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 var string a = `x`;\n\
 var string b = $a;\n\
 var string c = $b;\
 ",
     );
-    let cfg = load(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
     assert_eq!(cfg.vars["a"], "x");
     assert_eq!(cfg.vars["b"], "x");
     assert_eq!(cfg.vars["c"], "x");
@@ -247,32 +244,16 @@ fn test_undefined_variable() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 var string x = $missing;\
 ",
     );
-    let err = load(&dir.path().join("main.kiru")).unwrap_err();
+    let err = compile_no_shell(&dir.path().join("main.kiru")).unwrap_err();
     assert!(
         err.to_string().contains("undefined variable"),
         "got: {}",
         err
     );
-}
-
-#[test]
-fn test_missing_shell() {
-    let dir = tempfile::TempDir::new().unwrap();
-    write_config(
-        dir.path(),
-        "main.kiru",
-        "\
-sanctuary = `/tmp`;\n\
-pr test { url = `http://example.com`; dir = `test`; }\
-",
-    );
-    let err = load(&dir.path().join("main.kiru")).unwrap_err();
-    assert!(err.to_string().contains("shell"), "got: {}", err);
 }
 
 #[test]
@@ -283,11 +264,10 @@ fn test_missing_sanctuary() {
             dir.path(),
             "main.kiru",
             "\
-shell = `sh`;\n\
 pr test { url = `http://example.com`; dir = `test`; }\
 ",
         );
-        let err = load(&dir.path().join("main.kiru")).unwrap_err();
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("sanctuary"), "got: {}", err);
     })
 }
@@ -300,11 +280,10 @@ fn test_sanctuary_absolute_path() {
             dir.path(),
             "main.kiru",
             "\
-shell = `sh`;\n\
 sanctuary = `relative/path`;\
 ",
         );
-        let err = load(&dir.path().join("main.kiru")).unwrap_err();
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("absolute"), "got: {}", err);
     })
 }
@@ -317,12 +296,11 @@ fn test_missing_url() {
             dir.path(),
             "main.kiru",
             "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr p { dir = `d`; }\
 ",
         );
-        let err = load(&dir.path().join("main.kiru")).unwrap_err();
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("url is required"), "got: {}", err);
     })
 }
@@ -335,12 +313,11 @@ fn test_missing_dir() {
             dir.path(),
             "main.kiru",
             "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr p { url = `u`; }\
 ",
         );
-        let err = load(&dir.path().join("main.kiru")).unwrap_err();
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("dir is required"), "got: {}", err);
     })
 }
@@ -353,13 +330,12 @@ fn test_duplicate_dir() {
             dir.path(),
             "main.kiru",
             "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr a { url = `ua`; dir = `shared`; }\n\
 pr b { url = `ub`; dir = `shared`; }\
 ",
         );
-        let err = load(&dir.path().join("main.kiru")).unwrap_err();
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(
             err.to_string().contains("duplicate directory"),
             "got: {}",
@@ -376,38 +352,44 @@ fn test_invalid_sync_value() {
             dir.path(),
             "main.kiru",
             "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr p { url = `u`; dir = `d`; sync = `invalid`; }\
 ",
         );
-        let err = load(&dir.path().join("main.kiru")).unwrap_err();
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("sync"), "got: {}", err);
     })
 }
 
 #[test]
-fn test_empty_config() {
-    let dir = tempfile::TempDir::new().unwrap();
-    write_config(dir.path(), "main.kiru", "");
-    let err = load(&dir.path().join("main.kiru")).unwrap_err();
-    assert!(err.to_string().contains("shell"), "got: {}", err);
+fn test_duplicate_project_field() {
+    without_sanctuary(|| {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+sanctuary = `/tmp`;\n\
+pr p { url = `u`; dir = `d`; include = `a.kiru`; include = `b.kiru`; }\
+",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(err.to_string().contains("duplicate field"), "got: {}", err);
+    })
 }
 
 #[test]
-fn test_only_shell_and_sanctuary() {
+fn test_only_sanctuary() {
     let dir = tempfile::TempDir::new().unwrap();
     write_config(
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\
 ",
     );
-    let cfg = load(&dir.path().join("main.kiru")).unwrap();
-    assert_eq!(cfg.shell, "sh");
-    assert_eq!(cfg.sanctuary, "/tmp");
+    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+    assert_eq!(cfg.sanctuary_path, "/tmp");
 }
 
 #[test]
@@ -417,13 +399,12 @@ fn test_interpolation_in_backtick() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 var string name = `world`;\n\
 var string greeting = `hello ${name}`;\
 ",
     );
-    let cfg = load(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
     assert_eq!(cfg.vars["greeting"], "hello world");
 }
 
@@ -434,13 +415,12 @@ fn test_project_field_with_var_ref() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 var string myurl = `http://example.com`;\n\
 pr x { url = $myurl; dir = `d`; }\
 ",
     );
-    let cfg = load(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
     assert_eq!(cfg.projects["x"].url, "http://example.com");
 }
 
@@ -451,7 +431,6 @@ fn test_duplicate_fn_in_project() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
@@ -461,7 +440,7 @@ pr test {\n\
 }\
 ",
     );
-    let err = load(&dir.path().join("main.kiru")).unwrap_err();
+    let err = compile_no_shell(&dir.path().join("main.kiru")).unwrap_err();
     assert!(
         err.to_string().contains("duplicate function"),
         "got: {}",
@@ -476,7 +455,6 @@ fn test_duplicate_run_in_project() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
@@ -487,33 +465,7 @@ pr test {\n\
 }\
 ",
     );
-    let err = load(&dir.path().join("main.kiru")).unwrap_err();
-    assert!(
-        err.to_string().contains("duplicate run block"),
-        "got: {}",
-        err
-    );
-}
-
-#[test]
-fn test_duplicate_par_in_project() {
-    let dir = tempfile::TempDir::new().unwrap();
-    write_config(
-        dir.path(),
-        "main.kiru",
-        "\
-shell = `sh`;\n\
-sanctuary = `/tmp`;\n\
-pr test {\n\
-    url = `u`;\n\
-    dir = `d`;\n\
-    fn check { log `x`; }\n\
-    run dup { check; }\n\
-    run dup { check; }\n\
-}\
-",
-    );
-    let err = load(&dir.path().join("main.kiru")).unwrap_err();
+    let err = compile_no_shell(&dir.path().join("main.kiru")).unwrap_err();
     assert!(
         err.to_string().contains("duplicate run block"),
         "got: {}",
@@ -529,13 +481,12 @@ fn test_multi_file_parse_order() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 import `./a.kiru`;\n\
 var string b = $a;\
 ",
     );
-    let cfg = load(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
     assert_eq!(cfg.vars["b"], "from-a");
 }
 
@@ -546,7 +497,6 @@ fn test_undefined_var_in_fn_body() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
@@ -555,7 +505,7 @@ pr test {\n\
 }\
 ",
     );
-    let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
+    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
     assert!(
         err.to_string().contains("undefined variable"),
         "got: {}",
@@ -570,7 +520,6 @@ fn test_run_reference_validation() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
@@ -580,7 +529,7 @@ pr test {\n\
 }\
 ",
     );
-    let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
+    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
     let err_str = err.to_string();
     assert!(err_str.contains("unknown function"), "got: {}", err_str);
 }
@@ -592,7 +541,6 @@ fn test_valid_run_references() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
@@ -602,7 +550,7 @@ pr test {\n\
 }\
 ",
     );
-    let cfg = load(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
     assert!(cfg.projects["test"].runs.contains_key("s"));
 }
 
@@ -613,7 +561,6 @@ fn test_duplicate_var_in_fn_body() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
@@ -625,7 +572,7 @@ pr test {\n\
 }\
 ",
     );
-    let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
+    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
     assert!(
         err.to_string().contains("duplicate variable"),
         "got: {}",
@@ -653,14 +600,13 @@ run usepar { usefn; }\
         "main.kiru",
         &format!(
             "\
-shell = `sh`;\n\
 sanctuary = `{}`;\n\
 pr test {{ url = `http://example.com`; dir = `test`; include = `use.kiru`; }}\
 ",
             dir.path().display()
         ),
     );
-    let cfg = load_full(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
     let proj = &cfg.projects["test"];
     assert_eq!(proj.vars.get("usevar").unwrap(), "from-use");
     assert!(proj.functions.contains_key("usefn"));
@@ -676,14 +622,13 @@ fn test_include_file_not_found() {
         "main.kiru",
         &format!(
             "\
-shell = `sh`;\n\
 sanctuary = `{}`;\n\
 pr test {{ url = `http://example.com`; dir = `test`; include = `nonexistent.kiru`; }}\
 ",
             dir.path().display()
         ),
     );
-    let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
+    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
     let err_str = err.to_string();
     assert!(
         err_str.contains("include file not found") || err_str.contains("not found"),
@@ -700,31 +645,14 @@ fn test_include_file_sync_ignore_skips() {
         "main.kiru",
         &format!(
             "\
-shell = `sh`;\n\
 sanctuary = `{}`;\n\
 pr test {{ url = `http://example.com`; dir = `test`; sync = `ignore`; include = `use.kiru`; }}\
 ",
             dir.path().display()
         ),
     );
-    let cfg = load(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
     assert!(cfg.projects.contains_key("test"));
-}
-
-#[test]
-fn test_shell_exec_resolution() {
-    let dir = tempfile::TempDir::new().unwrap();
-    write_config(
-        dir.path(),
-        "main.kiru",
-        "\
-shell = `sh`;\n\
-sanctuary = `/tmp`;\n\
-var shell test_var = `echo hello`;\
-",
-    );
-    let cfg = load(&dir.path().join("main.kiru")).unwrap();
-    assert_eq!(cfg.vars["test_var"], "hello");
 }
 
 #[test]
@@ -735,15 +663,14 @@ fn test_sanctuary_with_var_ref() {
         "main.kiru",
         &format!(
             "\
-shell = `sh`;\n\
-var shell workdir = `echo {}`;\n\
+var string workdir = `{}`;\n\
 sanctuary = $workdir;\
 ",
             dir.path().display()
         ),
     );
-    let cfg = load(&dir.path().join("main.kiru")).unwrap();
-    assert_eq!(cfg.sanctuary, dir.path().to_str().unwrap());
+    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+    assert_eq!(cfg.sanctuary_path, dir.path().to_str().unwrap());
 }
 
 #[test]
@@ -753,7 +680,6 @@ fn test_project_var_chain_resolution() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
@@ -763,7 +689,7 @@ pr test {\n\
 }\
 ",
     );
-    let cfg = load(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
     let proj = &cfg.projects["test"];
     assert_eq!(proj.vars["a"], "hello");
     assert_eq!(proj.vars["b"], "hello");
@@ -776,7 +702,6 @@ fn test_project_var_sees_global() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 var string global_var = `global`;\n\
 pr test {\n\
@@ -787,7 +712,7 @@ pr test {\n\
 ",
     );
     // global vars should be accessible inside project function bodies
-    load_full(&dir.path().join("main.kiru")).unwrap();
+    compile_full(&dir.path().join("main.kiru")).unwrap();
 }
 
 #[test]
@@ -797,7 +722,6 @@ fn test_undefined_var_in_case_condition() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
@@ -806,7 +730,7 @@ pr test {\n\
 }\
 ",
     );
-    let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
+    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
     assert!(
         err.to_string().contains("undefined variable"),
         "got: {}",
@@ -821,7 +745,6 @@ fn test_undefined_var_in_case_varref_pattern() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 pr test {\n\
     url = `u`;\n\
@@ -830,7 +753,7 @@ pr test {\n\
 }\
 ",
     );
-    let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
+    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
     assert!(
         err.to_string().contains("undefined variable"),
         "got: {}",
@@ -846,7 +769,6 @@ fn test_case_runtime_matching_arm() {
         "main.kiru",
         &format!(
             "\
-shell = `sh`;\n\
 sanctuary = `{}`;\n\
 pr test {{\n\
     url = `http://example.com`;\n\
@@ -863,8 +785,8 @@ pr test {{\n\
             dir.path().display()
         ),
     );
-    let cfg = load(&dir.path().join("main.kiru")).unwrap();
-    let mut runner = Runner::from_arc(Arc::new(cfg));
+    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+    let mut runner = Runner::new(cfg);
     runner.execute_fn_call("deploy", "test").unwrap();
 }
 
@@ -876,7 +798,6 @@ fn test_case_runtime_no_match() {
         "main.kiru",
         &format!(
             "\
-shell = `sh`;\n\
 sanctuary = `{}`;\n\
 pr test {{\n\
     url = `http://example.com`;\n\
@@ -892,8 +813,8 @@ pr test {{\n\
             dir.path().display()
         ),
     );
-    let cfg = load(&dir.path().join("main.kiru")).unwrap();
-    let mut runner = Runner::from_arc(Arc::new(cfg));
+    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+    let mut runner = Runner::new(cfg);
     runner.execute_fn_call("deploy", "test").unwrap();
 }
 
@@ -906,13 +827,12 @@ fn test_top_level_fn_collection() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 fn build { log `building`; }\n\
 fn test { exec `check`; }\n\
 ",
     );
-    let cfg = load(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
     assert!(cfg.functions.contains_key("build"));
     assert!(cfg.functions.contains_key("test"));
     assert_eq!(cfg.functions.len(), 2);
@@ -925,7 +845,6 @@ fn test_top_level_run_collection() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 fn build { log `x`; }\n\
 fn test { log `y`; }\n\
@@ -933,7 +852,7 @@ run all { build => test; }\n\
 run ci { build; }\n\
 ",
     );
-    let cfg = load(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
     assert!(cfg.runs.contains_key("all"));
     assert!(cfg.runs.contains_key("ci"));
     assert_eq!(cfg.runs.len(), 2);
@@ -947,13 +866,12 @@ fn test_top_level_duplicate_fn() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 fn dup { log `a`; }\n\
 fn dup { log `b`; }\n\
 ",
     );
-    let err = load(&dir.path().join("main.kiru")).unwrap_err();
+    let err = compile_no_shell(&dir.path().join("main.kiru")).unwrap_err();
     assert!(err.to_string().contains("duplicate"), "got: {}", err);
 }
 
@@ -964,14 +882,13 @@ fn test_top_level_duplicate_run() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 fn x { log `a`; }\n\
 run dup { x; }\n\
 run dup { x; }\n\
 ",
     );
-    let err = load(&dir.path().join("main.kiru")).unwrap_err();
+    let err = compile_no_shell(&dir.path().join("main.kiru")).unwrap_err();
     assert!(err.to_string().contains("duplicate"), "got: {}", err);
 }
 
@@ -982,12 +899,11 @@ fn test_top_level_run_validates_function_refs() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 run bad { nonexistent; }\n\
 ",
     );
-    let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
+    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
     assert!(err.to_string().contains("unknown function"), "got: {}", err);
 }
 
@@ -998,89 +914,16 @@ fn test_top_level_fn_var_validation() {
         dir.path(),
         "main.kiru",
         "\
-shell = `sh`;\n\
 sanctuary = `/tmp`;\n\
 fn bad { log $undefined; }\n\
 ",
     );
-    let err = load_full(&dir.path().join("main.kiru")).unwrap_err();
+    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
     assert!(
         err.to_string().contains("undefined variable"),
         "got: {}",
         err
     );
-}
-
-// --- Project-scoped shell ---
-
-#[test]
-fn test_project_scoped_shell() {
-    let dir = tempfile::TempDir::new().unwrap();
-    write_config(
-        dir.path(),
-        "main.kiru",
-        "\
-shell = `sh`;\n\
-sanctuary = `/tmp`;\n\
-pr test {\n\
-    url = `u`;\n\
-    dir = `d`;\n\
-    shell = `zsh`;\n\
-    fn build { log `x`; }\n\
-}\n\
-",
-    );
-    let cfg = load(&dir.path().join("main.kiru")).unwrap();
-    assert_eq!(cfg.projects["test"].shell.as_deref(), Some("zsh"));
-}
-
-#[test]
-fn test_duplicate_shell_in_project() {
-    let dir = tempfile::TempDir::new().unwrap();
-    write_config(
-        dir.path(),
-        "main.kiru",
-        "\
-shell = `sh`;\n\
-sanctuary = `/tmp`;\n\
-pr test {\n\
-    url = `u`;\n\
-    dir = `d`;\n\
-    shell = `zsh`;\n\
-    shell = `fish`;\n\
-}\n\
-",
-    );
-    let err = load(&dir.path().join("main.kiru")).unwrap_err();
-    assert!(err.to_string().contains("duplicate shell"), "got: {}", err);
-}
-
-#[test]
-fn test_global_and_project_shell_coexist() {
-    let dir = tempfile::TempDir::new().unwrap();
-    write_config(
-        dir.path(),
-        "main.kiru",
-        "\
-shell = `sh`;\n\
-sanctuary = `/tmp`;\n\
-pr a {\n\
-    url = `ua`;\n\
-    dir = `da`;\n\
-    shell = `zsh`;\n\
-    fn afn { log `a`; }\n\
-}\n\
-pr b {\n\
-    url = `ub`;\n\
-    dir = `db`;\n\
-    fn bfn { log `b`; }\n\
-}\n\
-",
-    );
-    let cfg = load_full(&dir.path().join("main.kiru")).unwrap();
-    assert_eq!(cfg.projects["a"].shell.as_deref(), Some("zsh"));
-    assert_eq!(cfg.projects["b"].shell, None);
-    assert_eq!(cfg.shell, "sh");
 }
 
 // --- SANCTUARY=0 standalone mode (env var required) ---
@@ -1093,51 +936,16 @@ fn test_standalone_config_no_sanctuary() {
             dir.path(),
             "main.kiru",
             "\
-shell = `sh`;\n\
 fn build { log `building`; }\n\
 fn test { exec `check`; }\n\
 run all { build => test; }\n\
 ",
         );
-        let cfg = load(&dir.path().join("main.kiru")).unwrap();
-        assert_eq!(cfg.sanctuary, "");
+        let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+        assert_eq!(cfg.sanctuary_path, "");
         assert!(cfg.functions.contains_key("build"));
         assert!(cfg.functions.contains_key("test"));
         assert!(cfg.runs.contains_key("all"));
         assert!(cfg.projects.is_empty());
-    })
-}
-
-#[test]
-fn test_standalone_config_needs_shell() {
-    with_sanctuary("0", || {
-        let dir = tempfile::TempDir::new().unwrap();
-        write_config(
-            dir.path(),
-            "main.kiru",
-            "\
-fn build { log `x`; }\n\
-",
-        );
-        let err = load(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(err.to_string().contains("shell"), "got: {}", err);
-    })
-}
-
-#[test]
-fn test_standalone_duplicate_shell() {
-    with_sanctuary("0", || {
-        let dir = tempfile::TempDir::new().unwrap();
-        write_config(
-            dir.path(),
-            "main.kiru",
-            "\
-shell = `sh`;\n\
-shell = `zsh`;\n\
-fn x { log `a`; }\n\
-",
-        );
-        let err = load(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(err.to_string().contains("duplicate shell"), "got: {}", err);
     })
 }

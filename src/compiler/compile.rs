@@ -1,24 +1,20 @@
-pub(crate) mod error;
-pub(crate) mod merge;
-pub(crate) mod types;
-pub(crate) mod validation;
-
-pub use error::ConfigError;
-pub use types::{Config, Project};
-pub use validation::is_sanctuary_disabled;
-
-use crate::dsl::ast::{Expr, Program, Stmt};
+use crate::compiler::CompileError;
+use crate::compiler::merge;
+use crate::compiler::types::Sanctuary;
+use crate::compiler::validation;
+use crate::dsl::Expr;
+use crate::dsl::ast::{Program, Stmt};
 use crate::dsl::lexer::Lexer;
 use crate::dsl::parser::Parser;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-pub fn load(entry_path: &Path) -> Result<Config, ConfigError> {
+pub fn compile(entry_path: &Path) -> Result<Sanctuary, CompileError> {
     let abs_path = if entry_path.is_absolute() {
         entry_path.to_path_buf()
     } else {
         std::env::current_dir()
-            .map_err(ConfigError::Io)?
+            .map_err(CompileError::Io)?
             .join(entry_path)
     };
 
@@ -27,27 +23,11 @@ pub fn load(entry_path: &Path) -> Result<Config, ConfigError> {
     let programs = parse_recursive(&abs_path, &mut loaded_files, &mut recursion_stack)?;
 
     let config = merge::merge(programs)?;
-    validation::validate_base(&config)?;
 
     Ok(config)
 }
 
-pub fn default_config_path() -> PathBuf {
-    if is_sanctuary_disabled()
-        && let Ok(cwd) = std::env::current_dir()
-    {
-        let local = cwd.join(".kiru").join("main.kiru");
-        if local.exists() {
-            return local;
-        }
-    }
-    if let Some(config_dir) = dirs::config_dir() {
-        return config_dir.join("kiru").join("main.kiru");
-    }
-    PathBuf::from("main.kiru")
-}
-
-pub fn resolve_includes(cfg: &mut Config) -> Result<(), ConfigError> {
+pub fn resolve_includes(cfg: &mut Sanctuary) -> Result<(), CompileError> {
     validation::resolve_include(cfg, parse_recursive)
 }
 
@@ -55,24 +35,24 @@ fn parse_recursive(
     file_path: &Path,
     loaded_files: &mut HashSet<PathBuf>,
     recursion_stack: &mut HashSet<PathBuf>,
-) -> Result<Vec<Program>, ConfigError> {
+) -> Result<Vec<Program>, CompileError> {
     let abs_path = if file_path.is_absolute() {
         file_path.to_path_buf()
     } else {
         std::env::current_dir()
-            .map_err(ConfigError::Io)?
+            .map_err(CompileError::Io)?
             .join(file_path)
     };
 
     let canon_path = std::fs::canonicalize(&abs_path).map_err(|e| {
-        ConfigError::Io(std::io::Error::new(
+        CompileError::Io(std::io::Error::new(
             e.kind(),
             format!("Failed to resolve {}: {}", abs_path.display(), e),
         ))
     })?;
 
     if recursion_stack.contains(&canon_path) {
-        return Err(ConfigError::CircularImport(
+        return Err(CompileError::CircularImport(
             canon_path.display().to_string(),
         ));
     }
@@ -85,7 +65,7 @@ fn parse_recursive(
 
     let data = std::fs::read_to_string(&canon_path).map_err(|e| {
         recursion_stack.remove(&canon_path);
-        ConfigError::Io(std::io::Error::new(
+        CompileError::Io(std::io::Error::new(
             e.kind(),
             format!("Failed to read {}: {}", canon_path.display(), e),
         ))
@@ -112,7 +92,7 @@ fn parse_recursive(
                     ))
                 })
                 .collect();
-            return Err(ConfigError::ParseReports(reports));
+            return Err(CompileError::ParseReports(reports));
         }
     };
 
@@ -121,13 +101,13 @@ fn parse_recursive(
     let base_dir = canon_path.parent().unwrap_or_else(|| Path::new("."));
 
     for stmt in &program.stmts {
-        if let Stmt::ImportDecl { path } = stmt {
+        if let Stmt::Import { path } = stmt {
             let rel_path = match path {
                 Expr::BacktickLit { parts, .. } => {
                     let mut s = String::new();
                     for part in parts {
                         if part.is_var {
-                            return Err(ConfigError::Validation(format!(
+                            return Err(CompileError::Validation(format!(
                                 "variable interpolation in import path is not supported: ${{{}}}",
                                 part.value
                             )));
@@ -137,13 +117,13 @@ fn parse_recursive(
                     s
                 }
                 Expr::VarRef { name, .. } => {
-                    return Err(ConfigError::Validation(format!(
+                    return Err(CompileError::Validation(format!(
                         "variable reference in import path is not supported: ${}",
                         name
                     )));
                 }
             };
-            let import_abs = base_dir.join(&rel_path);
+            let import_abs = base_dir.join(rel_path.trim_start_matches('/'));
             match parse_recursive(&import_abs, loaded_files, recursion_stack) {
                 Ok(imported) => results.extend(imported),
                 Err(e) => {
@@ -159,6 +139,3 @@ fn parse_recursive(
     results.push(program);
     Ok(results)
 }
-
-#[cfg(test)]
-mod tests;

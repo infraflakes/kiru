@@ -1,0 +1,44 @@
+var shell workdir = `echo $HOME/dev`;
+var string app    = `todo`;
+
+sanctuary = $workdir;
+
+pr todo {
+    url  = `git@github.com:yourname/todo.git`;
+    dir  = `todo`;
+    sync = `clone`;
+    branch = `main`;
+    include = `.kiru/main.kiru`;
+
+    var shell version = `git describe --tags --always --dirty 2>/dev/null || echo dev`;
+
+    fn build {
+        log `Building ${app} at ${version}`;
+        var shell os = `uname -s`;
+        case $os {
+            `Linux`  {
+                cd `cmd`;
+                exec `go build -ldflags='${version}' -o bin/${app} .`;
+            };
+            `Darwin` {
+                cd `cmd`;
+                exec `go build -ldflags='${version}' -o bin/${app} .`;
+            };
+            _        { log `unsupported OS: ${os}`; };
+        };
+    }
+
+    fn test {
+        env [
+            CGO_ENABLED = `0`,
+            GOPATH = `$HOME/go`
+        ] {
+            exec `go test -race ./...`;
+            exec `go vet ./...`;
+        };
+    }
+
+    run ci {
+        test => build;
+    }
+}

@@ -1,8 +1,10 @@
-use super::*;
-use crate::dsl::ast::{CaseArm, TemplatePart};
+use crate::compiler::{Project, Sanctuary};
+use crate::dsl::{CaseArm, CasePattern, Expr, FnStmt, InterpolationPart};
+use crate::runner::output::OutputTarget;
+use crate::runner::parse::ExecContext;
 use std::collections::HashMap;
 
-fn test_context(vars: HashMap<String, String>) -> (Config, Project, Output) {
+fn test_context(vars: HashMap<String, String>) -> (Sanctuary, Project, OutputTarget) {
     let project = Project {
         name: "test".to_string(),
         url: "http://example.com".to_string(),
@@ -10,20 +12,20 @@ fn test_context(vars: HashMap<String, String>) -> (Config, Project, Output) {
         sync: "clone".to_string(),
         include_file: None,
         branch: "main".to_string(),
-        shell: None,
         vars,
+        shell_vars: HashMap::new(),
         functions: HashMap::new(),
         runs: HashMap::new(),
     };
-    let cfg = Config {
-        shell: "bash".to_string(),
-        sanctuary: "/tmp".to_string(),
+    let cfg = Sanctuary {
+        sanctuary_path: "/tmp".to_string(),
         projects: HashMap::new(),
         vars: HashMap::new(),
+        shell_vars: HashMap::new(),
         functions: HashMap::new(),
         runs: HashMap::new(),
     };
-    (cfg, project, Output::Direct(Box::new(Vec::new())))
+    (cfg, project, OutputTarget::Direct(Box::new(Vec::new())))
 }
 
 #[test]
@@ -32,7 +34,7 @@ fn test_match_literal_pattern() {
     let (cfg, project, mut output) = test_context(vars);
     let mut ctx = ExecContext::new(&cfg, Some(&project), &mut output);
     let pattern = CasePattern::Literal {
-        parts: vec![TemplatePart {
+        parts: vec![InterpolationPart {
             is_var: false,
             value: "Linux".to_string(),
         }],
@@ -49,11 +51,11 @@ fn test_match_literal_with_interpolation() {
     let mut ctx = ExecContext::new(&cfg, Some(&project), &mut output);
     let pattern = CasePattern::Literal {
         parts: vec![
-            TemplatePart {
+            InterpolationPart {
                 is_var: false,
                 value: "linux/".to_string(),
             },
-            TemplatePart {
+            InterpolationPart {
                 is_var: true,
                 value: "arch".to_string(),
             },
@@ -92,7 +94,7 @@ fn test_match_empty_string() {
     let (cfg, project, mut output) = test_context(vars);
     let mut ctx = ExecContext::new(&cfg, Some(&project), &mut output);
     let pattern = CasePattern::Literal {
-        parts: vec![TemplatePart {
+        parts: vec![InterpolationPart {
             is_var: false,
             value: "".to_string(),
         }],
@@ -107,7 +109,7 @@ fn test_match_undefined_var_in_literal_pattern() {
     let (cfg, project, mut output) = test_context(vars);
     let mut ctx = ExecContext::new(&cfg, Some(&project), &mut output);
     let pattern = CasePattern::Literal {
-        parts: vec![TemplatePart {
+        parts: vec![InterpolationPart {
             is_var: true,
             value: "undefined".to_string(),
         }],
@@ -149,15 +151,15 @@ fn test_case_first_match_wins() {
         condition: Expr::BacktickLit {
             offset: 0,
             len: 0,
-            parts: vec![TemplatePart {
+            parts: vec![InterpolationPart {
                 is_var: false,
                 value: "a".to_string(),
             }],
         },
-        arms: vec![
+        scopes: vec![
             CaseArm {
                 pattern: CasePattern::Literal {
-                    parts: vec![TemplatePart {
+                    parts: vec![InterpolationPart {
                         is_var: false,
                         value: "a".to_string(),
                     }],
@@ -166,7 +168,7 @@ fn test_case_first_match_wins() {
                     value: Expr::BacktickLit {
                         offset: 0,
                         len: 0,
-                        parts: vec![TemplatePart {
+                        parts: vec![InterpolationPart {
                             is_var: false,
                             value: "first".to_string(),
                         }],
@@ -179,7 +181,7 @@ fn test_case_first_match_wins() {
                     value: Expr::BacktickLit {
                         offset: 0,
                         len: 0,
-                        parts: vec![TemplatePart {
+                        parts: vec![InterpolationPart {
                             is_var: false,
                             value: "second".to_string(),
                         }],
@@ -200,14 +202,14 @@ fn test_case_no_match_does_nothing() {
         condition: Expr::BacktickLit {
             offset: 0,
             len: 0,
-            parts: vec![TemplatePart {
+            parts: vec![InterpolationPart {
                 is_var: false,
                 value: "no-match".to_string(),
             }],
         },
-        arms: vec![CaseArm {
+        scopes: vec![CaseArm {
             pattern: CasePattern::Literal {
-                parts: vec![TemplatePart {
+                parts: vec![InterpolationPart {
                     is_var: false,
                     value: "a".to_string(),
                 }],
@@ -216,7 +218,7 @@ fn test_case_no_match_does_nothing() {
                 value: Expr::BacktickLit {
                     offset: 0,
                     len: 0,
-                    parts: vec![TemplatePart {
+                    parts: vec![InterpolationPart {
                         is_var: false,
                         value: "should-not-run".to_string(),
                     }],

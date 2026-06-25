@@ -1,42 +1,44 @@
-use crate::colors;
-use crate::config::{Config, Project};
-use crate::dsl::ast::{CasePattern, Expr, FnStmt};
-use crate::runner::Output;
+use super::colors;
+use super::exec;
+use crate::compiler::{Project, Sanctuary};
+use crate::dsl::{CasePattern, Expr, FnStmt};
 use crate::runner::error::RuntimeError;
-use crate::shell;
+use crate::runner::output::OutputTarget;
 use std::collections::HashMap;
-use std::io::BufRead;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 pub type OutputCallback = Arc<dyn Fn(String) + Send + Sync>;
 
 pub(crate) struct ExecContext<'a> {
-    pub(super) cfg: &'a Config,
+    pub(super) cfg: &'a Sanctuary,
     pub(super) project: Option<&'a Project>,
-    output: &'a mut Output,
-    /// Base variables (global + project). Scope layers pushed/popped for case arms and env blocks.
+    pub(crate) output: &'a mut OutputTarget,
+    /// Base variables (global + project string vars + cached shell var results).
     pub(super) vars: HashMap<String, String>,
+    /// Unresolved shell var commands (global + project). Executed on first access.
+    pub(super) shell_vars: HashMap<String, String>,
     /// Scope stack for variable shadowing. Each layer shadows `vars` and higher layers.
     pub(super) var_stack: Vec<HashMap<String, String>>,
     pub(super) env_stack: Vec<HashMap<String, String>>,
     pub(super) work_dir: PathBuf,
-    pub(super) sys_env: Vec<(String, String)>,
+    pub(super) env_vars: Vec<(String, String)>,
 }
 
 impl<'a> ExecContext<'a> {
     pub(crate) fn new(
-        cfg: &'a Config,
+        cfg: &'a Sanctuary,
         project: Option<&'a Project>,
-        output: &'a mut Output,
+        output: &'a mut OutputTarget,
     ) -> Self {
         let mut vars = cfg.vars.clone();
+        let mut shell_vars = cfg.shell_vars.clone();
         if let Some(proj) = project {
             vars.extend(proj.vars.clone());
+            shell_vars.extend(proj.shell_vars.clone());
         }
         let work_dir = match project {
-            Some(proj) => PathBuf::from(&cfg.sanctuary).join(&proj.dir),
+            Some(proj) => PathBuf::from(&cfg.sanctuary_path).join(proj.dir.trim_start_matches('/')),
             None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         };
         ExecContext {
@@ -44,38 +46,28 @@ impl<'a> ExecContext<'a> {
             project,
             output,
             vars,
+            shell_vars,
             var_stack: Vec::new(),
             env_stack: Vec::new(),
             work_dir,
-            sys_env: std::env::vars().collect(),
+            env_vars: std::env::vars().collect(),
         }
-    }
-
-    /// Resolve which shell to use — project scope first, then global.
-    pub(super) fn effective_shell(&self) -> &str {
-        if let Some(proj) = self.project
-            && let Some(ref s) = proj.shell
-        {
-            return s;
-        }
-        &self.cfg.shell
     }
 
     /// Resolve an expression, checking scope layers before base vars.
-    pub(super) fn resolve_expr(&self, expr: &Expr) -> Result<String, RuntimeError> {
+    pub(super) fn resolve_expr(&mut self, expr: &Expr) -> Result<String, RuntimeError> {
         match expr {
             Expr::VarRef { name, .. } => self
-                .resolve_var(name)
-                .cloned()
+                .resolve_var(name)?
                 .ok_or_else(|| RuntimeError::Lookup(format!("undefined variable: ${}", name))),
             Expr::BacktickLit { parts, .. } => {
                 let mut result = String::new();
                 for part in parts {
                     if part.is_var {
-                        let val = self.resolve_var(&part.value).ok_or_else(|| {
+                        let val = self.resolve_var(&part.value)?.ok_or_else(|| {
                             RuntimeError::Lookup(format!("undefined variable: ${}", part.value))
                         })?;
-                        result.push_str(val);
+                        result.push_str(&val);
                     } else {
                         result.push_str(&part.value);
                     }
@@ -85,18 +77,44 @@ impl<'a> ExecContext<'a> {
         }
     }
 
-    /// Look up a variable name, checking scope layers (top-to-bottom) then base vars.
-    fn resolve_var(&self, name: &str) -> Option<&String> {
+    /// Look up a variable name, checking scope layers (top-to-bottom) then base/shell vars.
+    /// Shell vars are lazily executed on first access and cached in `self.vars`.
+    fn resolve_var(&mut self, name: &str) -> Result<Option<String>, RuntimeError> {
         for layer in self.var_stack.iter().rev() {
             if let Some(val) = layer.get(name) {
-                return Some(val);
+                return Ok(Some(val.clone()));
             }
         }
-        self.vars.get(name)
+        if let Some(val) = self.vars.get(name) {
+            return Ok(Some(val.clone()));
+        }
+        if let Some(cmd) = self.shell_vars.remove(name) {
+            let env_map: HashMap<String, String> = self.build_env().collect();
+            let out = exec::exec_and_get_stdout(&cmd, Some(&self.work_dir), Some(&env_map))
+                .map_err(|e| match e {
+                    exec::Error::Spawn(io_err) => RuntimeError::exec_io_error(&cmd, io_err),
+                    exec::Error::Exit {
+                        stderr, exit_code, ..
+                    } => RuntimeError::Exec {
+                        cmd: cmd.clone(),
+                        exit_code,
+                        detail: stderr,
+                    },
+                    exec::Error::Timeout { partial_stderr, .. } => RuntimeError::Exec {
+                        cmd: cmd.clone(),
+                        exit_code: None,
+                        detail: format!("timed out: {}", partial_stderr),
+                    },
+                })?;
+            let val = out.stdout;
+            self.vars.insert(name.to_string(), val.clone());
+            return Ok(Some(val));
+        }
+        Ok(None)
     }
 
     pub(super) fn build_env(&self) -> impl Iterator<Item = (String, String)> + '_ {
-        let sys = self.sys_env.iter().map(|(k, v)| (k.clone(), v.clone()));
+        let sys = self.env_vars.iter().map(|(k, v)| (k.clone(), v.clone()));
         let overrides = self
             .env_stack
             .iter()
@@ -104,16 +122,25 @@ impl<'a> ExecContext<'a> {
         sys.chain(overrides)
     }
 
-    fn indent(&self, extra: usize) -> String {
+    pub(super) fn indent(&self, extra: usize) -> String {
         "  ".repeat(self.env_stack.len() + extra)
     }
 
     pub(crate) fn exec_fn_body(&mut self, body: &[FnStmt]) -> Result<(), RuntimeError> {
+        let saved_work_dir = self.work_dir.clone();
+        self.var_stack.push(HashMap::new());
+        let result = self.exec_fn_body_inner(body);
+        self.var_stack.pop();
+        self.work_dir = saved_work_dir;
+        result
+    }
+
+    fn exec_fn_body_inner(&mut self, body: &[FnStmt]) -> Result<(), RuntimeError> {
         for stmt in body {
             match stmt {
                 FnStmt::Log { value, .. } => self.exec_log(value)?,
-                FnStmt::Exec { value, .. } => self.exec_exec(value)?,
-                FnStmt::Cd { arg, .. } => self.exec_cd(arg)?,
+                FnStmt::Exec { value, .. } => self.exec_command(value)?,
+                FnStmt::Cd { value, .. } => self.exec_cd(value)?,
                 FnStmt::VarDecl {
                     name,
                     value,
@@ -125,12 +152,12 @@ impl<'a> ExecContext<'a> {
                     body: block_body,
                     ..
                 } => self.exec_env_block(pairs, block_body)?,
-                FnStmt::Case { condition, arms } => {
+                FnStmt::Case { condition, scopes } => {
                     let value = self.resolve_expr(condition)?;
-                    for arm in arms {
-                        if self.match_case_pattern(&arm.pattern, &value)? {
+                    for branch in scopes {
+                        if self.match_case_pattern(&branch.pattern, &value)? {
                             self.var_stack.push(HashMap::new());
-                            let result = self.exec_fn_body(&arm.body);
+                            let result = self.exec_fn_body(&branch.body);
                             self.var_stack.pop();
                             result?;
                             break;
@@ -142,7 +169,7 @@ impl<'a> ExecContext<'a> {
         Ok(())
     }
 
-    fn match_case_pattern(
+    pub(super) fn match_case_pattern(
         &mut self,
         pattern: &CasePattern,
         value: &str,
@@ -153,28 +180,22 @@ impl<'a> ExecContext<'a> {
                 let mut resolved = String::new();
                 for part in parts {
                     if part.is_var {
-                        match self.resolve_var(&part.value) {
-                            Some(v) => resolved.push_str(v),
-                            None => {
-                                return Err(RuntimeError::Lookup(format!(
-                                    "undefined variable: ${}",
-                                    part.value
-                                )));
-                            }
-                        }
+                        let v = self.resolve_var(&part.value)?.ok_or_else(|| {
+                            RuntimeError::Lookup(format!("undefined variable: ${}", part.value))
+                        })?;
+                        resolved.push_str(&v);
                     } else {
                         resolved.push_str(&part.value);
                     }
                 }
                 Ok(value == resolved)
             }
-            CasePattern::VarRef { name } => match self.resolve_var(name) {
-                Some(v) => Ok(value == v),
-                None => Err(RuntimeError::Lookup(format!(
-                    "undefined variable: ${}",
-                    name
-                ))),
-            },
+            CasePattern::VarRef { name } => {
+                let v = self.resolve_var(name)?.ok_or_else(|| {
+                    RuntimeError::Lookup(format!("undefined variable: ${}", name))
+                })?;
+                Ok(value == v)
+            }
         }
     }
 
@@ -188,71 +209,8 @@ impl<'a> ExecContext<'a> {
         Ok(())
     }
 
-    fn exec_exec(&mut self, value: &Expr) -> Result<(), RuntimeError> {
-        let cmd_str = self.resolve_expr(value)?;
-        let indent = self.indent(0);
-        let line = format!("{}exec {}", indent, cmd_str);
-        self.output
-            .writeln_colored(&line, colors::EXEC_ANSI)
-            .map_err(RuntimeError::Io)?;
-
-        let shell = self.effective_shell().to_string();
-        let mut child = Command::new(&shell)
-            .arg("-c")
-            .arg(&cmd_str)
-            .current_dir(&self.work_dir)
-            .envs(self.build_env())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| RuntimeError::exec_io_error(&cmd_str, e))?;
-
-        let indent = self.indent(1);
-
-        let status = match self.output.fork_callback() {
-            Some(cb) => {
-                let stdout_thread =
-                    spawn_stream_reader(child.stdout.take(), indent.clone(), cb.clone());
-                let stderr_thread = spawn_stream_reader(child.stderr.take(), indent, cb);
-
-                let status = child
-                    .wait()
-                    .map_err(|e| RuntimeError::exec_io_error(&cmd_str, e))?;
-
-                if let Some(result) = stdout_thread.map(|h| h.join()) {
-                    result
-                        .map_err(|_| RuntimeError::Panic("stdout reader panicked".to_string()))??;
-                }
-                if let Some(result) = stderr_thread.map(|h| h.join()) {
-                    result
-                        .map_err(|_| RuntimeError::Panic("stderr reader panicked".to_string()))??;
-                }
-
-                status
-            }
-            None => {
-                let output = child
-                    .wait_with_output()
-                    .map_err(|e| RuntimeError::exec_io_error(&cmd_str, e))?;
-                write_output_lines(self.output, &output.stdout, &indent)?;
-                write_output_lines(self.output, &output.stderr, &indent)?;
-                output.status
-            }
-        };
-
-        if !status.success() {
-            return Err(RuntimeError::exec_exit_code(cmd_str, status.code()));
-        }
-
-        Ok(())
-    }
-
     fn exec_cd(&mut self, arg: &Expr) -> Result<(), RuntimeError> {
         let resolved = self.resolve_expr(arg)?;
-        let base_dir = match self.project {
-            Some(proj) => PathBuf::from(&self.cfg.sanctuary).join(&proj.dir),
-            None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-        };
 
         if Path::new(&resolved).is_absolute() {
             return Err(RuntimeError::Lookup(format!(
@@ -261,11 +219,7 @@ impl<'a> ExecContext<'a> {
             )));
         }
 
-        let candidate = if resolved == "." {
-            base_dir.clone()
-        } else {
-            base_dir.join(&resolved)
-        };
+        let candidate = self.work_dir.join(&resolved);
 
         let candidate = std::fs::canonicalize(&candidate)
             .map_err(|e| RuntimeError::Lookup(format!("cd {}: {}", resolved, e)))?;
@@ -278,7 +232,8 @@ impl<'a> ExecContext<'a> {
         }
 
         if let Some(proj) = self.project {
-            let base_canonical = PathBuf::from(&self.cfg.sanctuary).join(&proj.dir);
+            let base_canonical =
+                PathBuf::from(&self.cfg.sanctuary_path).join(proj.dir.trim_start_matches('/'));
             let base_canonical = std::fs::canonicalize(&base_canonical)
                 .map_err(|e| RuntimeError::Lookup(format!("cd {}: {}", resolved, e)))?;
             if !candidate.starts_with(&base_canonical) {
@@ -303,24 +258,23 @@ impl<'a> ExecContext<'a> {
         &mut self,
         name: &str,
         value: &Expr,
-        var_type: &crate::dsl::ast::VarType,
+        var_type: &crate::dsl::VarType,
     ) -> Result<(), RuntimeError> {
         let val = self.resolve_expr(value)?;
 
-        let resolved = if var_type == &crate::dsl::ast::VarType::Shell {
-            let shell = self.effective_shell().to_string();
+        let resolved = if var_type == &crate::dsl::VarType::Shell {
             let env_map: HashMap<String, String> = self.build_env().collect();
-            let out = shell::run_captured(&shell, &val, Some(&self.work_dir), Some(&env_map), None)
+            let out = exec::exec_and_get_stdout(&val, Some(&self.work_dir), Some(&env_map))
                 .map_err(|e| match e {
-                    shell::Error::Spawn(io_err) => RuntimeError::exec_io_error(&val, io_err),
-                    shell::Error::Exit {
+                    exec::Error::Spawn(io_err) => RuntimeError::exec_io_error(&val, io_err),
+                    exec::Error::Exit {
                         stderr, exit_code, ..
                     } => RuntimeError::Exec {
                         cmd: val.clone(),
                         exit_code,
                         detail: stderr,
                     },
-                    shell::Error::Timeout { partial_stderr, .. } => RuntimeError::Exec {
+                    exec::Error::Timeout { partial_stderr, .. } => RuntimeError::Exec {
                         cmd: val.clone(),
                         exit_code: None,
                         detail: format!("timed out: {}", partial_stderr),
@@ -341,7 +295,7 @@ impl<'a> ExecContext<'a> {
 
     fn exec_env_block(
         &mut self,
-        pairs: &[crate::dsl::ast::EnvPair],
+        pairs: &[crate::dsl::EnvPair],
         body: &[FnStmt],
     ) -> Result<(), RuntimeError> {
         let mut layer = HashMap::new();
@@ -367,33 +321,3 @@ impl<'a> ExecContext<'a> {
         result
     }
 }
-
-fn spawn_stream_reader<R: std::io::Read + Send + 'static>(
-    stream: Option<R>,
-    indent: String,
-    cb: OutputCallback,
-) -> Option<std::thread::JoinHandle<Result<(), RuntimeError>>> {
-    stream.map(|s| {
-        std::thread::spawn(move || {
-            let reader = std::io::BufReader::new(s);
-            for line in reader.lines() {
-                let line = line.map_err(RuntimeError::Io)?;
-                cb([indent.as_str(), line.as_str()].concat());
-            }
-            Ok(())
-        })
-    })
-}
-
-fn write_output_lines(output: &mut Output, data: &[u8], indent: &str) -> Result<(), RuntimeError> {
-    for line in std::io::BufReader::new(data).lines() {
-        let line = line.map_err(RuntimeError::Io)?;
-        output
-            .writeln(&[indent, &line].concat())
-            .map_err(RuntimeError::Io)?;
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests;

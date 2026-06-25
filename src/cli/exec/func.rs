@@ -1,17 +1,24 @@
 use super::super::load_config_and_resolve;
+use crate::runner::colors;
 use crate::runner::{OutputCallback, Runner};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub fn run(
+pub fn execute_function(
     config_arg: Option<PathBuf>,
     name: String,
     project: Option<String>,
 ) -> miette::Result<()> {
     let config = load_config_and_resolve(config_arg)?;
 
-    let is_standalone = crate::config::is_sanctuary_disabled() && config.projects.is_empty();
+    let is_standalone = crate::compiler::is_sanctuary_disabled();
+
+    let callback: OutputCallback = Arc::new(|line| {
+        let mut out = io::stdout().lock();
+        colors::write_colored_line(&line, &mut out);
+        let _ = writeln!(out);
+    });
 
     match project {
         Some(ref proj) => {
@@ -31,12 +38,6 @@ pub fn run(
                 ));
             }
 
-            let callback: OutputCallback = Arc::new(|line| {
-                let mut out = io::stdout().lock();
-                crate::tui::render::write_colored_line(&line, &mut out);
-                let _ = writeln!(out);
-            });
-
             let mut runner = Runner::new(config).with_output_callback(callback);
             runner
                 .execute_fn_call(&name, proj)
@@ -49,12 +50,6 @@ pub fn run(
                     name
                 ));
             }
-
-            let callback: OutputCallback = Arc::new(|line| {
-                let mut out = io::stdout().lock();
-                crate::tui::render::write_colored_line(&line, &mut out);
-                let _ = writeln!(out);
-            });
 
             let mut runner = Runner::new(config).with_output_callback(callback);
             runner

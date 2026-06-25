@@ -1,5 +1,3 @@
-shell = `sh`;
-
 import `run.kiru`;
 
 fn init {

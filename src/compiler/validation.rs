@@ -1,35 +1,85 @@
-use crate::config::error::ConfigError;
-use crate::config::merge::merge_project_body_stmt;
-use crate::config::types::Config;
-use crate::dsl::ast::{CasePattern, Expr, FnStmt};
-use std::collections::{HashMap, HashSet};
+use crate::compiler::error::CompileError;
+use crate::compiler::merge::merge_project_body_stmt;
+use crate::compiler::types::Sanctuary;
+use crate::dsl::{CasePattern, Expr, FnStmt};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 pub fn is_sanctuary_disabled() -> bool {
     std::env::var("SANCTUARY").as_deref() == Ok("0")
 }
 
-pub(crate) fn validate_base(config: &Config) -> Result<(), ConfigError> {
-    let mut errs = Vec::new();
+pub(crate) fn resolve_include(
+    cfg: &mut Sanctuary,
+    parse_recursive_fn: impl Fn(
+        &Path,
+        &mut HashSet<PathBuf>,
+        &mut HashSet<PathBuf>,
+    ) -> Result<Vec<crate::dsl::ast::Program>, CompileError>,
+) -> Result<(), CompileError> {
+    for proj in cfg.projects.values_mut() {
+        let Some(include_file) = &proj.include_file else {
+            continue;
+        };
 
-    if config.shell.is_empty() {
-        errs.push("shell declaration is required".to_string());
+        if proj.sync == "ignore" {
+            continue;
+        }
+
+        let use_path = PathBuf::from(&cfg.sanctuary_path)
+            .join(proj.dir.trim_start_matches('/'))
+            .join(include_file.trim_start_matches('/'));
+
+        if !use_path.exists() {
+            return Err(CompileError::Validation(format!(
+                "project {:?}: include file not found: {} (run 'kiru sync' first)",
+                proj.name,
+                use_path.display()
+            )));
+        }
+
+        let mut loaded_files = HashSet::new();
+        let mut recursion_stack = HashSet::new();
+        let programs = parse_recursive_fn(&use_path, &mut loaded_files, &mut recursion_stack)?;
+
+        for program in &programs {
+            let mut merged = cfg.vars.clone();
+            merged.extend(proj.vars.clone());
+            let mut merged_shell = cfg.shell_vars.clone();
+            merged_shell.extend(proj.shell_vars.clone());
+            for stmt in &program.stmts {
+                merge_project_body_stmt(
+                    proj,
+                    stmt.clone(),
+                    &mut merged,
+                    &mut merged_shell,
+                    &program.source_name,
+                    &program.source_text,
+                )?;
+            }
+        }
     }
+
+    Ok(())
+}
+
+pub fn validate(cfg: &Sanctuary) -> Result<(), CompileError> {
+    let mut errs = Vec::new();
 
     if is_sanctuary_disabled() {
         // SANCTUARY=0 mode: sanctuary and project fields are optional
-    } else if config.sanctuary.is_empty() {
+    } else if cfg.sanctuary_path.is_empty() {
         errs.push("sanctuary declaration is required".to_string());
-    } else if !Path::new(&config.sanctuary).is_absolute() {
+    } else if !Path::new(&cfg.sanctuary_path).is_absolute() {
         errs.push(format!(
             "sanctuary path must be absolute: {}",
-            config.sanctuary
+            cfg.sanctuary_path
         ));
     }
 
     if !is_sanctuary_disabled() {
         let mut dirs = std::collections::HashSet::new();
-        for proj in config.projects.values() {
+        for proj in cfg.projects.values() {
             if proj.url.is_empty() {
                 errs.push(format!("project {:?}: url is required", proj.name));
             }
@@ -54,116 +104,57 @@ pub(crate) fn validate_base(config: &Config) -> Result<(), ConfigError> {
         }
     }
 
+    validate_run_refs(&cfg.runs, &cfg.functions, "top-level", &mut errs);
+
+    let mut global_scope: HashSet<String> = cfg.vars.keys().cloned().collect();
+    global_scope.extend(cfg.shell_vars.keys().cloned());
+    validate_fn_bodies(&cfg.functions, &global_scope, "(top-level)", &mut errs);
+
+    for (proj_name, project) in &cfg.projects {
+        validate_run_refs(&project.runs, &project.functions, proj_name, &mut errs);
+
+        let mut scope: HashSet<String> = global_scope.clone();
+        scope.extend(project.vars.keys().cloned());
+        scope.extend(project.shell_vars.keys().cloned());
+        validate_fn_bodies(&project.functions, &scope, proj_name, &mut errs);
+    }
+
     if !errs.is_empty() {
-        return Err(ConfigError::Validation(errs.join("\n")));
+        return Err(CompileError::Validation(errs.join("\n")));
     }
 
     Ok(())
 }
 
-pub(crate) fn resolve_include(
-    cfg: &mut Config,
-    parse_recursive_fn: impl Fn(
-        &Path,
-        &mut HashSet<PathBuf>,
-        &mut HashSet<PathBuf>,
-    ) -> Result<Vec<crate::dsl::ast::Program>, ConfigError>,
-) -> Result<(), ConfigError> {
-    for proj in cfg.projects.values_mut() {
-        let Some(include_file) = &proj.include_file else {
-            continue;
-        };
-
-        if proj.sync == "ignore" {
-            continue;
-        }
-
-        let use_path = PathBuf::from(&cfg.sanctuary)
-            .join(&proj.dir)
-            .join(include_file);
-
-        if !use_path.exists() {
-            return Err(ConfigError::Validation(format!(
-                "project {:?}: include file not found: {} (run 'kiru sync' first)",
-                proj.name,
-                use_path.display()
-            )));
-        }
-
-        let mut loaded_files = HashSet::new();
-        let mut recursion_stack = HashSet::new();
-        let programs = parse_recursive_fn(&use_path, &mut loaded_files, &mut recursion_stack)?;
-
-        for program in &programs {
-            let mut merged = cfg.vars.clone();
-            merged.extend(proj.vars.clone());
-            for stmt in &program.stmts {
-                merge_project_body_stmt(
-                    proj,
-                    stmt.clone(),
-                    &cfg.shell,
-                    &mut merged,
-                    &program.source_name,
-                    &program.source_text,
-                )?;
-            }
-        }
-    }
-
-    validate_full(cfg)?;
-
-    Ok(())
-}
-
-fn validate_full(cfg: &Config) -> Result<(), ConfigError> {
-    let mut errs = Vec::new();
-
-    for (run_name, chains) in &cfg.runs {
+fn validate_run_refs(
+    runs: &std::collections::HashMap<String, Vec<Vec<String>>>,
+    functions: &std::collections::HashMap<String, Vec<FnStmt>>,
+    prefix: &str,
+    errs: &mut Vec<String>,
+) {
+    for (run_name, chains) in runs {
         for chain in chains {
             for fn_name in chain {
-                if !cfg.functions.contains_key(fn_name) {
+                if !functions.contains_key(fn_name) {
                     errs.push(format!(
-                        "top-level run {:?} references unknown function {:?}",
-                        run_name, fn_name
+                        "{}: run {:?} references unknown function {:?}",
+                        prefix, run_name, fn_name
                     ));
                 }
             }
         }
     }
-
-    if !cfg.functions.is_empty() {
-        validate_top_level_fn_vars(cfg, &mut errs);
-    }
-
-    for (proj_name, project) in &cfg.projects {
-        for (run_name, chains) in &project.runs {
-            for chain in chains {
-                for fn_name in chain {
-                    if !project.functions.contains_key(fn_name) {
-                        errs.push(format!(
-                            "project {:?}: run {:?} references unknown function {:?}",
-                            proj_name, run_name, fn_name
-                        ));
-                    }
-                }
-            }
-        }
-
-        validate_fn_vars(project, &cfg.vars, proj_name, &mut errs);
-    }
-
-    if !errs.is_empty() {
-        return Err(ConfigError::Validation(errs.join("\n")));
-    }
-
-    Ok(())
 }
 
-fn validate_top_level_fn_vars(cfg: &Config, errs: &mut Vec<String>) {
-    let global_scope: HashSet<String> = cfg.vars.keys().cloned().collect();
-    for (fn_name, body) in &cfg.functions {
-        let mut scope = global_scope.clone();
-        validate_fn_body(fn_name, body, &mut scope, errs, "(top-level)");
+fn validate_fn_bodies(
+    functions: &std::collections::HashMap<String, Vec<FnStmt>>,
+    initial_scope: &HashSet<String>,
+    proj_name: &str,
+    errs: &mut Vec<String>,
+) {
+    for (fn_name, body) in functions {
+        let mut scope = initial_scope.clone();
+        validate_fn_body(fn_name, body, &mut scope, errs, proj_name);
     }
 }
 
@@ -219,7 +210,7 @@ fn validate_fn_body(
             }
             FnStmt::Log { value, .. } => validate_expr(value, fn_name, scope, errs, proj_name),
             FnStmt::Exec { value, .. } => validate_expr(value, fn_name, scope, errs, proj_name),
-            FnStmt::Cd { arg, .. } => validate_expr(arg, fn_name, scope, errs, proj_name),
+            FnStmt::Cd { value, .. } => validate_expr(value, fn_name, scope, errs, proj_name),
             FnStmt::EnvBlock { pairs, body, .. } => {
                 let mut block_scope = scope.clone();
                 for pair in pairs {
@@ -227,9 +218,9 @@ fn validate_fn_body(
                 }
                 validate_fn_body(fn_name, body, &mut block_scope, errs, proj_name);
             }
-            FnStmt::Case { condition, arms } => {
+            FnStmt::Case { condition, scopes } => {
                 validate_expr(condition, fn_name, scope, errs, proj_name);
-                for arm in arms {
+                for arm in scopes {
                     match &arm.pattern {
                         CasePattern::VarRef { name } => {
                             validate_expr(
@@ -261,18 +252,5 @@ fn validate_fn_body(
                 }
             }
         }
-    }
-}
-
-fn validate_fn_vars(
-    project: &crate::config::types::Project,
-    global_vars: &HashMap<String, String>,
-    proj_name: &str,
-    errs: &mut Vec<String>,
-) {
-    for (fn_name, body) in &project.functions {
-        let mut scope: HashSet<String> = global_vars.keys().cloned().collect();
-        scope.extend(project.vars.keys().cloned());
-        validate_fn_body(fn_name, body, &mut scope, errs, proj_name);
     }
 }

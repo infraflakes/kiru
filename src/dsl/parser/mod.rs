@@ -2,6 +2,7 @@ use crate::dsl::ast::*;
 use crate::dsl::error::{ParseError, format_token, format_token_type, is_keyword_token};
 use crate::dsl::lexer::Lexer;
 use crate::dsl::token::{Token, TokenType};
+use crate::dsl::*;
 use miette::SourceSpan;
 
 mod body;
@@ -13,14 +14,14 @@ mod project;
 #[cfg(test)]
 mod tests;
 
-pub struct Parser {
+pub(crate) struct Parser {
     lexer: Lexer,
     current: Token,
     source_len: usize,
 }
 
 impl Parser {
-    pub fn new(mut lexer: Lexer) -> Self {
+    pub(crate) fn new(mut lexer: Lexer) -> Self {
         let source_len = lexer.source_len();
         let current = lexer.next_token();
         Parser {
@@ -67,12 +68,12 @@ impl Parser {
         }
     }
 
-    pub fn parse(&mut self) -> Result<Program, Vec<ParseError>> {
+    pub(crate) fn parse(&mut self) -> Result<Program, Vec<ParseError>> {
         let mut program = Program::new();
         let mut errors = Vec::new();
 
         while self.current_token().ty != TokenType::EOF {
-            match self.parse_toplevel_stmt() {
+            match self.parse_top_level_stmt() {
                 Ok(stmt) => program.stmts.push(stmt),
                 Err(e) => {
                     errors.push(e);
@@ -88,7 +89,7 @@ impl Parser {
         }
     }
 
-    fn parse_toplevel_stmt(&mut self) -> Result<Stmt, ParseError> {
+    fn parse_top_level_stmt(&mut self) -> Result<Stmt, ParseError> {
         if let TokenType::Illegal(m) = &self.current_token().ty {
             let token = self.current_token().clone();
             return Err(ParseError::new(
@@ -97,7 +98,6 @@ impl Parser {
             ));
         }
         match self.current_token().ty {
-            TokenType::Shell => self.parse_shell_decl(),
             TokenType::Sanctuary => self.parse_sanctuary_decl(),
             TokenType::Import => self.parse_import_decl(),
             TokenType::Var => self.parse_var_decl(),
@@ -118,7 +118,7 @@ impl Parser {
                     Err(ParseError::new(
                         self.eof_aware_span(),
                         format!(
-                            "expected shell, sanctuary, import, var, pr, fn, or run, found {}",
+                            "expected sanctuary, import, var, pr, fn, or run, found {}",
                             format_token(self.current_token())
                         ),
                     ))
@@ -136,7 +136,6 @@ impl Parser {
             ));
         }
         match self.current_token().ty {
-            TokenType::Shell => self.parse_shell_decl(),
             TokenType::Var => self.parse_var_decl(),
             TokenType::Fn => self.parse_fn_decl(),
             TokenType::Run => self.parse_run_decl(),
@@ -154,7 +153,7 @@ impl Parser {
                     Err(ParseError::new(
                         self.eof_aware_span(),
                         format!(
-                            "expected shell, var, fn, or run, found {}",
+                            "expected var, fn, or run, found {}",
                             format_token(self.current_token())
                         ),
                     ))
@@ -171,7 +170,7 @@ impl Parser {
                 Semicolon | RBrace => {
                     self.advance();
                 }
-                Shell | Sanctuary | Import | Var | Pr | Fn | Run => break,
+                Sanctuary | Import | Var | Pr | Fn | Run => break,
                 _ => self.advance(),
             }
         }

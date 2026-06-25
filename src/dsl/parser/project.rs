@@ -33,7 +33,7 @@ impl Parser {
 
         while self.current_token().ty != TokenType::RBrace {
             match &self.current_token().ty {
-                TokenType::Var | TokenType::Fn | TokenType::Run | TokenType::Shell => {
+                TokenType::Var | TokenType::Fn | TokenType::Run => {
                     body.push(self.parse_project_body_stmt()?);
                 }
                 _ => {
@@ -69,7 +69,7 @@ impl Parser {
 
         self.expect_with_context(TokenType::RBrace, "to close project body")?;
 
-        Ok(Stmt::ProjectDecl {
+        Ok(Stmt::Project {
             name,
             fields,
             body,

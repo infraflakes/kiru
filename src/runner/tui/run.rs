@@ -1,53 +1,13 @@
-use super::{MAX_PANEL_HEIGHT, Model, SPINNER_FRAMES, Task, TaskStatus};
-use crate::colors;
+use super::render::{self, status_color, status_label, task_marker};
+use super::{MAX_PANEL_HEIGHT, Model, TaskStatus};
+use crate::runner::colors;
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Color, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Clear, Paragraph},
 };
-use std::io::Write;
-
-const SEPARATOR_WIDTH: usize = 78;
-
-fn task_marker(task: &Task, spinner_idx: usize) -> String {
-    if task.finalized {
-        if task.status == TaskStatus::Success {
-            "✓".to_string()
-        } else if task.status == TaskStatus::Skipped {
-            "−".to_string()
-        } else {
-            "✗".to_string()
-        }
-    } else {
-        match task.status {
-            TaskStatus::Pending => "·".to_string(),
-            TaskStatus::Running => SPINNER_FRAMES[spinner_idx].to_string(),
-            TaskStatus::Success | TaskStatus::Error | TaskStatus::Skipped => unreachable!(),
-        }
-    }
-}
-
-fn status_label(status: TaskStatus) -> &'static str {
-    match status {
-        TaskStatus::Success => "ok",
-        TaskStatus::Running => "running",
-        TaskStatus::Pending => "pending",
-        TaskStatus::Error => "failed",
-        TaskStatus::Skipped => "skipped",
-    }
-}
-
-fn status_color(status: TaskStatus) -> Color {
-    match status {
-        TaskStatus::Success => colors::OK,
-        TaskStatus::Running => colors::RUNNING,
-        TaskStatus::Pending => colors::PENDING,
-        TaskStatus::Error => colors::FAILED,
-        TaskStatus::Skipped => colors::PENDING,
-    }
-}
 
 pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
     let area = f.area();
@@ -102,68 +62,12 @@ pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
     }
 }
 
-fn colored_line_parts(line: &str) -> (usize, &'static str, &'static str, &str) {
-    let trimmed = line.trim_start();
-    let indent = line.len() - trimmed.len();
-
-    if !trimmed.contains(' ') && trimmed.contains('(') && trimmed.ends_with(')') {
-        (0, "", colors::EXEC_ANSI, line)
-    } else if let Some(rest) = trimmed.strip_prefix("log  ") {
-        (indent, "log  ", colors::LOG_ANSI, rest)
-    } else if let Some(rest) = trimmed.strip_prefix("exec ") {
-        (indent, "exec ", colors::EXEC_ANSI, rest)
-    } else if let Some(rest) = trimmed.strip_prefix("cd   ") {
-        (indent, "cd   ", colors::CD_ANSI, rest)
-    } else if let Some(rest) = trimmed.strip_prefix("env  ") {
-        (indent, "env  ", colors::ENV_ANSI, rest)
-    } else {
-        (0, "", colors::TEXT_ANSI, line)
-    }
-}
-
-pub fn write_colored_line(line: &str, w: &mut impl Write) {
-    let (indent, prefix, color, rest) = colored_line_parts(line);
-    if indent > 0 {
-        let _ = write!(w, "{}", &line[..indent]);
-    }
-    let _ = write!(w, "{}{}{}{}", color, prefix, rest, colors::RESET);
-}
-
-fn write_colored_line_buf(buf: &mut String, line: &str) {
-    let (indent, prefix, color, rest) = colored_line_parts(line);
-    if indent > 0 {
-        buf.push_str(&line[..indent]);
-    }
-    buf.push_str(color);
-    buf.push_str(prefix);
-    buf.push_str(rest);
-    buf.push_str(colors::RESET);
-}
-
-fn write_separator(buf: &mut String, label: &str) {
-    let sep_len = SEPARATOR_WIDTH.saturating_sub(label.len() + 4);
-    let left = sep_len / 2;
-    let right = sep_len - left;
-    buf.push_str(colors::MUTED_ANSI);
-    for _ in 0..left {
-        buf.push('─');
-    }
-    buf.push(' ');
-    buf.push_str(label);
-    buf.push(' ');
-    for _ in 0..right {
-        buf.push('─');
-    }
-    buf.push_str(colors::RESET);
-    buf.push('\n');
-}
-
-pub fn dump_final(model: &Model) -> String {
+pub fn format_final_output(model: &Model) -> String {
     let mut buf = String::new();
     buf.push('\n');
 
     for chain in &model.chains {
-        write_separator(&mut buf, &chain.label);
+        render::write_separator(&mut buf, &chain.label);
 
         for ti in 0..chain.task_count {
             if let Some(task) = model.tasks.get(chain.task_start + ti) {
@@ -205,7 +109,7 @@ pub fn dump_final(model: &Model) -> String {
                         buf.push_str(colors::MUTED_ANSI);
                         buf.push_str("  ");
                         buf.push_str(colors::RESET);
-                        write_colored_line_buf(&mut buf, line);
+                        render::write_colored_line_buf(&mut buf, line);
                         buf.push('\n');
                     }
                 }

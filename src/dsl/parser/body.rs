@@ -1,4 +1,4 @@
-use super::expr::parse_template_parts;
+use super::expr::parse_interpolation_parts;
 use super::*;
 
 impl Parser {
@@ -26,7 +26,7 @@ impl Parser {
         let arg = self.parse_expr()?;
         self.expect_with_context(TokenType::Semicolon, "after `cd`")?;
 
-        Ok(FnStmt::Cd { arg })
+        Ok(FnStmt::Cd { value: arg })
     }
 
     pub(crate) fn parse_fn_var_decl(&mut self) -> Result<FnStmt, ParseError> {
@@ -105,7 +105,7 @@ impl Parser {
 
         self.expect_with_context(TokenType::LBrace, "to open case arms")?;
 
-        let mut arms = Vec::new();
+        let mut scopes = Vec::new();
         while self.current_token().ty != TokenType::RBrace {
             let pattern = self.parse_case_pattern()?;
 
@@ -118,13 +118,13 @@ impl Parser {
 
             self.expect_with_context(TokenType::Semicolon, "after case arm")?;
 
-            arms.push(CaseArm { pattern, body });
+            scopes.push(CaseArm { pattern, body });
         }
         self.expect_with_context(TokenType::RBrace, "to close case block")?;
 
         self.expect_with_context(TokenType::Semicolon, "after case block")?;
 
-        Ok(FnStmt::Case { condition, arms })
+        Ok(FnStmt::Case { condition, scopes })
     }
 
     fn parse_case_pattern(&mut self) -> Result<CasePattern, ParseError> {
@@ -162,7 +162,7 @@ impl Parser {
                     unreachable!()
                 };
                 self.advance();
-                let parts = parse_template_parts(content, token.offset)?;
+                let parts = parse_interpolation_parts(content, token.offset)?;
                 Ok(CasePattern::Literal { parts })
             }
             _ => {

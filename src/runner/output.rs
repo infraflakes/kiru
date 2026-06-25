@@ -1,75 +1,66 @@
-pub(crate) mod error;
-pub(crate) mod executor;
-
-use crate::colors;
-use crate::config::Config;
-use error::RuntimeError;
-use executor::ExecContext;
-pub use executor::OutputCallback;
+use crate::compiler::Sanctuary;
+use crate::runner::OutputCallback;
+use crate::runner::colors;
+use crate::runner::error::RuntimeError;
+use crate::runner::parse::ExecContext;
 use std::io::{self, Write};
 use std::sync::Arc;
 
-pub(crate) enum Output {
-    Direct(Box<dyn Write>),
+type SendWriter = Box<dyn Write + Send>;
+
+pub(crate) enum OutputTarget {
+    Direct(SendWriter),
     Callback(OutputCallback),
 }
 
-impl Output {
-    fn writeln(&mut self, content: &str) -> io::Result<()> {
+impl OutputTarget {
+    pub(super) fn writeln(&mut self, content: &str) -> io::Result<()> {
         match self {
-            Output::Direct(w) => writeln!(w, "{content}"),
-            Output::Callback(cb) => {
+            OutputTarget::Direct(w) => writeln!(w, "{content}"),
+            OutputTarget::Callback(cb) => {
                 cb(content.to_string());
                 Ok(())
             }
         }
     }
 
-    fn writeln_colored(&mut self, content: &str, color: &str) -> io::Result<()> {
+    pub(super) fn writeln_colored(&mut self, content: &str, color: &str) -> io::Result<()> {
         match self {
-            Output::Direct(w) => writeln!(w, "{color}{content}{}", colors::RESET),
-            Output::Callback(cb) => {
+            OutputTarget::Direct(w) => writeln!(w, "{color}{content}{}", colors::RESET),
+            OutputTarget::Callback(cb) => {
                 cb(content.to_string());
                 Ok(())
             }
         }
     }
 
-    fn fork_callback(&self) -> Option<OutputCallback> {
+    pub(crate) fn clone_callback(&self) -> Option<OutputCallback> {
         match self {
-            Output::Callback(cb) => Some(Arc::clone(cb)),
-            Output::Direct(_) => None,
+            OutputTarget::Callback(cb) => Some(Arc::clone(cb)),
+            OutputTarget::Direct(_) => None,
         }
     }
 }
 
-pub struct Runner {
-    cfg: Arc<Config>,
-    output: Output,
+pub(crate) struct Runner {
+    cfg: Arc<Sanctuary>,
+    output: OutputTarget,
 }
 
 impl Runner {
-    pub fn new(cfg: Config) -> Self {
+    pub(crate) fn new(cfg: Sanctuary) -> Self {
         Runner {
             cfg: Arc::new(cfg),
-            output: Output::Direct(Box::new(io::stdout())),
+            output: OutputTarget::Direct(Box::new(io::stdout()) as SendWriter),
         }
     }
 
-    #[allow(dead_code)]
-    pub fn from_arc(cfg: Arc<Config>) -> Self {
-        Runner {
-            cfg,
-            output: Output::Direct(Box::new(io::stdout())),
-        }
-    }
-
-    pub fn with_output_callback(mut self, callback: OutputCallback) -> Self {
-        self.output = Output::Callback(callback);
+    pub(crate) fn with_output_callback(mut self, callback: OutputCallback) -> Self {
+        self.output = OutputTarget::Callback(callback);
         self
     }
 
-    pub fn execute_fn_call(
+    pub(crate) fn execute_fn_call(
         &mut self,
         fn_name: &str,
         project_name: &str,
@@ -88,7 +79,7 @@ impl Runner {
         ctx.exec_fn_body(fn_body)
     }
 
-    pub fn execute_standalone_fn(&mut self, fn_name: &str) -> Result<(), RuntimeError> {
+    pub(crate) fn execute_standalone_fn(&mut self, fn_name: &str) -> Result<(), RuntimeError> {
         let fn_body = self
             .cfg
             .functions

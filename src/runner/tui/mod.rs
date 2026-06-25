@@ -4,7 +4,7 @@ use crossterm::{
 };
 
 use ratatui::{
-    Terminal, TerminalOptions, Viewport,
+    Frame, Terminal, TerminalOptions, Viewport,
     backend::{Backend, ClearType, CrosstermBackend, WindowSize},
     buffer::Cell,
     layout::{Position, Size},
@@ -110,6 +110,8 @@ impl<W: Write> Backend for SafeBackend<W> {
 }
 
 pub mod render;
+pub mod run;
+pub mod sync;
 
 pub fn send_event(tx: &mpsc::UnboundedSender<TuiEvent>, event: TuiEvent) {
     if tx.send(event).is_err() {
@@ -130,7 +132,7 @@ pub enum TaskStatus {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct Task {
+pub(crate) struct Task {
     pub name: String,
     pub status: TaskStatus,
     pub output: Vec<String>,
@@ -138,7 +140,7 @@ pub(super) struct Task {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct Chain {
+pub(crate) struct Chain {
     pub label: String,
     pub task_start: usize,
     pub task_count: usize,
@@ -263,6 +265,8 @@ pub async fn run_tui(
     model: Arc<Mutex<Model>>,
     mut rx: mpsc::UnboundedReceiver<TuiEvent>,
     height: u16,
+    render_fn: fn(&mut Frame, &Model, usize),
+    format_fn: fn(&Model) -> String,
 ) -> Result<(), io::Error> {
     let raw = RawMode::try_enable();
 
@@ -292,7 +296,7 @@ pub async fn run_tui(
         if Model::lock(&model).all_done() {
             terminal.draw(|f| {
                 let guard = Model::lock(&model);
-                render::render(f, &guard, spinner_idx);
+                render_fn(f, &guard, spinner_idx);
             })?;
             break;
         }
@@ -314,36 +318,39 @@ pub async fn run_tui(
         spinner_idx = (spinner_idx + 1) % SPINNER_FRAMES.len();
         terminal.draw(|f| {
             let guard = Model::lock(&model);
-            render::render(f, &guard, spinner_idx);
+            render_fn(f, &guard, spinner_idx);
         })?;
     }
 
     drop(terminal);
     drop(raw);
 
-    // scroll past the TUI viewport so the ANSI dump doesn't overlay
-    // leftover TUI content on the terminal (which caused visual corruption
-    // like " ✓ fmt(kiru)u)  ✗ failed")
-    {
+    let guard = Model::lock(&model);
+    let dump = format_fn(&guard);
+    drop(guard);
+
+    if !dump.is_empty() {
+        // scroll past the TUI viewport so the ANSI dump doesn't overlay
+        // leftover TUI content on the terminal (which caused visual corruption
+        // like " ✓ fmt(kiru)u)  ✗ failed")
         let mut out = io::stdout().lock();
         for _ in 0..height {
             out.write_all(b"\n")?;
         }
         out.flush()?;
-    }
 
-    let guard = Model::lock(&model);
-    let dump = render::dump_final(&guard);
-    drop(guard);
-    let mut out = io::stdout().lock();
-    out.write_all(dump.as_bytes())?;
-    out.flush()?;
+        let mut out = io::stdout().lock();
+        out.write_all(dump.as_bytes())?;
+        out.flush()?;
+    }
     Ok(())
 }
 
 pub(crate) fn run_tui_with<F, Fut>(
     chains: Vec<(String, Vec<String>)>,
     worker: F,
+    render_fn: fn(&mut Frame, &Model, usize),
+    format_fn: fn(&Model) -> String,
 ) -> miette::Result<()>
 where
     F: FnOnce(mpsc::UnboundedSender<TuiEvent>) -> Fut + Send + 'static,
@@ -363,7 +370,7 @@ where
             .unwrap_or(u16::MAX);
         let model = Arc::new(Mutex::new(model));
         let (tx, rx) = mpsc::unbounded_channel();
-        let tui = tokio::spawn(run_tui(model, rx, height));
+        let tui = tokio::spawn(run_tui(model, rx, height, render_fn, format_fn));
         let worker = tokio::spawn(worker(tx));
 
         tui.await
@@ -373,4 +380,26 @@ where
             .await
             .map_err(|e| miette::miette!("worker panicked: {}", e))?
     })
+}
+
+pub(crate) fn run_tui_with_run<F, Fut>(
+    chains: Vec<(String, Vec<String>)>,
+    worker: F,
+) -> miette::Result<()>
+where
+    F: FnOnce(mpsc::UnboundedSender<TuiEvent>) -> Fut + Send + 'static,
+    Fut: Future<Output = miette::Result<()>> + Send + 'static,
+{
+    run_tui_with(chains, worker, run::render, run::format_final_output)
+}
+
+pub(crate) fn run_tui_with_sync<F, Fut>(
+    chains: Vec<(String, Vec<String>)>,
+    worker: F,
+) -> miette::Result<()>
+where
+    F: FnOnce(mpsc::UnboundedSender<TuiEvent>) -> Fut + Send + 'static,
+    Fut: Future<Output = miette::Result<()>> + Send + 'static,
+{
+    run_tui_with(chains, worker, sync::render, sync::format_final_output)
 }

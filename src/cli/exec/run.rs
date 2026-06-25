@@ -1,13 +1,12 @@
 use super::super::load_config_and_resolve;
-use crate::runner::Output;
-use crate::runner::executor::ExecContext;
-use crate::tui::{self, TaskStatus, TuiEvent};
+use crate::runner::Runner;
+use crate::runner::tui::{self, TaskStatus, TuiEvent};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn run_project_chains(
-    config: Arc<crate::config::Config>,
+    config: Arc<crate::compiler::Sanctuary>,
     project: &str,
     chains: Vec<Vec<String>>,
 ) -> miette::Result<()> {
@@ -24,7 +23,7 @@ fn run_project_chains(
         .unzip();
 
     let project = project.to_string();
-    tui::run_tui_with(chain_pairs, move |tx| {
+    tui::run_tui_with_run(chain_pairs, move |tx| {
         let project = project.clone();
         let config = Arc::clone(&config);
         async move {
@@ -49,44 +48,15 @@ fn run_project_chains(
                             tui::send_event(&tx, TuiEvent::AppendOutput(idx, line))
                         }
                     };
-                    let mut output = Output::Callback(Arc::new(cb));
-
-                    let project_entry = config.projects.get(&project).unwrap();
-                    let mut ctx = ExecContext::new(&config, Some(project_entry), &mut output);
+                    let mut runner =
+                        Runner::new((*config).clone()).with_output_callback(Arc::new(cb));
 
                     for (fi, fn_name) in chain.iter().enumerate() {
                         let task_idx = start_index + fi;
                         current_task.store(task_idx, Ordering::Relaxed);
                         tui::send_event(&tx, TuiEvent::UpdateStatus(task_idx, TaskStatus::Running));
 
-                        let fn_body = match project_entry.functions.get(fn_name) {
-                            Some(b) => b.clone(),
-                            None => {
-                                tui::send_event(
-                                    &tx,
-                                    TuiEvent::AppendOutput(
-                                        task_idx,
-                                        format!("Error: unknown function '{}'", fn_name),
-                                    ),
-                                );
-                                tui::send_event(
-                                    &tx,
-                                    TuiEvent::UpdateStatus(task_idx, TaskStatus::Error),
-                                );
-                                for remaining in fi + 1..chain.len() {
-                                    tui::send_event(
-                                        &tx,
-                                        TuiEvent::UpdateStatus(
-                                            start_index + remaining,
-                                            TaskStatus::Skipped,
-                                        ),
-                                    );
-                                }
-                                return Err(());
-                            }
-                        };
-
-                        match ctx.exec_fn_body(&fn_body) {
+                        match runner.execute_fn_call(fn_name, &project) {
                             Ok(()) => {
                                 tui::send_event(
                                     &tx,
@@ -140,7 +110,7 @@ fn run_project_chains(
 }
 
 fn run_standalone_chains(
-    config: Arc<crate::config::Config>,
+    config: Arc<crate::compiler::Sanctuary>,
     chains: Vec<Vec<String>>,
 ) -> miette::Result<()> {
     let (chain_pairs, chain_tasks): (Vec<_>, Vec<_>) = chains
@@ -152,7 +122,7 @@ fn run_standalone_chains(
         })
         .unzip();
 
-    tui::run_tui_with(chain_pairs, move |tx| {
+    tui::run_tui_with_run(chain_pairs, move |tx| {
         let config = Arc::clone(&config);
         async move {
             let mut chain_handles = Vec::new();
@@ -175,43 +145,15 @@ fn run_standalone_chains(
                             tui::send_event(&tx, TuiEvent::AppendOutput(idx, line))
                         }
                     };
-                    let mut output = Output::Callback(Arc::new(cb));
-
-                    let mut ctx = ExecContext::new(&config, None, &mut output);
+                    let mut runner =
+                        Runner::new((*config).clone()).with_output_callback(Arc::new(cb));
 
                     for (fi, fn_name) in chain.iter().enumerate() {
                         let task_idx = start_index + fi;
                         current_task.store(task_idx, Ordering::Relaxed);
                         tui::send_event(&tx, TuiEvent::UpdateStatus(task_idx, TaskStatus::Running));
 
-                        let fn_body = match config.functions.get(fn_name) {
-                            Some(b) => b.clone(),
-                            None => {
-                                tui::send_event(
-                                    &tx,
-                                    TuiEvent::AppendOutput(
-                                        task_idx,
-                                        format!("Error: unknown function '{}'", fn_name),
-                                    ),
-                                );
-                                tui::send_event(
-                                    &tx,
-                                    TuiEvent::UpdateStatus(task_idx, TaskStatus::Error),
-                                );
-                                for remaining in fi + 1..chain.len() {
-                                    tui::send_event(
-                                        &tx,
-                                        TuiEvent::UpdateStatus(
-                                            start_index + remaining,
-                                            TaskStatus::Skipped,
-                                        ),
-                                    );
-                                }
-                                return Err(());
-                            }
-                        };
-
-                        match ctx.exec_fn_body(&fn_body) {
+                        match runner.execute_standalone_fn(fn_name) {
                             Ok(()) => {
                                 tui::send_event(
                                     &tx,
@@ -264,14 +206,14 @@ fn run_standalone_chains(
     Ok(())
 }
 
-pub fn run(
+pub fn execute_run_block(
     config_arg: Option<PathBuf>,
     name: String,
     project: Option<String>,
 ) -> miette::Result<()> {
     let config = load_config_and_resolve(config_arg)?;
 
-    let is_standalone = crate::config::is_sanctuary_disabled() && config.projects.is_empty();
+    let is_standalone = crate::compiler::is_sanctuary_disabled();
 
     match project {
         Some(ref proj) => {
