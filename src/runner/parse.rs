@@ -1,7 +1,7 @@
 use super::colors;
 use super::exec;
 use crate::compiler::{Project, Sanctuary};
-use crate::dsl::{CaseMatch, Expr, FnStmt};
+use crate::dsl::{CasePattern, Expr, FnStmt};
 use crate::runner::error::RuntimeError;
 use crate::runner::output::OutputTarget;
 use std::collections::HashMap;
@@ -171,12 +171,12 @@ impl<'a> ExecContext<'a> {
 
     pub(super) fn match_case_pattern(
         &mut self,
-        pattern: &CaseMatch,
+        pattern: &CasePattern,
         value: &str,
     ) -> Result<bool, RuntimeError> {
         match pattern {
-            CaseMatch::Default => Ok(true),
-            CaseMatch::Literal { parts } => {
+            CasePattern::Default => Ok(true),
+            CasePattern::Literal { parts } => {
                 let mut resolved = String::new();
                 for part in parts {
                     if part.is_var {
@@ -190,7 +190,7 @@ impl<'a> ExecContext<'a> {
                 }
                 Ok(value == resolved)
             }
-            CaseMatch::VarRef { name } => {
+            CasePattern::VarRef { name } => {
                 let v = self.resolve_var(name)?.ok_or_else(|| {
                     RuntimeError::Lookup(format!("undefined variable: ${}", name))
                 })?;

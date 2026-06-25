@@ -5,4 +5,4 @@ pub(crate) mod parser;
 pub(crate) mod syntax;
 pub(crate) mod token;
 
-pub(crate) use syntax::{CaseMatch, CaseScope, EnvPair, Expr, FnStmt, InterpolationPart, VarType};
+pub(crate) use syntax::{CaseArm, CasePattern, EnvPair, Expr, FnStmt, InterpolationPart, VarType};

@@ -54,8 +54,8 @@ env_pair         = ident "=" expr ;
 (* ── case block ─────────────────────────────────────────────────── *)
 
 case_stmt        = "case" expr "{" case_arm { case_arm } "}" ";" ;
-case_arm         = case_match "{" { fn_stmt } "}" ";" ;
-case_match       = backtick_expr    (* literal — exact string match   *)
+case_arm         = case_pattern "{" { fn_stmt } "}" ";" ;
+case_pattern       = backtick_expr    (* literal — exact string match   *)
                  | var_ref          (* variable reference             *)
                  | "_" ;            (* default / catch-all            *)
 
@@ -83,7 +83,7 @@ interpolation    = "${" ident "}" ;
 ident            = letter { letter | digit | "_" } ;
 letter           = "A" | "B" | … | "Z" | "a" | "b" | … | "z" ;
 digit            = "0" | "1" | … | "9" ;
-raw_char         = ? any character except "`" and "$" ? ;
+raw_char         = ? any character except "`" ? ;
 
 (* Key identifiers are reserved and cannot be used as user-defined    *)
 (* names: sanctuary import var string shell pr fn run log exec cd     *)

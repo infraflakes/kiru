@@ -327,8 +327,8 @@ fn test_case_stmt_in_fn_body() {
                     } => {
                         assert!(matches!(condition, Expr::VarRef { .. }));
                         assert_eq!(scopes.len(), 2);
-                        assert!(matches!(scopes[0].pattern, CaseMatch::Literal { .. }));
-                        assert!(matches!(scopes[1].pattern, CaseMatch::Default));
+                        assert!(matches!(scopes[0].pattern, CasePattern::Literal { .. }));
+                        assert!(matches!(scopes[1].pattern, CasePattern::Default));
                     }
                     _ => panic!("expected Case"),
                 }
@@ -349,8 +349,8 @@ fn test_case_with_var_ref_pattern() {
             Stmt::FnDecl { body, .. } => match &body[0] {
                 FnStmt::Case { scopes, .. } => {
                     assert_eq!(scopes.len(), 2);
-                    assert!(matches!(scopes[0].pattern, CaseMatch::VarRef { .. }));
-                    assert!(matches!(scopes[1].pattern, CaseMatch::Default));
+                    assert!(matches!(scopes[0].pattern, CasePattern::VarRef { .. }));
+                    assert!(matches!(scopes[1].pattern, CasePattern::Default));
                 }
                 _ => panic!("expected Case"),
             },
@@ -387,7 +387,7 @@ fn test_case_with_interpolation_in_pattern() {
         Stmt::ProjectDecl { body, .. } => match &body[0] {
             Stmt::FnDecl { body, .. } => match &body[0] {
                 FnStmt::Case { scopes, .. } => {
-                    assert!(matches!(scopes[0].pattern, CaseMatch::Literal { .. }));
+                    assert!(matches!(scopes[0].pattern, CasePattern::Literal { .. }));
                 }
                 _ => panic!("expected Case"),
             },
@@ -569,8 +569,8 @@ fn test_case_duplicate_default() {
             Stmt::FnDecl { body, .. } => match &body[0] {
                 FnStmt::Case { scopes, .. } => {
                     assert_eq!(scopes.len(), 2);
-                    assert!(matches!(scopes[0].pattern, CaseMatch::Default));
-                    assert!(matches!(scopes[1].pattern, CaseMatch::Default));
+                    assert!(matches!(scopes[0].pattern, CasePattern::Default));
+                    assert!(matches!(scopes[1].pattern, CasePattern::Default));
                 }
                 _ => panic!("expected Case"),
             },
@@ -614,8 +614,8 @@ fn test_case_with_exec_and_log() {
                     FnStmt::Case { condition, scopes } => {
                         assert!(matches!(condition, Expr::BacktickLit { .. }));
                         assert_eq!(scopes.len(), 2);
-                        assert!(matches!(scopes[0].pattern, CaseMatch::Literal { .. }));
-                        assert!(matches!(scopes[1].pattern, CaseMatch::Default));
+                        assert!(matches!(scopes[0].pattern, CasePattern::Literal { .. }));
+                        assert!(matches!(scopes[1].pattern, CasePattern::Default));
                         assert_eq!(count_fn_stmt_types(&scopes[0].body), vec!["log"]);
                         assert_eq!(count_fn_stmt_types(&scopes[1].body), vec!["exec"]);
                     }

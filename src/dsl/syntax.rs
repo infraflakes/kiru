@@ -56,20 +56,20 @@ pub enum FnStmt {
     },
     Case {
         condition: Expr,
-        scopes: Vec<CaseScope>,
+        scopes: Vec<CaseArm>,
     },
 }
 
 #[derive(Debug, Clone)]
-pub enum CaseMatch {
+pub enum CasePattern {
     Literal { parts: Vec<InterpolationPart> },
     VarRef { name: String },
     Default,
 }
 
 #[derive(Debug, Clone)]
-pub struct CaseScope {
-    pub pattern: CaseMatch,
+pub struct CaseArm {
+    pub pattern: CasePattern,
     pub body: Vec<FnStmt>,
 }
 

@@ -1,7 +1,7 @@
 use crate::compiler::error::CompileError;
 use crate::compiler::merge::merge_project_body_stmt;
 use crate::compiler::types::Sanctuary;
-use crate::dsl::{CaseMatch, Expr, FnStmt};
+use crate::dsl::{CasePattern, Expr, FnStmt};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -222,7 +222,7 @@ fn validate_fn_body(
                 validate_expr(condition, fn_name, scope, errs, proj_name);
                 for arm in scopes {
                     match &arm.pattern {
-                        CaseMatch::VarRef { name } => {
+                        CasePattern::VarRef { name } => {
                             validate_expr(
                                 &Expr::VarRef {
                                     name: name.clone(),
@@ -235,7 +235,7 @@ fn validate_fn_body(
                                 proj_name,
                             );
                         }
-                        CaseMatch::Literal { parts } => {
+                        CasePattern::Literal { parts } => {
                             for part in parts {
                                 if part.is_var && !scope.contains(&part.value) {
                                     errs.push(format!(
@@ -245,7 +245,7 @@ fn validate_fn_body(
                                 }
                             }
                         }
-                        CaseMatch::Default => {}
+                        CasePattern::Default => {}
                     }
                     let mut arm_scope = scope.clone();
                     validate_fn_body(fn_name, &arm.body, &mut arm_scope, errs, proj_name);

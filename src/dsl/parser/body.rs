@@ -107,7 +107,7 @@ impl Parser {
 
         let mut scopes = Vec::new();
         while self.current_token().ty != TokenType::RBrace {
-            let pattern = self.parse_case_match()?;
+            let pattern = self.parse_case_pattern()?;
 
             self.expect_with_context(TokenType::LBrace, "after case pattern")?;
             let mut body = Vec::new();
@@ -118,7 +118,7 @@ impl Parser {
 
             self.expect_with_context(TokenType::Semicolon, "after case arm")?;
 
-            scopes.push(CaseScope { pattern, body });
+            scopes.push(CaseArm { pattern, body });
         }
         self.expect_with_context(TokenType::RBrace, "to close case block")?;
 
@@ -127,11 +127,11 @@ impl Parser {
         Ok(FnStmt::Case { condition, scopes })
     }
 
-    fn parse_case_match(&mut self) -> Result<CaseMatch, ParseError> {
+    fn parse_case_pattern(&mut self) -> Result<CasePattern, ParseError> {
         match &self.current_token().ty {
             TokenType::Ident(s) if s == "_" => {
                 self.advance();
-                Ok(CaseMatch::Default)
+                Ok(CasePattern::Default)
             }
             TokenType::Dollar => {
                 self.advance();
@@ -154,7 +154,7 @@ impl Parser {
                     }
                 };
                 self.advance();
-                Ok(CaseMatch::VarRef { name })
+                Ok(CasePattern::VarRef { name })
             }
             TokenType::Backtick(_) => {
                 let token = self.current_token().clone();
@@ -163,7 +163,7 @@ impl Parser {
                 };
                 self.advance();
                 let parts = parse_interpolation_parts(content, token.offset)?;
-                Ok(CaseMatch::Literal { parts })
+                Ok(CasePattern::Literal { parts })
             }
             _ => {
                 let tok = format_token(self.current_token());
