@@ -216,7 +216,7 @@ fn footer_bar(out: &mut String, cfg: &Sanctuary) {
     let standalone_fns = cfg.functions.len();
     let standalone_runs = cfg.runs.len();
 
-    let is_standalone = crate::compiler::is_sanctuary_disabled() && cfg.projects.is_empty();
+    let is_standalone = crate::compiler::is_sanctuary_disabled();
     let fn_count = total_fns + standalone_fns;
     let run_count = total_runs + standalone_runs;
 

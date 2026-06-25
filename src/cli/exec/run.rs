@@ -213,7 +213,7 @@ pub fn execute_run_block(
 ) -> miette::Result<()> {
     let config = load_config_and_resolve(config_arg)?;
 
-    let is_standalone = crate::compiler::is_sanctuary_disabled() && config.projects.is_empty();
+    let is_standalone = crate::compiler::is_sanctuary_disabled();
 
     match project {
         Some(ref proj) => {

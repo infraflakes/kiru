@@ -12,7 +12,7 @@ pub fn execute_function(
 ) -> miette::Result<()> {
     let config = load_config_and_resolve(config_arg)?;
 
-    let is_standalone = crate::compiler::is_sanctuary_disabled() && config.projects.is_empty();
+    let is_standalone = crate::compiler::is_sanctuary_disabled();
 
     let callback: OutputCallback = Arc::new(|line| {
         let mut out = io::stdout().lock();
