@@ -69,7 +69,7 @@ impl Parser {
 
         self.expect_with_context(TokenType::RBrace, "to close project body")?;
 
-        Ok(Stmt::ProjectDecl {
+        Ok(Stmt::Project {
             name,
             fields,
             body,

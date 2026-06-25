@@ -7,6 +7,17 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
+type VarsResult = Result<(HashMap<String, String>, HashMap<String, String>), CompileError>;
+type ProjectsResult = Result<
+    (
+        Option<Expr>,
+        HashMap<String, Project>,
+        HashMap<String, Vec<FnStmt>>,
+        HashMap<String, Vec<Vec<String>>>,
+    ),
+    CompileError,
+>;
+
 fn spanned_err(
     msg: String,
     source_name: &str,
@@ -130,15 +141,12 @@ pub(crate) fn merge(
     })
 }
 
-fn collect_global_vars(
-    programs: &[Program],
-    shell_timeout: Option<Duration>,
-) -> Result<(HashMap<String, String>, HashMap<String, String>), CompileError> {
+fn collect_global_vars(programs: &[Program], shell_timeout: Option<Duration>) -> VarsResult {
     let mut vars = HashMap::new();
     let mut shell_vars = HashMap::new();
     for program in programs {
         for stmt in &program.stmts {
-            if let Stmt::VarDecl {
+            if let Stmt::Var {
                 name,
                 value,
                 var_type,
@@ -177,21 +185,12 @@ fn collect_global_vars(
     Ok((vars, shell_vars))
 }
 
-#[allow(clippy::type_complexity)]
 fn collect_projects(
     programs: Vec<Program>,
     global_vars: &mut HashMap<String, String>,
     global_shell_vars: &mut HashMap<String, String>,
     shell_timeout: Option<Duration>,
-) -> Result<
-    (
-        Option<Expr>,
-        HashMap<String, Project>,
-        HashMap<String, Vec<FnStmt>>,
-        HashMap<String, Vec<Vec<String>>>,
-    ),
-    CompileError,
-> {
+) -> ProjectsResult {
     let mut sanctuary_expr: Option<Expr> = None;
     let mut projects: HashMap<String, Project> = HashMap::new();
     let mut config_fns: HashMap<String, Vec<FnStmt>> = HashMap::new();
@@ -200,7 +199,7 @@ fn collect_projects(
     for program in programs {
         for stmt in program.stmts {
             match stmt {
-                Stmt::SanctuaryDecl { value } => {
+                Stmt::Sanctuary { value } => {
                     if sanctuary_expr.is_some() {
                         return Err(CompileError::Validation(
                             "duplicate sanctuary declaration".to_string(),
@@ -208,7 +207,7 @@ fn collect_projects(
                     }
                     sanctuary_expr = Some(value);
                 }
-                Stmt::ProjectDecl {
+                Stmt::Project {
                     name,
                     fields,
                     body,
@@ -293,7 +292,7 @@ fn collect_projects(
 
                     projects.insert(name, project);
                 }
-                Stmt::FnDecl {
+                Stmt::Fn {
                     name,
                     body,
                     offset,
@@ -311,7 +310,7 @@ fn collect_projects(
                     }
                     config_fns.insert(name, body);
                 }
-                Stmt::RunDecl {
+                Stmt::Run {
                     name,
                     chains,
                     offset,
@@ -350,7 +349,7 @@ pub(crate) fn merge_project_body_stmt(
         spanned_err(msg, source_name, source_text, offset, len)
     };
     match stmt {
-        Stmt::VarDecl {
+        Stmt::Var {
             name,
             value,
             var_type,
@@ -383,7 +382,7 @@ pub(crate) fn merge_project_body_stmt(
                 project.vars.insert(name, resolved);
             }
         }
-        Stmt::FnDecl {
+        Stmt::Fn {
             name,
             body,
             offset,
@@ -399,7 +398,7 @@ pub(crate) fn merge_project_body_stmt(
             }
             project.functions.insert(name, body);
         }
-        Stmt::RunDecl {
+        Stmt::Run {
             name,
             chains,
             offset,

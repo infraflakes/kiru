@@ -33,7 +33,6 @@ pub enum VarType {
     Shell,
 }
 
-#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone)]
 pub enum FnStmt {
     Log {

@@ -325,23 +325,24 @@ pub async fn run_tui(
     drop(terminal);
     drop(raw);
 
-    // scroll past the TUI viewport so the ANSI dump doesn't overlay
-    // leftover TUI content on the terminal (which caused visual corruption
-    // like " ✓ fmt(kiru)u)  ✗ failed")
-    {
+    let guard = Model::lock(&model);
+    let dump = format_fn(&guard);
+    drop(guard);
+
+    if !dump.is_empty() {
+        // scroll past the TUI viewport so the ANSI dump doesn't overlay
+        // leftover TUI content on the terminal (which caused visual corruption
+        // like " ✓ fmt(kiru)u)  ✗ failed")
         let mut out = io::stdout().lock();
         for _ in 0..height {
             out.write_all(b"\n")?;
         }
         out.flush()?;
-    }
 
-    let guard = Model::lock(&model);
-    let dump = format_fn(&guard);
-    drop(guard);
-    let mut out = io::stdout().lock();
-    out.write_all(dump.as_bytes())?;
-    out.flush()?;
+        let mut out = io::stdout().lock();
+        out.write_all(dump.as_bytes())?;
+        out.flush()?;
+    }
     Ok(())
 }
 

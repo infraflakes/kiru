@@ -9,7 +9,7 @@ impl Parser {
         let value = self.parse_expr()?;
         self.expect_with_context(TokenType::Semicolon, "after sanctuary declaration")?;
 
-        Ok(Stmt::SanctuaryDecl { value })
+        Ok(Stmt::Sanctuary { value })
     }
 
     pub(crate) fn parse_import_decl(&mut self) -> Result<Stmt, ParseError> {
@@ -18,14 +18,14 @@ impl Parser {
         let path = self.parse_expr()?;
         self.expect_with_context(TokenType::Semicolon, "after import path")?;
 
-        Ok(Stmt::ImportDecl { path })
+        Ok(Stmt::Import { path })
     }
 
     pub(crate) fn parse_var_decl(&mut self) -> Result<Stmt, ParseError> {
         let offset = self.current_token().offset;
         let len = self.current_token().len;
         let (var_type, name, value) = self.parse_var_decl_common()?;
-        Ok(Stmt::VarDecl {
+        Ok(Stmt::Var {
             var_type,
             name,
             value,
@@ -68,7 +68,7 @@ impl Parser {
 
         self.expect_with_context(TokenType::RBrace, "to close function body")?;
 
-        Ok(Stmt::FnDecl {
+        Ok(Stmt::Fn {
             name,
             body,
             offset,
@@ -116,7 +116,7 @@ impl Parser {
 
         self.expect_with_context(TokenType::RBrace, "to close run block body")?;
 
-        Ok(Stmt::RunDecl {
+        Ok(Stmt::Run {
             name,
             chains,
             offset,

@@ -108,7 +108,7 @@ fn parse_recursive(
     let base_dir = canon_path.parent().unwrap_or_else(|| Path::new("."));
 
     for stmt in &program.stmts {
-        if let Stmt::ImportDecl { path } = stmt {
+        if let Stmt::Import { path } = stmt {
             let rel_path = match path {
                 Expr::BacktickLit { parts, .. } => {
                     let mut s = String::new();

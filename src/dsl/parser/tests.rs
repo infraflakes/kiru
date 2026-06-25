@@ -25,12 +25,12 @@ fn count_stmt_types(program: &Program) -> Vec<&'static str> {
         .stmts
         .iter()
         .map(|s| match s {
-            Stmt::SanctuaryDecl { .. } => "sanctuary",
-            Stmt::ImportDecl { .. } => "import",
-            Stmt::VarDecl { .. } => "var",
-            Stmt::ProjectDecl { .. } => "pr",
-            Stmt::FnDecl { .. } => "fn",
-            Stmt::RunDecl { .. } => "run",
+            Stmt::Sanctuary { .. } => "sanctuary",
+            Stmt::Import { .. } => "import",
+            Stmt::Var { .. } => "var",
+            Stmt::Project { .. } => "pr",
+            Stmt::Fn { .. } => "fn",
+            Stmt::Run { .. } => "run",
         })
         .collect()
 }
@@ -40,7 +40,7 @@ fn test_sanctuary_decl() {
     let prog = parse_program("sanctuary = `/tmp/dev`;").unwrap();
     assert_eq!(count_stmt_types(&prog), vec!["sanctuary"]);
     match &prog.stmts[0] {
-        Stmt::SanctuaryDecl { value, .. } => match value {
+        Stmt::Sanctuary { value, .. } => match value {
             Expr::BacktickLit { parts, .. } => {
                 let concat: String = parts.iter().map(|p| p.value.as_str()).collect();
                 assert_eq!(concat, "/tmp/dev");
@@ -55,7 +55,7 @@ fn test_sanctuary_decl() {
 fn test_sanctuary_with_var_ref() {
     let prog = parse_program("sanctuary = $workdir;").unwrap();
     match &prog.stmts[0] {
-        Stmt::SanctuaryDecl { value, .. } => match value {
+        Stmt::Sanctuary { value, .. } => match value {
             Expr::VarRef { name, .. } => assert_eq!(name, "workdir"),
             _ => panic!("expected VarRef"),
         },
@@ -68,7 +68,7 @@ fn test_import_decl() {
     let prog = parse_program("import `./other.kiru`;").unwrap();
     assert_eq!(count_stmt_types(&prog), vec!["import"]);
     match &prog.stmts[0] {
-        Stmt::ImportDecl { path } => match path {
+        Stmt::Import { path } => match path {
             Expr::BacktickLit { parts, .. } => {
                 let concat: String = parts.iter().map(|p| p.value.as_str()).collect();
                 assert_eq!(concat, "./other.kiru");
@@ -83,7 +83,7 @@ fn test_import_decl() {
 fn test_var_string_decl() {
     let prog = parse_program("var string x = `hello`;").unwrap();
     match &prog.stmts[0] {
-        Stmt::VarDecl {
+        Stmt::Var {
             var_type,
             name,
             value,
@@ -107,7 +107,7 @@ fn test_var_string_decl() {
 fn test_var_shell_decl() {
     let prog = parse_program("var shell x = `echo hello`;").unwrap();
     match &prog.stmts[0] {
-        Stmt::VarDecl { var_type, name, .. } => {
+        Stmt::Var { var_type, name, .. } => {
             assert_eq!(*var_type, VarType::Shell);
             assert_eq!(name, "x");
         }
@@ -143,7 +143,7 @@ fn test_project_decl_with_fields() {
     let prog = parse_program(input).unwrap();
     assert_eq!(count_stmt_types(&prog), vec!["pr"]);
     match &prog.stmts[0] {
-        Stmt::ProjectDecl {
+        Stmt::Project {
             name, fields, body, ..
         } => {
             assert_eq!(name, "todo");
@@ -161,16 +161,16 @@ fn test_project_decl_with_body_stmts() {
     let input = "\npr todo {\n    url = `git@github.com:user/repo.git`;\n    dir = `todo`;\n    var string app = `todo`;\n    fn build {\n        log `building`;\n    }\n    run release {\n        build;\n    }\n    run ci {\n        build;\n    }\n}";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
-        Stmt::ProjectDecl {
+        Stmt::Project {
             name, fields, body, ..
         } => {
             assert_eq!(name, "todo");
             assert_eq!(fields.len(), 2);
             assert_eq!(body.len(), 4);
-            assert!(matches!(body[0], Stmt::VarDecl { .. }));
-            assert!(matches!(body[1], Stmt::FnDecl { .. }));
-            assert!(matches!(body[2], Stmt::RunDecl { .. }));
-            assert!(matches!(body[3], Stmt::RunDecl { .. }));
+            assert!(matches!(body[0], Stmt::Var { .. }));
+            assert!(matches!(body[1], Stmt::Fn { .. }));
+            assert!(matches!(body[2], Stmt::Run { .. }));
+            assert!(matches!(body[3], Stmt::Run { .. }));
         }
         _ => panic!("expected ProjectDecl"),
     }
@@ -181,7 +181,7 @@ fn test_project_duplicate_fields() {
     let input = "\npr x {\n    url = `a`;\n    url = `b`;\n    dir = `d`;\n}";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
-        Stmt::ProjectDecl { fields, .. } => {
+        Stmt::Project { fields, .. } => {
             assert_eq!(fields.len(), 3);
         }
         _ => panic!("expected ProjectDecl"),
@@ -302,7 +302,7 @@ fn test_project_with_interleaved_fields_and_body() {
     let input = "\npr todo {\n    url = `u`;\n    var string app = `todo`;\n    dir = `d`;\n    fn build { log `x`; }\n    sync = `clone`;\n}";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
-        Stmt::ProjectDecl { fields, body, .. } => {
+        Stmt::Project { fields, body, .. } => {
             assert_eq!(fields.len(), 3);
             assert_eq!(body.len(), 2);
         }
@@ -317,8 +317,8 @@ fn test_case_stmt_in_fn_body() {
     let input = "pr p { fn test { case $os { `Linux` { log `linux`; }; _ { log `other`; }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
-        Stmt::ProjectDecl { body, .. } => match &body[0] {
-            Stmt::FnDecl { name, body, .. } => {
+        Stmt::Project { body, .. } => match &body[0] {
+            Stmt::Fn { name, body, .. } => {
                 assert_eq!(name, "test");
                 assert_eq!(count_fn_stmt_types(body), vec!["case"]);
                 match &body[0] {
@@ -345,8 +345,8 @@ fn test_case_with_var_ref_pattern() {
         "pr p { fn test { case $os { $expected { log `match`; }; _ { log `no match`; }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
-        Stmt::ProjectDecl { body, .. } => match &body[0] {
-            Stmt::FnDecl { body, .. } => match &body[0] {
+        Stmt::Project { body, .. } => match &body[0] {
+            Stmt::Fn { body, .. } => match &body[0] {
                 FnStmt::Case { scopes, .. } => {
                     assert_eq!(scopes.len(), 2);
                     assert!(matches!(scopes[0].pattern, CasePattern::VarRef { .. }));
@@ -365,8 +365,8 @@ fn test_case_with_backtick_condition() {
     let input = "pr p { fn test { case `hello` { `hello` { log `match`; }; _ { log `no`; }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
-        Stmt::ProjectDecl { body, .. } => match &body[0] {
-            Stmt::FnDecl { body, .. } => match &body[0] {
+        Stmt::Project { body, .. } => match &body[0] {
+            Stmt::Fn { body, .. } => match &body[0] {
                 FnStmt::Case { condition, .. } => {
                     assert!(matches!(condition, Expr::BacktickLit { .. }));
                 }
@@ -384,8 +384,8 @@ fn test_case_with_interpolation_in_pattern() {
         "pr p { fn test { case $os { `hello ${world}` { log `match`; }; _ { log `no`; }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
-        Stmt::ProjectDecl { body, .. } => match &body[0] {
-            Stmt::FnDecl { body, .. } => match &body[0] {
+        Stmt::Project { body, .. } => match &body[0] {
+            Stmt::Fn { body, .. } => match &body[0] {
                 FnStmt::Case { scopes, .. } => {
                     assert!(matches!(scopes[0].pattern, CasePattern::Literal { .. }));
                 }
@@ -402,8 +402,8 @@ fn test_case_nested_inside_env() {
     let input = "pr p { fn test { env [DEBUG = `1`] { case $os { `Linux` { log `linux`; }; _ { log `other`; }; }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
-        Stmt::ProjectDecl { body, .. } => match &body[0] {
-            Stmt::FnDecl { body, .. } => {
+        Stmt::Project { body, .. } => match &body[0] {
+            Stmt::Fn { body, .. } => {
                 assert_eq!(count_fn_stmt_types(body), vec!["env"]);
                 match &body[0] {
                     FnStmt::EnvBlock { body: env_body, .. } => {
@@ -468,8 +468,8 @@ fn test_case_nested_inside_case() {
     let input = "pr p { fn test { case $x { `a` { case $y { `1` { log `nested`; }; _ { }; }; }; _ { }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
-        Stmt::ProjectDecl { body, .. } => match &body[0] {
-            Stmt::FnDecl { body, .. } => {
+        Stmt::Project { body, .. } => match &body[0] {
+            Stmt::Fn { body, .. } => {
                 assert_eq!(count_fn_stmt_types(body), vec!["case"]);
                 match &body[0] {
                     FnStmt::Case { scopes, .. } => {
@@ -491,8 +491,8 @@ fn test_case_with_cd_in_arm() {
     let input = "pr p { fn test { case $x { `a` { cd `dir`; }; _ { cd $x; }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
-        Stmt::ProjectDecl { body, .. } => match &body[0] {
-            Stmt::FnDecl { body, .. } => match &body[0] {
+        Stmt::Project { body, .. } => match &body[0] {
+            Stmt::Fn { body, .. } => match &body[0] {
                 FnStmt::Case { scopes, .. } => {
                     assert_eq!(count_fn_stmt_types(&scopes[0].body), vec!["cd"]);
                     assert_eq!(count_fn_stmt_types(&scopes[1].body), vec!["cd"]);
@@ -510,8 +510,8 @@ fn test_case_with_var_decl_in_arm() {
     let input = "pr p { fn test { case $x { `a` { var string msg = `hello`; }; _ { }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
-        Stmt::ProjectDecl { body, .. } => match &body[0] {
-            Stmt::FnDecl { body, .. } => match &body[0] {
+        Stmt::Project { body, .. } => match &body[0] {
+            Stmt::Fn { body, .. } => match &body[0] {
                 FnStmt::Case { scopes, .. } => {
                     assert_eq!(count_fn_stmt_types(&scopes[0].body), vec!["var"]);
                 }
@@ -529,8 +529,8 @@ fn test_case_with_env_in_arm() {
         "pr p { fn test { case $x { `a` { env [DEBUG = `1`] { log `ok`; }; }; _ { }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
-        Stmt::ProjectDecl { body, .. } => match &body[0] {
-            Stmt::FnDecl { body, .. } => match &body[0] {
+        Stmt::Project { body, .. } => match &body[0] {
+            Stmt::Fn { body, .. } => match &body[0] {
                 FnStmt::Case { scopes, .. } => {
                     assert_eq!(count_fn_stmt_types(&scopes[0].body), vec!["env"]);
                 }
@@ -547,8 +547,8 @@ fn test_case_arm_empty_body() {
     let input = "pr p { fn test { case $x { _ { }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
-        Stmt::ProjectDecl { body, .. } => match &body[0] {
-            Stmt::FnDecl { body, .. } => match &body[0] {
+        Stmt::Project { body, .. } => match &body[0] {
+            Stmt::Fn { body, .. } => match &body[0] {
                 FnStmt::Case { scopes, .. } => {
                     assert!(scopes[0].body.is_empty());
                 }
@@ -565,8 +565,8 @@ fn test_case_duplicate_default() {
     let input = "pr p { fn test { case $x { _ { log `a`; }; _ { log `b`; }; }; } }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
-        Stmt::ProjectDecl { body, .. } => match &body[0] {
-            Stmt::FnDecl { body, .. } => match &body[0] {
+        Stmt::Project { body, .. } => match &body[0] {
+            Stmt::Fn { body, .. } => match &body[0] {
                 FnStmt::Case { scopes, .. } => {
                     assert_eq!(scopes.len(), 2);
                     assert!(matches!(scopes[0].pattern, CasePattern::Default));
@@ -606,8 +606,8 @@ fn test_case_with_exec_and_log() {
 }";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
-        Stmt::ProjectDecl { body, .. } => match &body[0] {
-            Stmt::FnDecl { name, body, .. } => {
+        Stmt::Project { body, .. } => match &body[0] {
+            Stmt::Fn { name, body, .. } => {
                 assert_eq!(name, "deploy");
                 assert_eq!(count_fn_stmt_types(body), vec!["var", "case"]);
                 match &body[1] {

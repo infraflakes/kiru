@@ -2,33 +2,33 @@ use crate::dsl::{Expr, FnStmt, VarType};
 
 #[derive(Debug, Clone)]
 pub enum Stmt {
-    SanctuaryDecl {
+    Sanctuary {
         value: Expr,
     },
-    ImportDecl {
+    Import {
         path: Expr,
     },
-    VarDecl {
+    Var {
         var_type: VarType,
         name: String,
         value: Expr,
         offset: usize,
         len: usize,
     },
-    ProjectDecl {
+    Project {
         name: String,
         fields: Vec<ProjectField>,
         body: Vec<Stmt>,
         offset: usize,
         len: usize,
     },
-    FnDecl {
+    Fn {
         name: String,
         body: Vec<FnStmt>,
         offset: usize,
         len: usize,
     },
-    RunDecl {
+    Run {
         name: String,
         chains: Vec<Vec<String>>,
         offset: usize,

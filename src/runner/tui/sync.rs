@@ -1,5 +1,5 @@
-use super::render::{self, status_color, status_label, task_marker};
-use super::{MAX_PANEL_HEIGHT, Model, TaskStatus};
+use super::render;
+use super::{Model, SPINNER_FRAMES, TaskStatus};
 use crate::runner::colors;
 use ratatui::{
     Frame,
@@ -9,6 +9,37 @@ use ratatui::{
     widgets::{Clear, Paragraph},
 };
 
+/// Extract just the meaningful message from a sync summary line.
+/// For git output lines (no known prefix), returns the line as-is.
+fn sync_message(line: &str) -> &str {
+    if let Some(rest) = line
+        .strip_prefix("skip  ")
+        .or_else(|| line.strip_prefix("exists  "))
+        .or_else(|| line.strip_prefix("clone  "))
+    {
+        if let Some(pos) = rest.find(' ') {
+            rest[pos + 1..].trim()
+        } else {
+            rest.trim()
+        }
+    } else {
+        line
+    }
+}
+
+fn current_display(task: &super::Task) -> String {
+    if task.output.is_empty() {
+        return String::new();
+    }
+    if task.finalized {
+        // Show summary (first line) for finalized tasks
+        sync_message(&task.output[0]).to_string()
+    } else {
+        // Show live output (last line) for running/pending tasks
+        sync_message(task.output.last().unwrap()).to_string()
+    }
+}
+
 pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
     let area = f.area();
     f.render_widget(Clear, area);
@@ -17,137 +48,66 @@ pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
     }
 
     let mut y = area.y;
-    for chain in &model.chains {
+    let all_done = model.all_done();
+    let done_count = model
+        .tasks
+        .iter()
+        .filter(|t| {
+            matches!(
+                t.status,
+                TaskStatus::Success | TaskStatus::Error | TaskStatus::Skipped
+            )
+        })
+        .count();
+    let total = model.tasks.len();
+
+    let header = if all_done {
+        "✓ All projects synced".to_string()
+    } else {
+        format!(
+            "{} Syncing projects ({}/{})",
+            SPINNER_FRAMES[spinner_idx], done_count, total
+        )
+    };
+    let header_color = if all_done {
+        colors::OK
+    } else {
+        colors::RUNNING
+    };
+    f.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            &header,
+            Style::default().fg(header_color),
+        ))),
+        Rect::new(area.x, y, area.width, 1),
+    );
+    y += 1;
+
+    for (ci, chain) in model.chains.iter().enumerate() {
         if y >= area.y + area.height {
             break;
         }
 
-        let ch_status = model.chain_status(chain);
-        let ch_color = status_color(ch_status);
-        let header_char = match ch_status {
-            TaskStatus::Success => "✓",
-            TaskStatus::Error => "✗",
-            _ => "├─",
+        let conn = if ci == model.chains.len() - 1 {
+            "└──"
+        } else {
+            "├──"
         };
 
-        let header = format!("{} {}", header_char, chain.label);
-        let header_span = Span::styled(header, Style::default().fg(ch_color));
-        f.render_widget(
-            Paragraph::new(Line::from(header_span)),
-            Rect::new(area.x, y, area.width, 1),
-        );
-        y += 1;
-
-        for ti in 0..chain.task_count {
-            if y >= area.y + area.height {
-                break;
-            }
-            if let Some(task) = model.tasks.get(chain.task_start + ti) {
-                let tmarker = task_marker(task, spinner_idx);
-                let tcolor = status_color(task.status);
-                let line = format!(
-                    "│   {}  {} {}",
-                    task.name,
-                    tmarker,
-                    status_label(task.status),
-                );
-                let span = Span::styled(line, Style::default().fg(tcolor));
-                f.render_widget(
-                    Paragraph::new(Line::from(span)),
-                    Rect::new(area.x, y, area.width, 1),
-                );
-            }
-            y += 1;
+        if let Some(task) = model.tasks.get(chain.task_start) {
+            let color = render::status_color(task.status);
+            let display = current_display(task);
+            let line = format!("{} [{}]  {}", conn, task.name, display);
+            let span = Span::styled(line, Style::default().fg(color));
+            f.render_widget(
+                Paragraph::new(Line::from(span)),
+                Rect::new(area.x, y, area.width, 1),
+            );
         }
+        y += 1;
     }
 }
 
-pub fn format_final_output(model: &Model) -> String {
-    let mut buf = String::new();
-    buf.push('\n');
-
-    for chain in &model.chains {
-        render::write_separator(&mut buf, &chain.label);
-
-        for ti in 0..chain.task_count {
-            if let Some(task) = model.tasks.get(chain.task_start + ti) {
-                let color = match task.status {
-                    TaskStatus::Success => colors::OK_ANSI,
-                    TaskStatus::Running => colors::RUNNING_ANSI,
-                    TaskStatus::Pending => colors::PENDING_ANSI,
-                    TaskStatus::Error => colors::FAILED_ANSI,
-                    TaskStatus::Skipped => colors::MUTED_ANSI,
-                };
-                let marker = task_marker(task, 0);
-
-                buf.push(' ');
-                buf.push_str(color);
-                buf.push_str(&marker);
-                buf.push_str(colors::RESET);
-                buf.push(' ');
-                buf.push_str(&task.name);
-                buf.push('\n');
-
-                if !task.output.is_empty() {
-                    let total = task.output.len();
-                    let panel = total.min(MAX_PANEL_HEIGHT);
-                    let pruned = total - panel;
-
-                    if pruned > 0 {
-                        buf.push_str("   ");
-                        buf.push_str(colors::MUTED_ANSI);
-                        buf.push('↑');
-                        buf.push(' ');
-                        buf.push_str(&pruned.to_string());
-                        buf.push_str(" lines hidden ");
-                        buf.push_str(colors::RESET);
-                        buf.push('\n');
-                    }
-
-                    for line in task.output.iter().rev().take(panel).rev() {
-                        buf.push_str("  ");
-                        buf.push_str(colors::MUTED_ANSI);
-                        buf.push_str("  ");
-                        buf.push_str(colors::RESET);
-                        render::write_colored_line_buf(&mut buf, line);
-                        buf.push('\n');
-                    }
-                }
-                buf.push('\n');
-            }
-        }
-    }
-
-    let ok_count = model
-        .tasks
-        .iter()
-        .filter(|t| t.status == TaskStatus::Success)
-        .count();
-    let err_count = model
-        .tasks
-        .iter()
-        .filter(|t| t.status == TaskStatus::Error)
-        .count();
-    let skipped_count = model
-        .tasks
-        .iter()
-        .filter(|t| t.status == TaskStatus::Skipped)
-        .count();
-
-    if err_count > 0 {
-        if skipped_count > 0 {
-            buf.push_str(&format!(
-                "{} done, {} failed, {} skipped\n",
-                ok_count, err_count, skipped_count
-            ));
-        } else {
-            buf.push_str(&format!("{} done, {} failed\n", ok_count, err_count));
-        }
-    } else if skipped_count > 0 {
-        buf.push_str(&format!("✓ all passed, {} skipped\n", skipped_count));
-    } else {
-        buf.push_str(&format!("✓ all {} passed\n", ok_count));
-    }
-
-    buf
+pub fn format_final_output(_model: &Model) -> String {
+    String::new()
 }
