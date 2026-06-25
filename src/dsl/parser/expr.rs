@@ -56,7 +56,7 @@ impl Parser {
                     Err(ParseError::new(
                         self.eof_aware_span(),
                         format!(
-                            "expected backtick string, found {}",
+                            "expected backtick string or variable reference, found {}",
                             format_token(self.current_token())
                         ),
                     ))

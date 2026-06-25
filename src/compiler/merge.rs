@@ -5,6 +5,7 @@ use crate::dsl::{Expr, FnStmt, VarType};
 use crate::runner;
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Duration;
 
 fn spanned_err(
     msg: String,
@@ -22,12 +23,15 @@ fn spanned_err(
 
 /// Resolve an expression against string vars and shell vars.
 /// Shell vars are executed on first reference and cached in `vars`.
+/// When `shell_timeout` is `None`, shell execution is skipped and the command
+/// text is used as the value instead (for validation-only flows).
 fn resolve_expr_merged(
     expr: &Expr,
     vars: &mut HashMap<String, String>,
     shell_vars: &mut HashMap<String, String>,
     source_name: &str,
     source_text: &str,
+    shell_timeout: Option<Duration>,
 ) -> Result<String, CompileError> {
     let err_for =
         |msg: String, o: usize, l: usize| spanned_err(msg, source_name, source_text, o, l);
@@ -37,7 +41,7 @@ fn resolve_expr_merged(
                 return Ok(val.clone());
             }
             if let Some(cmd) = shell_vars.remove(name) {
-                resolve_shell_and_cache(name, &cmd, vars)?;
+                resolve_shell_and_cache(name, &cmd, vars, shell_timeout)?;
                 return Ok(vars[name].clone());
             }
             Err(err_for(
@@ -53,7 +57,7 @@ fn resolve_expr_merged(
                     if let Some(val) = vars.get(&part.value) {
                         result.push_str(val);
                     } else if let Some(cmd) = shell_vars.remove(&part.value) {
-                        resolve_shell_and_cache(&part.value, &cmd, vars)?;
+                        resolve_shell_and_cache(&part.value, &cmd, vars, shell_timeout)?;
                         result.push_str(&vars[&part.value]);
                     } else {
                         return Err(err_for(
@@ -75,23 +79,44 @@ fn resolve_shell_and_cache(
     name: &str,
     cmd: &str,
     vars: &mut HashMap<String, String>,
+    shell_timeout: Option<Duration>,
 ) -> Result<(), CompileError> {
-    let out =
-        runner::exec_and_get_stdout(cmd, None::<&Path>, None::<&HashMap<String, String>>, None)
-            .map_err(|e| CompileError::Validation(format!("shell var ${} failed: {}", name, e)))?;
-    vars.insert(name.to_string(), out.stdout);
+    if let Some(timeout) = shell_timeout {
+        let out = runner::exec_and_get_stdout(
+            cmd,
+            None::<&Path>,
+            None::<&HashMap<String, String>>,
+            Some(timeout),
+        )
+        .map_err(|e| CompileError::Validation(format!("shell var ${} failed: {}", name, e)))?;
+        vars.insert(name.to_string(), out.stdout);
+    } else {
+        vars.insert(name.to_string(), cmd.to_string());
+    }
     Ok(())
 }
 
-pub(crate) fn merge(programs: Vec<Program>) -> Result<Sanctuary, CompileError> {
-    let (mut global_vars, mut global_shell_vars) = collect_global_vars(&programs)?;
-    let (sanctuary_expr, projects, config_fns, config_runs) =
-        collect_projects(programs, &mut global_vars, &mut global_shell_vars)?;
+pub(crate) fn merge(
+    programs: Vec<Program>,
+    shell_timeout: Option<Duration>,
+) -> Result<Sanctuary, CompileError> {
+    let (mut global_vars, mut global_shell_vars) = collect_global_vars(&programs, shell_timeout)?;
+    let (sanctuary_expr, projects, config_fns, config_runs) = collect_projects(
+        programs,
+        &mut global_vars,
+        &mut global_shell_vars,
+        shell_timeout,
+    )?;
 
     let sanctuary_path = match sanctuary_expr {
-        Some(ref expr) => {
-            resolve_expr_merged(expr, &mut global_vars, &mut global_shell_vars, "", "")?
-        }
+        Some(ref expr) => resolve_expr_merged(
+            expr,
+            &mut global_vars,
+            &mut global_shell_vars,
+            "",
+            "",
+            shell_timeout,
+        )?,
         None => String::new(),
     };
 
@@ -107,6 +132,7 @@ pub(crate) fn merge(programs: Vec<Program>) -> Result<Sanctuary, CompileError> {
 
 fn collect_global_vars(
     programs: &[Program],
+    shell_timeout: Option<Duration>,
 ) -> Result<(HashMap<String, String>, HashMap<String, String>), CompileError> {
     let mut vars = HashMap::new();
     let mut shell_vars = HashMap::new();
@@ -137,6 +163,7 @@ fn collect_global_vars(
                     &mut shell_vars,
                     &program.source_name,
                     &program.source_text,
+                    shell_timeout,
                 )?;
 
                 if var_type == &VarType::Shell {
@@ -155,6 +182,7 @@ fn collect_projects(
     programs: Vec<Program>,
     global_vars: &mut HashMap<String, String>,
     global_shell_vars: &mut HashMap<String, String>,
+    shell_timeout: Option<Duration>,
 ) -> Result<
     (
         Option<Expr>,
@@ -228,6 +256,7 @@ fn collect_projects(
                             global_shell_vars,
                             &program.source_name,
                             &program.source_text,
+                            shell_timeout,
                         )?;
                         match field.key.as_str() {
                             "url" => project.url = value,
@@ -258,6 +287,7 @@ fn collect_projects(
                             &mut merged_shell_vars,
                             &program.source_name,
                             &program.source_text,
+                            shell_timeout,
                         )?;
                     }
 
@@ -314,6 +344,7 @@ pub(crate) fn merge_project_body_stmt(
     merged_shell_vars: &mut HashMap<String, String>,
     source_name: &str,
     source_text: &str,
+    shell_timeout: Option<Duration>,
 ) -> Result<(), CompileError> {
     let make_err = |msg: String, offset: usize, len: usize| -> CompileError {
         spanned_err(msg, source_name, source_text, offset, len)
@@ -335,8 +366,14 @@ pub(crate) fn merge_project_body_stmt(
                 ));
             }
 
-            let resolved =
-                resolve_expr_merged(&value, merged, merged_shell_vars, source_name, source_text)?;
+            let resolved = resolve_expr_merged(
+                &value,
+                merged,
+                merged_shell_vars,
+                source_name,
+                source_text,
+                shell_timeout,
+            )?;
 
             if var_type == VarType::Shell {
                 merged_shell_vars.insert(name.clone(), resolved.clone());

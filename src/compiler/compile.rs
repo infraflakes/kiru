@@ -8,8 +8,12 @@ use crate::dsl::lexer::Lexer;
 use crate::dsl::parser::Parser;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-pub fn compile(entry_path: &Path) -> Result<Sanctuary, CompileError> {
+pub fn compile(
+    entry_path: &Path,
+    shell_timeout: Option<Duration>,
+) -> Result<Sanctuary, CompileError> {
     let abs_path = if entry_path.is_absolute() {
         entry_path.to_path_buf()
     } else {
@@ -22,13 +26,16 @@ pub fn compile(entry_path: &Path) -> Result<Sanctuary, CompileError> {
     let mut recursion_stack = HashSet::new();
     let programs = parse_recursive(&abs_path, &mut loaded_files, &mut recursion_stack)?;
 
-    let config = merge::merge(programs)?;
+    let config = merge::merge(programs, shell_timeout)?;
 
     Ok(config)
 }
 
-pub fn resolve_includes(cfg: &mut Sanctuary) -> Result<(), CompileError> {
-    validation::resolve_include(cfg, parse_recursive)
+pub fn resolve_includes(
+    cfg: &mut Sanctuary,
+    shell_timeout: Option<Duration>,
+) -> Result<(), CompileError> {
+    validation::resolve_include(cfg, parse_recursive, shell_timeout)
 }
 
 fn parse_recursive(

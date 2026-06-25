@@ -3,12 +3,13 @@ use crate::runner::sync;
 use crate::runner::tui::{self, TaskStatus, TuiEvent};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
     if crate::compiler::is_sanctuary_disabled() {
         return Err(miette::miette!("sync is not available in SANCTUARY=0 mode"));
     }
-    let config = load_config(config_arg)?;
+    let config = load_config(config_arg, Some(Duration::from_secs(30)))?;
 
     let project_names: Vec<String> = config.projects.keys().cloned().collect();
     let chain_pairs: Vec<(String, Vec<String>)> = project_names

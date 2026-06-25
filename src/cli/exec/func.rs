@@ -4,13 +4,14 @@ use crate::runner::{OutputCallback, Runner};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 pub fn execute_function(
     config_arg: Option<PathBuf>,
     name: String,
     project: Option<String>,
 ) -> miette::Result<()> {
-    let config = load_config_and_resolve(config_arg)?;
+    let config = load_config_and_resolve(config_arg, Some(Duration::from_secs(30)))?;
 
     let is_standalone = crate::compiler::is_sanctuary_disabled();
 
