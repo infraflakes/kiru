@@ -4,7 +4,7 @@ use crossterm::{
 };
 
 use ratatui::{
-    Terminal, TerminalOptions, Viewport,
+    Frame, Terminal, TerminalOptions, Viewport,
     backend::{Backend, ClearType, CrosstermBackend, WindowSize},
     buffer::Cell,
     layout::{Position, Size},
@@ -110,6 +110,8 @@ impl<W: Write> Backend for SafeBackend<W> {
 }
 
 pub mod render;
+pub mod run;
+pub mod sync;
 
 pub fn send_event(tx: &mpsc::UnboundedSender<TuiEvent>, event: TuiEvent) {
     if tx.send(event).is_err() {
@@ -263,6 +265,8 @@ pub async fn run_tui(
     model: Arc<Mutex<Model>>,
     mut rx: mpsc::UnboundedReceiver<TuiEvent>,
     height: u16,
+    render_fn: fn(&mut Frame, &Model, usize),
+    format_fn: fn(&Model) -> String,
 ) -> Result<(), io::Error> {
     let raw = RawMode::try_enable();
 
@@ -292,7 +296,7 @@ pub async fn run_tui(
         if Model::lock(&model).all_done() {
             terminal.draw(|f| {
                 let guard = Model::lock(&model);
-                render::render(f, &guard, spinner_idx);
+                render_fn(f, &guard, spinner_idx);
             })?;
             break;
         }
@@ -314,7 +318,7 @@ pub async fn run_tui(
         spinner_idx = (spinner_idx + 1) % SPINNER_FRAMES.len();
         terminal.draw(|f| {
             let guard = Model::lock(&model);
-            render::render(f, &guard, spinner_idx);
+            render_fn(f, &guard, spinner_idx);
         })?;
     }
 
@@ -333,7 +337,7 @@ pub async fn run_tui(
     }
 
     let guard = Model::lock(&model);
-    let dump = render::format_final_output(&guard);
+    let dump = format_fn(&guard);
     drop(guard);
     let mut out = io::stdout().lock();
     out.write_all(dump.as_bytes())?;
@@ -344,6 +348,8 @@ pub async fn run_tui(
 pub(crate) fn run_tui_with<F, Fut>(
     chains: Vec<(String, Vec<String>)>,
     worker: F,
+    render_fn: fn(&mut Frame, &Model, usize),
+    format_fn: fn(&Model) -> String,
 ) -> miette::Result<()>
 where
     F: FnOnce(mpsc::UnboundedSender<TuiEvent>) -> Fut + Send + 'static,
@@ -363,7 +369,7 @@ where
             .unwrap_or(u16::MAX);
         let model = Arc::new(Mutex::new(model));
         let (tx, rx) = mpsc::unbounded_channel();
-        let tui = tokio::spawn(run_tui(model, rx, height));
+        let tui = tokio::spawn(run_tui(model, rx, height, render_fn, format_fn));
         let worker = tokio::spawn(worker(tx));
 
         tui.await
@@ -373,4 +379,26 @@ where
             .await
             .map_err(|e| miette::miette!("worker panicked: {}", e))?
     })
+}
+
+pub(crate) fn run_tui_with_run<F, Fut>(
+    chains: Vec<(String, Vec<String>)>,
+    worker: F,
+) -> miette::Result<()>
+where
+    F: FnOnce(mpsc::UnboundedSender<TuiEvent>) -> Fut + Send + 'static,
+    Fut: Future<Output = miette::Result<()>> + Send + 'static,
+{
+    run_tui_with(chains, worker, run::render, run::format_final_output)
+}
+
+pub(crate) fn run_tui_with_sync<F, Fut>(
+    chains: Vec<(String, Vec<String>)>,
+    worker: F,
+) -> miette::Result<()>
+where
+    F: FnOnce(mpsc::UnboundedSender<TuiEvent>) -> Fut + Send + 'static,
+    Fut: Future<Output = miette::Result<()>> + Send + 'static,
+{
+    run_tui_with(chains, worker, sync::render, sync::format_final_output)
 }

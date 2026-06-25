@@ -86,7 +86,10 @@ fn sync_project_inner(
 
     if !status.success() {
         if status.code().is_none() {
-            std::process::exit(130);
+            return Err(RuntimeError::exec_io_error(
+                format!("git clone {}", proj.name),
+                "interrupted by signal",
+            ));
         }
         return Err(RuntimeError::exec_exit_code(
             format!("git clone {}", proj.name),

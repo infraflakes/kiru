@@ -24,7 +24,7 @@ fn run_project_chains(
         .unzip();
 
     let project = project.to_string();
-    tui::run_tui_with(chain_pairs, move |tx| {
+    tui::run_tui_with_run(chain_pairs, move |tx| {
         let project = project.clone();
         let config = Arc::clone(&config);
         async move {
@@ -123,7 +123,7 @@ fn run_standalone_chains(
         })
         .unzip();
 
-    tui::run_tui_with(chain_pairs, move |tx| {
+    tui::run_tui_with_run(chain_pairs, move |tx| {
         let config = Arc::clone(&config);
         async move {
             let mut chain_handles = Vec::new();
