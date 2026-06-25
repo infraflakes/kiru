@@ -57,12 +57,12 @@ fn without_sanctuary<R>(f: impl FnOnce() -> R) -> R {
 }
 
 fn compile_no_shell(entry_path: &Path) -> Result<Sanctuary, CompileError> {
-    compile(entry_path, None)
+    compile(entry_path)
 }
 
 fn compile_full(entry_path: &Path) -> Result<Sanctuary, CompileError> {
-    let mut cfg = compile(entry_path, None)?;
-    resolve_includes(&mut cfg, None)?;
+    let mut cfg = compile(entry_path)?;
+    resolve_includes(&mut cfg)?;
     validate(&cfg)?;
     Ok(cfg)
 }

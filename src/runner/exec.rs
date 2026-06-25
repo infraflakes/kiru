@@ -88,7 +88,6 @@ pub(crate) fn exec_and_get_stdout(
     command: &str,
     dir: Option<&Path>,
     env: Option<&std::collections::HashMap<String, String>>,
-    timeout: Option<Duration>,
 ) -> Result<ShellVarValue, Error> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
     let mut cmd = Command::new(shell);
@@ -106,81 +105,72 @@ pub(crate) fn exec_and_get_stdout(
 
     let mut child = cmd.spawn().map_err(Error::Spawn)?;
 
-    let (status, stdout_buf, stderr_buf) = match timeout {
-        Some(dur) => {
-            let start = Instant::now();
+    let dur = Duration::from_secs(30);
+    let start = Instant::now();
 
-            let stdout_buf = Arc::new(Mutex::new(Vec::new()));
-            let stderr_buf = Arc::new(Mutex::new(Vec::new()));
+    let stdout_buf = Arc::new(Mutex::new(Vec::new()));
+    let stderr_buf = Arc::new(Mutex::new(Vec::new()));
 
-            let stdout_reader = child.stdout.take().map(|s| {
-                let buf = Arc::clone(&stdout_buf);
-                std::thread::spawn(move || {
-                    let mut tmp = Vec::new();
-                    let _ = std::io::BufReader::new(s).read_to_end(&mut tmp);
-                    buf.lock().unwrap_or_else(|e| e.into_inner()).extend(tmp);
-                })
-            });
-            let stderr_reader = child.stderr.take().map(|s| {
-                let buf = Arc::clone(&stderr_buf);
-                std::thread::spawn(move || {
-                    let mut tmp = Vec::new();
-                    let _ = std::io::BufReader::new(s).read_to_end(&mut tmp);
-                    buf.lock().unwrap_or_else(|e| e.into_inner()).extend(tmp);
-                })
-            });
+    let stdout_reader = child.stdout.take().map(|s| {
+        let buf = Arc::clone(&stdout_buf);
+        std::thread::spawn(move || {
+            let mut tmp = Vec::new();
+            let _ = std::io::BufReader::new(s).read_to_end(&mut tmp);
+            buf.lock().unwrap_or_else(|e| e.into_inner()).extend(tmp);
+        })
+    });
+    let stderr_reader = child.stderr.take().map(|s| {
+        let buf = Arc::clone(&stderr_buf);
+        std::thread::spawn(move || {
+            let mut tmp = Vec::new();
+            let _ = std::io::BufReader::new(s).read_to_end(&mut tmp);
+            buf.lock().unwrap_or_else(|e| e.into_inner()).extend(tmp);
+        })
+    });
 
-            let status = loop {
-                match child.try_wait() {
-                    Ok(Some(status)) => break status,
-                    Ok(None) => {
-                        if start.elapsed() >= dur {
-                            let _ = child.kill();
-                            let _ = child.wait();
-                            if let Some(h) = stdout_reader {
-                                let _ = h.join();
-                            }
-                            if let Some(h) = stderr_reader {
-                                let _ = h.join();
-                            }
-                            let out = stdout_buf.lock().unwrap_or_else(|e| e.into_inner());
-                            let err = stderr_buf.lock().unwrap_or_else(|e| e.into_inner());
-                            return Err(Error::Timeout {
-                                command: command.to_string(),
-                                partial_stdout: String::from_utf8_lossy(&out).into_owned(),
-                                partial_stderr: String::from_utf8_lossy(&err).into_owned(),
-                            });
-                        }
-                        std::thread::sleep(Duration::from_millis(50));
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if start.elapsed() >= dur {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    if let Some(h) = stdout_reader {
+                        let _ = h.join();
                     }
-                    Err(e) => {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        return Err(Error::Spawn(e));
+                    if let Some(h) = stderr_reader {
+                        let _ = h.join();
                     }
+                    let out = stdout_buf.lock().unwrap_or_else(|e| e.into_inner());
+                    let err = stderr_buf.lock().unwrap_or_else(|e| e.into_inner());
+                    return Err(Error::Timeout {
+                        command: command.to_string(),
+                        partial_stdout: String::from_utf8_lossy(&out).into_owned(),
+                        partial_stderr: String::from_utf8_lossy(&err).into_owned(),
+                    });
                 }
-            };
-
-            if let Some(h) = stdout_reader {
-                let _ = h.join();
+                std::thread::sleep(Duration::from_millis(50));
             }
-            if let Some(h) = stderr_reader {
-                let _ = h.join();
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(Error::Spawn(e));
             }
-
-            let out = stdout_buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
-            let err = stderr_buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
-
-            (status, out, err)
-        }
-        None => {
-            let output = child.wait_with_output().map_err(Error::Spawn)?;
-            (output.status, output.stdout, output.stderr)
         }
     };
 
-    let stdout = String::from_utf8_lossy(&stdout_buf).trim_end().to_string();
-    let stderr = String::from_utf8_lossy(&stderr_buf).to_string();
+    if let Some(h) = stdout_reader {
+        let _ = h.join();
+    }
+    if let Some(h) = stderr_reader {
+        let _ = h.join();
+    }
+
+    let out = stdout_buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let err = stderr_buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
+
+    let stdout = String::from_utf8_lossy(&out).trim_end().to_string();
+    let stderr = String::from_utf8_lossy(&err).to_string();
 
     if !status.success() {
         if status.code().is_none() {

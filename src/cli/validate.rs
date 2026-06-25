@@ -18,7 +18,7 @@ macro_rules! style {
 }
 
 pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
-    let cfg = load_config_and_resolve(config_arg, None)?;
+    let cfg = load_config_and_resolve(config_arg)?;
     let output = format_config(&cfg);
     display_output(&output)?;
     Ok(())

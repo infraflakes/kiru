@@ -90,22 +90,22 @@ impl<'a> ExecContext<'a> {
         }
         if let Some(cmd) = self.shell_vars.remove(name) {
             let env_map: HashMap<String, String> = self.build_env().collect();
-            let out = exec::exec_and_get_stdout(&cmd, Some(&self.work_dir), Some(&env_map), None)
+            let out = exec::exec_and_get_stdout(&cmd, Some(&self.work_dir), Some(&env_map))
                 .map_err(|e| match e {
-                exec::Error::Spawn(io_err) => RuntimeError::exec_io_error(&cmd, io_err),
-                exec::Error::Exit {
-                    stderr, exit_code, ..
-                } => RuntimeError::Exec {
-                    cmd: cmd.clone(),
-                    exit_code,
-                    detail: stderr,
-                },
-                exec::Error::Timeout { partial_stderr, .. } => RuntimeError::Exec {
-                    cmd: cmd.clone(),
-                    exit_code: None,
-                    detail: format!("timed out: {}", partial_stderr),
-                },
-            })?;
+                    exec::Error::Spawn(io_err) => RuntimeError::exec_io_error(&cmd, io_err),
+                    exec::Error::Exit {
+                        stderr, exit_code, ..
+                    } => RuntimeError::Exec {
+                        cmd: cmd.clone(),
+                        exit_code,
+                        detail: stderr,
+                    },
+                    exec::Error::Timeout { partial_stderr, .. } => RuntimeError::Exec {
+                        cmd: cmd.clone(),
+                        exit_code: None,
+                        detail: format!("timed out: {}", partial_stderr),
+                    },
+                })?;
             let val = out.stdout;
             self.vars.insert(name.to_string(), val.clone());
             return Ok(Some(val));
@@ -263,22 +263,22 @@ impl<'a> ExecContext<'a> {
 
         let resolved = if var_type == &crate::dsl::VarType::Shell {
             let env_map: HashMap<String, String> = self.build_env().collect();
-            let out = exec::exec_and_get_stdout(&val, Some(&self.work_dir), Some(&env_map), None)
+            let out = exec::exec_and_get_stdout(&val, Some(&self.work_dir), Some(&env_map))
                 .map_err(|e| match e {
-                exec::Error::Spawn(io_err) => RuntimeError::exec_io_error(&val, io_err),
-                exec::Error::Exit {
-                    stderr, exit_code, ..
-                } => RuntimeError::Exec {
-                    cmd: val.clone(),
-                    exit_code,
-                    detail: stderr,
-                },
-                exec::Error::Timeout { partial_stderr, .. } => RuntimeError::Exec {
-                    cmd: val.clone(),
-                    exit_code: None,
-                    detail: format!("timed out: {}", partial_stderr),
-                },
-            })?;
+                    exec::Error::Spawn(io_err) => RuntimeError::exec_io_error(&val, io_err),
+                    exec::Error::Exit {
+                        stderr, exit_code, ..
+                    } => RuntimeError::Exec {
+                        cmd: val.clone(),
+                        exit_code,
+                        detail: stderr,
+                    },
+                    exec::Error::Timeout { partial_stderr, .. } => RuntimeError::Exec {
+                        cmd: val.clone(),
+                        exit_code: None,
+                        detail: format!("timed out: {}", partial_stderr),
+                    },
+                })?;
             out.stdout
         } else {
             val

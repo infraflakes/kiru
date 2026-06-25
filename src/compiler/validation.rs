@@ -4,7 +4,6 @@ use crate::compiler::types::Sanctuary;
 use crate::dsl::{CasePattern, Expr, FnStmt};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 pub fn is_sanctuary_disabled() -> bool {
     std::env::var("SANCTUARY").as_deref() == Ok("0")
@@ -17,7 +16,6 @@ pub(crate) fn resolve_include(
         &mut HashSet<PathBuf>,
         &mut HashSet<PathBuf>,
     ) -> Result<Vec<crate::dsl::ast::Program>, CompileError>,
-    shell_timeout: Option<Duration>,
 ) -> Result<(), CompileError> {
     for proj in cfg.projects.values_mut() {
         let Some(include_file) = &proj.include_file else {
@@ -57,7 +55,6 @@ pub(crate) fn resolve_include(
                     &mut merged_shell,
                     &program.source_name,
                     &program.source_text,
-                    shell_timeout,
                 )?;
             }
         }

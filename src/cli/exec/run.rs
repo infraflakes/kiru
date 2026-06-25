@@ -4,7 +4,6 @@ use crate::runner::tui::{self, TaskStatus, TuiEvent};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
 
 fn run_project_chains(
     config: Arc<crate::compiler::Sanctuary>,
@@ -212,7 +211,7 @@ pub fn execute_run_block(
     name: String,
     project: Option<String>,
 ) -> miette::Result<()> {
-    let config = load_config_and_resolve(config_arg, Some(Duration::from_secs(30)))?;
+    let config = load_config_and_resolve(config_arg)?;
 
     let is_standalone = crate::compiler::is_sanctuary_disabled();
 

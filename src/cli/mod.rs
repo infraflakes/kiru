@@ -8,26 +8,19 @@ pub use args::{Cli, Commands};
 use crate::compiler::{CompileError, Sanctuary, compile};
 use clap::Parser;
 use std::path::PathBuf;
-use std::time::Duration;
 
-fn load_config(
-    config_arg: Option<PathBuf>,
-    shell_timeout: Option<Duration>,
-) -> miette::Result<Sanctuary> {
+fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Sanctuary> {
     let config_path = get_config_path(config_arg);
-    compile(&config_path, shell_timeout).map_err(|e| match e {
+    compile(&config_path).map_err(|e| match e {
         CompileError::ParseReports(reports) => print_parse_errors(reports),
         CompileError::ValidationReport(report) => report,
         _ => miette::miette!("{}", e),
     })
 }
 
-fn load_config_and_resolve(
-    config_arg: Option<PathBuf>,
-    shell_timeout: Option<Duration>,
-) -> miette::Result<Sanctuary> {
-    let mut config = load_config(config_arg, shell_timeout)?;
-    match crate::compiler::resolve_includes(&mut config, shell_timeout) {
+fn load_config_and_resolve(config_arg: Option<PathBuf>) -> miette::Result<Sanctuary> {
+    let mut config = load_config(config_arg)?;
+    match crate::compiler::resolve_includes(&mut config) {
         Ok(()) => {}
         Err(crate::compiler::CompileError::ParseReports(reports)) => {
             return Err(print_parse_errors(reports));
