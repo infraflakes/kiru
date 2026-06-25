@@ -14,7 +14,7 @@ fn sync_project_inner(
         return Ok(());
     }
 
-    let target_dir = PathBuf::from(sanctuary).join(&proj.dir);
+    let target_dir = PathBuf::from(sanctuary).join(proj.dir.trim_start_matches('/'));
     let git_dir = target_dir.join(".git");
 
     if git_dir.exists() {

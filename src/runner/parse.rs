@@ -38,7 +38,7 @@ impl<'a> ExecContext<'a> {
             shell_vars.extend(proj.shell_vars.clone());
         }
         let work_dir = match project {
-            Some(proj) => PathBuf::from(&cfg.sanctuary_path).join(&proj.dir),
+            Some(proj) => PathBuf::from(&cfg.sanctuary_path).join(proj.dir.trim_start_matches('/')),
             None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         };
         ExecContext {
@@ -232,7 +232,8 @@ impl<'a> ExecContext<'a> {
         }
 
         if let Some(proj) = self.project {
-            let base_canonical = PathBuf::from(&self.cfg.sanctuary_path).join(&proj.dir);
+            let base_canonical =
+                PathBuf::from(&self.cfg.sanctuary_path).join(proj.dir.trim_start_matches('/'));
             let base_canonical = std::fs::canonicalize(&base_canonical)
                 .map_err(|e| RuntimeError::Lookup(format!("cd {}: {}", resolved, e)))?;
             if !candidate.starts_with(&base_canonical) {

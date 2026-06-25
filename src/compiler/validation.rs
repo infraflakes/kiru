@@ -27,8 +27,8 @@ pub(crate) fn resolve_include(
         }
 
         let use_path = PathBuf::from(&cfg.sanctuary_path)
-            .join(&proj.dir)
-            .join(include_file);
+            .join(proj.dir.trim_start_matches('/'))
+            .join(include_file.trim_start_matches('/'));
 
         if !use_path.exists() {
             return Err(CompileError::Validation(format!(
