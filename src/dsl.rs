@@ -5,4 +5,6 @@ pub(crate) mod parser;
 pub(crate) mod syntax;
 pub(crate) mod token;
 
+pub(crate) use ast::{Program, ProjectField, Stmt, TopLevel};
+pub(crate) use parser::Parser;
 pub(crate) use syntax::{CaseArm, CasePattern, EnvPair, Expr, FnStmt, InterpolationPart, VarType};

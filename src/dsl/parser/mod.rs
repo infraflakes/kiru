@@ -21,6 +21,10 @@ pub(crate) struct Parser {
 }
 
 impl Parser {
+    pub(crate) fn from_source(source: String) -> Self {
+        Parser::new(Lexer::new(source))
+    }
+
     pub(crate) fn new(mut lexer: Lexer) -> Self {
         let source_len = lexer.source_len();
         let current = lexer.next_token();
@@ -68,13 +72,34 @@ impl Parser {
         }
     }
 
+    pub(crate) fn parse_toplevel(&mut self) -> Result<Option<TopLevel>, ParseError> {
+        if self.current_token().ty == TokenType::EOF {
+            return Ok(None);
+        }
+        if let TokenType::Illegal(m) = &self.current_token().ty {
+            return Err(ParseError::new(self.eof_aware_span(), m.clone()));
+        }
+        match &self.current_token().ty {
+            TokenType::Import => {
+                self.advance();
+                let path = self.parse_expr()?;
+                self.expect_with_context(TokenType::Semicolon, "after import path")?;
+                Ok(Some(TopLevel::Import(path)))
+            }
+            _ => self.parse_top_level_stmt().map(|s| Some(TopLevel::Stmt(s))),
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn parse(&mut self) -> Result<Program, Vec<ParseError>> {
         let mut program = Program::new();
         let mut errors = Vec::new();
 
         while self.current_token().ty != TokenType::EOF {
-            match self.parse_top_level_stmt() {
-                Ok(stmt) => program.stmts.push(stmt),
+            match self.parse_toplevel() {
+                Ok(Some(TopLevel::Stmt(stmt))) => program.stmts.push(stmt),
+                Ok(Some(TopLevel::Import(_))) => {}
+                Ok(None) => break,
                 Err(e) => {
                     errors.push(e);
                     self.skip_to_stmt_boundary();
@@ -91,15 +116,10 @@ impl Parser {
 
     fn parse_top_level_stmt(&mut self) -> Result<Stmt, ParseError> {
         if let TokenType::Illegal(m) = &self.current_token().ty {
-            let token = self.current_token().clone();
-            return Err(ParseError::new(
-                SourceSpan::new(token.offset.into(), token.len),
-                m.clone(),
-            ));
+            return Err(ParseError::new(self.eof_aware_span(), m.clone()));
         }
         match self.current_token().ty {
             TokenType::Sanctuary => self.parse_sanctuary_decl(),
-            TokenType::Import => self.parse_import_decl(),
             TokenType::Var => self.parse_var_decl(),
             TokenType::Pr => self.parse_project_decl(),
             TokenType::Fn => self.parse_fn_decl(),
@@ -118,7 +138,7 @@ impl Parser {
                     Err(ParseError::new(
                         self.eof_aware_span(),
                         format!(
-                            "expected sanctuary, import, var, pr, fn, or run, found {}",
+                            "expected sanctuary, var, pr, fn, or run, found {}",
                             format_token(self.current_token())
                         ),
                     ))
@@ -162,6 +182,7 @@ impl Parser {
         }
     }
 
+    #[cfg(test)]
     fn skip_to_stmt_boundary(&mut self) {
         use TokenType::*;
         loop {
@@ -170,14 +191,10 @@ impl Parser {
                 Semicolon | RBrace => {
                     self.advance();
                 }
-                Sanctuary | Import | Var | Pr | Fn | Run => break,
+                Sanctuary | Var | Pr | Fn | Run => break,
                 _ => self.advance(),
             }
         }
-    }
-
-    pub(crate) fn into_source(self) -> String {
-        self.lexer.into_source()
     }
 
     pub(crate) fn parse_var_decl_common(&mut self) -> Result<(VarType, String, Expr), ParseError> {

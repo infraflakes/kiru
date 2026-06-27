@@ -15,7 +15,7 @@ pub fn task_marker(task: &Task, spinner_idx: usize) -> String {
         match task.status {
             TaskStatus::Pending => "·".to_string(),
             TaskStatus::Running => SPINNER_FRAMES[spinner_idx].to_string(),
-            TaskStatus::Success | TaskStatus::Error => unreachable!(),
+            TaskStatus::Success | TaskStatus::Error => "?".to_string(),
         }
     }
 }

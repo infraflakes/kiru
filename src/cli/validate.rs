@@ -146,11 +146,11 @@ fn draw_project(out: &mut String, name: &str, proj: &crate::compiler::types::Pro
     project_field(out, indent, "url", &proj.url);
     project_field(out, indent, "dir", &proj.dir);
 
-    if !proj.branch.is_empty() {
-        project_field(out, indent, "branch", &proj.branch);
+    if let Some(ref branch) = proj.branch {
+        project_field(out, indent, "branch", branch);
     }
 
-    project_field(out, indent, "sync", proj.sync.as_str());
+    project_field(out, indent, "sync", &proj.sync.to_string());
 
     if let Some(ref u) = proj.include_file {
         project_field(out, indent, "include", u);

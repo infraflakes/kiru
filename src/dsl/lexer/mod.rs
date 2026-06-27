@@ -28,10 +28,6 @@ impl Lexer {
         lexer
     }
 
-    pub(crate) fn into_source(self) -> String {
-        self.input.into_iter().collect()
-    }
-
     pub(crate) fn source_len(&self) -> usize {
         self.input.iter().map(|c| c.len_utf8()).sum()
     }
@@ -95,7 +91,10 @@ impl Lexer {
             Some('(') | Some(')') => {
                 self.read_char();
                 Token::new(
-                    TokenType::Illegal(format!("unexpected character: {}", ch.unwrap())),
+                    TokenType::Illegal(format!(
+                        "unexpected character: {}",
+                        ch.expect("ch is Some in this arm")
+                    )),
                     start_line,
                     start_col,
                     start_byte_offset,

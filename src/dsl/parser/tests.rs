@@ -26,7 +26,6 @@ fn count_stmt_types(program: &Program) -> Vec<&'static str> {
         .iter()
         .map(|s| match s {
             Stmt::Sanctuary { .. } => "sanctuary",
-            Stmt::Import { .. } => "import",
             Stmt::Var { .. } => "var",
             Stmt::Project { .. } => "pr",
             Stmt::Field { .. } => "field",
@@ -43,7 +42,7 @@ fn count_body_stmt_types(body: &[Stmt]) -> Vec<&'static str> {
             Stmt::Field { .. } => "field",
             Stmt::Fn { .. } => "fn",
             Stmt::Run { .. } => "run",
-            _ => "other",
+            Stmt::Sanctuary { .. } | Stmt::Project { .. } => "other",
         })
         .collect()
 }
@@ -73,22 +72,6 @@ fn test_sanctuary_with_var_ref() {
             _ => panic!("expected VarRef"),
         },
         _ => panic!("expected SanctuaryDecl"),
-    }
-}
-
-#[test]
-fn test_import_decl() {
-    let prog = parse_program("import `./other.kiru`;").unwrap();
-    assert_eq!(count_stmt_types(&prog), vec!["import"]);
-    match &prog.stmts[0] {
-        Stmt::Import { path } => match path {
-            Expr::BacktickLit { parts, .. } => {
-                let concat: String = parts.iter().map(|p| p.value.as_str()).collect();
-                assert_eq!(concat, "./other.kiru");
-            }
-            _ => panic!("expected BacktickLit"),
-        },
-        _ => panic!("expected ImportDecl"),
     }
 }
 
@@ -159,14 +142,23 @@ fn test_project_decl_with_fields() {
         Stmt::Project { name, body, .. } => {
             assert_eq!(name, "todo");
             assert_eq!(body.len(), 5);
-            let keys: Vec<&str> = body
+            let keys: Vec<&ProjectField> = body
                 .iter()
                 .filter_map(|s| match s {
-                    Stmt::Field { key, .. } => Some(key.as_str()),
+                    Stmt::Field { key, .. } => Some(key),
                     _ => None,
                 })
                 .collect();
-            assert_eq!(keys, vec!["url", "dir", "sync", "include", "branch"]);
+            assert_eq!(
+                keys,
+                &[
+                    &ProjectField::Url,
+                    &ProjectField::Dir,
+                    &ProjectField::Sync,
+                    &ProjectField::Include,
+                    &ProjectField::Branch
+                ]
+            );
         }
         _ => panic!("expected ProjectDecl"),
     }
@@ -281,14 +273,10 @@ fn test_var_with_var_ref_value() {
 #[test]
 fn test_multiple_top_level_statements() {
     let input = "sanctuary = `/tmp`;\n\
-                  import `./other.kiru`;\n\
                   var string x = `hello`;\n\
                    pr p { url = `u`; dir = `d`; fn f { log `hi`; } run s { f; } }";
     let prog = parse_program(input).unwrap();
-    assert_eq!(
-        count_stmt_types(&prog),
-        vec!["sanctuary", "import", "var", "pr"]
-    );
+    assert_eq!(count_stmt_types(&prog), vec!["sanctuary", "var", "pr"]);
 }
 
 #[test]
@@ -301,19 +289,6 @@ fn test_error_recovery_skips_bad_stmt() {
         Err(errs) => {
             assert!(errs.iter().any(|e| e.to_string().contains("expected log")));
         }
-    }
-}
-
-#[test]
-fn test_import_path_types() {
-    let inputs = vec![
-        "import `./foo.kiru`;",
-        "import `../foo.kiru`;",
-        "import `../../dir/foo.kiru`;",
-    ];
-    for input in inputs {
-        let result = parse_program(input);
-        assert!(result.is_ok(), "expected success for: {}", input);
     }
 }
 

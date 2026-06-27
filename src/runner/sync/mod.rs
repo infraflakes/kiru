@@ -3,6 +3,8 @@ use crate::runner::error::RuntimeError;
 use std::path::PathBuf;
 use std::process::Command;
 
+/// Clone (or skip) a single project's git repo into the sanctuary directory.
+/// Reports progress through the `output` callback.
 fn sync_project_inner(
     sanctuary: &str,
     proj: &Project,
@@ -24,10 +26,9 @@ fn sync_project_inner(
     output(&format!("clone  {} → {}", proj.name, target_dir.display()));
 
     let target_dir_str = target_dir.to_string_lossy().to_string();
-    let args = if proj.branch.is_empty() {
-        vec!["clone", &proj.url, &target_dir_str]
-    } else {
-        vec!["clone", "-b", &proj.branch, &proj.url, &target_dir_str]
+    let args = match &proj.branch {
+        Some(branch) => vec!["clone", "-b", branch, &proj.url, &target_dir_str],
+        None => vec!["clone", &proj.url, &target_dir_str],
     };
 
     use std::io::BufRead;
@@ -98,6 +99,8 @@ fn sync_project_inner(
     Ok(())
 }
 
+/// Synchronize a single project into the sanctuary directory.
+/// Accepts an output callback that receives progress lines for display or forwarding.
 pub fn sync_project_with_callback(
     sanctuary: &str,
     proj: &Project,

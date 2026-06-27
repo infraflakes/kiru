@@ -159,7 +159,10 @@ impl Parser {
             TokenType::Backtick(_) => {
                 let token = self.current_token().clone();
                 let TokenType::Backtick(content) = &token.ty else {
-                    unreachable!()
+                    return Err(ParseError::new(
+                        self.eof_aware_span(),
+                        "expected backtick string in case pattern".to_string(),
+                    ));
                 };
                 self.advance();
                 let parts = parse_interpolation_parts(content, token.offset)?;

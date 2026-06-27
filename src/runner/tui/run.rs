@@ -38,11 +38,11 @@ pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
         );
         y += 1;
 
-        for ti in 0..chain.task_count {
+        for task_offset in 0..chain.task_count {
             if y >= area.y + area.height {
                 break;
             }
-            if let Some(task) = model.tasks.get(chain.task_start + ti) {
+            if let Some(task) = model.tasks.get(chain.task_start + task_offset) {
                 let tmarker = task_marker(task, spinner_idx);
                 let tcolor = status_color(task.status);
                 let line = format!(
@@ -69,8 +69,8 @@ pub fn format_final_output(model: &Model) -> String {
     for chain in &model.chains {
         render::write_separator(&mut buf, &chain.label);
 
-        for ti in 0..chain.task_count {
-            if let Some(task) = model.tasks.get(chain.task_start + ti) {
+        for task_offset in 0..chain.task_count {
+            if let Some(task) = model.tasks.get(chain.task_start + task_offset) {
                 let color = match task.status {
                     TaskStatus::Success => colors::OK_ANSI,
                     TaskStatus::Running => colors::RUNNING_ANSI,

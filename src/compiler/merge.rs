@@ -1,7 +1,6 @@
 use crate::compiler::error::{CompileError, SpannedValidationError};
 use crate::compiler::types::{Project, Sanctuary, SyncMode};
-use crate::dsl::ast::{Program, Stmt};
-use crate::dsl::{Expr, FnStmt, VarType};
+use crate::dsl::{Expr, FnStmt, Program, ProjectField, Stmt, VarType};
 use crate::runner;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -32,15 +31,19 @@ fn spanned_err(
 
 fn resolve_expr_merged(
     expr: &Expr,
-    vars: &HashMap<String, String>,
+    global_vars: &HashMap<String, String>,
+    project_vars: &HashMap<String, String>,
     source_name: &str,
     source_text: &str,
 ) -> Result<String, CompileError> {
+    let get_var = |name: &str| -> Option<&String> {
+        project_vars.get(name).or_else(|| global_vars.get(name))
+    };
     let err_for =
         |msg: String, o: usize, l: usize| spanned_err(msg, source_name, source_text, o, l);
     match expr {
         Expr::VarRef { name, offset, len } => {
-            if let Some(val) = vars.get(name) {
+            if let Some(val) = get_var(name) {
                 return Ok(val.clone());
             }
             Err(err_for(
@@ -53,7 +56,7 @@ fn resolve_expr_merged(
             let mut result = String::new();
             for part in parts {
                 if part.is_var {
-                    if let Some(val) = vars.get(&part.value) {
+                    if let Some(val) = get_var(&part.value) {
                         result.push_str(val);
                     } else {
                         return Err(err_for(
@@ -119,7 +122,10 @@ pub(crate) fn merge(programs: Vec<Program>) -> Result<Sanctuary, CompileError> {
         collect_projects(programs, &mut global_vars)?;
 
     let sanctuary_path = match sanctuary_expr {
-        Some(ref expr) => resolve_expr_merged(expr, &global_vars, "", "")?,
+        Some(ref expr) => {
+            let empty = HashMap::new();
+            resolve_expr_merged(expr, &global_vars, &empty, "", "")?
+        }
         None => String::new(),
     };
 
@@ -145,8 +151,14 @@ fn collect_global_vars(programs: &[Program]) -> Result<HashMap<String, String>, 
                 ..
             } = stmt
             {
-                let resolved =
-                    resolve_expr_merged(value, &vars, &program.source_name, &program.source_text)?;
+                let empty = HashMap::new();
+                let resolved = resolve_expr_merged(
+                    value,
+                    &vars,
+                    &empty,
+                    &program.source_name,
+                    &program.source_text,
+                )?;
 
                 if var_type == &VarType::Shell {
                     let output = exec_shell_var(
@@ -181,8 +193,12 @@ fn collect_projects(
             match stmt {
                 Stmt::Sanctuary { value } => {
                     if sanctuary_expr.is_some() {
-                        return Err(CompileError::Validation(
+                        return Err(spanned_err(
                             "duplicate sanctuary declaration".to_string(),
+                            &program.source_name,
+                            &program.source_text,
+                            0,
+                            1,
                         ));
                     }
                     sanctuary_expr = Some(value);
@@ -210,20 +226,19 @@ fn collect_projects(
                         dir: String::new(),
                         sync: SyncMode::Clone,
                         include_file: None,
-                        branch: String::new(),
+                        branch: None,
                         vars: HashMap::new(),
                         functions: HashMap::new(),
                         runs: HashMap::new(),
                     };
 
-                    let mut merged_vars = global_vars.clone();
                     let mut seen_fields: HashSet<String> = HashSet::new();
 
                     for body_stmt in body {
                         merge_project_body_stmt(
                             &mut project,
                             body_stmt,
-                            &mut merged_vars,
+                            global_vars,
                             &program.source_name,
                             &program.source_text,
                             &mut seen_fields,
@@ -237,7 +252,7 @@ fn collect_projects(
                 } => {
                     return Err(spanned_err(
                         format!(
-                            "unexpected field '{}' at top level (fields are only valid inside a project block)",
+                            "unexpected field '{:?}' at top level (fields are only valid inside a project block)",
                             key
                         ),
                         &program.source_name,
@@ -282,7 +297,7 @@ fn collect_projects(
                     }
                     config_runs.insert(name, chains);
                 }
-                _ => {}
+                Stmt::Var { .. } => {}
             }
         }
     }
@@ -293,7 +308,7 @@ fn collect_projects(
 pub(crate) fn merge_project_body_stmt(
     project: &mut Project,
     stmt: Stmt,
-    merged: &mut HashMap<String, String>,
+    global_vars: &mut HashMap<String, String>,
     source_name: &str,
     source_text: &str,
     seen_fields: &mut HashSet<String>,
@@ -310,15 +325,14 @@ pub(crate) fn merge_project_body_stmt(
             len,
             ..
         } => {
-            let resolved = resolve_expr_merged(&value, merged, source_name, source_text)?;
+            let resolved =
+                resolve_expr_merged(&value, global_vars, &project.vars, source_name, source_text)?;
 
             if var_type == VarType::Shell {
                 let output =
                     exec_shell_var(&name, &resolved, source_name, source_text, offset, len)?;
-                merged.insert(name.clone(), output.clone());
                 project.vars.insert(name, output);
             } else {
-                merged.insert(name.clone(), resolved.clone());
                 project.vars.insert(name, resolved);
             }
         }
@@ -329,33 +343,35 @@ pub(crate) fn merge_project_body_stmt(
             len,
             ..
         } => {
-            if !seen_fields.insert(key.clone()) {
+            let field_name = format!("{:?}", key);
+            if !seen_fields.insert(field_name) {
                 return Err(make_err(
-                    format!("duplicate field '{}' in project '{}'", key, project.name),
+                    format!("duplicate field '{:?}' in project '{}'", key, project.name),
                     offset,
                     len,
                 ));
             }
 
-            let resolved = resolve_expr_merged(&value, merged, source_name, source_text)?;
-            match key.as_str() {
-                "url" => project.url = resolved,
-                "dir" => project.dir = resolved,
-                "sync" => {
+            let resolved =
+                resolve_expr_merged(&value, global_vars, &project.vars, source_name, source_text)?;
+            match key {
+                ProjectField::Url => project.url = resolved,
+                ProjectField::Dir => project.dir = resolved,
+                ProjectField::Sync => {
                     project.sync =
                         parse_sync_mode(&resolved, source_name, source_text, offset, len)?;
                 }
-                "include" => {
+                ProjectField::Include => {
                     if !resolved.is_empty() {
                         project.include_file = Some(resolved);
                     }
                 }
-                "branch" => project.branch = resolved,
-                _ => {
-                    return Err(CompileError::Validation(format!(
-                        "unknown project field: {}",
-                        key
-                    )));
+                ProjectField::Branch => {
+                    if resolved.is_empty() {
+                        project.branch = None;
+                    } else {
+                        project.branch = Some(resolved);
+                    }
                 }
             }
         }
@@ -394,11 +410,17 @@ pub(crate) fn merge_project_body_stmt(
             }
             project.runs.insert(name, chains);
         }
-        _ => {
-            return Err(CompileError::Validation(format!(
-                "unexpected statement in project '{}' (only var, fn, run, and fields are valid)",
-                project.name
-            )));
+        Stmt::Sanctuary { .. } | Stmt::Project { .. } => {
+            return Err(spanned_err(
+                format!(
+                    "unexpected statement in project '{}' (only var, fn, run, and fields are valid)",
+                    project.name
+                ),
+                source_name,
+                source_text,
+                0,
+                1,
+            ));
         }
     }
     Ok(())

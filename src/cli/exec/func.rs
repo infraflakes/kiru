@@ -38,7 +38,7 @@ pub fn execute_function(
                 ));
             }
 
-            let mut runner = Runner::new(config).with_output_callback(callback);
+            let mut runner = Runner::new(Arc::new(config)).with_output_callback(callback);
             runner
                 .execute_fn_call(&name, proj)
                 .map_err(|e| miette::miette!("{}", e))
@@ -51,7 +51,7 @@ pub fn execute_function(
                 ));
             }
 
-            let mut runner = Runner::new(config).with_output_callback(callback);
+            let mut runner = Runner::new(Arc::new(config)).with_output_callback(callback);
             runner
                 .execute_standalone_fn(&name)
                 .map_err(|e| miette::miette!("{}", e))

@@ -12,15 +12,6 @@ impl Parser {
         Ok(Stmt::Sanctuary { value })
     }
 
-    pub(crate) fn parse_import_decl(&mut self) -> Result<Stmt, ParseError> {
-        self.advance();
-
-        let path = self.parse_expr()?;
-        self.expect_with_context(TokenType::Semicolon, "after import path")?;
-
-        Ok(Stmt::Import { path })
-    }
-
     pub(crate) fn parse_var_decl(&mut self) -> Result<Stmt, ParseError> {
         let offset = self.current_token().offset;
         let len = self.current_token().len;

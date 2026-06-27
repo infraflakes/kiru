@@ -2,12 +2,16 @@ use std::fmt;
 
 use miette::Diagnostic;
 
+/// Compilation errors across the parsing, merging, and validation pipeline.
 #[derive(Debug, thiserror::Error)]
 pub enum CompileError {
+    /// An IO error (file read, canonicalize, etc.).
     Io(#[from] std::io::Error),
+    /// One or more parse errors with source spans attached.
     ParseReports(Vec<miette::Report>),
+    /// A circular import chain detected during file resolution.
     CircularImport(String),
-    Validation(String),
+    /// A validation error with source span information.
     ValidationReport(miette::Report),
 }
 
@@ -24,7 +28,6 @@ impl fmt::Display for CompileError {
             CompileError::CircularImport(path) => {
                 write!(f, "Circular import detected: {}", path)
             }
-            CompileError::Validation(msg) => write!(f, "Validation error: {}", msg),
             CompileError::ValidationReport(report) => write!(f, "{}", report),
         }
     }

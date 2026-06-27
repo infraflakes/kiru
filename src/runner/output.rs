@@ -48,9 +48,9 @@ pub(crate) struct Runner {
 }
 
 impl Runner {
-    pub(crate) fn new(cfg: Sanctuary) -> Self {
+    pub(crate) fn new(cfg: Arc<Sanctuary>) -> Self {
         Runner {
-            cfg: Arc::new(cfg),
+            cfg,
             output: OutputTarget::Direct(Box::new(io::stdout()) as SendWriter),
         }
     }

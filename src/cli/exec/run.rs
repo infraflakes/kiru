@@ -1,6 +1,6 @@
 use super::super::load_config_and_resolve;
 use crate::runner::Runner;
-use crate::runner::tui::{self, TaskStatus, TuiEvent};
+use crate::runner::{self, TaskStatus, TuiEvent};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -23,7 +23,7 @@ fn run_project_chains(
         .unzip();
 
     let project = project.to_string();
-    tui::run_tui_with_run(chain_pairs, move |tx| {
+    runner::run_tui_with_run(chain_pairs, move |tx| {
         let project = project.clone();
         let config = Arc::clone(&config);
         async move {
@@ -45,30 +45,33 @@ fn run_project_chains(
                         let current_task = Arc::clone(&current_task);
                         move |line: String| {
                             let idx = current_task.load(Ordering::Relaxed);
-                            tui::send_event(&tx, TuiEvent::AppendOutput(idx, line))
+                            runner::send_event(&tx, TuiEvent::AppendOutput(idx, line))
                         }
                     };
                     let mut runner =
-                        Runner::new((*config).clone()).with_output_callback(Arc::new(cb));
+                        Runner::new(Arc::clone(&config)).with_output_callback(Arc::new(cb));
 
-                    for (fi, fn_name) in chain.iter().enumerate() {
-                        let task_idx = start_index + fi;
+                    for (fn_idx, fn_name) in chain.iter().enumerate() {
+                        let task_idx = start_index + fn_idx;
                         current_task.store(task_idx, Ordering::Relaxed);
-                        tui::send_event(&tx, TuiEvent::UpdateStatus(task_idx, TaskStatus::Running));
+                        runner::send_event(
+                            &tx,
+                            TuiEvent::UpdateStatus(task_idx, TaskStatus::Running),
+                        );
 
                         match runner.execute_fn_call(fn_name, &project) {
                             Ok(()) => {
-                                tui::send_event(
+                                runner::send_event(
                                     &tx,
                                     TuiEvent::UpdateStatus(task_idx, TaskStatus::Success),
                                 );
                             }
                             Err(e) => {
-                                tui::send_event(
+                                runner::send_event(
                                     &tx,
                                     TuiEvent::AppendOutput(task_idx, format!("Error: {}", e)),
                                 );
-                                tui::send_event(
+                                runner::send_event(
                                     &tx,
                                     TuiEvent::UpdateStatus(task_idx, TaskStatus::Error),
                                 );
@@ -115,7 +118,7 @@ fn run_standalone_chains(
         })
         .unzip();
 
-    tui::run_tui_with_run(chain_pairs, move |tx| {
+    runner::run_tui_with_run(chain_pairs, move |tx| {
         let config = Arc::clone(&config);
         async move {
             let mut chain_handles = Vec::new();
@@ -135,30 +138,33 @@ fn run_standalone_chains(
                         let current_task = Arc::clone(&current_task);
                         move |line: String| {
                             let idx = current_task.load(Ordering::Relaxed);
-                            tui::send_event(&tx, TuiEvent::AppendOutput(idx, line))
+                            runner::send_event(&tx, TuiEvent::AppendOutput(idx, line))
                         }
                     };
                     let mut runner =
-                        Runner::new((*config).clone()).with_output_callback(Arc::new(cb));
+                        Runner::new(Arc::clone(&config)).with_output_callback(Arc::new(cb));
 
-                    for (fi, fn_name) in chain.iter().enumerate() {
-                        let task_idx = start_index + fi;
+                    for (fn_idx, fn_name) in chain.iter().enumerate() {
+                        let task_idx = start_index + fn_idx;
                         current_task.store(task_idx, Ordering::Relaxed);
-                        tui::send_event(&tx, TuiEvent::UpdateStatus(task_idx, TaskStatus::Running));
+                        runner::send_event(
+                            &tx,
+                            TuiEvent::UpdateStatus(task_idx, TaskStatus::Running),
+                        );
 
                         match runner.execute_standalone_fn(fn_name) {
                             Ok(()) => {
-                                tui::send_event(
+                                runner::send_event(
                                     &tx,
                                     TuiEvent::UpdateStatus(task_idx, TaskStatus::Success),
                                 );
                             }
                             Err(e) => {
-                                tui::send_event(
+                                runner::send_event(
                                     &tx,
                                     TuiEvent::AppendOutput(task_idx, format!("Error: {}", e)),
                                 );
-                                tui::send_event(
+                                runner::send_event(
                                     &tx,
                                     TuiEvent::UpdateStatus(task_idx, TaskStatus::Error),
                                 );

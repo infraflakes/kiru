@@ -2,7 +2,7 @@ use super::*;
 use crate::runner::Runner;
 use std::fs;
 use std::path::Path;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 /// Serializes tests that read or modify the SANCTUARY env var.
 static SANCTUARY_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -783,7 +783,7 @@ pr test {{\n\
         ),
     );
     let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
-    let mut runner = Runner::new(cfg);
+    let mut runner = Runner::new(Arc::new(cfg));
     runner.execute_fn_call("deploy", "test").unwrap();
 }
 
@@ -811,7 +811,7 @@ pr test {{\n\
         ),
     );
     let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
-    let mut runner = Runner::new(cfg);
+    let mut runner = Runner::new(Arc::new(cfg));
     runner.execute_fn_call("deploy", "test").unwrap();
 }
 

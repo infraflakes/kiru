@@ -11,7 +11,7 @@ fn test_context(vars: HashMap<String, String>) -> (Sanctuary, Project, OutputTar
         dir: "test".to_string(),
         sync: SyncMode::Clone,
         include_file: None,
-        branch: "main".to_string(),
+        branch: Some("main".to_string()),
         vars,
         functions: HashMap::new(),
         runs: HashMap::new(),

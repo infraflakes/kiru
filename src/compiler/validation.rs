@@ -1,4 +1,4 @@
-use crate::compiler::error::CompileError;
+use crate::compiler::error::{CompileError, SpannedValidationError};
 use crate::compiler::merge::merge_project_body_stmt;
 use crate::compiler::types::{Sanctuary, SyncMode};
 use crate::dsl::{CasePattern, Expr, FnStmt};
@@ -7,6 +7,20 @@ use std::path::{Path, PathBuf};
 
 pub fn is_sanctuary_disabled() -> bool {
     std::env::var("SANCTUARY").as_deref() == Ok("0")
+}
+
+fn spanned_err(
+    msg: String,
+    source_name: &str,
+    source_text: &str,
+    offset: usize,
+    len: usize,
+) -> CompileError {
+    CompileError::ValidationReport(miette::Report::new(SpannedValidationError {
+        message: msg,
+        span: miette::SourceSpan::new(offset.into(), len.max(1)),
+        source_code: miette::NamedSource::new(source_name, source_text.to_string()),
+    }))
 }
 
 pub(crate) fn resolve_include(
@@ -31,11 +45,17 @@ pub(crate) fn resolve_include(
             .join(include_file.trim_start_matches('/'));
 
         if !use_path.exists() {
-            return Err(CompileError::Validation(format!(
-                "project {:?}: include file not found: {} (run 'kiru sync' first)",
-                proj.name,
-                use_path.display()
-            )));
+            return Err(spanned_err(
+                format!(
+                    "project {:?}: include file not found: {} (run 'kiru sync' first)",
+                    proj.name,
+                    use_path.display()
+                ),
+                "",
+                "",
+                0,
+                1,
+            ));
         }
 
         let mut loaded_files = HashSet::new();
@@ -44,13 +64,11 @@ pub(crate) fn resolve_include(
 
         let mut seen_fields: HashSet<String> = HashSet::new();
         for program in &programs {
-            let mut merged = cfg.vars.clone();
-            merged.extend(proj.vars.clone());
             for stmt in &program.stmts {
                 merge_project_body_stmt(
                     proj,
                     stmt.clone(),
-                    &mut merged,
+                    &mut cfg.vars,
                     &program.source_name,
                     &program.source_text,
                     &mut seen_fields,
@@ -77,7 +95,7 @@ pub fn validate(cfg: &Sanctuary) -> Result<(), CompileError> {
     }
 
     if !is_sanctuary_disabled() {
-        let mut dirs = std::collections::HashSet::<String>::new();
+        let mut dirs = HashSet::<String>::new();
         for proj in cfg.projects.values() {
             if proj.url.is_empty() {
                 errs.push(format!("project {:?}: url is required", proj.name));
@@ -92,25 +110,35 @@ pub fn validate(cfg: &Sanctuary) -> Result<(), CompileError> {
                     proj.name, proj.dir
                 ));
             }
-            // SyncMode enum guarantees valid values at compile time
         }
     }
 
     validate_run_refs(&cfg.runs, &cfg.functions, "top-level", &mut errs);
 
     let global_scope: HashSet<String> = cfg.vars.keys().cloned().collect();
-    validate_fn_bodies(&cfg.functions, &global_scope, "(top-level)", &mut errs);
+    validate_fn_bodies(
+        &cfg.functions,
+        &global_scope,
+        &HashSet::new(),
+        "(top-level)",
+        &mut errs,
+    );
 
     for (proj_name, project) in &cfg.projects {
         validate_run_refs(&project.runs, &project.functions, proj_name, &mut errs);
 
-        let mut scope: HashSet<String> = global_scope.clone();
-        scope.extend(project.vars.keys().cloned());
-        validate_fn_bodies(&project.functions, &scope, proj_name, &mut errs);
+        let project_scope: HashSet<String> = project.vars.keys().cloned().collect();
+        validate_fn_bodies(
+            &project.functions,
+            &global_scope,
+            &project_scope,
+            proj_name,
+            &mut errs,
+        );
     }
 
     if !errs.is_empty() {
-        return Err(CompileError::Validation(errs.join("\n")));
+        return Err(spanned_err(errs.join("\n"), "", "", 0, 1));
     }
 
     Ok(())
@@ -138,13 +166,15 @@ fn validate_run_refs(
 
 fn validate_fn_bodies(
     functions: &std::collections::HashMap<String, Vec<FnStmt>>,
-    initial_scope: &HashSet<String>,
+    global_scope: &HashSet<String>,
+    project_scope: &HashSet<String>,
     proj_name: &str,
     errs: &mut Vec<String>,
 ) {
     for (fn_name, body) in functions {
-        let mut scope = initial_scope.clone();
-        validate_fn_body(fn_name, body, &mut scope, errs, proj_name);
+        let mut mutable_scope: HashSet<String> =
+            global_scope.union(project_scope).cloned().collect();
+        validate_fn_body(fn_name, body, &mut mutable_scope, errs, proj_name);
     }
 }
 

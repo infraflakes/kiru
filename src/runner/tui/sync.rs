@@ -36,7 +36,7 @@ fn current_display(task: &super::Task) -> String {
         sync_message(&task.output[0]).to_string()
     } else {
         // Show live output (last line) for running/pending tasks
-        sync_message(task.output.last().unwrap()).to_string()
+        sync_message(task.output.last().expect("output non-empty, checked above")).to_string()
     }
 }
 
@@ -91,12 +91,12 @@ pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
     );
     y += 1;
 
-    for (ci, chain) in model.chains.iter().enumerate() {
+    for (chain_idx, chain) in model.chains.iter().enumerate() {
         if y >= area.y + area.height {
             break;
         }
 
-        let conn = if ci == model.chains.len() - 1 {
+        let conn = if chain_idx == model.chains.len() - 1 {
             "└──"
         } else {
             "├──"

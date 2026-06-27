@@ -68,7 +68,10 @@ impl Parser {
     pub(crate) fn parse_backtick_expr(&mut self) -> Result<Expr, ParseError> {
         let token = self.current_token().clone();
         let TokenType::Backtick(content) = &token.ty else {
-            unreachable!("parse_backtick_expr called without Backtick token")
+            return Err(ParseError::new(
+                self.eof_aware_span(),
+                format!("expected backtick string, found {}", format_token(&token)),
+            ));
         };
         let offset = token.offset;
         let len = token.len;

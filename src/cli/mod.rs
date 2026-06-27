@@ -42,7 +42,10 @@ fn load_config_and_resolve(config_arg: Option<PathBuf>) -> miette::Result<Sanctu
 fn print_parse_errors(reports: Vec<miette::Report>) -> miette::Report {
     let count = reports.len();
     if count == 1 {
-        reports.into_iter().next().unwrap()
+        reports
+            .into_iter()
+            .next()
+            .expect("exactly one report when count == 1")
     } else {
         let mut combined = String::new();
         for (i, report) in reports.into_iter().enumerate() {

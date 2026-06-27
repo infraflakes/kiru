@@ -19,7 +19,7 @@ fn fmt {
 fn test {
   log `Testing the codebase!`;
   exec `cargo test`;
-  exec `cargo clippy`;
+  exec `cargo clippy -- -D warnings`;
   exec `cargo fmt --check`;
 }
 fn fail {
