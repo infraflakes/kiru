@@ -43,3 +43,17 @@ pub struct SpannedValidationError {
     #[source_code]
     pub source_code: miette::NamedSource<String>,
 }
+
+pub(crate) fn spanned_err(
+    msg: String,
+    source_name: &str,
+    source_text: &str,
+    offset: usize,
+    len: usize,
+) -> CompileError {
+    CompileError::ValidationReport(miette::Report::new(SpannedValidationError {
+        message: msg,
+        span: miette::SourceSpan::new(offset.into(), len.max(1)),
+        source_code: miette::NamedSource::new(source_name, source_text.to_string()),
+    }))
+}

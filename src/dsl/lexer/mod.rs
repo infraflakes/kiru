@@ -88,13 +88,10 @@ impl Lexer {
                     self.byte_offset - start_byte_offset,
                 )
             }
-            Some('(') | Some(')') => {
+            Some(c @ ('(' | ')')) => {
                 self.read_char();
                 Token::new(
-                    TokenType::Illegal(format!(
-                        "unexpected character: {}",
-                        ch.expect("ch is Some in this arm")
-                    )),
+                    TokenType::Illegal(format!("unexpected character: {}", c)),
                     start_line,
                     start_col,
                     start_byte_offset,

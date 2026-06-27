@@ -1,6 +1,7 @@
 pub(crate) mod compile;
 pub(crate) mod error;
 pub(crate) mod merge;
+pub(crate) mod resolve;
 pub(crate) mod types;
 pub(crate) mod validation;
 

@@ -1,31 +1,31 @@
 use super::super::load_config_and_resolve;
 use crate::runner::Runner;
+use crate::runner::error::RuntimeError;
 use crate::runner::{self, TaskStatus, TuiEvent};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-fn run_project_chains(
+fn run_chains(
     config: Arc<crate::compiler::Sanctuary>,
-    project: &str,
     chains: Vec<Vec<String>>,
+    task_name_fn: impl Fn(&str) -> String + Send + 'static,
+    exec_fn: impl Fn(&mut Runner, &str) -> Result<(), RuntimeError> + Send + Sync + 'static,
 ) -> miette::Result<()> {
     let (chain_pairs, chain_tasks): (Vec<_>, Vec<_>) = chains
         .iter()
         .map(|chain| {
             let label = chain.join(" → ");
-            let task_names: Vec<String> = chain
-                .iter()
-                .map(|fn_name| format!("{}({})", fn_name, project))
-                .collect();
+            let task_names: Vec<String> =
+                chain.iter().map(|fn_name| task_name_fn(fn_name)).collect();
             ((label, task_names), chain.clone())
         })
         .unzip();
 
-    let project = project.to_string();
+    let exec_fn = Arc::new(exec_fn);
     runner::run_tui_with_run(chain_pairs, move |tx| {
-        let project = project.clone();
         let config = Arc::clone(&config);
+        let exec_fn = Arc::clone(&exec_fn);
         async move {
             let mut chain_handles = Vec::new();
 
@@ -33,8 +33,8 @@ fn run_project_chains(
             for chain in &chain_tasks {
                 let tx = tx.clone();
                 let config = Arc::clone(&config);
+                let exec_fn = Arc::clone(&exec_fn);
                 let chain = chain.clone();
-                let project = project.clone();
                 let start_index = base_index;
                 let chain_len = chain.len();
 
@@ -59,7 +59,7 @@ fn run_project_chains(
                             TuiEvent::UpdateStatus(task_idx, TaskStatus::Running),
                         );
 
-                        match runner.execute_fn_call(fn_name, &project) {
+                        match exec_fn(&mut runner, fn_name) {
                             Ok(()) => {
                                 runner::send_event(
                                     &tx,
@@ -105,97 +105,33 @@ fn run_project_chains(
     Ok(())
 }
 
+fn run_project_chains(
+    config: Arc<crate::compiler::Sanctuary>,
+    project: &str,
+    chains: Vec<Vec<String>>,
+) -> miette::Result<()> {
+    let project = project.to_string();
+    run_chains(
+        config,
+        chains,
+        {
+            let project = project.clone();
+            move |fn_name| format!("{}({})", fn_name, project)
+        },
+        move |runner, fn_name| runner.execute_fn_call(fn_name, &project),
+    )
+}
+
 fn run_standalone_chains(
     config: Arc<crate::compiler::Sanctuary>,
     chains: Vec<Vec<String>>,
 ) -> miette::Result<()> {
-    let (chain_pairs, chain_tasks): (Vec<_>, Vec<_>) = chains
-        .iter()
-        .map(|chain| {
-            let label = chain.join(" → ");
-            let task_names: Vec<String> = chain.to_vec();
-            ((label, task_names), chain.clone())
-        })
-        .unzip();
-
-    runner::run_tui_with_run(chain_pairs, move |tx| {
-        let config = Arc::clone(&config);
-        async move {
-            let mut chain_handles = Vec::new();
-
-            let mut base_index = 0;
-            for chain in &chain_tasks {
-                let tx = tx.clone();
-                let config = Arc::clone(&config);
-                let chain = chain.clone();
-                let start_index = base_index;
-                let chain_len = chain.len();
-
-                let handle = tokio::task::spawn_blocking(move || -> Result<(), ()> {
-                    let current_task = Arc::new(AtomicUsize::new(0));
-                    let cb = {
-                        let tx = tx.clone();
-                        let current_task = Arc::clone(&current_task);
-                        move |line: String| {
-                            let idx = current_task.load(Ordering::Relaxed);
-                            runner::send_event(&tx, TuiEvent::AppendOutput(idx, line))
-                        }
-                    };
-                    let mut runner =
-                        Runner::new(Arc::clone(&config)).with_output_callback(Arc::new(cb));
-
-                    for (fn_idx, fn_name) in chain.iter().enumerate() {
-                        let task_idx = start_index + fn_idx;
-                        current_task.store(task_idx, Ordering::Relaxed);
-                        runner::send_event(
-                            &tx,
-                            TuiEvent::UpdateStatus(task_idx, TaskStatus::Running),
-                        );
-
-                        match runner.execute_standalone_fn(fn_name) {
-                            Ok(()) => {
-                                runner::send_event(
-                                    &tx,
-                                    TuiEvent::UpdateStatus(task_idx, TaskStatus::Success),
-                                );
-                            }
-                            Err(e) => {
-                                runner::send_event(
-                                    &tx,
-                                    TuiEvent::AppendOutput(task_idx, format!("Error: {}", e)),
-                                );
-                                runner::send_event(
-                                    &tx,
-                                    TuiEvent::UpdateStatus(task_idx, TaskStatus::Error),
-                                );
-                                return Err(());
-                            }
-                        }
-                    }
-
-                    Ok(())
-                });
-
-                chain_handles.push(handle);
-                base_index += chain_len;
-            }
-
-            let mut any_err = false;
-            for handle in chain_handles {
-                match handle.await {
-                    Ok(Ok(())) => {}
-                    _ => any_err = true,
-                }
-            }
-
-            if any_err {
-                Err(miette::miette!("One or more chain tasks failed"))
-            } else {
-                Ok(())
-            }
-        }
-    })?;
-    Ok(())
+    run_chains(
+        config,
+        chains,
+        |fn_name| fn_name.to_string(),
+        |runner, fn_name| runner.execute_standalone_fn(fn_name),
+    )
 }
 
 pub fn execute_run_block(

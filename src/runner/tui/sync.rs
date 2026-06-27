@@ -34,9 +34,10 @@ fn current_display(task: &super::Task) -> String {
     if task.finalized {
         // Show summary (first line) for finalized tasks
         sync_message(&task.output[0]).to_string()
+    } else if let Some(last) = task.output.last() {
+        sync_message(last).to_string()
     } else {
-        // Show live output (last line) for running/pending tasks
-        sync_message(task.output.last().expect("output non-empty, checked above")).to_string()
+        String::new()
     }
 }
 

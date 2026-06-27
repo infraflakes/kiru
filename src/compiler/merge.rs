@@ -1,7 +1,7 @@
-use crate::compiler::error::{CompileError, SpannedValidationError};
+use crate::compiler::error::{CompileError, spanned_err};
+use crate::compiler::resolve::{exec_shell_var, resolve_expr_merged};
 use crate::compiler::types::{Project, Sanctuary, SyncMode};
 use crate::dsl::{Expr, FnStmt, Program, ProjectField, Stmt, VarType};
-use crate::runner;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -14,84 +14,6 @@ type ProjectsResult = Result<
     ),
     CompileError,
 >;
-
-fn spanned_err(
-    msg: String,
-    source_name: &str,
-    source_text: &str,
-    offset: usize,
-    len: usize,
-) -> CompileError {
-    CompileError::ValidationReport(miette::Report::new(SpannedValidationError {
-        message: msg,
-        span: miette::SourceSpan::new(offset.into(), len.max(1)),
-        source_code: miette::NamedSource::new(source_name, source_text.to_string()),
-    }))
-}
-
-fn resolve_expr_merged(
-    expr: &Expr,
-    global_vars: &HashMap<String, String>,
-    project_vars: &HashMap<String, String>,
-    source_name: &str,
-    source_text: &str,
-) -> Result<String, CompileError> {
-    let get_var = |name: &str| -> Option<&String> {
-        project_vars.get(name).or_else(|| global_vars.get(name))
-    };
-    let err_for =
-        |msg: String, o: usize, l: usize| spanned_err(msg, source_name, source_text, o, l);
-    match expr {
-        Expr::VarRef { name, offset, len } => {
-            if let Some(val) = get_var(name) {
-                return Ok(val.clone());
-            }
-            Err(err_for(
-                format!("undefined variable: ${}", name),
-                *offset,
-                *len,
-            ))
-        }
-        Expr::BacktickLit { parts, offset, len } => {
-            let mut result = String::new();
-            for part in parts {
-                if part.is_var {
-                    if let Some(val) = get_var(&part.value) {
-                        result.push_str(val);
-                    } else {
-                        return Err(err_for(
-                            format!("undefined variable: ${}", part.value),
-                            *offset,
-                            *len,
-                        ));
-                    }
-                } else {
-                    result.push_str(&part.value);
-                }
-            }
-            Ok(result)
-        }
-    }
-}
-
-fn exec_shell_var(
-    name: &str,
-    resolved_command: &str,
-    source_name: &str,
-    source_text: &str,
-    offset: usize,
-    len: usize,
-) -> Result<String, CompileError> {
-    runner::exec_and_get_stdout(resolved_command, None, None).map_err(|e| {
-        spanned_err(
-            format!("shell var ${} failed: {}", name, e),
-            source_name,
-            source_text,
-            offset,
-            len,
-        )
-    })
-}
 
 fn parse_sync_mode(
     value: &str,

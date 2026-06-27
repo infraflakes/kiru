@@ -1,4 +1,4 @@
-use crate::compiler::error::{CompileError, SpannedValidationError};
+use crate::compiler::error::{CompileError, spanned_err};
 use crate::compiler::merge::merge_project_body_stmt;
 use crate::compiler::types::{Sanctuary, SyncMode};
 use crate::dsl::{CasePattern, Expr, FnStmt};
@@ -7,20 +7,6 @@ use std::path::{Path, PathBuf};
 
 pub fn is_sanctuary_disabled() -> bool {
     std::env::var("SANCTUARY").as_deref() == Ok("0")
-}
-
-fn spanned_err(
-    msg: String,
-    source_name: &str,
-    source_text: &str,
-    offset: usize,
-    len: usize,
-) -> CompileError {
-    CompileError::ValidationReport(miette::Report::new(SpannedValidationError {
-        message: msg,
-        span: miette::SourceSpan::new(offset.into(), len.max(1)),
-        source_code: miette::NamedSource::new(source_name, source_text.to_string()),
-    }))
 }
 
 pub(crate) fn resolve_include(
