@@ -173,9 +173,6 @@ pub(crate) fn exec_and_get_stdout(
     let stderr = String::from_utf8_lossy(&err).to_string();
 
     if !status.success() {
-        if status.code().is_none() {
-            std::process::exit(130);
-        }
         return Err(Error::Exit {
             command: command.to_string(),
             exit_code: status.code(),
@@ -244,9 +241,6 @@ impl ExecContext<'_> {
         };
 
         if !status.success() {
-            if status.code().is_none() {
-                std::process::exit(130);
-            }
             return Err(RuntimeError::exec_exit_code(cmd_str, status.code()));
         }
 
