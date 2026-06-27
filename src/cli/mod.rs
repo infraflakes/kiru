@@ -72,13 +72,8 @@ fn get_config_path(config_arg: Option<PathBuf>) -> PathBuf {
         return path;
     }
 
-    if crate::compiler::is_sanctuary_disabled()
-        && let Ok(cwd) = std::env::current_dir()
-    {
-        let local = cwd.join(".kiru").join("main.kiru");
-        if local.exists() {
-            return local;
-        }
+    if crate::compiler::is_sanctuary_disabled() {
+        return PathBuf::from(".kiru").join("main.kiru");
     }
     if let Some(config_dir) = dirs::config_dir() {
         return config_dir.join("kiru").join("main.kiru");
