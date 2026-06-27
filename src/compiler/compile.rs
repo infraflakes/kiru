@@ -123,8 +123,8 @@ fn parse_recursive(
                     )));
                 }
             };
-            let import_abs = base_dir.join(rel_path.trim_start_matches('/'));
-            match parse_recursive(&import_abs, loaded_files, recursion_stack) {
+            let import_path = base_dir.join(rel_path.trim_start_matches('/'));
+            match parse_recursive(&import_path, loaded_files, recursion_stack) {
                 Ok(imported) => results.extend(imported),
                 Err(e) => {
                     recursion_stack.remove(&canon_path);
