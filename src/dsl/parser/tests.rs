@@ -29,8 +29,21 @@ fn count_stmt_types(program: &Program) -> Vec<&'static str> {
             Stmt::Import { .. } => "import",
             Stmt::Var { .. } => "var",
             Stmt::Project { .. } => "pr",
+            Stmt::Field { .. } => "field",
             Stmt::Fn { .. } => "fn",
             Stmt::Run { .. } => "run",
+        })
+        .collect()
+}
+
+fn count_body_stmt_types(body: &[Stmt]) -> Vec<&'static str> {
+    body.iter()
+        .map(|s| match s {
+            Stmt::Var { .. } => "var",
+            Stmt::Field { .. } => "field",
+            Stmt::Fn { .. } => "fn",
+            Stmt::Run { .. } => "run",
+            _ => "other",
         })
         .collect()
 }
@@ -143,13 +156,16 @@ fn test_project_decl_with_fields() {
     let prog = parse_program(input).unwrap();
     assert_eq!(count_stmt_types(&prog), vec!["pr"]);
     match &prog.stmts[0] {
-        Stmt::Project {
-            name, fields, body, ..
-        } => {
+        Stmt::Project { name, body, .. } => {
             assert_eq!(name, "todo");
-            assert_eq!(fields.len(), 5);
-            assert!(body.is_empty());
-            let keys: Vec<&str> = fields.iter().map(|f| f.key.as_str()).collect();
+            assert_eq!(body.len(), 5);
+            let keys: Vec<&str> = body
+                .iter()
+                .filter_map(|s| match s {
+                    Stmt::Field { key, .. } => Some(key.as_str()),
+                    _ => None,
+                })
+                .collect();
             assert_eq!(keys, vec!["url", "dir", "sync", "include", "branch"]);
         }
         _ => panic!("expected ProjectDecl"),
@@ -161,16 +177,13 @@ fn test_project_decl_with_body_stmts() {
     let input = "\npr todo {\n    url = `git@github.com:user/repo.git`;\n    dir = `todo`;\n    var string app = `todo`;\n    fn build {\n        log `building`;\n    }\n    run release {\n        build;\n    }\n    run ci {\n        build;\n    }\n}";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
-        Stmt::Project {
-            name, fields, body, ..
-        } => {
+        Stmt::Project { name, body, .. } => {
             assert_eq!(name, "todo");
-            assert_eq!(fields.len(), 2);
-            assert_eq!(body.len(), 4);
-            assert!(matches!(body[0], Stmt::Var { .. }));
-            assert!(matches!(body[1], Stmt::Fn { .. }));
-            assert!(matches!(body[2], Stmt::Run { .. }));
-            assert!(matches!(body[3], Stmt::Run { .. }));
+            assert_eq!(count_body_stmt_types(body), vec!["field", "field", "var", "fn", "run", "run"]);
+            assert!(matches!(body[2], Stmt::Var { .. }));
+            assert!(matches!(body[3], Stmt::Fn { .. }));
+            assert!(matches!(body[4], Stmt::Run { .. }));
+            assert!(matches!(body[5], Stmt::Run { .. }));
         }
         _ => panic!("expected ProjectDecl"),
     }
@@ -181,8 +194,9 @@ fn test_project_duplicate_fields() {
     let input = "\npr x {\n    url = `a`;\n    url = `b`;\n    dir = `d`;\n}";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
-        Stmt::Project { fields, .. } => {
-            assert_eq!(fields.len(), 3);
+        Stmt::Project { body, .. } => {
+            let field_count = body.iter().filter(|s| matches!(s, Stmt::Field { .. })).count();
+            assert_eq!(field_count, 3);
         }
         _ => panic!("expected ProjectDecl"),
     }
@@ -302,9 +316,8 @@ fn test_project_with_interleaved_fields_and_body() {
     let input = "\npr todo {\n    url = `u`;\n    var string app = `todo`;\n    dir = `d`;\n    fn build { log `x`; }\n    sync = `clone`;\n}";
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
-        Stmt::Project { fields, body, .. } => {
-            assert_eq!(fields.len(), 3);
-            assert_eq!(body.len(), 2);
+        Stmt::Project { body, .. } => {
+            assert_eq!(count_body_stmt_types(body), vec!["field", "var", "field", "fn", "field"]);
         }
         _ => panic!("expected ProjectDecl"),
     }

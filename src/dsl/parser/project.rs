@@ -28,7 +28,6 @@ impl Parser {
 
         self.expect_with_context(TokenType::LBrace, "after project name")?;
 
-        let mut fields = Vec::new();
         let mut body = Vec::new();
 
         while self.current_token().ty != TokenType::RBrace {
@@ -37,6 +36,7 @@ impl Parser {
                     body.push(self.parse_project_body_stmt()?);
                 }
                 _ => {
+                    let type_offset = self.current_token().offset;
                     let key = match &self.current_token().ty {
                         TokenType::Ident(k) => k.clone(),
                         ty if is_keyword_token(ty) => {
@@ -62,7 +62,13 @@ impl Parser {
                     let value = self.parse_expr()?;
                     self.expect_with_context(TokenType::Semicolon, "after project field value")?;
 
-                    fields.push(ProjectField { key, value });
+                    let field_len = self.current_token().offset - type_offset;
+                    body.push(Stmt::Field {
+                        key,
+                        value,
+                        offset: type_offset,
+                        len: field_len,
+                    });
                 }
             }
         }
@@ -71,7 +77,6 @@ impl Parser {
 
         Ok(Stmt::Project {
             name,
-            fields,
             body,
             offset,
             len,

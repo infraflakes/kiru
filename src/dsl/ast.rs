@@ -17,8 +17,13 @@ pub enum Stmt {
     },
     Project {
         name: String,
-        fields: Vec<ProjectField>,
         body: Vec<Stmt>,
+        offset: usize,
+        len: usize,
+    },
+    Field {
+        key: String,
+        value: Expr,
         offset: usize,
         len: usize,
     },
@@ -34,12 +39,6 @@ pub enum Stmt {
         offset: usize,
         len: usize,
     },
-}
-
-#[derive(Debug, Clone)]
-pub struct ProjectField {
-    pub key: String,
-    pub value: Expr,
 }
 
 #[derive(Debug, Clone)]
