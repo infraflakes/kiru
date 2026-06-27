@@ -12,15 +12,6 @@ pub enum Expr {
     },
 }
 
-impl Expr {
-    pub fn span(&self) -> (usize, usize) {
-        match self {
-            Expr::BacktickLit { offset, len, .. } => (*offset, *len),
-            Expr::VarRef { offset, len, .. } => (*offset, *len),
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct InterpolationPart {
     pub is_var: bool,

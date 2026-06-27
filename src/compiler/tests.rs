@@ -179,7 +179,7 @@ sanctuary = `/other`;\
 }
 
 #[test]
-fn test_duplicate_variable_decl() {
+fn test_shadowing_global_var() {
     let dir = tempfile::TempDir::new().unwrap();
     write_config(
         dir.path(),
@@ -190,12 +190,9 @@ var string x = `a`;\n\
 var string x = `b`;\
 ",
     );
-    let err = compile_no_shell(&dir.path().join("main.kiru")).unwrap_err();
-    assert!(
-        err.to_string().contains("duplicate variable"),
-        "got: {}",
-        err
-    );
+    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+    // Later declaration shadows earlier one (top-down evaluation)
+    assert_eq!(cfg.vars.get("x").unwrap(), "b");
 }
 
 #[test]
@@ -555,7 +552,7 @@ pr test {\n\
 }
 
 #[test]
-fn test_duplicate_var_in_fn_body() {
+fn test_shadowing_var_in_fn_body() {
     let dir = tempfile::TempDir::new().unwrap();
     write_config(
         dir.path(),
@@ -572,12 +569,12 @@ pr test {\n\
 }\
 ",
     );
-    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-    assert!(
-        err.to_string().contains("duplicate variable"),
-        "got: {}",
-        err
-    );
+    // Shadowing is allowed in fn bodies — latest declaration wins within its scope
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+    assert!(cfg.projects["test"].functions.contains_key("bad"));
+    // Function has 2 VarDecls, second shadows first at runtime
+    let body = &cfg.projects["test"].functions["bad"];
+    assert_eq!(body.len(), 2);
 }
 
 #[test]
@@ -924,6 +921,53 @@ fn bad { log $undefined; }\n\
         "got: {}",
         err
     );
+}
+
+// --- Shadowing and field/var interleaving (new model) ---
+
+#[test]
+fn test_project_field_references_project_var() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+sanctuary = `/tmp`;\n\
+pr test {\n\
+    var string name = `myproject`;\n\
+    url = `http://example.com/${name}`;\n\
+    dir = $name;\n\
+}\
+",
+    );
+    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+    let proj = &cfg.projects["test"];
+    assert_eq!(proj.url, "http://example.com/myproject");
+    assert_eq!(proj.dir, "myproject");
+}
+
+#[test]
+fn test_global_var_shadowed_by_project_var() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+sanctuary = `/tmp`;\n\
+var string name = `global`;\n\
+pr test {\n\
+    var string name = `project`;\n\
+    url = `http://example.com`;\n\
+    dir = $name;\n\
+}\
+",
+    );
+    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+    let proj = &cfg.projects["test"];
+    // Project-level var "name" shadows the global "name"
+    assert_eq!(proj.dir, "project");
+    // Global scope should still have the global value
+    assert_eq!(cfg.vars.get("name").unwrap(), "global");
 }
 
 // --- SANCTUARY=0 standalone mode (env var required) ---

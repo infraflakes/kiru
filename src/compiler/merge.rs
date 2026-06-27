@@ -4,6 +4,7 @@ use crate::dsl::ast::{Program, Stmt};
 use crate::dsl::{Expr, FnStmt, VarType};
 use crate::runner;
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 type VarsResult = Result<(HashMap<String, String>, HashMap<String, String>), CompileError>;
 type ProjectsResult = Result<
@@ -90,6 +91,26 @@ fn resolve_shell_and_cache(
     Ok(())
 }
 
+fn exec_shell_var(
+    name: &str,
+    resolved_command: &str,
+    source_name: &str,
+    source_text: &str,
+    offset: usize,
+    len: usize,
+) -> Result<String, CompileError> {
+    let out = runner::exec_and_get_stdout(resolved_command, None, None).map_err(|e| {
+        spanned_err(
+            format!("shell var ${} failed: {}", name, e),
+            source_name,
+            source_text,
+            offset,
+            len,
+        )
+    })?;
+    Ok(out.stdout)
+}
+
 pub(crate) fn merge(programs: Vec<Program>) -> Result<Sanctuary, CompileError> {
     let (mut global_vars, mut global_shell_vars) = collect_global_vars(&programs)?;
     let (sanctuary_expr, projects, config_fns, config_runs) =
@@ -126,16 +147,6 @@ fn collect_global_vars(programs: &[Program]) -> VarsResult {
                 ..
             } = stmt
             {
-                if vars.contains_key(name) || shell_vars.contains_key(name) {
-                    return Err(spanned_err(
-                        format!("duplicate variable: {}", name),
-                        &program.source_name,
-                        &program.source_text,
-                        *offset,
-                        *len,
-                    ));
-                }
-
                 let resolved = resolve_expr_merged(
                     value,
                     &mut vars,
@@ -145,8 +156,20 @@ fn collect_global_vars(programs: &[Program]) -> VarsResult {
                 )?;
 
                 if var_type == &VarType::Shell {
-                    shell_vars.insert(name.clone(), resolved);
+                    let output = exec_shell_var(
+                        name,
+                        &resolved,
+                        &program.source_name,
+                        &program.source_text,
+                        *offset,
+                        *len,
+                    )?;
+                    vars.remove(name);
+                    vars.insert(name.clone(), output);
+                    shell_vars.remove(name);
                 } else {
+                    shell_vars.remove(name);
+                    vars.remove(name);
                     vars.insert(name.clone(), resolved);
                 }
             }
@@ -178,7 +201,6 @@ fn collect_projects(
                 }
                 Stmt::Project {
                     name,
-                    fields,
                     body,
                     offset,
                     len,
@@ -207,45 +229,10 @@ fn collect_projects(
                         runs: HashMap::new(),
                     };
 
-                    let mut seen_fields = std::collections::HashSet::new();
-                    for field in &fields {
-                        if !seen_fields.insert(field.key.as_str()) {
-                            return Err(spanned_err(
-                                format!("duplicate field '{}' in project '{}'", field.key, name),
-                                &program.source_name,
-                                &program.source_text,
-                                field.value.span().0,
-                                field.value.span().1,
-                            ));
-                        }
-                        let value = resolve_expr_merged(
-                            &field.value,
-                            global_vars,
-                            global_shell_vars,
-                            &program.source_name,
-                            &program.source_text,
-                        )?;
-                        match field.key.as_str() {
-                            "url" => project.url = value,
-                            "dir" => project.dir = value,
-                            "sync" => project.sync = value,
-                            "include" => {
-                                if !value.is_empty() {
-                                    project.include_file = Some(value);
-                                }
-                            }
-                            "branch" => project.branch = value,
-                            _ => {
-                                return Err(CompileError::Validation(format!(
-                                    "unknown project field: {}",
-                                    field.key
-                                )));
-                            }
-                        }
-                    }
-
                     let mut merged_vars = global_vars.clone();
                     let mut merged_shell_vars = global_shell_vars.clone();
+                    let mut seen_fields: HashSet<String> = HashSet::new();
+
                     for body_stmt in body {
                         merge_project_body_stmt(
                             &mut project,
@@ -254,6 +241,7 @@ fn collect_projects(
                             &mut merged_shell_vars,
                             &program.source_name,
                             &program.source_text,
+                            &mut seen_fields,
                         )?;
                     }
 
@@ -310,6 +298,7 @@ pub(crate) fn merge_project_body_stmt(
     merged_shell_vars: &mut HashMap<String, String>,
     source_name: &str,
     source_text: &str,
+    seen_fields: &mut HashSet<String>,
 ) -> Result<(), CompileError> {
     let make_err = |msg: String, offset: usize, len: usize| -> CompileError {
         spanned_err(msg, source_name, source_text, offset, len)
@@ -323,9 +312,35 @@ pub(crate) fn merge_project_body_stmt(
             len,
             ..
         } => {
-            if project.vars.contains_key(&name) || project.shell_vars.contains_key(&name) {
+            let resolved =
+                resolve_expr_merged(&value, merged, merged_shell_vars, source_name, source_text)?;
+
+            if var_type == VarType::Shell {
+                let output =
+                    exec_shell_var(&name, &resolved, source_name, source_text, offset, len)?;
+                merged.remove(&name);
+                merged.insert(name.clone(), output.clone());
+                merged_shell_vars.remove(&name);
+                project.vars.remove(&name);
+                project.vars.insert(name, output);
+            } else {
+                merged_shell_vars.remove(&name);
+                merged.remove(&name);
+                merged.insert(name.clone(), resolved.clone());
+                project.vars.remove(&name);
+                project.vars.insert(name, resolved);
+            }
+        }
+        Stmt::Field {
+            key,
+            value,
+            offset,
+            len,
+            ..
+        } => {
+            if !seen_fields.insert(key.clone()) {
                 return Err(make_err(
-                    format!("duplicate variable in project '{}': {}", project.name, name),
+                    format!("duplicate field '{}' in project '{}'", key, project.name),
                     offset,
                     len,
                 ));
@@ -333,13 +348,22 @@ pub(crate) fn merge_project_body_stmt(
 
             let resolved =
                 resolve_expr_merged(&value, merged, merged_shell_vars, source_name, source_text)?;
-
-            if var_type == VarType::Shell {
-                merged_shell_vars.insert(name.clone(), resolved.clone());
-                project.shell_vars.insert(name.clone(), resolved);
-            } else {
-                merged.insert(name.clone(), resolved.clone());
-                project.vars.insert(name, resolved);
+            match key.as_str() {
+                "url" => project.url = resolved,
+                "dir" => project.dir = resolved,
+                "sync" => project.sync = resolved,
+                "include" => {
+                    if !resolved.is_empty() {
+                        project.include_file = Some(resolved);
+                    }
+                }
+                "branch" => project.branch = resolved,
+                _ => {
+                    return Err(CompileError::Validation(format!(
+                        "unknown project field: {}",
+                        key
+                    )));
+                }
             }
         }
         Stmt::Fn {

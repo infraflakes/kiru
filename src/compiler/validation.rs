@@ -42,6 +42,7 @@ pub(crate) fn resolve_include(
         let mut recursion_stack = HashSet::new();
         let programs = parse_recursive_fn(&use_path, &mut loaded_files, &mut recursion_stack)?;
 
+        let mut seen_fields: HashSet<String> = HashSet::new();
         for program in &programs {
             let mut merged = cfg.vars.clone();
             merged.extend(proj.vars.clone());
@@ -55,6 +56,7 @@ pub(crate) fn resolve_include(
                     &mut merged_shell,
                     &program.source_name,
                     &program.source_text,
+                    &mut seen_fields,
                 )?;
             }
         }
@@ -202,12 +204,7 @@ fn validate_fn_body(
         match stmt {
             FnStmt::VarDecl { name, value, .. } => {
                 validate_expr(value, fn_name, scope, errs, proj_name);
-                if !scope.insert(name.clone()) {
-                    errs.push(format!(
-                        "project {:?}: fn {:?}: duplicate variable {:?}",
-                        proj_name, fn_name, name
-                    ));
-                }
+                scope.insert(name.clone());
             }
             FnStmt::Log { value, .. } => validate_expr(value, fn_name, scope, errs, proj_name),
             FnStmt::Exec { value, .. } => validate_expr(value, fn_name, scope, errs, proj_name),

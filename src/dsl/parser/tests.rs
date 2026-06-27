@@ -179,7 +179,10 @@ fn test_project_decl_with_body_stmts() {
     match &prog.stmts[0] {
         Stmt::Project { name, body, .. } => {
             assert_eq!(name, "todo");
-            assert_eq!(count_body_stmt_types(body), vec!["field", "field", "var", "fn", "run", "run"]);
+            assert_eq!(
+                count_body_stmt_types(body),
+                vec!["field", "field", "var", "fn", "run", "run"]
+            );
             assert!(matches!(body[2], Stmt::Var { .. }));
             assert!(matches!(body[3], Stmt::Fn { .. }));
             assert!(matches!(body[4], Stmt::Run { .. }));
@@ -195,7 +198,10 @@ fn test_project_duplicate_fields() {
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
         Stmt::Project { body, .. } => {
-            let field_count = body.iter().filter(|s| matches!(s, Stmt::Field { .. })).count();
+            let field_count = body
+                .iter()
+                .filter(|s| matches!(s, Stmt::Field { .. }))
+                .count();
             assert_eq!(field_count, 3);
         }
         _ => panic!("expected ProjectDecl"),
@@ -317,7 +323,10 @@ fn test_project_with_interleaved_fields_and_body() {
     let prog = parse_program(input).unwrap();
     match &prog.stmts[0] {
         Stmt::Project { body, .. } => {
-            assert_eq!(count_body_stmt_types(body), vec!["field", "var", "field", "fn", "field"]);
+            assert_eq!(
+                count_body_stmt_types(body),
+                vec!["field", "var", "field", "fn", "field"]
+            );
         }
         _ => panic!("expected ProjectDecl"),
     }
