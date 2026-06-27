@@ -14,10 +14,8 @@ pub(crate) struct ExecContext<'a> {
     pub(super) cfg: &'a Sanctuary,
     pub(super) project: Option<&'a Project>,
     pub(crate) output: &'a mut OutputTarget,
-    /// Base variables (global + project string vars + cached shell var results).
+    /// Base variables (global + project vars, all eagerly resolved at compile time).
     pub(super) vars: HashMap<String, String>,
-    /// Unresolved shell var commands (global + project). Executed on first access.
-    pub(super) shell_vars: HashMap<String, String>,
     /// Scope stack for variable shadowing. Each layer shadows `vars` and higher layers.
     pub(super) var_stack: Vec<HashMap<String, String>>,
     pub(super) env_stack: Vec<HashMap<String, String>>,
@@ -32,10 +30,8 @@ impl<'a> ExecContext<'a> {
         output: &'a mut OutputTarget,
     ) -> Self {
         let mut vars = cfg.vars.clone();
-        let mut shell_vars = cfg.shell_vars.clone();
         if let Some(proj) = project {
             vars.extend(proj.vars.clone());
-            shell_vars.extend(proj.shell_vars.clone());
         }
         let work_dir = match project {
             Some(proj) => PathBuf::from(&cfg.sanctuary_path).join(proj.dir.trim_start_matches('/')),
@@ -46,7 +42,6 @@ impl<'a> ExecContext<'a> {
             project,
             output,
             vars,
-            shell_vars,
             var_stack: Vec::new(),
             env_stack: Vec::new(),
             work_dir,
@@ -77,8 +72,7 @@ impl<'a> ExecContext<'a> {
         }
     }
 
-    /// Look up a variable name, checking scope layers (top-to-bottom) then base/shell vars.
-    /// Shell vars are lazily executed on first access and cached in `self.vars`.
+    /// Look up a variable name, checking scope layers (top-to-bottom) then base vars.
     fn resolve_var(&mut self, name: &str) -> Result<Option<String>, RuntimeError> {
         for layer in self.var_stack.iter().rev() {
             if let Some(val) = layer.get(name) {
@@ -87,28 +81,6 @@ impl<'a> ExecContext<'a> {
         }
         if let Some(val) = self.vars.get(name) {
             return Ok(Some(val.clone()));
-        }
-        if let Some(cmd) = self.shell_vars.remove(name) {
-            let env_map: HashMap<String, String> = self.build_env().collect();
-            let out = exec::exec_and_get_stdout(&cmd, Some(&self.work_dir), Some(&env_map))
-                .map_err(|e| match e {
-                    exec::Error::Spawn(io_err) => RuntimeError::exec_io_error(&cmd, io_err),
-                    exec::Error::Exit {
-                        stderr, exit_code, ..
-                    } => RuntimeError::Exec {
-                        cmd: cmd.clone(),
-                        exit_code,
-                        detail: stderr,
-                    },
-                    exec::Error::Timeout { partial_stderr, .. } => RuntimeError::Exec {
-                        cmd: cmd.clone(),
-                        exit_code: None,
-                        detail: format!("timed out: {}", partial_stderr),
-                    },
-                })?;
-            let val = out.stdout;
-            self.vars.insert(name.to_string(), val.clone());
-            return Ok(Some(val));
         }
         Ok(None)
     }

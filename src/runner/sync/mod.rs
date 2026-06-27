@@ -1,4 +1,4 @@
-use crate::compiler::Project;
+use crate::compiler::{Project, SyncMode};
 use crate::runner::error::RuntimeError;
 use std::path::PathBuf;
 use std::process::Command;
@@ -8,7 +8,7 @@ fn sync_project_inner(
     proj: &Project,
     output: &mut dyn FnMut(&str),
 ) -> Result<(), RuntimeError> {
-    if proj.sync == "ignore" {
+    if proj.sync == SyncMode::Ignore {
         output(&format!("skip  {} (sync=ignore)", proj.name));
         return Ok(());
     }

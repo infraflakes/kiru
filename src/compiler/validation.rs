@@ -1,6 +1,6 @@
 use crate::compiler::error::CompileError;
 use crate::compiler::merge::merge_project_body_stmt;
-use crate::compiler::types::Sanctuary;
+use crate::compiler::types::{Sanctuary, SyncMode};
 use crate::dsl::{CasePattern, Expr, FnStmt};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -22,7 +22,7 @@ pub(crate) fn resolve_include(
             continue;
         };
 
-        if proj.sync == "ignore" {
+        if proj.sync == SyncMode::Ignore {
             continue;
         }
 
@@ -46,14 +46,11 @@ pub(crate) fn resolve_include(
         for program in &programs {
             let mut merged = cfg.vars.clone();
             merged.extend(proj.vars.clone());
-            let mut merged_shell = cfg.shell_vars.clone();
-            merged_shell.extend(proj.shell_vars.clone());
             for stmt in &program.stmts {
                 merge_project_body_stmt(
                     proj,
                     stmt.clone(),
                     &mut merged,
-                    &mut merged_shell,
                     &program.source_name,
                     &program.source_text,
                     &mut seen_fields,
@@ -95,22 +92,13 @@ pub fn validate(cfg: &Sanctuary) -> Result<(), CompileError> {
                     proj.name, proj.dir
                 ));
             }
-            match proj.sync.as_str() {
-                "clone" | "ignore" => {}
-                other => {
-                    errs.push(format!(
-                        "project {:?}: invalid sync value {:?} (expected 'clone' or 'ignore')",
-                        proj.name, other
-                    ));
-                }
-            }
+            // SyncMode enum guarantees valid values at compile time
         }
     }
 
     validate_run_refs(&cfg.runs, &cfg.functions, "top-level", &mut errs);
 
-    let mut global_scope: HashSet<String> = cfg.vars.keys().cloned().collect();
-    global_scope.extend(cfg.shell_vars.keys().cloned());
+    let global_scope: HashSet<String> = cfg.vars.keys().cloned().collect();
     validate_fn_bodies(&cfg.functions, &global_scope, "(top-level)", &mut errs);
 
     for (proj_name, project) in &cfg.projects {
@@ -118,7 +106,6 @@ pub fn validate(cfg: &Sanctuary) -> Result<(), CompileError> {
 
         let mut scope: HashSet<String> = global_scope.clone();
         scope.extend(project.vars.keys().cloned());
-        scope.extend(project.shell_vars.keys().cloned());
         validate_fn_bodies(&project.functions, &scope, proj_name, &mut errs);
     }
 

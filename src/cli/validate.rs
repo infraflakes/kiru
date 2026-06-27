@@ -150,7 +150,7 @@ fn draw_project(out: &mut String, name: &str, proj: &crate::compiler::types::Pro
         project_field(out, indent, "branch", &proj.branch);
     }
 
-    project_field(out, indent, "sync", &proj.sync);
+    project_field(out, indent, "sync", proj.sync.as_str());
 
     if let Some(ref u) = proj.include_file {
         project_field(out, indent, "include", u);

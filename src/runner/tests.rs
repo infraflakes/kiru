@@ -1,4 +1,4 @@
-use crate::compiler::{Project, Sanctuary};
+use crate::compiler::{Project, Sanctuary, SyncMode};
 use crate::dsl::{CaseArm, CasePattern, Expr, FnStmt, InterpolationPart};
 use crate::runner::output::OutputTarget;
 use crate::runner::parse::ExecContext;
@@ -9,11 +9,10 @@ fn test_context(vars: HashMap<String, String>) -> (Sanctuary, Project, OutputTar
         name: "test".to_string(),
         url: "http://example.com".to_string(),
         dir: "test".to_string(),
-        sync: "clone".to_string(),
+        sync: SyncMode::Clone,
         include_file: None,
         branch: "main".to_string(),
         vars,
-        shell_vars: HashMap::new(),
         functions: HashMap::new(),
         runs: HashMap::new(),
     };
@@ -21,7 +20,6 @@ fn test_context(vars: HashMap<String, String>) -> (Sanctuary, Project, OutputTar
         sanctuary_path: "/tmp".to_string(),
         projects: HashMap::new(),
         vars: HashMap::new(),
-        shell_vars: HashMap::new(),
         functions: HashMap::new(),
         runs: HashMap::new(),
     };
