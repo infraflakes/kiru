@@ -79,7 +79,7 @@ fn exec_shell_var(
     offset: usize,
     len: usize,
 ) -> Result<String, CompileError> {
-    let out = runner::exec_and_get_stdout(resolved_command, None, None).map_err(|e| {
+    runner::exec_and_get_stdout(resolved_command, None, None).map_err(|e| {
         spanned_err(
             format!("shell var ${} failed: {}", name, e),
             source_name,
@@ -87,8 +87,7 @@ fn exec_shell_var(
             offset,
             len,
         )
-    })?;
-    Ok(out.stdout)
+    })
 }
 
 fn parse_sync_mode(
@@ -395,7 +394,12 @@ pub(crate) fn merge_project_body_stmt(
             }
             project.runs.insert(name, chains);
         }
-        _ => {}
+        _ => {
+            return Err(CompileError::Validation(format!(
+                "unexpected statement in project '{}' (only var, fn, run, and fields are valid)",
+                project.name
+            )));
+        }
     }
     Ok(())
 }

@@ -14,11 +14,6 @@ use crate::runner::output::OutputTarget;
 use super::parse::ExecContext;
 
 #[derive(Debug)]
-pub(crate) struct ShellVarValue {
-    pub(crate) stdout: String,
-}
-
-#[derive(Debug)]
 pub(crate) enum Error {
     Spawn(std::io::Error),
     Exit {
@@ -88,8 +83,8 @@ pub(crate) fn exec_and_get_stdout(
     command: &str,
     dir: Option<&Path>,
     env: Option<&std::collections::HashMap<String, String>>,
-) -> Result<ShellVarValue, Error> {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
+) -> Result<String, Error> {
+    let shell = current_shell();
     let mut cmd = Command::new(shell);
     cmd.arg("-c")
         .arg(command)
@@ -180,7 +175,7 @@ pub(crate) fn exec_and_get_stdout(
         });
     }
 
-    Ok(ShellVarValue { stdout })
+    Ok(stdout)
 }
 
 fn current_shell() -> String {

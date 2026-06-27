@@ -236,8 +236,8 @@ impl<'a> ExecContext<'a> {
 
         let resolved = if var_type == &crate::dsl::VarType::Shell {
             let env_map: HashMap<String, String> = self.build_env().collect();
-            let out = exec::exec_and_get_stdout(&val, Some(&self.work_dir), Some(&env_map))
-                .map_err(|e| match e {
+            exec::exec_and_get_stdout(&val, Some(&self.work_dir), Some(&env_map)).map_err(|e| {
+                match e {
                     exec::Error::Spawn(io_err) => RuntimeError::exec_io_error(&val, io_err),
                     exec::Error::Exit {
                         stderr, exit_code, ..
@@ -251,8 +251,8 @@ impl<'a> ExecContext<'a> {
                         exit_code: None,
                         detail: format!("timed out: {}", partial_stderr),
                     },
-                })?;
-            out.stdout
+                }
+            })?
         } else {
             val
         };
