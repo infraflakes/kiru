@@ -49,23 +49,36 @@ pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
 
     let mut y = area.y;
     let all_done = model.all_done();
-    let done_count = model
+    let ok_count = model
         .tasks
         .iter()
-        .filter(|t| matches!(t.status, TaskStatus::Success | TaskStatus::Error))
+        .filter(|t| t.status == TaskStatus::Success)
+        .count();
+    let err_count = model
+        .tasks
+        .iter()
+        .filter(|t| t.status == TaskStatus::Error)
         .count();
     let total = model.tasks.len();
 
-    let header = if all_done {
-        "✓ All projects synced".to_string()
-    } else {
+    let header = if !all_done {
         format!(
             "{} Syncing projects ({}/{})",
-            SPINNER_FRAMES[spinner_idx], done_count, total
+            SPINNER_FRAMES[spinner_idx],
+            ok_count + err_count,
+            total
         )
+    } else if err_count > 0 {
+        format!("✗ {} synced, {} failed", ok_count, err_count)
+    } else {
+        format!("✓ All {} synced", ok_count)
     };
     let header_color = if all_done {
-        colors::OK
+        if err_count > 0 {
+            colors::FAILED
+        } else {
+            colors::OK
+        }
     } else {
         colors::RUNNING
     };

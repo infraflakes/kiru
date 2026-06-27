@@ -18,7 +18,7 @@ pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
     let sanctuary = config.sanctuary_path.clone();
     let projects = Arc::new(config.projects);
 
-    if let Err(e) = tui::run_tui_with_sync(chain_pairs, move |tx| {
+    if let Err(_) = tui::run_tui_with_sync(chain_pairs, move |tx| {
         let sanctuary = sanctuary.clone();
         let projects = Arc::clone(&projects);
         async move {
@@ -97,7 +97,6 @@ pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
             }
         }
     }) {
-        eprintln!("TUI error: {}", e);
         std::process::exit(1);
     }
     Ok(())
