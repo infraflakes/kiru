@@ -78,7 +78,7 @@ pub fn validate(cfg: &Sanctuary) -> Result<(), CompileError> {
     }
 
     if !is_sanctuary_disabled() {
-        let mut dirs = std::collections::HashSet::new();
+        let mut dirs = std::collections::HashSet::<String>::new();
         for proj in cfg.projects.values() {
             if proj.url.is_empty() {
                 errs.push(format!("project {:?}: url is required", proj.name));
@@ -86,7 +86,8 @@ pub fn validate(cfg: &Sanctuary) -> Result<(), CompileError> {
             if proj.dir.is_empty() {
                 errs.push(format!("project {:?}: dir is required", proj.name));
             }
-            if !dirs.insert(&proj.dir) {
+            let normalized_dir = proj.dir.trim_start_matches('/').to_string();
+            if !dirs.insert(normalized_dir) {
                 errs.push(format!(
                     "project {:?}: duplicate directory {:?}",
                     proj.name, proj.dir
