@@ -116,7 +116,3 @@ pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
         y += 1;
     }
 }
-
-pub fn format_final_output(_model: &Model) -> String {
-    String::new()
-}

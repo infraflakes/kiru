@@ -96,7 +96,7 @@ impl Parser {
 
         let mut chains = Vec::new();
         while self.current_token().ty != TokenType::RBrace {
-            if self.current_token().ty == TokenType::EOF {
+            if self.current_token().ty == TokenType::Eof {
                 return Err(ParseError::new(
                     self.eof_aware_span(),
                     "unexpected end of file in run declaration (expected '}')".to_string(),

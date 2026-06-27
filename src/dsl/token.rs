@@ -1,7 +1,6 @@
 #[derive(Debug, Clone, PartialEq)]
-#[allow(clippy::upper_case_acronyms)]
 pub enum TokenType {
-    EOF,
+    Eof,
     Illegal(String),
     Ident(String),
     Backtick(String),

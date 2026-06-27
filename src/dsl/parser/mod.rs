@@ -1,8 +1,12 @@
-use crate::dsl::ast::*;
+#[cfg(test)]
+use crate::dsl::Program;
 use crate::dsl::error::{ParseError, format_token, format_token_type, is_keyword_token};
 use crate::dsl::lexer::Lexer;
 use crate::dsl::token::{Token, TokenType};
-use crate::dsl::*;
+use crate::dsl::{
+    CaseArm, CasePattern, EnvPair, Expr, FnStmt, InterpolationPart, ProjectField, Stmt, TopLevel,
+    VarType,
+};
 use miette::SourceSpan;
 
 mod body;
@@ -73,7 +77,7 @@ impl Parser {
     }
 
     pub(crate) fn parse_toplevel(&mut self) -> Result<Option<TopLevel>, ParseError> {
-        if self.current_token().ty == TokenType::EOF {
+        if self.current_token().ty == TokenType::Eof {
             return Ok(None);
         }
         if let TokenType::Illegal(m) = &self.current_token().ty {
@@ -95,7 +99,7 @@ impl Parser {
         let mut program = Program::new();
         let mut errors = Vec::new();
 
-        while self.current_token().ty != TokenType::EOF {
+        while self.current_token().ty != TokenType::Eof {
             match self.parse_toplevel() {
                 Ok(Some(TopLevel::Stmt(stmt))) => program.stmts.push(stmt),
                 Ok(Some(TopLevel::Import(_))) => {}
@@ -187,7 +191,7 @@ impl Parser {
         use TokenType::*;
         loop {
             match &self.current_token().ty {
-                EOF => break,
+                Eof => break,
                 Semicolon | RBrace => {
                     self.advance();
                 }

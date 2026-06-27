@@ -1,19 +1,13 @@
 use super::load_config_and_resolve;
 use crate::compiler::types::Sanctuary;
+use crate::runner::colors;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-const BOLD: &str = "\x1b[1m";
-const YELLOW: &str = "\x1b[33m";
-const CYAN: &str = "\x1b[36m";
-const GRAY: &str = "\x1b[90m";
-const BOLD_CYAN: &str = "\x1b[1;36m";
-const RESET: &str = "\x1b[0m";
-
 macro_rules! style {
     ($code:expr, $($arg:tt)*) => {
-        format!("{}{}{}", $code, format_args!($($arg)*), RESET)
+        format!("{}{}{}", $code, format_args!($($arg)*), colors::RESET)
     };
 }
 
@@ -51,8 +45,8 @@ fn format_config(cfg: &Sanctuary) -> String {
 
         out.push_str(&format!(
             "\n  {}  {}\n\n",
-            style!(BOLD, "Projects"),
-            style!(YELLOW, "{}", sorted.len())
+            style!(colors::BOLD, "Projects"),
+            style!(colors::YELLOW, "{}", sorted.len())
         ));
 
         for (i, (name, proj)) in sorted.iter().enumerate() {
@@ -73,7 +67,14 @@ fn header_box(out: &mut String, box_w: usize, label_w: usize, cfg: &Sanctuary) {
     out.push_str(&top);
     out.push('\n');
 
-    key_value_row(out, box_w, label_w, "Sanctuary", &cfg.sanctuary_path, CYAN);
+    key_value_row(
+        out,
+        box_w,
+        label_w,
+        "Sanctuary",
+        &cfg.sanctuary_path,
+        colors::CYAN,
+    );
 
     out.push_str(&bot);
     out.push('\n');
@@ -98,7 +99,7 @@ fn key_value_row(
     let pad = interior.saturating_sub(visible);
 
     let key_padded = format!("{:>label_w$}", key);
-    let key_styled = style!(GRAY, "{}", key_padded);
+    let key_styled = style!(colors::GRAY, "{}", key_padded);
     let val_styled = style!(val_color, "{}", val_plain);
 
     out.push_str(&format!(
@@ -116,14 +117,18 @@ fn draw_standalone(out: &mut String, fns: &[&String], runs: &[&String]) {
     let items: &[(&str, &[&String])] = &[("fn", fns), ("run", runs)];
 
     for (label, names) in items {
-        let styled_label = style!(YELLOW, "{}", label);
+        let styled_label = style!(colors::YELLOW, "{}", label);
         if names.is_empty() {
-            out.push_str(&format!("  {}:  {}\n", styled_label, style!(GRAY, "—")));
+            out.push_str(&format!(
+                "  {}:  {}\n",
+                styled_label,
+                style!(colors::GRAY, "—")
+            ));
         } else {
-            let count = style!(GRAY, "({})", names.len());
+            let count = style!(colors::GRAY, "({})", names.len());
             let joined = names
                 .iter()
-                .map(|n| style!(BOLD, "{}", n))
+                .map(|n| style!(colors::BOLD, "{}", n))
                 .collect::<Vec<_>>()
                 .join(", ");
             out.push_str(&format!("  {}:  {}  {}\n", styled_label, joined, count));
@@ -138,7 +143,7 @@ fn draw_project(out: &mut String, name: &str, proj: &crate::compiler::types::Pro
     out.push_str(&format!(
         "  {}── {}\n",
         branch,
-        style!(BOLD_CYAN, "{}", name)
+        style!(colors::BOLD_CYAN, "{}", name)
     ));
 
     let indent = if last { "   " } else { "│  " };
@@ -176,7 +181,7 @@ fn project_field(out: &mut String, indent: &str, key: &str, value: &str) {
     out.push_str(&format!(
         "  {}  ├── {:>7}:  {}\n",
         indent,
-        style!(CYAN, "{}", key),
+        style!(colors::CYAN, "{}", key),
         value
     ));
 }
@@ -187,21 +192,21 @@ fn draw_item_line(out: &mut String, indent: &str, conn: &str, label: &str, names
             "  {}  {}── {:>7}:  {}\n",
             indent,
             conn,
-            style!(YELLOW, "{}", label),
-            style!(GRAY, "—")
+            style!(colors::YELLOW, "{}", label),
+            style!(colors::GRAY, "—")
         ));
     } else {
-        let count = style!(GRAY, "({})", names.len());
+        let count = style!(colors::GRAY, "({})", names.len());
         let joined = names
             .iter()
-            .map(|n| style!(BOLD, "{}", n))
+            .map(|n| style!(colors::BOLD, "{}", n))
             .collect::<Vec<_>>()
             .join(", ");
         out.push_str(&format!(
             "  {}  {}── {:>7}:  {}  {}\n",
             indent,
             conn,
-            style!(YELLOW, "{}", label),
+            style!(colors::YELLOW, "{}", label),
             joined,
             count
         ));
@@ -222,14 +227,14 @@ fn footer_bar(out: &mut String, cfg: &Sanctuary) {
 
     if is_standalone {
         out.push_str(&style!(
-            GRAY,
+            colors::GRAY,
             "  ─ {} functions · {} runs ─\n",
             fn_count,
             run_count,
         ));
     } else {
         out.push_str(&style!(
-            GRAY,
+            colors::GRAY,
             "  ─ {} projects · {} functions · {} runs ─\n",
             cfg.projects.len(),
             fn_count,

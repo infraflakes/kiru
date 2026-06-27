@@ -398,5 +398,5 @@ where
     F: FnOnce(mpsc::UnboundedSender<TuiEvent>) -> Fut + Send + 'static,
     Fut: Future<Output = miette::Result<()>> + Send + 'static,
 {
-    run_tui_with(chains, worker, sync::render, sync::format_final_output)
+    run_tui_with(chains, worker, sync::render, |_| String::new())
 }

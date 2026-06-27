@@ -43,7 +43,7 @@ pub fn format_token_type(ty: &TokenType) -> &'static str {
         TokenType::Ident(_) => "identifier",
         TokenType::Backtick(_) => "backtick string",
         TokenType::Illegal(_) => "illegal token",
-        TokenType::EOF => "end of file",
+        TokenType::Eof => "end of file",
     }
 }
 

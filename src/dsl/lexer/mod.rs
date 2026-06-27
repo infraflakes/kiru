@@ -47,7 +47,7 @@ impl Lexer {
         let ch = self.ch;
 
         match ch {
-            None => Token::new(TokenType::EOF, start_line, start_col, start_byte_offset, 0),
+            None => Token::new(TokenType::Eof, start_line, start_col, start_byte_offset, 0),
             Some('{') => {
                 self.read_char();
                 Token::new(
@@ -181,8 +181,8 @@ fn collect_tokens(input: &str) -> Vec<TokenType> {
     let mut tokens = Vec::new();
     loop {
         let tok = lexer.next_token();
-        let is_eof = matches!(tok.ty, TokenType::EOF);
-        if !matches!(tok.ty, TokenType::EOF | TokenType::Illegal(_)) {
+        let is_eof = matches!(tok.ty, TokenType::Eof);
+        if !matches!(tok.ty, TokenType::Eof | TokenType::Illegal(_)) {
             tokens.push(tok.ty);
         }
         if is_eof {
@@ -198,7 +198,7 @@ fn collect_all_tokens(input: &str) -> Vec<Token> {
     let mut tokens = Vec::new();
     loop {
         let tok = lexer.next_token();
-        let is_eof = matches!(tok.ty, TokenType::EOF);
+        let is_eof = matches!(tok.ty, TokenType::Eof);
         tokens.push(tok);
         if is_eof {
             break;
@@ -214,7 +214,7 @@ fn extract_errors(input: &str) -> Vec<String> {
     loop {
         let tok = lexer.next_token();
         match tok.ty {
-            TokenType::EOF => break,
+            TokenType::Eof => break,
             TokenType::Illegal(msg) => errors.push(msg),
             _ => {}
         }

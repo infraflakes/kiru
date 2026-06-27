@@ -2,6 +2,11 @@ use ratatui::style::Color;
 use std::io::Write;
 
 pub(crate) const RESET: &str = "\x1b[0m";
+pub(crate) const BOLD: &str = "\x1b[1m";
+pub(crate) const YELLOW: &str = "\x1b[33m";
+pub(crate) const CYAN: &str = "\x1b[36m";
+pub(crate) const GRAY: &str = "\x1b[90m";
+pub(crate) const BOLD_CYAN: &str = "\x1b[1;36m";
 
 pub(crate) const OK_ANSI: &str = "\x1b[92m";
 pub(crate) const RUNNING_ANSI: &str = "\x1b[93m";

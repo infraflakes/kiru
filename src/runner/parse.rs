@@ -13,7 +13,7 @@ pub type OutputCallback = Arc<dyn Fn(String) + Send + Sync>;
 pub(crate) struct ExecContext<'a> {
     pub(super) cfg: &'a Sanctuary,
     pub(super) project: Option<&'a Project>,
-    pub(crate) output: &'a mut OutputTarget,
+    pub(super) output: &'a mut OutputTarget,
     /// Base variables (global + project vars, all eagerly resolved at compile time).
     pub(super) vars: HashMap<String, String>,
     /// Scope stack for variable shadowing. Each layer shadows `vars` and higher layers.
@@ -31,7 +31,7 @@ impl<'a> ExecContext<'a> {
     ) -> Self {
         let mut vars = cfg.vars.clone();
         if let Some(proj) = project {
-            vars.extend(proj.vars.clone());
+            vars.extend(proj.vars.iter().map(|(k, v)| (k.clone(), v.clone())));
         }
         let work_dir = match project {
             Some(proj) => PathBuf::from(&cfg.sanctuary_path).join(proj.dir.trim_start_matches('/')),

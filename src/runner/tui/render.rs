@@ -13,9 +13,10 @@ pub fn task_marker(task: &Task, spinner_idx: usize) -> String {
         }
     } else {
         match task.status {
+            TaskStatus::Success => "✓".to_string(),
+            TaskStatus::Error => "✗".to_string(),
             TaskStatus::Pending => "·".to_string(),
             TaskStatus::Running => SPINNER_FRAMES[spinner_idx].to_string(),
-            TaskStatus::Success | TaskStatus::Error => "?".to_string(),
         }
     }
 }
