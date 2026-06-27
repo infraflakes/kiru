@@ -10,7 +10,6 @@ pub(crate) enum RuntimeError {
         detail: String,
     },
     Panic(String),
-    Other(String),
 }
 
 impl RuntimeError {
@@ -54,7 +53,6 @@ impl fmt::Display for RuntimeError {
                 }
             },
             RuntimeError::Panic(s) => write!(f, "runtime panic: {}", s),
-            RuntimeError::Other(s) => write!(f, "{}", s),
         }
     }
 }

@@ -100,7 +100,7 @@ fn run_project_chains(
             }
 
             if any_err {
-                Err(miette::miette!("one or more chain tasks failed"))
+                Err(miette::miette!("One or more chain tasks failed"))
             } else {
                 Ok(())
             }
@@ -197,7 +197,7 @@ fn run_standalone_chains(
             }
 
             if any_err {
-                Err(miette::miette!("one or more chain tasks failed"))
+                Err(miette::miette!("One or more chain tasks failed"))
             } else {
                 Ok(())
             }

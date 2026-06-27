@@ -22,12 +22,14 @@ pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
         let sanctuary = sanctuary.clone();
         let projects = Arc::clone(&projects);
         async move {
+            let mut had_errors = false;
             let mut join_handles = Vec::new();
 
             for (i, proj_name) in project_names.iter().enumerate() {
                 let proj = match projects.get(proj_name) {
                     Some(p) => p.clone(),
                     None => {
+                        had_errors = true;
                         crate::runner::tui::send_event(
                             &tx,
                             TuiEvent::UpdateStatus(i, TaskStatus::Error),
@@ -64,6 +66,7 @@ pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
                         );
                     }
                     Ok(Err(e)) => {
+                        had_errors = true;
                         crate::runner::tui::send_event(
                             &tx,
                             TuiEvent::AppendOutput(i, format!("Error: {}", e)),
@@ -74,6 +77,7 @@ pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
                         );
                     }
                     Err(e) => {
+                        had_errors = true;
                         crate::runner::tui::send_event(
                             &tx,
                             TuiEvent::AppendOutput(i, format!("Task panicked: {}", e)),
@@ -86,43 +90,11 @@ pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
                 }
             }
 
-            let projects = Arc::clone(&projects);
-            let sanctuary = sanctuary.clone();
-            let tx = tx.clone();
-            let warn_result = tokio::task::spawn_blocking(move || {
-                sync::warn_unknown_repos(&sanctuary, Arc::as_ref(&projects))
-            })
-            .await;
-
-            let has_tasks = !project_names.is_empty();
-            match warn_result {
-                Ok(Err(e)) => {
-                    if has_tasks {
-                        crate::runner::tui::send_event(
-                            &tx,
-                            TuiEvent::AppendOutput(0, format!("Warning: {}", e)),
-                        );
-                    } else {
-                        eprintln!("[kiru] Warning: {}", e);
-                    }
-                }
-                Err(e) => {
-                    if has_tasks {
-                        crate::runner::tui::send_event(
-                            &tx,
-                            TuiEvent::AppendOutput(
-                                0,
-                                format!("Warning: blocking task failed: {}", e),
-                            ),
-                        );
-                    } else {
-                        eprintln!("[kiru] Warning: blocking task failed: {}", e);
-                    }
-                }
-                _ => {}
+            if had_errors {
+                Err(miette::miette!("One or more projects failed to sync"))
+            } else {
+                Ok(())
             }
-
-            Ok(())
         }
     }) {
         eprintln!("TUI error: {}", e);

@@ -1,6 +1,5 @@
 use crate::compiler::Project;
 use crate::runner::error::RuntimeError;
-use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -105,55 +104,4 @@ pub fn sync_project_with_callback(
     mut output_cb: impl FnMut(&str),
 ) -> Result<(), RuntimeError> {
     sync_project_inner(sanctuary, proj, &mut output_cb)
-}
-
-fn warn_unknown_repos_inner(
-    sanctuary: &str,
-    projects: &std::collections::HashMap<String, Project>,
-    output: &mut dyn FnMut(&str),
-) -> Result<(), RuntimeError> {
-    let mut known_dirs = std::collections::HashSet::new();
-    for proj in projects.values() {
-        known_dirs.insert(&proj.dir);
-    }
-
-    let entries = match fs::read_dir(sanctuary) {
-        Ok(e) => e,
-        Err(_) => return Ok(()),
-    };
-
-    for entry in entries {
-        let entry = entry.map_err(RuntimeError::Io)?;
-        if !entry.path().is_dir() {
-            continue;
-        }
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy().to_string();
-        if known_dirs.contains(&name_str) {
-            continue;
-        }
-        let git_dir = PathBuf::from(sanctuary).join(&name_str).join(".git");
-        if git_dir.exists() {
-            output(&format!(
-                "  warn  {}/{} is a git repo not in your config",
-                sanctuary, name_str
-            ));
-        }
-    }
-
-    Ok(())
-}
-
-pub fn warn_unknown_repos(
-    sanctuary: &str,
-    projects: &std::collections::HashMap<String, Project>,
-) -> Result<(), RuntimeError> {
-    let mut warnings = Vec::new();
-    warn_unknown_repos_inner(sanctuary, projects, &mut |line: &str| {
-        warnings.push(line.to_string());
-    })?;
-    if !warnings.is_empty() {
-        return Err(RuntimeError::Other(warnings.join("\n")));
-    }
-    Ok(())
 }
