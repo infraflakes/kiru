@@ -1,5 +1,6 @@
 use std::fmt;
 
+/// Errors that can occur during function execution.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum RuntimeError {
     Lookup(String),
@@ -13,6 +14,7 @@ pub(crate) enum RuntimeError {
 }
 
 impl RuntimeError {
+    /// Create an `Exec` error from an I/O failure.
     pub(crate) fn exec_io_error(cmd: impl ToString, err: impl ToString) -> Self {
         RuntimeError::Exec {
             cmd: cmd.to_string(),
@@ -21,6 +23,7 @@ impl RuntimeError {
         }
     }
 
+    /// Create an `Exec` error from a non-zero exit code.
     pub(crate) fn exec_exit_code(cmd: impl ToString, code: Option<i32>) -> Self {
         RuntimeError::Exec {
             cmd: cmd.to_string(),

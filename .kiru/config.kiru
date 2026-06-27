@@ -1,9 +1,12 @@
 var shell workdir = `echo $HOME/dev`;
 sanctuary = $workdir;
 
+var string kiru_dir = `${workdir}/kiru`;
+
 pr kiru {
   url = `https://github.com/infraflakes/kiru.git`;
-  dir = `kiru`;
+  dir = $kiru_dir;
   sync = `clone`;
-  include = `.kiru/main.kiru`;
 }
+
+import `${kiru_dir}/.kiru/main.kiru`;

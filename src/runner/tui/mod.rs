@@ -90,7 +90,7 @@ impl<W: Write> Backend for SafeBackend<W> {
 
     fn window_size(&mut self) -> Result<WindowSize, Self::Error> {
         match self.inner.window_size() {
-            Ok(ws) => Ok(ws),
+            Ok(window_size) => Ok(window_size),
             Err(_) => Ok(WindowSize {
                 columns_rows: Size {
                     width: 80,
@@ -113,8 +113,8 @@ pub mod render;
 pub mod run;
 pub mod sync;
 
-pub fn send_event(tx: &mpsc::UnboundedSender<TuiEvent>, event: TuiEvent) {
-    if tx.send(event).is_err() {
+pub fn send_event(sender: &mpsc::UnboundedSender<TuiEvent>, event: TuiEvent) {
+    if sender.send(event).is_err() {
         eprintln!("[kiru] warning: failed to send TUI event");
     }
 }
@@ -256,7 +256,7 @@ pub enum TuiEvent {
 
 pub async fn run_tui(
     model: Arc<Mutex<Model>>,
-    mut rx: mpsc::UnboundedReceiver<TuiEvent>,
+    mut event_receiver: mpsc::UnboundedReceiver<TuiEvent>,
     height: u16,
     render_fn: fn(&mut Frame, &Model, usize),
     format_fn: fn(&Model) -> String,
@@ -275,7 +275,7 @@ pub async fn run_tui(
 
     loop {
         loop {
-            match rx.try_recv() {
+            match event_receiver.try_recv() {
                 Ok(TuiEvent::UpdateStatus(idx, status)) => {
                     Model::lock(&model).update_task_status(idx, status);
                 }
@@ -291,9 +291,9 @@ pub async fn run_tui(
         }
 
         if disconnected || Model::lock(&model).all_done() {
-            terminal.draw(|f| {
+            terminal.draw(|frame| {
                 let guard = Model::lock(&model);
-                render_fn(f, &guard, spinner_idx);
+                render_fn(frame, &guard, spinner_idx);
             })?;
             break;
         }
@@ -313,9 +313,9 @@ pub async fn run_tui(
         }
 
         spinner_idx = (spinner_idx + 1) % SPINNER_FRAMES.len();
-        terminal.draw(|f| {
+        terminal.draw(|frame| {
             let guard = Model::lock(&model);
-            render_fn(f, &guard, spinner_idx);
+            render_fn(frame, &guard, spinner_idx);
         })?;
     }
 
@@ -353,8 +353,8 @@ where
     F: FnOnce(mpsc::UnboundedSender<TuiEvent>) -> Fut + Send + 'static,
     Fut: Future<Output = miette::Result<()>> + Send + 'static,
 {
-    let rt = tokio::runtime::Runtime::new().map_err(|e| miette::miette!("{}", e))?;
-    rt.block_on(async {
+    let tokio_runtime = tokio::runtime::Runtime::new().map_err(|e| miette::miette!("{}", e))?;
+    tokio_runtime.block_on(async {
         let mut model = Model::new();
         for (label, task_names) in chains {
             model.add_chain(label, task_names);
@@ -366,9 +366,9 @@ where
             .try_fold(0u16, |acc, h| acc.checked_add(h))
             .unwrap_or(u16::MAX);
         let model = Arc::new(Mutex::new(model));
-        let (tx, rx) = mpsc::unbounded_channel();
-        let tui = tokio::spawn(run_tui(model, rx, height, render_fn, format_fn));
-        let worker = tokio::spawn(worker(tx));
+        let (event_sender, event_receiver) = mpsc::unbounded_channel();
+        let tui = tokio::spawn(run_tui(model, event_receiver, height, render_fn, format_fn));
+        let worker = tokio::spawn(worker(event_sender));
 
         tui.await
             .map_err(|e| miette::miette!("TUI panicked: {}", e))?

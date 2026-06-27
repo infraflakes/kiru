@@ -3,8 +3,8 @@ use crate::dsl::token::{Token, TokenType, lookup_ident};
 
 impl Lexer {
     pub(super) fn read_char(&mut self) {
-        if let Some(c) = self.ch {
-            self.byte_offset += c.len_utf8();
+        if let Some(ch) = self.ch {
+            self.byte_offset += ch.len_utf8();
         }
         self.ch = if self.read_pos < self.input.len() {
             Some(self.input[self.read_pos])
@@ -23,8 +23,8 @@ impl Lexer {
     }
 
     pub(super) fn skip_whitespace(&mut self) {
-        while let Some(c) = self.ch {
-            if !c.is_whitespace() {
+        while let Some(ch) = self.ch {
+            if !ch.is_whitespace() {
                 break;
             }
             self.read_char();
@@ -43,8 +43,8 @@ impl Lexer {
         let start_pos = self.pos;
         let start_byte_offset = self.byte_offset;
 
-        while let Some(c) = self.ch {
-            if c.is_alphanumeric() || c == '_' {
+        while let Some(ch) = self.ch {
+            if ch.is_alphanumeric() || ch == '_' {
                 self.read_char();
             } else {
                 break;
@@ -52,9 +52,9 @@ impl Lexer {
         }
 
         let ident: String = self.input[start_pos..self.pos].iter().collect();
-        let ty = lookup_ident(&ident);
+        let token_type = lookup_ident(&ident);
         Token::new(
-            ty,
+            token_type,
             start_line,
             start_col,
             start_byte_offset,
@@ -69,11 +69,11 @@ impl Lexer {
         let start_byte_offset = self.byte_offset;
 
         self.read_char();
-        while let Some(c) = self.ch {
-            if c == '`' {
+        while let Some(ch) = self.ch {
+            if ch == '`' {
                 break;
             }
-            if c == '\n' {
+            if ch == '\n' {
                 break;
             }
             self.read_char();

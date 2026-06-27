@@ -41,14 +41,14 @@ fn current_display(task: &super::Task) -> String {
     }
 }
 
-pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
-    let area = f.area();
-    f.render_widget(Clear, area);
+pub fn render(frame: &mut Frame, model: &Model, spinner_idx: usize) {
+    let area = frame.area();
+    frame.render_widget(Clear, area);
     if area.height < 1 {
         return;
     }
 
-    let mut y = area.y;
+    let mut y_pos = area.y;
     let all_done = model.all_done();
     let ok_count = model
         .tasks
@@ -83,17 +83,17 @@ pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
     } else {
         colors::RUNNING
     };
-    f.render_widget(
+    frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             &header,
             Style::default().fg(header_color),
         ))),
-        Rect::new(area.x, y, area.width, 1),
+        Rect::new(area.x, y_pos, area.width, 1),
     );
-    y += 1;
+    y_pos += 1;
 
     for (chain_idx, chain) in model.chains.iter().enumerate() {
-        if y >= area.y + area.height {
+        if y_pos >= area.y + area.height {
             break;
         }
 
@@ -108,11 +108,11 @@ pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
             let display = current_display(task);
             let line = format!("{} [{}]  {}", conn, task.name, display);
             let span = Span::styled(line, Style::default().fg(color));
-            f.render_widget(
+            frame.render_widget(
                 Paragraph::new(Line::from(span)),
-                Rect::new(area.x, y, area.width, 1),
+                Rect::new(area.x, y_pos, area.width, 1),
             );
         }
-        y += 1;
+        y_pos += 1;
     }
 }

@@ -18,6 +18,8 @@ mod project;
 #[cfg(test)]
 mod tests;
 
+/// Recursive-descent parser for the kiru DSL. Wraps a `Lexer` and produces
+/// a sequence of `TopLevel` items (statements and imports).
 pub(crate) struct Parser {
     lexer: Lexer,
     current: Token,
@@ -80,8 +82,8 @@ impl Parser {
         if self.current_token().ty == TokenType::Eof {
             return Ok(None);
         }
-        if let TokenType::Illegal(m) = &self.current_token().ty {
-            return Err(ParseError::new(self.eof_aware_span(), m.clone()));
+        if let TokenType::Illegal(msg) = &self.current_token().ty {
+            return Err(ParseError::new(self.eof_aware_span(), msg.clone()));
         }
         match &self.current_token().ty {
             TokenType::Import => {
@@ -90,7 +92,7 @@ impl Parser {
                 self.expect_with_context(TokenType::Semicolon, "after import path")?;
                 Ok(Some(TopLevel::Import(path)))
             }
-            _ => self.parse_top_level_stmt().map(|s| Some(TopLevel::Stmt(s))),
+            _ => self.parse_top_level_stmt().map(|stmt| Some(TopLevel::Stmt(stmt))),
         }
     }
 
@@ -101,8 +103,7 @@ impl Parser {
 
         while self.current_token().ty != TokenType::Eof {
             match self.parse_toplevel() {
-                Ok(Some(TopLevel::Stmt(stmt))) => program.stmts.push(stmt),
-                Ok(Some(TopLevel::Import(_))) => {}
+                Ok(Some(item)) => program.items.push(item),
                 Ok(None) => break,
                 Err(e) => {
                     errors.push(e);
@@ -119,8 +120,8 @@ impl Parser {
     }
 
     fn parse_top_level_stmt(&mut self) -> Result<Stmt, ParseError> {
-        if let TokenType::Illegal(m) = &self.current_token().ty {
-            return Err(ParseError::new(self.eof_aware_span(), m.clone()));
+        if let TokenType::Illegal(msg) = &self.current_token().ty {
+            return Err(ParseError::new(self.eof_aware_span(), msg.clone()));
         }
         match self.current_token().ty {
             TokenType::Sanctuary => self.parse_sanctuary_decl(),
@@ -131,7 +132,7 @@ impl Parser {
             _ => {
                 let is_underscore = matches!(
                     &self.current_token().ty,
-                    TokenType::Ident(s) if s == "_"
+                    TokenType::Ident(ident) if ident == "_"
                 );
                 if is_underscore {
                     Err(ParseError::new(
@@ -152,11 +153,11 @@ impl Parser {
     }
 
     pub(crate) fn parse_project_body_stmt(&mut self) -> Result<Stmt, ParseError> {
-        if let TokenType::Illegal(m) = &self.current_token().ty {
+        if let TokenType::Illegal(msg) = &self.current_token().ty {
             let token = self.current_token().clone();
             return Err(ParseError::new(
                 SourceSpan::new(token.offset.into(), token.len),
-                m.clone(),
+                msg.clone(),
             ));
         }
         match self.current_token().ty {
@@ -166,7 +167,7 @@ impl Parser {
             _ => {
                 let is_underscore = matches!(
                     &self.current_token().ty,
-                    TokenType::Ident(s) if s == "_"
+                    TokenType::Ident(ident) if ident == "_"
                 );
                 if is_underscore {
                     Err(ParseError::new(
@@ -222,7 +223,7 @@ impl Parser {
         };
 
         let name = match &self.current_token().ty {
-            TokenType::Ident(n) => n.clone(),
+            TokenType::Ident(name) => name.clone(),
             ty if is_keyword_token(ty) => {
                 return Err(ParseError::new(
                     self.eof_aware_span(),
@@ -271,7 +272,7 @@ impl Parser {
             _ => {
                 let is_underscore = matches!(
                     &self.current_token().ty,
-                    TokenType::Ident(s) if s == "_"
+                    TokenType::Ident(ident) if ident == "_"
                 );
                 if is_underscore {
                     Err(ParseError::new(

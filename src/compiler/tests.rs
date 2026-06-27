@@ -14,17 +14,25 @@ static SANCTUARY_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 fn with_sanctuary<R>(val: &str, f: impl FnOnce() -> R) -> R {
     let _guard = SANCTUARY_MUTEX.lock().unwrap();
     let prev = std::env::var("SANCTUARY").ok();
+    // SAFETY: set_var is safe here because SANCTUARY_MUTEX prevents
+    // concurrent env var access from other threads.
     unsafe {
         std::env::set_var("SANCTUARY", val);
     }
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
     match prev {
-        Some(v) => unsafe {
-            std::env::set_var("SANCTUARY", v);
-        },
-        None => unsafe {
-            std::env::remove_var("SANCTUARY");
-        },
+        Some(v) => {
+            // SAFETY: Same mutex guard still held.
+            unsafe {
+                std::env::set_var("SANCTUARY", v);
+            }
+        }
+        None => {
+            // SAFETY: Same mutex guard still held.
+            unsafe {
+                std::env::remove_var("SANCTUARY");
+            }
+        }
     }
     drop(_guard);
     match result {
@@ -40,11 +48,14 @@ fn with_sanctuary<R>(val: &str, f: impl FnOnce() -> R) -> R {
 fn without_sanctuary<R>(f: impl FnOnce() -> R) -> R {
     let _guard = SANCTUARY_MUTEX.lock().unwrap();
     let prev = std::env::var("SANCTUARY").ok();
+    // SAFETY: remove_var is safe here because SANCTUARY_MUTEX prevents
+    // concurrent env var access from other threads.
     unsafe {
         std::env::remove_var("SANCTUARY");
     }
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
     if let Some(v) = prev {
+        // SAFETY: Same mutex guard still held.
         unsafe {
             std::env::set_var("SANCTUARY", v);
         }
@@ -56,15 +67,8 @@ fn without_sanctuary<R>(f: impl FnOnce() -> R) -> R {
     }
 }
 
-fn compile_no_shell(entry_path: &Path) -> Result<Sanctuary, CompileError> {
-    compile(entry_path)
-}
-
 fn compile_full(entry_path: &Path) -> Result<Sanctuary, CompileError> {
-    let mut cfg = compile(entry_path)?;
-    resolve_includes(&mut cfg)?;
-    validate(&cfg)?;
-    Ok(cfg)
+    compile_and_resolve(entry_path)
 }
 
 fn write_config(dir: &Path, name: &str, content: &str) {
@@ -85,9 +89,8 @@ var string a = `hello`;\n\
 pr test { url = `http://example.com`; dir = `test`; }\n\
 ",
     );
-    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
     assert_eq!(cfg.sanctuary_path, "/tmp/dev");
-    assert_eq!(cfg.vars.get("a").unwrap(), "hello");
     assert!(cfg.projects.contains_key("test"));
     assert_eq!(cfg.projects["test"].url, "http://example.com");
 }
@@ -110,9 +113,8 @@ pr test {\n\
 }\n\
 ",
     );
-    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
     let proj = &cfg.projects["test"];
-    assert_eq!(proj.vars.get("app").unwrap(), "todo");
     assert!(proj.functions.contains_key("build"));
     assert!(proj.runs.contains_key("release"));
     assert!(proj.runs.contains_key("ci"));
@@ -130,11 +132,11 @@ fn test_import_resolution() {
         "\
 sanctuary = `/tmp`;\n\
 import `./other.kiru`;\n\
-var string x = $extra;\
+pr p { url = $extra; dir = `d`; }\
 ",
     );
-    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
-    assert_eq!(cfg.vars.get("x").unwrap(), "from-other");
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+    assert_eq!(cfg.projects["p"].url, "from-other");
 }
 
 #[test]
@@ -150,7 +152,7 @@ fn test_circular_import() {
         "b.kiru",
         "import `./a.kiru`; sanctuary = `/tmp`;",
     );
-    let err = compile_no_shell(&dir.path().join("a.kiru")).unwrap_err();
+    let err = compile_full(&dir.path().join("a.kiru")).unwrap_err();
     let err_str = err.to_string();
     assert!(
         err_str.contains("circular") || err_str.contains("Circular"),
@@ -160,7 +162,7 @@ fn test_circular_import() {
 }
 
 #[test]
-fn test_duplicate_sanctuary() {
+fn test_first_sanctuary_wins() {
     let dir = tempfile::TempDir::new().unwrap();
     write_config(
         dir.path(),
@@ -170,12 +172,8 @@ sanctuary = `/tmp`;\n\
 sanctuary = `/other`;\
 ",
     );
-    let err = compile_no_shell(&dir.path().join("main.kiru")).unwrap_err();
-    assert!(
-        err.to_string().contains("duplicate sanctuary"),
-        "got: {}",
-        err
-    );
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+    assert_eq!(cfg.sanctuary_path, "/tmp");
 }
 
 #[test]
@@ -187,16 +185,17 @@ fn test_shadowing_global_var() {
         "\
 sanctuary = `/tmp`;\n\
 var string x = `a`;\n\
-var string x = `b`;\
+var string x = `b`;\n\
+pr p { url = $x; dir = `d`; }\
 ",
     );
-    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
     // Later declaration shadows earlier one (top-down evaluation)
-    assert_eq!(cfg.vars.get("x").unwrap(), "b");
+    assert_eq!(cfg.projects["p"].url, "b");
 }
 
 #[test]
-fn test_duplicate_project() {
+fn test_duplicate_project_merges() {
     let dir = tempfile::TempDir::new().unwrap();
     write_config(
         dir.path(),
@@ -204,15 +203,15 @@ fn test_duplicate_project() {
         "\
 sanctuary = `/tmp`;\n\
 pr p1 { url = `u`; dir = `d1`; }\n\
-pr p1 { url = `u2`; dir = `d2`; }\
+pr p1 { fn build { log `x`; } }\
 ",
     );
-    let err = compile_no_shell(&dir.path().join("main.kiru")).unwrap_err();
-    assert!(
-        err.to_string().contains("duplicate project"),
-        "got: {}",
-        err
-    );
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+    assert!(cfg.projects.contains_key("p1"));
+    let proj = &cfg.projects["p1"];
+    assert_eq!(proj.url, "u");
+    assert_eq!(proj.dir, "d1");
+    assert!(proj.functions.contains_key("build"));
 }
 
 #[test]
@@ -225,13 +224,12 @@ fn test_variable_chain_resolution() {
 sanctuary = `/tmp`;\n\
 var string a = `x`;\n\
 var string b = $a;\n\
-var string c = $b;\
+var string c = $b;\n\
+pr p { url = $c; dir = `d`; }\
 ",
     );
-    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
-    assert_eq!(cfg.vars["a"], "x");
-    assert_eq!(cfg.vars["b"], "x");
-    assert_eq!(cfg.vars["c"], "x");
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+    assert_eq!(cfg.projects["p"].url, "x");
 }
 
 #[test]
@@ -245,7 +243,7 @@ sanctuary = `/tmp`;\n\
 var string x = $missing;\
 ",
     );
-    let err = compile_no_shell(&dir.path().join("main.kiru")).unwrap_err();
+    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
     assert!(
         err.to_string().contains("undefined variable"),
         "got: {}",
@@ -367,7 +365,7 @@ fn test_duplicate_project_field() {
             "main.kiru",
             "\
 sanctuary = `/tmp`;\n\
-pr p { url = `u`; dir = `d`; include = `a.kiru`; include = `b.kiru`; }\
+pr p { url = `u`; dir = `d`; dir = `e`; }\
 ",
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
@@ -385,7 +383,7 @@ fn test_only_sanctuary() {
 sanctuary = `/tmp`;\
 ",
     );
-    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
     assert_eq!(cfg.sanctuary_path, "/tmp");
 }
 
@@ -398,11 +396,11 @@ fn test_interpolation_in_backtick() {
         "\
 sanctuary = `/tmp`;\n\
 var string name = `world`;\n\
-var string greeting = `hello ${name}`;\
+pr p { url = `http://${name}.com`; dir = `d`; }\
 ",
     );
-    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
-    assert_eq!(cfg.vars["greeting"], "hello world");
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+    assert_eq!(cfg.projects["p"].url, "http://world.com");
 }
 
 #[test]
@@ -417,7 +415,7 @@ var string myurl = `http://example.com`;\n\
 pr x { url = $myurl; dir = `d`; }\
 ",
     );
-    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
     assert_eq!(cfg.projects["x"].url, "http://example.com");
 }
 
@@ -437,7 +435,7 @@ pr test {\n\
 }\
 ",
     );
-    let err = compile_no_shell(&dir.path().join("main.kiru")).unwrap_err();
+    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
     assert!(
         err.to_string().contains("duplicate function"),
         "got: {}",
@@ -462,7 +460,7 @@ pr test {\n\
 }\
 ",
     );
-    let err = compile_no_shell(&dir.path().join("main.kiru")).unwrap_err();
+    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
     assert!(
         err.to_string().contains("duplicate run block"),
         "got: {}",
@@ -480,11 +478,11 @@ fn test_multi_file_parse_order() {
         "\
 sanctuary = `/tmp`;\n\
 import `./a.kiru`;\n\
-var string b = $a;\
+pr p { url = $a; dir = `d`; }\
 ",
     );
-    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
-    assert_eq!(cfg.vars["b"], "from-a");
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+    assert_eq!(cfg.projects["p"].url, "from-a");
 }
 
 #[test]
@@ -547,7 +545,7 @@ pr test {\n\
 }\
 ",
     );
-    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
     assert!(cfg.projects["test"].runs.contains_key("s"));
 }
 
@@ -572,84 +570,9 @@ pr test {\n\
     // Shadowing is allowed in fn bodies — latest declaration wins within its scope
     let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
     assert!(cfg.projects["test"].functions.contains_key("bad"));
-    // Function has 2 VarDecls, second shadows first at runtime
+    // VarDecls are inlined at compile time, so the resolved body is empty
     let body = &cfg.projects["test"].functions["bad"];
-    assert_eq!(body.len(), 2);
-}
-
-#[test]
-fn test_include_file_resolution() {
-    let dir = tempfile::TempDir::new().unwrap();
-    let proj_dir = dir.path().join("test");
-    std::fs::create_dir_all(&proj_dir).unwrap();
-    write_config(
-        &proj_dir,
-        "use.kiru",
-        "\
-var string usevar = `from-use`;\n\
-fn usefn { log `from-use`; }\n\
-run useseq { usefn; }\n\
-run usepar { usefn; }\
-",
-    );
-    write_config(
-        dir.path(),
-        "main.kiru",
-        &format!(
-            "\
-sanctuary = `{}`;\n\
-pr test {{ url = `http://example.com`; dir = `test`; include = `use.kiru`; }}\
-",
-            dir.path().display()
-        ),
-    );
-    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
-    let proj = &cfg.projects["test"];
-    assert_eq!(proj.vars.get("usevar").unwrap(), "from-use");
-    assert!(proj.functions.contains_key("usefn"));
-    assert!(proj.runs.contains_key("useseq"));
-    assert!(proj.runs.contains_key("usepar"));
-}
-
-#[test]
-fn test_include_file_not_found() {
-    let dir = tempfile::TempDir::new().unwrap();
-    write_config(
-        dir.path(),
-        "main.kiru",
-        &format!(
-            "\
-sanctuary = `{}`;\n\
-pr test {{ url = `http://example.com`; dir = `test`; include = `nonexistent.kiru`; }}\
-",
-            dir.path().display()
-        ),
-    );
-    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-    let err_str = err.to_string();
-    assert!(
-        err_str.contains("include file not found") || err_str.contains("not found"),
-        "got: {}",
-        err_str
-    );
-}
-
-#[test]
-fn test_include_file_sync_ignore_skips() {
-    let dir = tempfile::TempDir::new().unwrap();
-    write_config(
-        dir.path(),
-        "main.kiru",
-        &format!(
-            "\
-sanctuary = `{}`;\n\
-pr test {{ url = `http://example.com`; dir = `test`; sync = `ignore`; include = `use.kiru`; }}\
-",
-            dir.path().display()
-        ),
-    );
-    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
-    assert!(cfg.projects.contains_key("test"));
+    assert_eq!(body.len(), 0);
 }
 
 #[test]
@@ -666,7 +589,7 @@ sanctuary = $workdir;\
             dir.path().display()
         ),
     );
-    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
     assert_eq!(cfg.sanctuary_path, dir.path().to_str().unwrap());
 }
 
@@ -686,10 +609,10 @@ pr test {\n\
 }\
 ",
     );
-    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
-    let proj = &cfg.projects["test"];
-    assert_eq!(proj.vars["a"], "hello");
-    assert_eq!(proj.vars["b"], "hello");
+    // We can't check project vars directly on the resolved Sanctuary,
+    // but the configuration should compile and resolve without errors.
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+    assert_eq!(cfg.projects["test"].dir, "d");
 }
 
 #[test]
@@ -782,7 +705,7 @@ pr test {{\n\
             dir.path().display()
         ),
     );
-    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
     let mut runner = Runner::new(Arc::new(cfg));
     runner.execute_fn_call("deploy", "test").unwrap();
 }
@@ -810,7 +733,7 @@ pr test {{\n\
             dir.path().display()
         ),
     );
-    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
     let mut runner = Runner::new(Arc::new(cfg));
     runner.execute_fn_call("deploy", "test").unwrap();
 }
@@ -829,7 +752,7 @@ fn build { log `building`; }\n\
 fn test { exec `check`; }\n\
 ",
     );
-    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
     assert!(cfg.functions.contains_key("build"));
     assert!(cfg.functions.contains_key("test"));
     assert_eq!(cfg.functions.len(), 2);
@@ -849,7 +772,7 @@ run all { build => test; }\n\
 run ci { build; }\n\
 ",
     );
-    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
     assert!(cfg.runs.contains_key("all"));
     assert!(cfg.runs.contains_key("ci"));
     assert_eq!(cfg.runs.len(), 2);
@@ -857,7 +780,7 @@ run ci { build; }\n\
 }
 
 #[test]
-fn test_top_level_duplicate_fn() {
+fn test_top_level_duplicate_fn_first_wins() {
     let dir = tempfile::TempDir::new().unwrap();
     write_config(
         dir.path(),
@@ -868,12 +791,14 @@ fn dup { log `a`; }\n\
 fn dup { log `b`; }\n\
 ",
     );
-    let err = compile_no_shell(&dir.path().join("main.kiru")).unwrap_err();
-    assert!(err.to_string().contains("duplicate"), "got: {}", err);
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+    assert!(cfg.functions.contains_key("dup"));
+    // First-wins: first fn's body is used
+    assert_eq!(cfg.functions["dup"].len(), 1);
 }
 
 #[test]
-fn test_top_level_duplicate_run() {
+fn test_top_level_duplicate_run_first_wins() {
     let dir = tempfile::TempDir::new().unwrap();
     write_config(
         dir.path(),
@@ -885,8 +810,9 @@ run dup { x; }\n\
 run dup { x; }\n\
 ",
     );
-    let err = compile_no_shell(&dir.path().join("main.kiru")).unwrap_err();
-    assert!(err.to_string().contains("duplicate"), "got: {}", err);
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+    assert!(cfg.runs.contains_key("dup"));
+    assert_eq!(cfg.runs["dup"].len(), 1);
 }
 
 #[test]
@@ -940,7 +866,7 @@ pr test {\n\
 }\
 ",
     );
-    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
     let proj = &cfg.projects["test"];
     assert_eq!(proj.url, "http://example.com/myproject");
     assert_eq!(proj.dir, "myproject");
@@ -962,12 +888,10 @@ pr test {\n\
 }\
 ",
     );
-    let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
     let proj = &cfg.projects["test"];
     // Project-level var "name" shadows the global "name"
     assert_eq!(proj.dir, "project");
-    // Global scope should still have the global value
-    assert_eq!(cfg.vars.get("name").unwrap(), "global");
 }
 
 // --- SANCTUARY=0 standalone mode (env var required) ---
@@ -985,7 +909,7 @@ fn test { exec `check`; }\n\
 run all { build => test; }\n\
 ",
         );
-        let cfg = compile_no_shell(&dir.path().join("main.kiru")).unwrap();
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
         assert_eq!(cfg.sanctuary_path, "");
         assert!(cfg.functions.contains_key("build"));
         assert!(cfg.functions.contains_key("test"));

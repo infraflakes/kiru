@@ -1,3 +1,4 @@
+/// Token types recognized by the kiru DSL lexer.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenType {
     Eof,
@@ -28,6 +29,7 @@ pub enum TokenType {
     Case,
 }
 
+/// A lexical token with source position tracking.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub ty: TokenType,
@@ -49,6 +51,8 @@ impl Token {
     }
 }
 
+/// Convert a keyword string to its corresponding token type,
+/// or return `TokenType::Ident` if it is not a keyword.
 pub fn lookup_ident(ident: &str) -> TokenType {
     match ident {
         "sanctuary" => TokenType::Sanctuary,

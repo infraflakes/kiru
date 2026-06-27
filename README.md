@@ -33,14 +33,15 @@ Config lives at `~/.config/kiru/main.kiru`. Override with `-c <path>`.
 
 ---
 
-## The four things
+## The five things
 
 | thing | what it is |
 |---|---|
 | **sanctuary** | the root directory where all your repos live |
-| **pr** | a repo: url, local path, optional branch, sync mode |
-| **fn** | a function with execution primitives `exec`, `cd`, `log`, `env`, `var`, `case` |
-| **run** | an orchestration block — chains of fn calls, concurrent by default |
+| **import** | import multiple `.kiru` files |
+| **pr** | declare repos with metadata fields |
+| **fn** | a function with execution primitives `log`, `exec`, `cd`, `var`, `env`, `case` |
+| **run** | an orchestration block — chains of function calls, concurrent by default |
 
 ---
 ## Examples:
@@ -56,12 +57,12 @@ Config lives at `~/.config/kiru/main.kiru`. Override with `-c <path>`.
 | command | what it does |
 |---------|-------------|
 | `kiru sync` | clone/update all declared repos into sanctuary |
-| `kiru run <name> <project>` | execute a run block (interactive TUI) |
-| `kiru fn <name> <project>` | execute one function (plain output) |
+| `kiru run <name> [<project>]` | execute a run block |
+| `kiru fn <name> [<project>]` | execute one function |
 | `kiru validate` | parse and validate the config |
 | `kiru version` | print version |
 
-When `SANCTUARY=0`, kiru runs in standalone mode — no sanctuary, no projects, just top-level `fn` and `run` blocks. Config defaults to `.kiru/main.kiru`. Useful for CI/CD.
+When `SANCTUARY=0`, kiru runs in standalone mode — no sanctuary, no projects, just top-level `fn` and `run` blocks. Config defaults to `.kiru/main.kiru`. `kiru sync` is not available in this mode. Useful for CI/CD.
 
 ---
 

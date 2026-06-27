@@ -4,6 +4,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+/// Errors from shell command execution.
 #[derive(Debug)]
 pub(crate) enum Error {
     Spawn(std::io::Error),
@@ -70,47 +71,56 @@ impl std::error::Error for Error {
     }
 }
 
+/// Execute a shell command and capture stdout.  Applies an optional working
+/// directory and environment variable overrides.  Times out after 30 seconds.
 pub(crate) fn exec_and_get_stdout(
     command: &str,
-    dir: Option<&Path>,
-    env: Option<&std::collections::HashMap<String, String>>,
+    working_dir: Option<&Path>,
+    env_overrides: Option<&std::collections::HashMap<String, String>>,
 ) -> Result<String, Error> {
-    let shell = current_shell();
-    let mut cmd = Command::new(shell);
-    cmd.arg("-c")
+    let shell_path = current_shell();
+    let mut shell_command = Command::new(shell_path);
+    shell_command
+        .arg("-c")
         .arg(command)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    if let Some(dir) = dir {
-        cmd.current_dir(dir);
+    if let Some(dir) = working_dir {
+        shell_command.current_dir(dir);
     }
-    if let Some(env) = env {
-        cmd.envs(env);
+    if let Some(overrides) = env_overrides {
+        shell_command.envs(overrides);
     }
 
-    let mut child = cmd.spawn().map_err(Error::Spawn)?;
+    let mut child = shell_command.spawn().map_err(Error::Spawn)?;
 
-    let dur = Duration::from_secs(30);
+    let timeout_duration = Duration::from_secs(30);
     let start = Instant::now();
 
     let stdout_buf = Arc::new(Mutex::new(Vec::new()));
     let stderr_buf = Arc::new(Mutex::new(Vec::new()));
 
-    let stdout_reader = child.stdout.take().map(|s| {
-        let buf = Arc::clone(&stdout_buf);
+    let stdout_reader = child.stdout.take().map(|child_stream| {
+        let buffer_clone = Arc::clone(&stdout_buf);
         std::thread::spawn(move || {
-            let mut tmp = Vec::new();
-            let _ = std::io::BufReader::new(s).read_to_end(&mut tmp);
-            buf.lock().unwrap_or_else(|e| e.into_inner()).extend(tmp);
+            let mut read_buffer = Vec::new();
+            let _ = std::io::BufReader::new(child_stream).read_to_end(&mut read_buffer);
+            buffer_clone
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .extend(read_buffer);
         })
     });
-    let stderr_reader = child.stderr.take().map(|s| {
-        let buf = Arc::clone(&stderr_buf);
+    let stderr_reader = child.stderr.take().map(|child_stream| {
+        let buffer_clone = Arc::clone(&stderr_buf);
         std::thread::spawn(move || {
-            let mut tmp = Vec::new();
-            let _ = std::io::BufReader::new(s).read_to_end(&mut tmp);
-            buf.lock().unwrap_or_else(|e| e.into_inner()).extend(tmp);
+            let mut read_buffer = Vec::new();
+            let _ = std::io::BufReader::new(child_stream).read_to_end(&mut read_buffer);
+            buffer_clone
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .extend(read_buffer);
         })
     });
 
@@ -118,21 +128,21 @@ pub(crate) fn exec_and_get_stdout(
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) => {
-                if start.elapsed() >= dur {
+                if start.elapsed() >= timeout_duration {
                     let _ = child.kill();
                     let _ = child.wait();
-                    if let Some(h) = stdout_reader {
-                        let _ = h.join();
+                    if let Some(join_handle) = stdout_reader {
+                        let _ = join_handle.join();
                     }
-                    if let Some(h) = stderr_reader {
-                        let _ = h.join();
+                    if let Some(join_handle) = stderr_reader {
+                        let _ = join_handle.join();
                     }
-                    let out = stdout_buf.lock().unwrap_or_else(|e| e.into_inner());
-                    let err = stderr_buf.lock().unwrap_or_else(|e| e.into_inner());
+                    let stdout_guard = stdout_buf.lock().unwrap_or_else(|e| e.into_inner());
+                    let stderr_guard = stderr_buf.lock().unwrap_or_else(|e| e.into_inner());
                     return Err(Error::Timeout {
                         command: command.to_string(),
-                        partial_stdout: String::from_utf8_lossy(&out).into_owned(),
-                        partial_stderr: String::from_utf8_lossy(&err).into_owned(),
+                        partial_stdout: String::from_utf8_lossy(&stdout_guard).into_owned(),
+                        partial_stderr: String::from_utf8_lossy(&stderr_guard).into_owned(),
                     });
                 }
                 std::thread::sleep(Duration::from_millis(50));
@@ -145,18 +155,18 @@ pub(crate) fn exec_and_get_stdout(
         }
     };
 
-    if let Some(h) = stdout_reader {
-        let _ = h.join();
+    if let Some(join_handle) = stdout_reader {
+        let _ = join_handle.join();
     }
-    if let Some(h) = stderr_reader {
-        let _ = h.join();
+    if let Some(join_handle) = stderr_reader {
+        let _ = join_handle.join();
     }
 
-    let out = stdout_buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let err = stderr_buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let stdout_data = stdout_buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let stderr_data = stderr_buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
 
-    let stdout = String::from_utf8_lossy(&out).trim_end().to_string();
-    let stderr = String::from_utf8_lossy(&err).to_string();
+    let stdout = String::from_utf8_lossy(&stdout_data).trim_end().to_string();
+    let stderr = String::from_utf8_lossy(&stderr_data).to_string();
 
     if !status.success() {
         return Err(Error::Exit {
@@ -169,6 +179,7 @@ pub(crate) fn exec_and_get_stdout(
     Ok(stdout)
 }
 
+/// Return the user's shell from `$SHELL`, defaulting to `"sh"`.
 pub(crate) fn current_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string())
 }

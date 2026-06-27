@@ -2,6 +2,7 @@ use crate::dsl::token::{Token, TokenType};
 
 mod tokenizer;
 
+/// Character-level lexer that emits tokens from source text.
 #[derive(Debug)]
 pub(crate) struct Lexer {
     pub(super) input: Vec<char>,
@@ -29,7 +30,7 @@ impl Lexer {
     }
 
     pub(crate) fn source_len(&self) -> usize {
-        self.input.iter().map(|c| c.len_utf8()).sum()
+        self.input.iter().map(|ch| ch.len_utf8()).sum()
     }
 
     pub(crate) fn next_token(&mut self) -> Token {
@@ -88,10 +89,10 @@ impl Lexer {
                     self.byte_offset - start_byte_offset,
                 )
             }
-            Some(c @ ('(' | ')')) => {
+            Some(ch @ ('(' | ')')) => {
                 self.read_char();
                 Token::new(
-                    TokenType::Illegal(format!("unexpected character: {}", c)),
+                    TokenType::Illegal(format!("unexpected character: {}", ch)),
                     start_line,
                     start_col,
                     start_byte_offset,
@@ -160,11 +161,11 @@ impl Lexer {
                 }
             }
             Some('`') => self.read_backtick(),
-            Some(c) if c.is_alphabetic() || c == '_' => self.read_ident(),
-            Some(c) => {
+            Some(ch) if ch.is_alphabetic() || ch == '_' => self.read_ident(),
+            Some(ch) => {
                 self.read_char();
                 Token::new(
-                    TokenType::Illegal(format!("unexpected character: {}", c)),
+                    TokenType::Illegal(format!("unexpected character: {}", ch)),
                     start_line,
                     start_col,
                     start_byte_offset,

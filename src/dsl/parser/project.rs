@@ -2,12 +2,10 @@ use super::*;
 
 impl Parser {
     pub(crate) fn parse_project_decl(&mut self) -> Result<Stmt, ParseError> {
-        let offset = self.current_token().offset;
-        let len = self.current_token().len;
         self.advance(); // skip 'pr'
 
         let name = match &self.current_token().ty {
-            TokenType::Ident(n) => n.clone(),
+            TokenType::Ident(name_str) => name_str.clone(),
             ty if is_keyword_token(ty) => {
                 return Err(ParseError::new(
                     self.eof_aware_span(),
@@ -38,7 +36,7 @@ impl Parser {
                 _ => {
                     let type_offset = self.current_token().offset;
                     let key_str = match &self.current_token().ty {
-                        TokenType::Ident(k) => k.clone(),
+                        TokenType::Ident(ident) => ident.clone(),
                         ty if is_keyword_token(ty) => {
                             return Err(ParseError::new(
                                 self.eof_aware_span(),
@@ -61,7 +59,6 @@ impl Parser {
                         "url" => ProjectField::Url,
                         "dir" => ProjectField::Dir,
                         "sync" => ProjectField::Sync,
-                        "include" => ProjectField::Include,
                         "branch" => ProjectField::Branch,
                         _ => {
                             return Err(ParseError::new(
@@ -89,11 +86,6 @@ impl Parser {
 
         self.expect_with_context(TokenType::RBrace, "to close project body")?;
 
-        Ok(Stmt::Project {
-            name,
-            body,
-            offset,
-            len,
-        })
+        Ok(Stmt::Project { name, body })
     }
 }

@@ -46,7 +46,7 @@ impl Parser {
         let mut pairs = Vec::new();
         while self.current_token().ty != TokenType::RBracket {
             let key = match &self.current_token().ty {
-                TokenType::Ident(k) => k.clone(),
+                TokenType::Ident(key_str) => key_str.clone(),
                 ty if is_keyword_token(ty) => {
                     return Err(ParseError::new(
                         self.eof_aware_span(),
@@ -129,14 +129,14 @@ impl Parser {
 
     fn parse_case_pattern(&mut self) -> Result<CasePattern, ParseError> {
         match &self.current_token().ty {
-            TokenType::Ident(s) if s == "_" => {
+            TokenType::Ident(ident) if ident == "_" => {
                 self.advance();
                 Ok(CasePattern::Default)
             }
             TokenType::Dollar => {
                 self.advance();
                 let name = match &self.current_token().ty {
-                    TokenType::Ident(n) => n.clone(),
+                    TokenType::Ident(name_str) => name_str.clone(),
                     ty if is_keyword_token(ty) => {
                         return Err(ParseError::new(
                             self.eof_aware_span(),
@@ -169,12 +169,12 @@ impl Parser {
                 Ok(CasePattern::Literal { parts })
             }
             _ => {
-                let tok = format_token(self.current_token());
+                let token_str = format_token(self.current_token());
                 Err(ParseError::new(
                     self.eof_aware_span(),
                     format!(
                         "expected pattern before {}; are you missing a case arm pattern?",
-                        tok
+                        token_str
                     ),
                 ))
             }

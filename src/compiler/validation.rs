@@ -1,130 +1,125 @@
 use crate::compiler::error::{CompileError, spanned_err};
-use crate::compiler::merge::merge_project_body_stmt;
-use crate::compiler::types::{Sanctuary, SyncMode};
 use crate::dsl::{CasePattern, Expr, FnStmt};
-use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 pub fn is_sanctuary_disabled() -> bool {
     std::env::var("SANCTUARY").as_deref() == Ok("0")
 }
 
-pub(crate) fn resolve_include(
-    cfg: &mut Sanctuary,
-    parse_recursive_fn: impl Fn(
-        &Path,
-        &mut HashSet<PathBuf>,
-        &mut HashSet<PathBuf>,
-    ) -> Result<Vec<crate::dsl::ast::Program>, CompileError>,
-) -> Result<(), CompileError> {
-    for proj in cfg.projects.values_mut() {
-        let Some(include_file) = &proj.include_file else {
-            continue;
-        };
-
-        if proj.sync == SyncMode::Ignore {
-            continue;
-        }
-
-        let use_path = PathBuf::from(&cfg.sanctuary_path)
-            .join(proj.dir.trim_start_matches('/'))
-            .join(include_file.trim_start_matches('/'));
-
-        if !use_path.exists() {
-            return Err(spanned_err(
-                format!(
-                    "project {:?}: include file not found: {} (run 'kiru sync' first)",
-                    proj.name,
-                    use_path.display()
-                ),
-                "",
-                "",
-                0,
-                1,
-            ));
-        }
-
-        let mut loaded_files = HashSet::new();
-        let mut recursion_stack = HashSet::new();
-        let programs = parse_recursive_fn(&use_path, &mut loaded_files, &mut recursion_stack)?;
-
-        let mut seen_fields: HashSet<String> = HashSet::new();
-        for program in &programs {
-            for stmt in &program.stmts {
-                merge_project_body_stmt(
-                    proj,
-                    stmt.clone(),
-                    &mut cfg.vars,
-                    &program.source_name,
-                    &program.source_text,
-                    &mut seen_fields,
-                )?;
+/// Extract a plain string from an `Expr` if it is a simple backtick literal
+/// with no variable interpolation. Returns `None` for var refs or interpolated
+/// strings.
+fn extract_string(expr: &Option<Expr>) -> Option<String> {
+    let expr = expr.as_ref()?;
+    match expr {
+        Expr::BacktickLit { parts, .. } => {
+            let mut extracted_string = String::new();
+            for part in parts {
+                if part.is_var {
+                    return None;
+                }
+                extracted_string.push_str(&part.value);
             }
+            Some(extracted_string)
         }
+        Expr::VarRef { .. } => None,
     }
-
-    Ok(())
 }
 
-pub fn validate(cfg: &Sanctuary) -> Result<(), CompileError> {
-    let mut errs = Vec::new();
+pub fn validate(
+    cfg: &super::types::UnresolvedSanctuary,
+    global_scope: &HashMap<String, String>,
+    project_var_scopes: &HashMap<String, HashMap<String, String>>,
+) -> Result<(), CompileError> {
+    let mut errors = Vec::new();
 
+    // Sanity-check sanctuary path
     if is_sanctuary_disabled() {
         // SANCTUARY=0 mode: sanctuary and project fields are optional
-    } else if cfg.sanctuary_path.is_empty() {
-        errs.push("sanctuary declaration is required".to_string());
-    } else if !Path::new(&cfg.sanctuary_path).is_absolute() {
-        errs.push(format!(
-            "sanctuary path must be absolute: {}",
-            cfg.sanctuary_path
-        ));
+    } else {
+        match &cfg.sanctuary_path {
+            None => {
+                errors.push("sanctuary declaration is required".to_string());
+            }
+            Some(Expr::VarRef { .. }) => {
+                // Uses a variable reference — can't validate at this stage.
+                // The resolve phase will catch undefined vars.
+            }
+            Some(Expr::BacktickLit { parts, .. }) => {
+                let path_str: String = parts.iter().map(|part| part.value.as_str()).collect();
+                if path_str.is_empty() {
+                    errors.push("sanctuary declaration is required".to_string());
+                } else if !Path::new(&path_str).is_absolute() {
+                    errors.push(format!("sanctuary path must be absolute: {}", path_str));
+                }
+            }
+        }
     }
 
+    // Validate project fields (url/dir required, no duplicate dirs)
     if !is_sanctuary_disabled() {
-        let mut dirs = HashSet::<String>::new();
-        for proj in cfg.projects.values() {
-            if proj.url.is_empty() {
-                errs.push(format!("project {:?}: url is required", proj.name));
+        let mut seen_dirs = HashSet::<String>::new();
+        for project in cfg.projects.values() {
+            let url_str = extract_string(&project.url).unwrap_or_default();
+            let dir_str = extract_string(&project.dir).unwrap_or_default();
+
+            if url_str.is_empty() && project.url.is_some() {
+                // url is set but uses var refs — can't validate now
+            } else if project.url.is_none() || url_str.is_empty() {
+                errors.push(format!("project {:?}: url is required", project.name));
             }
-            if proj.dir.is_empty() {
-                errs.push(format!("project {:?}: dir is required", proj.name));
+
+            if dir_str.is_empty() && project.dir.is_some() {
+                // dir is set but uses var refs
+            } else if project.dir.is_none() || dir_str.is_empty() {
+                errors.push(format!("project {:?}: dir is required", project.name));
             }
-            let normalized_dir = proj.dir.trim_start_matches('/').to_string();
-            if !dirs.insert(normalized_dir) {
-                errs.push(format!(
+
+            let normalized_dir = dir_str.trim_start_matches('/').to_string();
+            if !normalized_dir.is_empty() && !seen_dirs.insert(normalized_dir) {
+                errors.push(format!(
                     "project {:?}: duplicate directory {:?}",
-                    proj.name, proj.dir
+                    project.name, dir_str
                 ));
             }
         }
     }
 
-    validate_run_refs(&cfg.runs, &cfg.functions, "top-level", &mut errs);
+    // Validate run references
+    validate_run_refs(&cfg.runs, &cfg.functions, "top-level", &mut errors);
 
-    let global_scope: HashSet<String> = cfg.vars.keys().cloned().collect();
+    // Build global scope set from pre-built scope
+    let global_set: HashSet<String> = global_scope.keys().cloned().collect();
+
     validate_fn_bodies(
         &cfg.functions,
-        &global_scope,
+        &global_set,
         &HashSet::new(),
         "(top-level)",
-        &mut errs,
+        &mut errors,
     );
 
     for (proj_name, project) in &cfg.projects {
-        validate_run_refs(&project.runs, &project.functions, proj_name, &mut errs);
+        validate_run_refs(&project.runs, &project.functions, proj_name, &mut errors);
 
-        let project_scope: HashSet<String> = project.vars.keys().cloned().collect();
+        // Build project scope set from the pre-built project scope
+        let project_set: HashSet<String> = project_var_scopes
+            .get(proj_name)
+            .map(|m| m.keys().cloned().collect())
+            .unwrap_or_default();
+
         validate_fn_bodies(
             &project.functions,
-            &global_scope,
-            &project_scope,
+            &global_set,
+            &project_set,
             proj_name,
-            &mut errs,
+            &mut errors,
         );
     }
 
-    if !errs.is_empty() {
-        return Err(spanned_err(errs.join("\n"), "", "", 0, 1));
+    if !errors.is_empty() {
+        return Err(spanned_err(errors.join("\n"), "", "", 0, 1));
     }
 
     Ok(())
@@ -134,13 +129,13 @@ fn validate_run_refs(
     runs: &std::collections::HashMap<String, Vec<Vec<String>>>,
     functions: &std::collections::HashMap<String, Vec<FnStmt>>,
     prefix: &str,
-    errs: &mut Vec<String>,
+    errors: &mut Vec<String>,
 ) {
     for (run_name, chains) in runs {
         for chain in chains {
             for fn_name in chain {
                 if !functions.contains_key(fn_name) {
-                    errs.push(format!(
+                    errors.push(format!(
                         "{}: run {:?} references unknown function {:?}",
                         prefix, run_name, fn_name
                     ));
@@ -155,12 +150,12 @@ fn validate_fn_bodies(
     global_scope: &HashSet<String>,
     project_scope: &HashSet<String>,
     proj_name: &str,
-    errs: &mut Vec<String>,
+    errors: &mut Vec<String>,
 ) {
     for (fn_name, body) in functions {
         let mut mutable_scope: HashSet<String> =
             global_scope.union(project_scope).cloned().collect();
-        validate_fn_body(fn_name, body, &mut mutable_scope, errs, proj_name);
+        validate_fn_body(fn_name, body, &mut mutable_scope, errors, proj_name);
     }
 }
 
@@ -168,13 +163,13 @@ fn validate_expr(
     expr: &Expr,
     fn_name: &str,
     scope: &HashSet<String>,
-    errs: &mut Vec<String>,
+    errors: &mut Vec<String>,
     proj_name: &str,
 ) {
     match expr {
         Expr::VarRef { name, .. } => {
             if !scope.contains(name) {
-                errs.push(format!(
+                errors.push(format!(
                     "project {:?}: fn {:?}: undefined variable ${}",
                     proj_name, fn_name, name
                 ));
@@ -185,7 +180,7 @@ fn validate_expr(
                 if part.is_var {
                     let var_name = part.value.trim_start_matches('$');
                     if !scope.contains(var_name) {
-                        errs.push(format!(
+                        errors.push(format!(
                             "project {:?}: fn {:?}: undefined variable ${}",
                             proj_name, fn_name, var_name
                         ));
@@ -200,27 +195,27 @@ fn validate_fn_body(
     fn_name: &str,
     body: &[FnStmt],
     scope: &mut HashSet<String>,
-    errs: &mut Vec<String>,
+    errors: &mut Vec<String>,
     proj_name: &str,
 ) {
     for stmt in body {
         match stmt {
             FnStmt::VarDecl { name, value, .. } => {
-                validate_expr(value, fn_name, scope, errs, proj_name);
+                validate_expr(value, fn_name, scope, errors, proj_name);
                 scope.insert(name.clone());
             }
-            FnStmt::Log { value, .. } => validate_expr(value, fn_name, scope, errs, proj_name),
-            FnStmt::Exec { value, .. } => validate_expr(value, fn_name, scope, errs, proj_name),
-            FnStmt::Cd { value, .. } => validate_expr(value, fn_name, scope, errs, proj_name),
+            FnStmt::Log { value, .. } => validate_expr(value, fn_name, scope, errors, proj_name),
+            FnStmt::Exec { value, .. } => validate_expr(value, fn_name, scope, errors, proj_name),
+            FnStmt::Cd { value, .. } => validate_expr(value, fn_name, scope, errors, proj_name),
             FnStmt::EnvBlock { pairs, body, .. } => {
                 let mut block_scope = scope.clone();
                 for pair in pairs {
-                    validate_expr(&pair.value, fn_name, scope, errs, proj_name);
+                    validate_expr(&pair.value, fn_name, scope, errors, proj_name);
                 }
-                validate_fn_body(fn_name, body, &mut block_scope, errs, proj_name);
+                validate_fn_body(fn_name, body, &mut block_scope, errors, proj_name);
             }
             FnStmt::Case { condition, scopes } => {
-                validate_expr(condition, fn_name, scope, errs, proj_name);
+                validate_expr(condition, fn_name, scope, errors, proj_name);
                 for arm in scopes {
                     match &arm.pattern {
                         CasePattern::VarRef { name } => {
@@ -232,14 +227,14 @@ fn validate_fn_body(
                                 },
                                 fn_name,
                                 scope,
-                                errs,
+                                errors,
                                 proj_name,
                             );
                         }
                         CasePattern::Literal { parts } => {
                             for part in parts {
                                 if part.is_var && !scope.contains(&part.value) {
-                                    errs.push(format!(
+                                    errors.push(format!(
                                         "project {:?}: fn {:?}: undefined variable ${}",
                                         proj_name, fn_name, part.value
                                     ));
@@ -249,7 +244,7 @@ fn validate_fn_body(
                         CasePattern::Default => {}
                     }
                     let mut arm_scope = scope.clone();
-                    validate_fn_body(fn_name, &arm.body, &mut arm_scope, errs, proj_name);
+                    validate_fn_body(fn_name, &arm.body, &mut arm_scope, errors, proj_name);
                 }
             }
         }

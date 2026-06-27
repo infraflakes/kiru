@@ -31,7 +31,7 @@ impl Parser {
         self.advance();
 
         let name = match &self.current_token().ty {
-            TokenType::Ident(n) => n.clone(),
+            TokenType::Ident(name_str) => name_str.clone(),
             ty if is_keyword_token(ty) => {
                 return Err(ParseError::new(
                     self.eof_aware_span(),
@@ -73,7 +73,7 @@ impl Parser {
         self.advance();
 
         let name = match &self.current_token().ty {
-            TokenType::Ident(n) => n.clone(),
+            TokenType::Ident(name_str) => name_str.clone(),
             ty if is_keyword_token(ty) => {
                 return Err(ParseError::new(
                     self.eof_aware_span(),

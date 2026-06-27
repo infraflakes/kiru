@@ -6,8 +6,8 @@
 # Usage:
 #   kiru validate              # check that this config is correct
 #   kiru sync                  # clone the repository
-#   kiru fn <function name> <project's name>        # run a single function
-#   kiru run <name> <project name>         # run an orchestration plan (TUI)
+#   kiru fn <function name> [<project's name>]      # run a single function
+#   kiru run <name> [<project name>]       # run an orchestration plan (TUI)
 
 # 1. GLOBAL VARIABLES
 #
@@ -48,7 +48,7 @@ sanctuary = $workdir;
 #   dir     (required)  Directory inside sanctuary
 #   sync    (optional)  `clone` (default) or `ignore`
 #   branch  (optional)  Git branch to clone
-#   include (optional)  .kiru file inside the project to merge in, included kiru files cant use pr fields in favor for [standalone mode](#standalone-mode)
+  #   include (optional)  .kiru file inside the project to merge in; included kiru files can only use standalone-mode features (no pr blocks, no sanctuary)
 #
 # Inside a pr block you can also declare:
 #   var <type> <name> = <value>;   Project-scoped variables

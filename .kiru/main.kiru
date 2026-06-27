@@ -1,5 +1,7 @@
 import `run.kiru`;
 
+pr kiru {
+
 fn init {
   exec `cargo check`;
 }
@@ -57,4 +59,5 @@ fn build_with_container {
       exec `exit 1`; 
     };
   };
+}
 }

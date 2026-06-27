@@ -1,23 +1,22 @@
 use super::colors;
-use crate::compiler::{Project, Sanctuary};
-use crate::dsl::{CasePattern, Expr, FnStmt};
+use crate::compiler::{Project, ResolvedEnvPair, ResolvedFnStmt, Sanctuary};
 use crate::runner::error::RuntimeError;
 use crate::runner::output::OutputTarget;
-use crate::shell;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 pub type OutputCallback = Arc<dyn Fn(String) + Send + Sync>;
+use std::sync::Arc;
 
+/// Runtime execution context for a resolved function body.
+///
+/// All variable references have been substituted at compile time, so this
+/// context has no variable lookup or scope-tracking logic — it only manages
+/// the working directory, environment variable layers, and output.
 pub(crate) struct ExecContext<'a> {
     pub(super) cfg: &'a Sanctuary,
     pub(super) project: Option<&'a Project>,
     pub(super) output: &'a mut OutputTarget,
-    /// Base variables (global + project vars, all eagerly resolved at compile time).
-    pub(super) vars: HashMap<String, String>,
-    /// Scope stack for variable shadowing. Each layer shadows `vars` and higher layers.
-    pub(super) var_stack: Vec<HashMap<String, String>>,
     pub(super) env_stack: Vec<HashMap<String, String>>,
     pub(super) work_dir: PathBuf,
     pub(super) env_vars: Vec<(String, String)>,
@@ -29,108 +28,71 @@ impl<'a> ExecContext<'a> {
         project: Option<&'a Project>,
         output: &'a mut OutputTarget,
     ) -> Self {
-        let mut vars = cfg.vars.clone();
-        if let Some(proj) = project {
-            vars.extend(proj.vars.iter().map(|(k, v)| (k.clone(), v.clone())));
-        }
-        let work_dir = match project {
-            Some(proj) => PathBuf::from(&cfg.sanctuary_path).join(proj.dir.trim_start_matches('/')),
-            None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        let base = if cfg.sanctuary_path.is_empty() {
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+        } else {
+            PathBuf::from(&cfg.sanctuary_path)
+        };
+        let dir = project.map(|p| &*p.dir).unwrap_or("");
+        let work_dir = if dir.is_empty() {
+            base
+        } else {
+            base.join(dir.trim_start_matches('/'))
         };
         ExecContext {
             cfg,
             project,
             output,
-            vars,
-            var_stack: Vec::new(),
             env_stack: Vec::new(),
             work_dir,
             env_vars: std::env::vars().collect(),
         }
     }
 
-    /// Resolve an expression, checking scope layers before base vars.
-    pub(super) fn resolve_expr(&mut self, expr: &Expr) -> Result<String, RuntimeError> {
-        match expr {
-            Expr::VarRef { name, .. } => self
-                .resolve_var(name)?
-                .ok_or_else(|| RuntimeError::Lookup(format!("undefined variable: ${}", name))),
-            Expr::BacktickLit { parts, .. } => {
-                let mut result = String::new();
-                for part in parts {
-                    if part.is_var {
-                        let val = self.resolve_var(&part.value)?.ok_or_else(|| {
-                            RuntimeError::Lookup(format!("undefined variable: ${}", part.value))
-                        })?;
-                        result.push_str(&val);
-                    } else {
-                        result.push_str(&part.value);
-                    }
-                }
-                Ok(result)
-            }
-        }
-    }
-
-    /// Look up a variable name, checking scope layers (top-to-bottom) then base vars.
-    fn resolve_var(&mut self, name: &str) -> Result<Option<String>, RuntimeError> {
-        for layer in self.var_stack.iter().rev() {
-            if let Some(val) = layer.get(name) {
-                return Ok(Some(val.clone()));
-            }
-        }
-        if let Some(val) = self.vars.get(name) {
-            return Ok(Some(val.clone()));
-        }
-        Ok(None)
-    }
-
+    /// Chain system env vars with per-layer overrides for subprocess execution.
     pub(super) fn build_env(&self) -> impl Iterator<Item = (String, String)> + '_ {
-        let sys = self.env_vars.iter().map(|(k, v)| (k.clone(), v.clone()));
-        let overrides = self
-            .env_stack
+        let system_env_vars = self
+            .env_vars
             .iter()
-            .flat_map(|layer| layer.iter().map(|(k, v)| (k.clone(), v.clone())));
-        sys.chain(overrides)
+            .map(|(key, value)| (key.clone(), value.clone()));
+        let layer_overrides = self.env_stack.iter().flat_map(|layer| {
+            layer
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+        });
+        system_env_vars.chain(layer_overrides)
     }
 
+    /// Compute indentation string based on current env block nesting depth.
     pub(super) fn indent(&self, extra: usize) -> String {
         "  ".repeat(self.env_stack.len() + extra)
     }
 
-    pub(crate) fn exec_fn_body(&mut self, body: &[FnStmt]) -> Result<(), RuntimeError> {
+    /// Execute a fully resolved function body.
+    /// All values are concrete strings — no variable resolution happens here.
+    pub(crate) fn exec_resolved_fn_body(
+        &mut self,
+        body: &[ResolvedFnStmt],
+    ) -> Result<(), RuntimeError> {
         let saved_work_dir = self.work_dir.clone();
-        self.var_stack.push(HashMap::new());
-        let result = self.exec_fn_body_inner(body);
-        self.var_stack.pop();
+        let result = self.exec_resolved_fn_body_inner(body);
         self.work_dir = saved_work_dir;
         result
     }
 
-    fn exec_fn_body_inner(&mut self, body: &[FnStmt]) -> Result<(), RuntimeError> {
+    fn exec_resolved_fn_body_inner(&mut self, body: &[ResolvedFnStmt]) -> Result<(), RuntimeError> {
         for stmt in body {
             match stmt {
-                FnStmt::Log { value, .. } => self.exec_log(value)?,
-                FnStmt::Exec { value, .. } => self.exec_command(value)?,
-                FnStmt::Cd { value, .. } => self.exec_cd(value)?,
-                FnStmt::VarDecl {
-                    name,
-                    value,
-                    var_type,
-                    ..
-                } => self.exec_var_decl(name, value, var_type)?,
-                FnStmt::EnvBlock {
-                    pairs,
-                    body: block_body,
-                    ..
-                } => self.exec_env_block(pairs, block_body)?,
-                FnStmt::Case { condition, scopes } => {
-                    let value = self.resolve_expr(condition)?;
-                    for branch in scopes {
-                        if self.match_case_pattern(&branch.pattern, &value)? {
-                            self.var_stack.push(HashMap::new());
-                            let result = self.exec_fn_body(&branch.body);
-                            self.var_stack.pop();
+                ResolvedFnStmt::Log { value } => self.exec_log(value)?,
+                ResolvedFnStmt::Exec { value } => self.exec_command(value)?,
+                ResolvedFnStmt::Cd { value } => self.exec_cd(value)?,
+                ResolvedFnStmt::EnvBlock { pairs, body } => {
+                    self.exec_resolved_env_block(pairs, body)?;
+                }
+                ResolvedFnStmt::Case { condition, scopes } => {
+                    for arm in scopes {
+                        if match_case_pattern(&arm.pattern, condition) {
+                            let result = self.exec_resolved_fn_body_inner(&arm.body);
                             result?;
                             break;
                         }
@@ -141,38 +103,7 @@ impl<'a> ExecContext<'a> {
         Ok(())
     }
 
-    pub(super) fn match_case_pattern(
-        &mut self,
-        pattern: &CasePattern,
-        value: &str,
-    ) -> Result<bool, RuntimeError> {
-        match pattern {
-            CasePattern::Default => Ok(true),
-            CasePattern::Literal { parts } => {
-                let mut resolved = String::new();
-                for part in parts {
-                    if part.is_var {
-                        let v = self.resolve_var(&part.value)?.ok_or_else(|| {
-                            RuntimeError::Lookup(format!("undefined variable: ${}", part.value))
-                        })?;
-                        resolved.push_str(&v);
-                    } else {
-                        resolved.push_str(&part.value);
-                    }
-                }
-                Ok(value == resolved)
-            }
-            CasePattern::VarRef { name } => {
-                let v = self.resolve_var(name)?.ok_or_else(|| {
-                    RuntimeError::Lookup(format!("undefined variable: ${}", name))
-                })?;
-                Ok(value == v)
-            }
-        }
-    }
-
-    fn exec_log(&mut self, value: &Expr) -> Result<(), RuntimeError> {
-        let msg = self.resolve_expr(value)?;
+    fn exec_log(&mut self, msg: &str) -> Result<(), RuntimeError> {
         let indent = self.indent(0);
         let line = format!("{}log  {}", indent, msg);
         self.output
@@ -181,17 +112,15 @@ impl<'a> ExecContext<'a> {
         Ok(())
     }
 
-    fn exec_cd(&mut self, arg: &Expr) -> Result<(), RuntimeError> {
-        let resolved = self.resolve_expr(arg)?;
-
-        if Path::new(&resolved).is_absolute() {
+    fn exec_cd(&mut self, resolved: &str) -> Result<(), RuntimeError> {
+        if Path::new(resolved).is_absolute() {
             return Err(RuntimeError::Lookup(format!(
                 "cd {}: absolute path not allowed",
                 resolved
             )));
         }
 
-        let candidate = self.work_dir.join(&resolved);
+        let candidate = self.work_dir.join(resolved);
 
         let candidate = std::fs::canonicalize(&candidate)
             .map_err(|e| RuntimeError::Lookup(format!("cd {}: {}", resolved, e)))?;
@@ -203,11 +132,15 @@ impl<'a> ExecContext<'a> {
             )));
         }
 
-        if let Some(proj) = self.project {
+        if let Some(current_project) = self.project {
+            let base = if self.cfg.sanctuary_path.is_empty() {
+                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+            } else {
+                PathBuf::from(&self.cfg.sanctuary_path)
+            };
             let base_canonical =
-                PathBuf::from(&self.cfg.sanctuary_path).join(proj.dir.trim_start_matches('/'));
-            let base_canonical = std::fs::canonicalize(&base_canonical)
-                .map_err(|e| RuntimeError::Lookup(format!("cd {}: {}", resolved, e)))?;
+                std::fs::canonicalize(base.join(current_project.dir.trim_start_matches('/')))
+                    .map_err(|e| RuntimeError::Lookup(format!("cd {}: {}", resolved, e)))?;
             if !candidate.starts_with(&base_canonical) {
                 return Err(RuntimeError::Lookup(format!(
                     "cd {}: path escapes project directory",
@@ -226,54 +159,14 @@ impl<'a> ExecContext<'a> {
         Ok(())
     }
 
-    fn exec_var_decl(
+    fn exec_resolved_env_block(
         &mut self,
-        name: &str,
-        value: &Expr,
-        var_type: &crate::dsl::VarType,
-    ) -> Result<(), RuntimeError> {
-        let val = self.resolve_expr(value)?;
-
-        let resolved = if var_type == &crate::dsl::VarType::Shell {
-            let env_map: HashMap<String, String> = self.build_env().collect();
-            shell::exec_and_get_stdout(&val, Some(&self.work_dir), Some(&env_map)).map_err(|e| {
-                match e {
-                    shell::Error::Spawn(io_err) => RuntimeError::exec_io_error(&val, io_err),
-                    shell::Error::Exit {
-                        stderr, exit_code, ..
-                    } => RuntimeError::Exec {
-                        cmd: val.clone(),
-                        exit_code,
-                        detail: stderr,
-                    },
-                    shell::Error::Timeout { partial_stderr, .. } => RuntimeError::Exec {
-                        cmd: val.clone(),
-                        exit_code: None,
-                        detail: format!("timed out: {}", partial_stderr),
-                    },
-                }
-            })?
-        } else {
-            val
-        };
-
-        if let Some(top) = self.var_stack.last_mut() {
-            top.insert(name.to_string(), resolved);
-        } else {
-            self.vars.insert(name.to_string(), resolved);
-        }
-        Ok(())
-    }
-
-    fn exec_env_block(
-        &mut self,
-        pairs: &[crate::dsl::EnvPair],
-        body: &[FnStmt],
+        pairs: &[ResolvedEnvPair],
+        body: &[ResolvedFnStmt],
     ) -> Result<(), RuntimeError> {
         let mut layer = HashMap::new();
         for pair in pairs {
-            let val = self.resolve_expr(&pair.value)?;
-            layer.insert(pair.key.clone(), val);
+            layer.insert(pair.key.clone(), pair.value.clone());
         }
 
         let keys: Vec<&str> = pairs.iter().map(|p| p.key.as_str()).collect();
@@ -285,11 +178,19 @@ impl<'a> ExecContext<'a> {
             .map_err(RuntimeError::Io)?;
 
         self.env_stack.push(layer);
-        self.var_stack.push(HashMap::new());
-        let result = self.exec_fn_body(body);
-        self.var_stack.pop();
+        let result = self.exec_resolved_fn_body(body);
         self.env_stack.pop();
-
         result
+    }
+}
+
+/// Check whether a runtime condition matches a resolved case pattern.
+pub(crate) fn match_case_pattern(
+    pattern: &crate::compiler::ResolvedCasePattern,
+    condition: &str,
+) -> bool {
+    match pattern {
+        crate::compiler::ResolvedCasePattern::Literal(lit) => condition == lit,
+        crate::compiler::ResolvedCasePattern::Default => true,
     }
 }

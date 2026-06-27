@@ -31,7 +31,7 @@ project_stmt     = field_decl | var_decl | fn_decl | run_decl ;
 field_decl       = ident "=" expr ";" ;
 
 (* Note: recognised field names are url, dir, sync, branch, include.  *)
-(* The parser accepts any ident — invalid names are caught at merge.  *)
+(* The parser accepts any ident — invalid names are caught at parse.  *)
 
 (* ═══════════════════════════════════════════════════════════════════ *)
 (*  FUNCTION BLOCK                                                    *)
@@ -83,7 +83,7 @@ interpolation    = "${" ident "}" ;
 ident            = letter { letter | digit | "_" } ;
 letter           = "A" | "B" | … | "Z" | "a" | "b" | … | "z" ;
 digit            = "0" | "1" | … | "9" ;
-raw_char         = ? any character except "`" ? ;
+raw_char         = ? any character except "`" or "\n" ? ;
 
 (* Key identifiers are reserved and cannot be used as user-defined    *)
 (* names: sanctuary import var string shell pr fn run log exec cd     *)

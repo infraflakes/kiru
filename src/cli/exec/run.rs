@@ -1,4 +1,4 @@
-use super::super::load_config_and_resolve;
+use super::super::load_config;
 use crate::runner::Runner;
 use crate::runner::error::RuntimeError;
 use crate::runner::{self, TaskStatus, TuiEvent};
@@ -6,6 +6,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// Execute a list of function chains through the TUI, calling `exec_fn` for
+/// each step.  `task_name_fn` produces the label shown in the UI for each
+/// function call (e.g. `"fn_name(project)"` for project-scoped runs).
 fn run_chains(
     config: Arc<crate::compiler::Sanctuary>,
     chains: Vec<Vec<String>>,
@@ -40,18 +43,18 @@ fn run_chains(
 
                 let handle = tokio::task::spawn_blocking(move || -> Result<(), ()> {
                     let current_task = Arc::new(AtomicUsize::new(0));
-                    let cb = {
+                    let output_callback = {
                         let tx = tx.clone();
                         let current_task = Arc::clone(&current_task);
                         move |line: String| {
-                            let idx = current_task.load(Ordering::Relaxed);
-                            runner::send_event(&tx, TuiEvent::AppendOutput(idx, line))
+                            let task_index = current_task.load(Ordering::Relaxed);
+                            runner::send_event(&tx, TuiEvent::AppendOutput(task_index, line))
                         }
                     };
-                    let mut runner =
-                        Runner::new(Arc::clone(&config)).with_output_callback(Arc::new(cb));
+                    let mut runner = Runner::new(Arc::clone(&config))
+                        .with_output_callback(Arc::new(output_callback));
 
-                    for (fn_idx, fn_name) in chain.iter().enumerate() {
+                    for (fn_idx, function_name) in chain.iter().enumerate() {
                         let task_idx = start_index + fn_idx;
                         current_task.store(task_idx, Ordering::Relaxed);
                         runner::send_event(
@@ -59,7 +62,7 @@ fn run_chains(
                             TuiEvent::UpdateStatus(task_idx, TaskStatus::Running),
                         );
 
-                        match exec_fn(&mut runner, fn_name) {
+                        match exec_fn(&mut runner, function_name) {
                             Ok(()) => {
                                 runner::send_event(
                                     &tx,
@@ -105,6 +108,7 @@ fn run_chains(
     Ok(())
 }
 
+/// Execute chains scoped to a named project.
 fn run_project_chains(
     config: Arc<crate::compiler::Sanctuary>,
     project: &str,
@@ -116,12 +120,13 @@ fn run_project_chains(
         chains,
         {
             let project = project.clone();
-            move |fn_name| format!("{}({})", fn_name, project)
+            move |function_name| format!("{}({})", function_name, project)
         },
-        move |runner, fn_name| runner.execute_fn_call(fn_name, &project),
+        move |runner, function_name| runner.execute_fn_call(function_name, &project),
     )
 }
 
+/// Execute chains using top-level (standalone) functions.
 fn run_standalone_chains(
     config: Arc<crate::compiler::Sanctuary>,
     chains: Vec<Vec<String>>,
@@ -129,8 +134,8 @@ fn run_standalone_chains(
     run_chains(
         config,
         chains,
-        |fn_name| fn_name.to_string(),
-        |runner, fn_name| runner.execute_standalone_fn(fn_name),
+        |function_name| function_name.to_string(),
+        |runner, function_name| runner.execute_standalone_fn(function_name),
     )
 }
 
@@ -139,38 +144,31 @@ pub fn execute_run_block(
     name: String,
     project: Option<String>,
 ) -> miette::Result<()> {
-    let config = load_config_and_resolve(config_arg)?;
-
-    let is_standalone = crate::compiler::is_sanctuary_disabled();
+    let config = load_config(config_arg)?;
 
     match project {
-        Some(ref proj) => {
-            if is_standalone {
-                return Err(miette::miette!(
-                    "Project name cannot be specified when SANCTUARY=0 is set",
-                ));
-            }
-            if !config.projects.contains_key(proj) {
-                return Err(miette::miette!("unknown project: {}", proj));
+        Some(ref project_name) => {
+            if !config.projects.contains_key(project_name) {
+                return Err(miette::miette!("unknown project: {}", project_name));
             }
 
-            let project_entry = &config.projects[proj];
-            let chains = match project_entry.runs.get(&name) {
-                Some(c) => c.clone(),
+            let project_entry = &config.projects[project_name];
+            let chains: Vec<Vec<String>> = match project_entry.runs.get(&name) {
+                Some(chain_list) => chain_list.clone(),
                 None => {
                     return Err(miette::miette!(
                         "unknown run block '{}' in project '{}'",
                         name,
-                        proj
+                        project_name
                     ));
                 }
             };
 
-            run_project_chains(Arc::new(config), proj, chains)
+            run_project_chains(Arc::new(config), project_name, chains)
         }
         None => {
-            let chains = match config.runs.get(&name) {
-                Some(c) => c.clone(),
+            let chains: Vec<Vec<String>> = match config.runs.get(&name) {
+                Some(chain_list) => chain_list.clone(),
                 None => {
                     return Err(miette::miette!(
                         "unknown run block '{}' (no project specified, and no top-level run with that name)",

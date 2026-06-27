@@ -1,5 +1,5 @@
-use super::load_config_and_resolve;
-use crate::compiler::types::Sanctuary;
+use super::load_config;
+use crate::compiler::Sanctuary;
 use crate::runner::colors;
 use std::io::Write;
 use std::path::PathBuf;
@@ -12,72 +12,77 @@ macro_rules! style {
 }
 
 pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
-    let cfg = load_config_and_resolve(config_arg)?;
-    let output = format_config(&cfg);
+    let config = load_config(config_arg)?;
+    let output = format_config(&config);
     display_output(&output)?;
     Ok(())
 }
 
-fn format_config(cfg: &Sanctuary) -> String {
-    let mut out = String::new();
-    out.push('\n');
-    let box_w = 62usize;
-    let label_w = 14usize;
+fn format_config(config: &Sanctuary) -> String {
+    let mut formatted_output = String::new();
+    formatted_output.push('\n');
+    let box_width = 62usize;
+    let label_width = 14usize;
 
     let is_standalone = crate::compiler::is_sanctuary_disabled();
 
     if !is_standalone {
-        header_box(&mut out, box_w, label_w, cfg);
+        header_box(&mut formatted_output, box_width, label_width, config);
     }
 
     if is_standalone {
-        let mut fns: Vec<&String> = cfg.functions.keys().collect();
-        fns.sort_unstable();
-        let mut runs: Vec<&String> = cfg.runs.keys().collect();
-        runs.sort_unstable();
+        let mut function_names: Vec<&String> = config.functions.keys().collect();
+        function_names.sort_unstable();
+        let mut run_names: Vec<&String> = config.runs.keys().collect();
+        run_names.sort_unstable();
 
-        draw_standalone(&mut out, &fns, &runs);
-        out.push('\n');
+        draw_standalone(&mut formatted_output, &function_names, &run_names);
+        formatted_output.push('\n');
     } else {
-        let mut sorted: Vec<(&String, &crate::compiler::types::Project)> =
-            cfg.projects.iter().collect();
-        sorted.sort_by(|a, b| a.0.cmp(b.0));
+        let mut sorted_projects: Vec<(&String, &crate::compiler::Project)> =
+            config.projects.iter().collect();
+        sorted_projects.sort_by(|a, b| a.0.cmp(b.0));
 
-        out.push_str(&format!(
+        formatted_output.push_str(&format!(
             "\n  {}  {}\n\n",
             style!(colors::BOLD, "Projects"),
-            style!(colors::YELLOW, "{}", sorted.len())
+            style!(colors::YELLOW, "{}", sorted_projects.len())
         ));
 
-        for (i, (name, proj)) in sorted.iter().enumerate() {
-            draw_project(&mut out, name, proj, i == sorted.len() - 1);
+        for (i, (name, project)) in sorted_projects.iter().enumerate() {
+            draw_project(
+                &mut formatted_output,
+                name,
+                project,
+                i == sorted_projects.len() - 1,
+            );
         }
     }
 
-    footer_bar(&mut out, cfg);
-    out.push('\n');
-    out
+    footer_bar(&mut formatted_output, config);
+    formatted_output.push('\n');
+    formatted_output
 }
 
 // ── Header box ────────────────────────────────────────────
 
-fn header_box(out: &mut String, box_w: usize, label_w: usize, cfg: &Sanctuary) {
-    let top = format!("  ╭─{:=^width$}─╮", " Sanctuary ", width = box_w - 2);
-    let bot = format!("  ╰─{:=^width$}─╯", "", width = box_w - 2);
-    out.push_str(&top);
-    out.push('\n');
+fn header_box(output: &mut String, box_width: usize, label_width: usize, config: &Sanctuary) {
+    let top_border = format!("  ╭─{:=^width$}─╮", " Sanctuary ", width = box_width - 2);
+    let bottom_border = format!("  ╰─{:=^width$}─╯", "", width = box_width - 2);
+    output.push_str(&top_border);
+    output.push('\n');
 
     key_value_row(
-        out,
-        box_w,
-        label_w,
+        output,
+        box_width,
+        label_width,
         "Sanctuary",
-        &cfg.sanctuary_path,
+        &config.sanctuary_path,
         colors::CYAN,
     );
 
-    out.push_str(&bot);
-    out.push('\n');
+    output.push_str(&bottom_border);
+    output.push('\n');
 }
 
 /// Render a key-value row inside the box.
@@ -85,36 +90,36 @@ fn header_box(out: &mut String, box_w: usize, label_w: usize, cfg: &Sanctuary) {
 /// `val_plain` is the unstyled text used for alignment calculation;
 /// `val_color` is the ANSI colour code applied only to the value.
 fn key_value_row(
-    out: &mut String,
-    box_w: usize,
-    label_w: usize,
+    output: &mut String,
+    box_width: usize,
+    label_width: usize,
     key: &str,
-    val_plain: &str,
-    val_color: &str,
+    value_plain_text: &str,
+    value_color_code: &str,
 ) {
-    let interior = box_w - 2;
-    let gap = 2;
-    let val_visual = val_plain.chars().count();
-    let visible = label_w + gap + val_visual;
-    let pad = interior.saturating_sub(visible);
+    let interior = box_width - 2;
+    let spacing_gap = 2;
+    let value_visual_len = value_plain_text.chars().count();
+    let visible_chars = label_width + spacing_gap + value_visual_len;
+    let right_padding = interior.saturating_sub(visible_chars);
 
-    let key_padded = format!("{:>label_w$}", key);
-    let key_styled = style!(colors::GRAY, "{}", key_padded);
-    let val_styled = style!(val_color, "{}", val_plain);
+    let padded_key = format!("{:>label_width$}", key);
+    let styled_key = style!(colors::GRAY, "{}", padded_key);
+    let styled_value = style!(value_color_code, "{}", value_plain_text);
 
-    out.push_str(&format!(
+    output.push_str(&format!(
         "  │ {}{}{}{} │\n",
-        key_styled,
+        styled_key,
         "  ",
-        val_styled,
-        " ".repeat(pad),
+        styled_value,
+        " ".repeat(right_padding),
     ));
 }
 
 // ── Standalone pseudo-project (SANCTUARY=0) ───────────────
 
-fn draw_standalone(out: &mut String, fns: &[&String], runs: &[&String]) {
-    let items: &[(&str, &[&String])] = &[("fn", fns), ("run", runs)];
+fn draw_standalone(out: &mut String, function_names: &[&String], run_names: &[&String]) {
+    let items: &[(&str, &[&String])] = &[("fn", function_names), ("run", run_names)];
 
     for (label, names) in items {
         let styled_label = style!(colors::YELLOW, "{}", label);
@@ -128,7 +133,7 @@ fn draw_standalone(out: &mut String, fns: &[&String], runs: &[&String]) {
             let count = style!(colors::GRAY, "({})", names.len());
             let joined = names
                 .iter()
-                .map(|n| style!(colors::BOLD, "{}", n))
+                .map(|name| style!(colors::BOLD, "{}", name))
                 .collect::<Vec<_>>()
                 .join(", ");
             out.push_str(&format!("  {}:  {}  {}\n", styled_label, joined, count));
@@ -138,7 +143,7 @@ fn draw_standalone(out: &mut String, fns: &[&String], runs: &[&String]) {
 
 // ── Project tree ──────────────────────────────────────────
 
-fn draw_project(out: &mut String, name: &str, proj: &crate::compiler::types::Project, last: bool) {
+fn draw_project(out: &mut String, name: &str, project: &crate::compiler::Project, last: bool) {
     let branch = if last { "└" } else { "├" };
     out.push_str(&format!(
         "  {}── {}\n",
@@ -148,30 +153,27 @@ fn draw_project(out: &mut String, name: &str, proj: &crate::compiler::types::Pro
 
     let indent = if last { "   " } else { "│  " };
 
-    project_field(out, indent, "url", &proj.url);
-    project_field(out, indent, "dir", &proj.dir);
+    project_field(out, indent, "url", &project.url);
+    project_field(out, indent, "dir", &project.dir);
 
-    if let Some(ref branch) = proj.branch {
+    if let Some(ref branch) = project.branch {
         project_field(out, indent, "branch", branch);
     }
 
-    project_field(out, indent, "sync", &proj.sync.to_string());
+    project_field(out, indent, "sync", &project.sync.to_string());
 
-    if let Some(ref u) = proj.include_file {
-        project_field(out, indent, "include", u);
-    }
+    let mut project_function_names: Vec<&String> = project.functions.keys().collect();
+    project_function_names.sort_unstable();
+    let mut project_run_names: Vec<&String> = project.runs.keys().collect();
+    project_run_names.sort_unstable();
 
-    let mut proj_fns: Vec<&String> = proj.functions.keys().collect();
-    proj_fns.sort_unstable();
-    let mut proj_runs: Vec<&String> = proj.runs.keys().collect();
-    proj_runs.sort_unstable();
-
-    let items: &[(&str, &Vec<&String>)] = &[("fn", &proj_fns), ("run", &proj_runs)];
+    let items: &[(&str, &Vec<&String>)] =
+        &[("fn", &project_function_names), ("run", &project_run_names)];
 
     for (i, (label, names)) in items.iter().enumerate() {
         let last_item = i == items.len() - 1;
-        let conn = if last_item { "└" } else { "├" };
-        draw_item_line(out, indent, conn, label, names);
+        let connector = if last_item { "└" } else { "├" };
+        draw_item_line(out, indent, connector, label, names);
     }
 
     out.push('\n');
@@ -186,12 +188,12 @@ fn project_field(out: &mut String, indent: &str, key: &str, value: &str) {
     ));
 }
 
-fn draw_item_line(out: &mut String, indent: &str, conn: &str, label: &str, names: &[&String]) {
+fn draw_item_line(out: &mut String, indent: &str, connector: &str, label: &str, names: &[&String]) {
     if names.is_empty() {
         out.push_str(&format!(
             "  {}  {}── {:>7}:  {}\n",
             indent,
-            conn,
+            connector,
             style!(colors::YELLOW, "{}", label),
             style!(colors::GRAY, "—")
         ));
@@ -199,13 +201,13 @@ fn draw_item_line(out: &mut String, indent: &str, conn: &str, label: &str, names
         let count = style!(colors::GRAY, "({})", names.len());
         let joined = names
             .iter()
-            .map(|n| style!(colors::BOLD, "{}", n))
+            .map(|name| style!(colors::BOLD, "{}", name))
             .collect::<Vec<_>>()
             .join(", ");
         out.push_str(&format!(
             "  {}  {}── {:>7}:  {}  {}\n",
             indent,
-            conn,
+            connector,
             style!(colors::YELLOW, "{}", label),
             joined,
             count
@@ -215,11 +217,19 @@ fn draw_item_line(out: &mut String, indent: &str, conn: &str, label: &str, names
 
 // ── Footer ────────────────────────────────────────────────
 
-fn footer_bar(out: &mut String, cfg: &Sanctuary) {
-    let total_fns: usize = cfg.projects.values().map(|p| p.functions.len()).sum();
-    let total_runs: usize = cfg.projects.values().map(|p| p.runs.len()).sum();
-    let standalone_fns = cfg.functions.len();
-    let standalone_runs = cfg.runs.len();
+fn footer_bar(out: &mut String, config: &Sanctuary) {
+    let total_fns: usize = config
+        .projects
+        .values()
+        .map(|project| project.functions.len())
+        .sum();
+    let total_runs: usize = config
+        .projects
+        .values()
+        .map(|project| project.runs.len())
+        .sum();
+    let standalone_fns = config.functions.len();
+    let standalone_runs = config.runs.len();
 
     let is_standalone = crate::compiler::is_sanctuary_disabled();
     let fn_count = total_fns + standalone_fns;
@@ -236,7 +246,7 @@ fn footer_bar(out: &mut String, cfg: &Sanctuary) {
         out.push_str(&style!(
             colors::GRAY,
             "  ─ {} projects · {} functions · {} runs ─\n",
-            cfg.projects.len(),
+            config.projects.len(),
             fn_count,
             run_count,
         ));

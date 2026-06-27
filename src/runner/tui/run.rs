@@ -9,16 +9,16 @@ use ratatui::{
     widgets::{Clear, Paragraph},
 };
 
-pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
-    let area = f.area();
-    f.render_widget(Clear, area);
+pub fn render(frame: &mut Frame, model: &Model, spinner_idx: usize) {
+    let area = frame.area();
+    frame.render_widget(Clear, area);
     if area.height < 1 {
         return;
     }
 
-    let mut y = area.y;
+    let mut y_pos = area.y;
     for chain in &model.chains {
-        if y >= area.y + area.height {
+        if y_pos >= area.y + area.height {
             break;
         }
 
@@ -32,14 +32,14 @@ pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
 
         let header = format!("{} {}", header_char, chain.label);
         let header_span = Span::styled(header, Style::default().fg(ch_color));
-        f.render_widget(
+        frame.render_widget(
             Paragraph::new(Line::from(header_span)),
-            Rect::new(area.x, y, area.width, 1),
+            Rect::new(area.x, y_pos, area.width, 1),
         );
-        y += 1;
+        y_pos += 1;
 
         for task_offset in 0..chain.task_count {
-            if y >= area.y + area.height {
+            if y_pos >= area.y + area.height {
                 break;
             }
             if let Some(task) = model.tasks.get(chain.task_start + task_offset) {
@@ -52,12 +52,12 @@ pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
                     status_label(task.status),
                 );
                 let span = Span::styled(line, Style::default().fg(tcolor));
-                f.render_widget(
+                frame.render_widget(
                     Paragraph::new(Line::from(span)),
-                    Rect::new(area.x, y, area.width, 1),
+                    Rect::new(area.x, y_pos, area.width, 1),
                 );
             }
-            y += 1;
+            y_pos += 1;
         }
     }
 }
@@ -89,26 +89,26 @@ pub fn format_final_output(model: &Model) -> String {
 
                 if !task.output.is_empty() {
                     let total = task.output.len();
-                    let panel = total.min(MAX_PANEL_HEIGHT);
-                    let pruned = total - panel;
+                    let visible_lines = total.min(MAX_PANEL_HEIGHT);
+                    let hidden_lines = total - visible_lines;
 
-                    if pruned > 0 {
+                    if hidden_lines > 0 {
                         buf.push_str("   ");
                         buf.push_str(colors::MUTED_ANSI);
                         buf.push('↑');
                         buf.push(' ');
-                        buf.push_str(&pruned.to_string());
+                        buf.push_str(&hidden_lines.to_string());
                         buf.push_str(" lines hidden ");
                         buf.push_str(colors::RESET);
                         buf.push('\n');
                     }
 
-                    for line in task.output.iter().rev().take(panel).rev() {
+                    for output_line in task.output.iter().rev().take(visible_lines).rev() {
                         buf.push_str("  ");
                         buf.push_str(colors::MUTED_ANSI);
                         buf.push_str("  ");
                         buf.push_str(colors::RESET);
-                        render::write_colored_line_buf(&mut buf, line);
+                        render::write_colored_line_buf(&mut buf, output_line);
                         buf.push('\n');
                     }
                 }

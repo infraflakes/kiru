@@ -1,3 +1,4 @@
+pr kiru {
 run all {
   init => test => build;
   fmt => test;
@@ -11,4 +12,5 @@ run test {
 }
 run ci {
   init => test;
+}
 }

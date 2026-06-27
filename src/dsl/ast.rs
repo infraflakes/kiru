@@ -1,12 +1,11 @@
 use crate::dsl::{Expr, FnStmt, VarType};
 
-/// The key of a project block field (e.g., `url`, `dir`, `sync`, `include`, `branch`).
+/// The key of a project block field (e.g., `url`, `dir`, `sync`, `branch`).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProjectField {
     Url,
     Dir,
     Sync,
-    Include,
     Branch,
 }
 
@@ -24,13 +23,8 @@ pub enum Stmt {
         len: usize,
     },
     /// A project block definition.
-    Project {
-        name: String,
-        body: Vec<Stmt>,
-        offset: usize,
-        len: usize,
-    },
-    /// A named field inside a project block (url, dir, sync, include, branch).
+    Project { name: String, body: Vec<Stmt> },
+    /// A named field inside a project block (url, dir, sync, branch).
     Field {
         key: ProjectField,
         value: Expr,
@@ -60,10 +54,12 @@ pub enum TopLevel {
     Import(Expr),
 }
 
-/// A set of parsed statements from a single source file, with source tracking for error reporting.
+/// A set of parsed top-level items from a single source file, with source tracking
+/// for error reporting. Items preserve source order and include both statements
+/// and import directives.
 #[derive(Debug, Clone)]
 pub struct Program {
-    pub stmts: Vec<Stmt>,
+    pub items: Vec<TopLevel>,
     pub source_name: String,
     pub source_text: String,
 }
@@ -71,7 +67,7 @@ pub struct Program {
 impl Program {
     pub fn new() -> Self {
         Self {
-            stmts: Vec::new(),
+            items: Vec::new(),
             source_name: String::new(),
             source_text: String::new(),
         }

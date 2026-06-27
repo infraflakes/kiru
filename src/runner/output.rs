@@ -6,8 +6,10 @@ use crate::runner::parse::ExecContext;
 use std::io::{self, Write};
 use std::sync::Arc;
 
+/// A writer that implements `Send` for use across thread boundaries.
 type SendWriter = Box<dyn Write + Send>;
 
+/// Where function output is directed: a direct writer or a callback.
 pub(crate) enum OutputTarget {
     Direct(SendWriter),
     Callback(OutputCallback),
@@ -34,6 +36,7 @@ impl OutputTarget {
         }
     }
 
+    /// Clone the callback if this target is a callback variant.
     pub(crate) fn clone_callback(&self) -> Option<OutputCallback> {
         match self {
             OutputTarget::Callback(cb) => Some(Arc::clone(cb)),
@@ -42,12 +45,14 @@ impl OutputTarget {
     }
 }
 
+/// Executes resolved function bodies against a compiled `Sanctuary` config.
 pub(crate) struct Runner {
     cfg: Arc<Sanctuary>,
     output: OutputTarget,
 }
 
 impl Runner {
+    /// Create a new runner that writes directly to stdout.
     pub(crate) fn new(cfg: Arc<Sanctuary>) -> Self {
         Runner {
             cfg,
@@ -55,11 +60,13 @@ impl Runner {
         }
     }
 
+    /// Replace output target with a callback (used by the TUI).
     pub(crate) fn with_output_callback(mut self, callback: OutputCallback) -> Self {
         self.output = OutputTarget::Callback(callback);
         self
     }
 
+    /// Look up and execute a function within a named project.
     pub(crate) fn execute_fn_call(
         &mut self,
         fn_name: &str,
@@ -76,9 +83,10 @@ impl Runner {
             .ok_or_else(|| RuntimeError::Lookup(format!("unknown function: {}", fn_name)))?;
 
         let mut ctx = ExecContext::new(&self.cfg, Some(project), &mut self.output);
-        ctx.exec_fn_body(fn_body)
+        ctx.exec_resolved_fn_body(fn_body)
     }
 
+    /// Look up and execute a top-level (standalone) function.
     pub(crate) fn execute_standalone_fn(&mut self, fn_name: &str) -> Result<(), RuntimeError> {
         let fn_body = self
             .cfg
@@ -87,6 +95,6 @@ impl Runner {
             .ok_or_else(|| RuntimeError::Lookup(format!("unknown function: {}", fn_name)))?;
 
         let mut ctx = ExecContext::new(&self.cfg, None, &mut self.output);
-        ctx.exec_fn_body(fn_body)
+        ctx.exec_resolved_fn_body(fn_body)
     }
 }

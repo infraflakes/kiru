@@ -2,11 +2,11 @@ use super::*;
 
 impl Parser {
     pub(crate) fn parse_expr(&mut self) -> Result<Expr, ParseError> {
-        if let TokenType::Illegal(m) = &self.current_token().ty {
+        if let TokenType::Illegal(msg) = &self.current_token().ty {
             let token = self.current_token().clone();
             return Err(ParseError::new(
                 SourceSpan::new(token.offset.into(), token.len),
-                m.clone(),
+                msg.clone(),
             ));
         }
         match &self.current_token().ty {
@@ -16,7 +16,7 @@ impl Parser {
                 self.advance();
 
                 let name = match &self.current_token().ty {
-                    TokenType::Ident(n) => n.clone(),
+                    TokenType::Ident(name_str) => name_str.clone(),
                     ty if is_keyword_token(ty) => {
                         return Err(ParseError::new(
                             self.eof_aware_span(),
@@ -45,7 +45,7 @@ impl Parser {
             _ => {
                 let is_underscore = matches!(
                     &self.current_token().ty,
-                    TokenType::Ident(s) if s == "_"
+                    TokenType::Ident(ident) if ident == "_"
                 );
                 if is_underscore {
                     Err(ParseError::new(
@@ -89,8 +89,8 @@ pub(crate) fn parse_interpolation_parts(
     let mut current = String::new();
     let mut chars = content.char_indices().peekable();
 
-    while let Some((i, c)) = chars.next() {
-        if c == '$' && chars.peek().is_some_and(|(_, n)| n == &'{') {
+    while let Some((idx, ch)) = chars.next() {
+        if ch == '$' && chars.peek().is_some_and(|(_, next_char)| next_char == &'{') {
             chars.next();
 
             if !current.is_empty() {
@@ -105,10 +105,10 @@ pub(crate) fn parse_interpolation_parts(
             loop {
                 match chars.next() {
                     Some((_, '}')) => break,
-                    Some((_, c)) => var_name.push(c),
+                    Some((_, ch)) => var_name.push(ch),
                     None => {
                         return Err(ParseError::new(
-                            SourceSpan::new((offset + 1 + i).into(), 3),
+                            SourceSpan::new((offset + 1 + idx).into(), 3),
                             "unclosed variable interpolation".to_string(),
                         ));
                     }
@@ -117,7 +117,7 @@ pub(crate) fn parse_interpolation_parts(
 
             if var_name.is_empty() {
                 return Err(ParseError::new(
-                    SourceSpan::new((offset + 1 + i).into(), 3),
+                    SourceSpan::new((offset + 1 + idx).into(), 3),
                     "empty variable name in template".to_string(),
                 ));
             }
@@ -127,7 +127,7 @@ pub(crate) fn parse_interpolation_parts(
                 value: var_name,
             });
         } else {
-            current.push(c);
+            current.push(ch);
         }
     }
 
