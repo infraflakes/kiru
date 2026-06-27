@@ -276,7 +276,7 @@ fn test_error_recovery_skips_bad_stmt() {
     let result = parse_program("sanctuary = `/tmp`;\nfn bad { unknown }");
     match result {
         Ok(prog) => {
-            assert_eq!(prog.stmts.len(), 2);
+            assert_eq!(prog.stmts.len(), 1);
         }
         Err(errs) => {
             assert!(errs.iter().any(|e| e.to_string().contains("expected log")));

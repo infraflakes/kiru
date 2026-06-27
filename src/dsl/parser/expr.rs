@@ -105,7 +105,7 @@ pub(crate) fn parse_interpolation_parts(
                     Some((_, c)) => var_name.push(c),
                     None => {
                         return Err(ParseError::new(
-                            SourceSpan::new((offset + i).into(), 3),
+                            SourceSpan::new((offset + 1 + i).into(), 3),
                             "unclosed variable interpolation".to_string(),
                         ));
                     }
@@ -114,7 +114,7 @@ pub(crate) fn parse_interpolation_parts(
 
             if var_name.is_empty() {
                 return Err(ParseError::new(
-                    SourceSpan::new((offset + i).into(), 3),
+                    SourceSpan::new((offset + 1 + i).into(), 3),
                     "empty variable name in template".to_string(),
                 ));
             }
