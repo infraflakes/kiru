@@ -8,8 +8,6 @@ pub fn task_marker(task: &Task, spinner_idx: usize) -> String {
     if task.finalized {
         if task.status == TaskStatus::Success {
             "✓".to_string()
-        } else if task.status == TaskStatus::Skipped {
-            "−".to_string()
         } else {
             "✗".to_string()
         }
@@ -17,7 +15,7 @@ pub fn task_marker(task: &Task, spinner_idx: usize) -> String {
         match task.status {
             TaskStatus::Pending => "·".to_string(),
             TaskStatus::Running => SPINNER_FRAMES[spinner_idx].to_string(),
-            TaskStatus::Success | TaskStatus::Error | TaskStatus::Skipped => unreachable!(),
+            TaskStatus::Success | TaskStatus::Error => unreachable!(),
         }
     }
 }
@@ -28,7 +26,6 @@ pub fn status_label(status: TaskStatus) -> &'static str {
         TaskStatus::Running => "running",
         TaskStatus::Pending => "pending",
         TaskStatus::Error => "failed",
-        TaskStatus::Skipped => "skipped",
     }
 }
 
@@ -38,7 +35,6 @@ pub fn status_color(status: TaskStatus) -> Color {
         TaskStatus::Running => colors::RUNNING,
         TaskStatus::Pending => colors::PENDING,
         TaskStatus::Error => colors::FAILED,
-        TaskStatus::Skipped => colors::PENDING,
     }
 }
 

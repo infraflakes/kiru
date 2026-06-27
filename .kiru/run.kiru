@@ -1,7 +1,7 @@
 run all {
   init => test => build;
   fmt => test;
-  fail;
+  fail => fmt;
 }
 run build {
   init => test => build;

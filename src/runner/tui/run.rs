@@ -76,7 +76,6 @@ pub fn format_final_output(model: &Model) -> String {
                     TaskStatus::Running => colors::RUNNING_ANSI,
                     TaskStatus::Pending => colors::PENDING_ANSI,
                     TaskStatus::Error => colors::FAILED_ANSI,
-                    TaskStatus::Skipped => colors::MUTED_ANSI,
                 };
                 let marker = task_marker(task, 0);
 
@@ -128,23 +127,8 @@ pub fn format_final_output(model: &Model) -> String {
         .iter()
         .filter(|t| t.status == TaskStatus::Error)
         .count();
-    let skipped_count = model
-        .tasks
-        .iter()
-        .filter(|t| t.status == TaskStatus::Skipped)
-        .count();
-
     if err_count > 0 {
-        if skipped_count > 0 {
-            buf.push_str(&format!(
-                "{} done, {} failed, {} skipped\n",
-                ok_count, err_count, skipped_count
-            ));
-        } else {
-            buf.push_str(&format!("{} done, {} failed\n", ok_count, err_count));
-        }
-    } else if skipped_count > 0 {
-        buf.push_str(&format!("✓ all passed, {} skipped\n", skipped_count));
+        buf.push_str(&format!("{} done, {} failed\n", ok_count, err_count));
     } else {
         buf.push_str(&format!("✓ all {} passed\n", ok_count));
     }

@@ -128,7 +128,6 @@ pub enum TaskStatus {
     Running,
     Success,
     Error,
-    Skipped,
 }
 
 #[derive(Debug, Clone)]
@@ -185,10 +184,7 @@ impl Model {
     pub fn update_task_status(&mut self, index: usize, status: TaskStatus) {
         if let Some(task) = self.tasks.get_mut(index) {
             task.status = status;
-            task.finalized = matches!(
-                status,
-                TaskStatus::Success | TaskStatus::Error | TaskStatus::Skipped
-            );
+            task.finalized = matches!(status, TaskStatus::Success | TaskStatus::Error);
         }
     }
 
@@ -199,12 +195,9 @@ impl Model {
     }
 
     pub fn all_done(&self) -> bool {
-        self.tasks.iter().all(|t| {
-            matches!(
-                t.status,
-                TaskStatus::Success | TaskStatus::Error | TaskStatus::Skipped
-            )
-        })
+        self.tasks
+            .iter()
+            .all(|t| matches!(t.status, TaskStatus::Success | TaskStatus::Error))
     }
 
     pub fn chain_status(&self, chain: &Chain) -> TaskStatus {
@@ -278,6 +271,7 @@ pub async fn run_tui(
     )?;
 
     let mut spinner_idx = 0;
+    let mut disconnected = false;
 
     loop {
         loop {
@@ -289,11 +283,14 @@ pub async fn run_tui(
                     Model::lock(&model).append_output(idx, line);
                 }
                 Err(mpsc::error::TryRecvError::Empty) => break,
-                Err(mpsc::error::TryRecvError::Disconnected) => break,
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    disconnected = true;
+                    break;
+                }
             }
         }
 
-        if Model::lock(&model).all_done() {
+        if disconnected || Model::lock(&model).all_done() {
             terminal.draw(|f| {
                 let guard = Model::lock(&model);
                 render_fn(f, &guard, spinner_idx);

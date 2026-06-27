@@ -52,12 +52,7 @@ pub fn render(f: &mut Frame, model: &Model, spinner_idx: usize) {
     let done_count = model
         .tasks
         .iter()
-        .filter(|t| {
-            matches!(
-                t.status,
-                TaskStatus::Success | TaskStatus::Error | TaskStatus::Skipped
-            )
-        })
+        .filter(|t| matches!(t.status, TaskStatus::Success | TaskStatus::Error))
         .count();
     let total = model.tasks.len();
 

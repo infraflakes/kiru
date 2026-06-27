@@ -72,13 +72,6 @@ fn run_project_chains(
                                     &tx,
                                     TuiEvent::UpdateStatus(task_idx, TaskStatus::Error),
                                 );
-                                for remaining in fi + 1..chain.len() {
-                                    let skip_idx = start_index + remaining;
-                                    tui::send_event(
-                                        &tx,
-                                        TuiEvent::UpdateStatus(skip_idx, TaskStatus::Skipped),
-                                    );
-                                }
                                 return Err(());
                             }
                         }
@@ -169,13 +162,6 @@ fn run_standalone_chains(
                                     &tx,
                                     TuiEvent::UpdateStatus(task_idx, TaskStatus::Error),
                                 );
-                                for remaining in fi + 1..chain.len() {
-                                    let skip_idx = start_index + remaining;
-                                    tui::send_event(
-                                        &tx,
-                                        TuiEvent::UpdateStatus(skip_idx, TaskStatus::Skipped),
-                                    );
-                                }
                                 return Err(());
                             }
                         }
