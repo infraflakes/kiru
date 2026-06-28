@@ -92,7 +92,9 @@ impl<'a> ExecContext<'a> {
     }
 
     /// Chain system env vars with per-layer overrides for subprocess execution.
-    pub(super) fn build_environment_iterator_with_overrides(&self) -> impl Iterator<Item = (String, String)> + '_ {
+    pub(super) fn build_environment_iterator_with_overrides(
+        &self,
+    ) -> impl Iterator<Item = (String, String)> + '_ {
         let system_env_vars = self
             .env_vars
             .iter()

@@ -170,7 +170,13 @@ where
             .unwrap_or(u16::MAX);
         let model = Arc::new(Mutex::new(model));
         let (event_sender, event_receiver) = mpsc::unbounded_channel();
-        let tui = tokio::spawn(run_tui_event_loop(model, event_receiver, height, render_fn, format_fn));
+        let tui = tokio::spawn(run_tui_event_loop(
+            model,
+            event_receiver,
+            height,
+            render_fn,
+            format_fn,
+        ));
         let worker = tokio::spawn(worker(event_sender));
 
         tui.await
@@ -190,7 +196,12 @@ where
     F: FnOnce(mpsc::UnboundedSender<TuiEvent>) -> Fut + Send + 'static,
     Fut: Future<Output = miette::Result<()>> + Send + 'static,
 {
-    run_tui_with(chains, worker, run::render_run_output, run::format_final_output)
+    run_tui_with(
+        chains,
+        worker,
+        run::render_run_output,
+        run::format_final_output,
+    )
 }
 
 pub(crate) fn run_tui_with_sync<F, Fut>(

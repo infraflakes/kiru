@@ -1,6 +1,6 @@
 use crate::compiler::types::ResolvedCaseArm;
 use crate::compiler::{Project, ResolvedCasePattern, ResolvedFnStmt, Sanctuary, SyncMode};
-use crate::runner::OutputTarget;
+use crate::runner::execution_context::OutputTarget;
 use crate::runner::execution_context::{ExecContext, match_case_pattern};
 use std::collections::HashMap;
 

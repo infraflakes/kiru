@@ -134,7 +134,9 @@ pub(crate) fn resolve_with_scopes(
             .unwrap_or_default();
 
         let sync = match resolve_optional_expr(&unresolved_project.sync, &proj_scope, "", "")? {
-            Some(mode) => parse_sync_mode_value(&mode).map_err(|msg| spanned_err(msg, "", "", 0, 1))?,
+            Some(mode) => {
+                parse_sync_mode_value(&mode).map_err(|msg| spanned_err(msg, "", "", 0, 1))?
+            }
             None => SyncMode::Clone,
         };
 

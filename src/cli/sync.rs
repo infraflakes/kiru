@@ -79,7 +79,10 @@ pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
                     }
                     Ok(Err(e)) => {
                         had_errors = true;
-                        runner::send_tui_event(&tx, TuiEvent::AppendOutput(i, format!("Error: {}", e)));
+                        runner::send_tui_event(
+                            &tx,
+                            TuiEvent::AppendOutput(i, format!("Error: {}", e)),
+                        );
                         runner::send_tui_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Error));
                     }
                     Err(e) => {
