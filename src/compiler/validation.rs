@@ -1,5 +1,6 @@
 use crate::compiler::error::CompileError;
 use crate::dsl::{CasePattern, Expr, FnStmt};
+use miette::miette;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -40,7 +41,7 @@ pub fn validate_configuration(
     } else {
         match &cfg.sanctuary_path {
             None => {
-                errors.push("sanctuary declaration is required".to_string());
+                errors.push(miette!("sanctuary declaration is required"));
             }
             Some(Expr::VarRef { .. }) => {
                 // Uses a variable reference — can't validate at this stage.
@@ -49,9 +50,9 @@ pub fn validate_configuration(
             Some(Expr::BacktickLit { parts, .. }) => {
                 let path_str: String = parts.iter().map(|part| part.value.as_str()).collect();
                 if path_str.is_empty() {
-                    errors.push("sanctuary declaration is required".to_string());
+                    errors.push(miette!("sanctuary declaration is required"));
                 } else if !Path::new(&path_str).is_absolute() {
-                    errors.push(format!("sanctuary path must be absolute: {}", path_str));
+                    errors.push(miette!("sanctuary path must be absolute: {}", path_str));
                 }
             }
         }
@@ -67,38 +68,27 @@ pub fn validate_configuration(
             if url_str.is_empty() && project.url.is_some() {
                 // url is set but uses var refs — can't validate now
             } else if project.url.is_none() || url_str.is_empty() {
-                errors.push(format!("project {:?}: url is required", project.name));
+                errors.push(miette!("project {:?}: url is required", project.name));
             }
 
             if dir_str.is_empty() && project.dir.is_some() {
                 // dir is set but uses var refs
             } else if project.dir.is_none() || dir_str.is_empty() {
-                errors.push(format!("project {:?}: dir is required", project.name));
+                errors.push(miette!("project {:?}: dir is required", project.name));
             }
 
             let normalized_dir = dir_str.trim_start_matches('/').to_string();
             if !normalized_dir.is_empty() && !seen_dirs.insert(normalized_dir) {
-                errors.push(format!(
+                errors.push(miette!(
                     "project {:?}: duplicate directory {:?}",
-                    project.name, dir_str
+                    project.name,
+                    dir_str
                 ));
             }
         }
     }
 
-    // Validate run references
-    validate_run_refs(&cfg.runs, &cfg.functions, "top-level", &mut errors);
-
-    // Build global scope set from pre-built scope
     let global_set: HashSet<String> = global_scope.keys().cloned().collect();
-
-    validate_fn_bodies(
-        &cfg.functions,
-        &global_set,
-        &HashSet::new(),
-        "(top-level)",
-        &mut errors,
-    );
 
     for (proj_name, project) in &cfg.projects {
         validate_run_refs(&project.runs, &project.functions, proj_name, &mut errors);
@@ -118,10 +108,22 @@ pub fn validate_configuration(
         );
     }
 
-    if !errors.is_empty() {
-        return Err(CompileError::ValidationReport(miette::miette!(
-            "{}",
-            errors.join("\n")
+    if errors.len() == 1 {
+        return Err(CompileError::ValidationReport(
+            errors.into_iter().next().unwrap(),
+        ));
+    } else if !errors.is_empty() {
+        let mut combined = String::new();
+        for (i, report) in errors.iter().enumerate() {
+            if i > 0 {
+                combined.push('\n');
+            }
+            combined.push_str(&format!("{}", report));
+        }
+        return Err(CompileError::ValidationReport(miette!(
+            "{}\n{} validation error(s) found",
+            combined,
+            errors.len()
         )));
     }
 
@@ -132,15 +134,17 @@ fn validate_run_refs(
     runs: &std::collections::HashMap<String, Vec<Vec<String>>>,
     functions: &std::collections::HashMap<String, Vec<FnStmt>>,
     prefix: &str,
-    errors: &mut Vec<String>,
+    errors: &mut Vec<miette::Report>,
 ) {
     for (run_name, chains) in runs {
         for chain in chains {
             for fn_name in chain {
                 if !functions.contains_key(fn_name) {
-                    errors.push(format!(
+                    errors.push(miette!(
                         "{}: run {:?} references unknown function {:?}",
-                        prefix, run_name, fn_name
+                        prefix,
+                        run_name,
+                        fn_name
                     ));
                 }
             }
@@ -153,7 +157,7 @@ fn validate_fn_bodies(
     global_scope: &HashSet<String>,
     project_scope: &HashSet<String>,
     proj_name: &str,
-    errors: &mut Vec<String>,
+    errors: &mut Vec<miette::Report>,
 ) {
     for (fn_name, body) in functions {
         let mut mutable_scope: HashSet<String> =
@@ -166,15 +170,17 @@ fn validate_expr(
     expr: &Expr,
     fn_name: &str,
     scope: &HashSet<String>,
-    errors: &mut Vec<String>,
+    errors: &mut Vec<miette::Report>,
     proj_name: &str,
 ) {
     match expr {
         Expr::VarRef { name, .. } => {
             if !scope.contains(name) {
-                errors.push(format!(
+                errors.push(miette!(
                     "project {:?}: fn {:?}: undefined variable ${}",
-                    proj_name, fn_name, name
+                    proj_name,
+                    fn_name,
+                    name
                 ));
             }
         }
@@ -183,9 +189,11 @@ fn validate_expr(
                 if part.is_var {
                     let var_name = part.value.trim_start_matches('$');
                     if !scope.contains(var_name) {
-                        errors.push(format!(
+                        errors.push(miette!(
                             "project {:?}: fn {:?}: undefined variable ${}",
-                            proj_name, fn_name, var_name
+                            proj_name,
+                            fn_name,
+                            var_name
                         ));
                     }
                 }
@@ -198,7 +206,7 @@ fn validate_fn_body(
     fn_name: &str,
     body: &[FnStmt],
     scope: &mut HashSet<String>,
-    errors: &mut Vec<String>,
+    errors: &mut Vec<miette::Report>,
     proj_name: &str,
 ) {
     for stmt in body {
@@ -237,9 +245,11 @@ fn validate_fn_body(
                         CasePattern::Literal { parts, .. } => {
                             for part in parts {
                                 if part.is_var && !scope.contains(&part.value) {
-                                    errors.push(format!(
+                                    errors.push(miette!(
                                         "project {:?}: fn {:?}: undefined variable ${}",
-                                        proj_name, fn_name, part.value
+                                        proj_name,
+                                        fn_name,
+                                        part.value
                                     ));
                                 }
                             }

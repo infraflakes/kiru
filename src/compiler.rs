@@ -37,6 +37,9 @@ pub(crate) mod validation;
 
 /// Run the full pipeline: parse, merge, resolve includes, validate, and resolve.
 pub use compile::compile_and_resolve;
+/// Lightweight compilation: parse, resolve vars, resolve project fields.
+/// Skips validation and function body lowering.  Used by `kiru sync`.
+pub use compile::extract_projects;
 pub use error::CompileError;
 pub use types::{
     Project, ResolvedCasePattern, ResolvedEnvPair, ResolvedFnStmt, Sanctuary, SyncMode,

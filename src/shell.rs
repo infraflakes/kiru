@@ -193,6 +193,8 @@ pub(crate) fn execute_shell_variable(
 ) -> Result<String, CompileError> {
     match exec_and_get_stdout(resolved_command, None, None) {
         Ok(stdout) => Ok(stdout),
+        // Non-zero exit is not an error — empty string is a valid value
+        // in Kiru's type system.
         Err(Error::Exit { .. }) => Ok(String::new()),
         Err(e) => Err(spanned_err(
             format!("shell var ${} failed: {}", name, e),

@@ -126,19 +126,6 @@ fn run_project_chains(
     )
 }
 
-/// Execute chains using top-level (standalone) functions.
-fn run_standalone_chains(
-    config: Arc<crate::compiler::Sanctuary>,
-    chains: Vec<Vec<String>>,
-) -> miette::Result<()> {
-    run_chains(
-        config,
-        chains,
-        |function_name| function_name.to_string(),
-        |runner, function_name| runner.execute_standalone_fn(function_name),
-    )
-}
-
 pub fn execute_run_block(
     config_arg: Option<PathBuf>,
     name: String,
@@ -166,18 +153,9 @@ pub fn execute_run_block(
 
             run_project_chains(Arc::new(config), project_name, chains)
         }
-        None => {
-            let chains: Vec<Vec<String>> = match config.runs.get(&name) {
-                Some(chain_list) => chain_list.clone(),
-                None => {
-                    return Err(miette::miette!(
-                        "unknown run block '{}' (no project specified, and no top-level run with that name)",
-                        name
-                    ));
-                }
-            };
-
-            run_standalone_chains(Arc::new(config), chains)
-        }
+        None => Err(miette::miette!(
+            "must specify a project to run '{}' in",
+            name
+        )),
     }
 }

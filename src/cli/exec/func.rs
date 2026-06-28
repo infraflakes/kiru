@@ -38,18 +38,9 @@ pub fn execute_function(
                 .execute_fn_call(&name, project_name)
                 .map_err(|e| miette::miette!("{}", e))
         }
-        None => {
-            if !config.functions.contains_key(&name) {
-                return Err(miette::miette!(
-                    "unknown function {} (no project specified, and no top-level function with that name)",
-                    name
-                ));
-            }
-
-            let mut runner = Runner::new(Arc::new(config)).with_output_callback(callback);
-            runner
-                .execute_standalone_fn(&name)
-                .map_err(|e| miette::miette!("{}", e))
-        }
+        None => Err(miette::miette!(
+            "must specify a project to run function '{}' in",
+            name
+        )),
     }
 }

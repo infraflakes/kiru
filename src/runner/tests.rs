@@ -16,8 +16,6 @@ fn test_context() -> (Sanctuary, Project, OutputTarget) {
     let cfg = Sanctuary {
         sanctuary_path: "/tmp".to_string(),
         projects: HashMap::new(),
-        functions: HashMap::new(),
-        runs: HashMap::new(),
     };
     (cfg, project, OutputTarget::Direct(Box::new(Vec::new())))
 }

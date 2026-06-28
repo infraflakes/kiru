@@ -1,10 +1,12 @@
 use crate::compiler::error::CompileError;
+use crate::compiler::error::spanned_err;
 use crate::compiler::imports;
 use crate::compiler::resolve;
-use crate::compiler::types::{Sanctuary, UnresolvedProject};
+use crate::compiler::types::{Project, Sanctuary, SyncMode, UnresolvedProject};
 use crate::compiler::validation;
 use crate::dsl::Parser;
-use crate::dsl::{Expr, FnStmt, Program, Stmt, TopLevel};
+use crate::dsl::{Expr, Program, Stmt, TopLevel};
+use miette::miette;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -36,8 +38,6 @@ struct LinearState {
     global_scope: HashMap<String, String>,
     sanctuary_path: Option<Expr>,
     projects: HashMap<String, UnresolvedProject>,
-    config_fns: HashMap<String, Vec<FnStmt>>,
-    config_runs: HashMap<String, Vec<Vec<String>>>,
     /// Per-project locally-declared variable overrides. Each block of the same
     /// project refreshes from current globals (via `or_insert`), so later
     /// global vars are visible across blocks. Project-local vars accumulate
@@ -45,6 +45,10 @@ struct LinearState {
     project_var_scopes: HashMap<String, HashMap<String, String>>,
     loaded_files: HashSet<PathBuf>,
     recursion_stack: HashSet<PathBuf>,
+    /// When false, `import` items are silently skipped instead of followed.
+    /// Used by `extract_projects` which only needs project fields from the
+    /// entry file and must not fail on missing import targets.
+    follow_imports: bool,
 }
 
 impl LinearState {
@@ -53,11 +57,10 @@ impl LinearState {
             global_scope: HashMap::new(),
             sanctuary_path: None,
             projects: HashMap::new(),
-            config_fns: HashMap::new(),
-            config_runs: HashMap::new(),
             project_var_scopes: HashMap::new(),
             loaded_files: HashSet::new(),
             recursion_stack: HashSet::new(),
+            follow_imports: true,
         }
     }
 }
@@ -71,7 +74,7 @@ struct LinearResult {
 
 /// Canonicalize the entry path, resolving relative paths against the current
 /// working directory. All paths within the pipeline are absolute after this.
-fn canonicalize_entry(path: &Path) -> Result<PathBuf, CompileError> {
+pub(crate) fn canonicalize_entry(path: &Path) -> Result<PathBuf, CompileError> {
     let abs_path = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -134,9 +137,10 @@ fn linear_process_file(file_path: &Path, state: &mut LinearState) -> Result<(), 
     })?;
 
     if state.recursion_stack.contains(&canon_path) {
-        return Err(CompileError::CircularImport(
-            canon_path.display().to_string(),
-        ));
+        return Err(CompileError::ValidationReport(miette!(
+            "circular import: {}",
+            canon_path.display()
+        )));
     }
 
     if state.loaded_files.contains(&canon_path) {
@@ -155,7 +159,6 @@ fn linear_process_file(file_path: &Path, state: &mut LinearState) -> Result<(), 
     result
 }
 
-use crate::compiler::error::spanned_err;
 use crate::dsl::ProjectField;
 
 /// Merge a single statement into a project body during AST collection.
@@ -237,7 +240,7 @@ pub(crate) fn merge_project_body_stmt(
         Stmt::Sanctuary { offset, len, .. } | Stmt::Project { offset, len, .. } => {
             return Err(spanned_err(
                 format!(
-                    "unexpected statement in project '{}' (only var, fn, run, and fields are valid)",
+                    "unexpected statement in project '{}' (only var, fn, and run are valid)",
                     project.name
                 ),
                 source_name,
@@ -275,7 +278,9 @@ fn linear_process_program(
                             state.sanctuary_path = Some(value.clone());
                         }
                     }
-                    Stmt::Project { name, body, .. } => {
+                    Stmt::Project {
+                        name, fields, body, ..
+                    } => {
                         let project_entry =
                             state
                                 .projects
@@ -302,6 +307,16 @@ fn linear_process_program(
                                 .or_insert(value.clone());
                         }
 
+                        for field_stmt in fields {
+                            merge_project_body_stmt(
+                                project_entry,
+                                field_stmt.clone(),
+                                &program.source_name,
+                                &program.source_text,
+                                seen_fields,
+                            )?;
+                        }
+
                         for body_stmt in body {
                             if let Stmt::Var { .. } = body_stmt {
                                 resolve::resolve_var_stmt(
@@ -320,34 +335,36 @@ fn linear_process_program(
                             )?;
                         }
                     }
-                    Stmt::Fn { name, body, .. } => {
-                        if !state.config_fns.contains_key(name) {
-                            state.config_fns.insert(name.clone(), body.clone());
-                        }
-                    }
-                    Stmt::Run { name, chains, .. } => {
-                        if !state.config_runs.contains_key(name) {
-                            state.config_runs.insert(name.clone(), chains.clone());
-                        }
-                    }
-                    Stmt::Field { .. } => {
-                        return Err(CompileError::Io(std::io::Error::new(
-                            std::io::ErrorKind::InvalidInput,
-                            "field outside project block".to_string(),
-                        )));
+                    Stmt::Fn { offset, len, .. }
+                    | Stmt::Run { offset, len, .. }
+                    | Stmt::Field { offset, len, .. } => {
+                        return Err(spanned_err(
+                            format!("unexpected statement in '{}'", program.source_name),
+                            &program.source_name,
+                            &program.source_text,
+                            *offset,
+                            *len,
+                        ));
                     }
                 }
             }
             TopLevel::Import(expr) => {
-                let path_str = imports::resolve_import_path(expr, &state.global_scope)?;
+                if !state.follow_imports {
+                    continue;
+                }
+                let path_str = imports::resolve_import_path(
+                    expr,
+                    &state.global_scope,
+                    &program.source_name,
+                    &program.source_text,
+                )?;
                 let import_path = if Path::new(&path_str).is_absolute() {
                     PathBuf::from(path_str)
                 } else if let Some(dir) = base_dir {
                     dir.join(path_str)
                 } else {
-                    return Err(CompileError::Io(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        "relative import path without base directory".to_string(),
+                    return Err(CompileError::ValidationReport(miette!(
+                        "relative import path without base directory"
                     )));
                 };
                 let import_path = canonicalize_entry(&import_path)?;
@@ -367,13 +384,87 @@ fn resolve_linear(entry_path: &Path) -> Result<LinearResult, CompileError> {
     let unresolved = super::types::UnresolvedSanctuary {
         sanctuary_path: state.sanctuary_path,
         projects: state.projects,
-        functions: state.config_fns,
-        runs: state.config_runs,
     };
 
     Ok(LinearResult {
         unresolved,
         global_scope: state.global_scope,
         project_var_scopes: state.project_var_scopes,
+    })
+}
+
+/// Lightweight compilation that resolves project metadata without validating
+/// or lowering function bodies.
+///
+/// 1. Linear processing — parse the entry file, resolve `var` and `var shell`
+///    declarations, build global and project scopes.  Imports are **skipped**
+///    (sync only needs the entry file's project list).
+/// 2. Project field resolution — resolve each project's `url`, `dir`, `sync`,
+///    and `branch` expressions against its computed scope.
+///
+/// The returned [`Sanctuary`] has empty function maps — function and run
+/// blocks are collected during linear processing but never resolved.
+pub fn extract_projects(entry_path: &Path) -> Result<Sanctuary, CompileError> {
+    let abs_entry = canonicalize_entry(entry_path)?;
+
+    let mut state = LinearState {
+        follow_imports: false,
+        ..LinearState::new()
+    };
+    linear_process_file(&abs_entry, &mut state)?;
+
+    let sanctuary_path =
+        resolve::resolve_optional_expr(&state.sanctuary_path, &state.global_scope, "", "")?
+            .unwrap_or_default();
+
+    let mut projects = HashMap::new();
+    for (name, unresolved_project) in state.projects {
+        let proj_scope = state
+            .project_var_scopes
+            .get(&name)
+            .cloned()
+            .unwrap_or_else(|| state.global_scope.clone());
+
+        let sync_offset_len = unresolved_project
+            .sync
+            .as_ref()
+            .map(|e| match e {
+                Expr::BacktickLit { offset, len, .. } => (*offset, *len),
+                Expr::VarRef { offset, len, .. } => (*offset, *len),
+            })
+            .unwrap_or((0, 1));
+
+        let url = resolve::resolve_optional_expr(&unresolved_project.url, &proj_scope, "", "")?
+            .unwrap_or_default();
+        let dir = resolve::resolve_optional_expr(&unresolved_project.dir, &proj_scope, "", "")?
+            .unwrap_or_default();
+        let sync =
+            match resolve::resolve_optional_expr(&unresolved_project.sync, &proj_scope, "", "")? {
+                Some(mode) => {
+                    let (so, sl) = sync_offset_len;
+                    resolve::parse_sync_mode_value(&mode)
+                        .map_err(|msg| spanned_err(msg, "", "", so, sl))?
+                }
+                None => SyncMode::Clone,
+            };
+        let branch =
+            resolve::resolve_optional_expr(&unresolved_project.branch, &proj_scope, "", "")?;
+
+        projects.insert(
+            name,
+            Project {
+                url,
+                dir,
+                sync,
+                branch,
+                functions: HashMap::new(),
+                runs: unresolved_project.runs,
+            },
+        );
+    }
+
+    Ok(Sanctuary {
+        sanctuary_path,
+        projects,
     })
 }

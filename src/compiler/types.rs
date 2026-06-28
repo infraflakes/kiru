@@ -86,8 +86,6 @@ pub struct UnresolvedProject {
 pub struct UnresolvedSanctuary {
     pub sanctuary_path: Option<Expr>,
     pub projects: HashMap<String, UnresolvedProject>,
-    pub functions: HashMap<String, Vec<FnStmt>>,
-    pub runs: HashMap<String, Vec<Vec<String>>>,
 }
 
 /// A fully compiled project block with all function bodies resolved to concrete strings.
@@ -115,6 +113,4 @@ pub struct Project {
 pub struct Sanctuary {
     pub sanctuary_path: String,
     pub projects: HashMap<String, Project>,
-    pub functions: HashMap<String, Vec<ResolvedFnStmt>>,
-    pub runs: HashMap<String, Vec<Vec<String>>>,
 }

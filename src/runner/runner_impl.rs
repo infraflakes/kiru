@@ -45,16 +45,4 @@ impl Runner {
         let mut ctx = ExecContext::new(&self.cfg, Some(project), &mut self.output);
         ctx.exec_resolved_fn_body(fn_body)
     }
-
-    /// Look up and execute a top-level (standalone) function.
-    pub(crate) fn execute_standalone_fn(&mut self, fn_name: &str) -> Result<(), RuntimeError> {
-        let fn_body = self
-            .cfg
-            .functions
-            .get(fn_name)
-            .ok_or_else(|| RuntimeError::Lookup(format!("unknown function: {}", fn_name)))?;
-
-        let mut ctx = ExecContext::new(&self.cfg, None, &mut self.output);
-        ctx.exec_resolved_fn_body(fn_body)
-    }
 }

@@ -1,3 +1,5 @@
+[OUTDATED]
+
 var shell workdir = `echo $HOME/dev`;
 var string app    = `todo`;
 

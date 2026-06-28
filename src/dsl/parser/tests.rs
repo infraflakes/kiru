@@ -40,10 +40,9 @@ fn count_body_stmt_types(body: &[Stmt]) -> Vec<&'static str> {
     body.iter()
         .map(|s| match s {
             Stmt::Var { .. } => "var",
-            Stmt::Field { .. } => "field",
             Stmt::Fn { .. } => "fn",
             Stmt::Run { .. } => "run",
-            Stmt::Sanctuary { .. } | Stmt::Project { .. } => "other",
+            Stmt::Sanctuary { .. } | Stmt::Project { .. } | Stmt::Field { .. } => "other",
         })
         .collect()
 }
@@ -136,14 +135,14 @@ fn test_var_invalid_type() {
 
 #[test]
 fn test_project_decl_with_fields() {
-    let input = "\npr todo {\n    url = `git@github.com:user/repo.git`;\n    dir = `todo`;\n    sync = `clone`;\n    branch = `main`;\n}";
+    let input = "\npr todo [\n    url = `git@github.com:user/repo.git`,\n    dir = `todo`,\n    sync = `clone`,\n    branch = `main`,\n] {\n}";
     let prog = parse_program(input).unwrap();
     assert_eq!(count_stmt_types(&prog), vec!["pr"]);
     match &prog.items[0] {
-        TopLevel::Stmt(Stmt::Project { name, body, .. }) => {
+        TopLevel::Stmt(Stmt::Project { name, fields, .. }) => {
             assert_eq!(name, "todo");
-            assert_eq!(body.len(), 4);
-            let keys: Vec<&ProjectField> = body
+            assert_eq!(fields.len(), 4);
+            let keys: Vec<&ProjectField> = fields
                 .iter()
                 .filter_map(|s| match s {
                     Stmt::Field { key, .. } => Some(key),
@@ -166,19 +165,19 @@ fn test_project_decl_with_fields() {
 
 #[test]
 fn test_project_decl_with_body_stmts() {
-    let input = "\npr todo {\n    url = `git@github.com:user/repo.git`;\n    dir = `todo`;\n    var string app = `todo`;\n    fn build {\n        log `building`;\n    }\n    run release {\n        build;\n    }\n    run ci {\n        build;\n    }\n}";
+    let input = "\npr todo [\n    url = `git@github.com:user/repo.git`,\n    dir = `todo`,\n] {\n    var string app = `todo`;\n    fn build {\n        log `building`;\n    }\n    run release {\n        build;\n    }\n    run ci {\n        build;\n    }\n}";
     let prog = parse_program(input).unwrap();
     match &prog.items[0] {
-        TopLevel::Stmt(Stmt::Project { name, body, .. }) => {
+        TopLevel::Stmt(Stmt::Project {
+            name, fields, body, ..
+        }) => {
             assert_eq!(name, "todo");
-            assert_eq!(
-                count_body_stmt_types(body),
-                vec!["field", "field", "var", "fn", "run", "run"]
-            );
-            assert!(matches!(body[2], Stmt::Var { .. }));
-            assert!(matches!(body[3], Stmt::Fn { .. }));
-            assert!(matches!(body[4], Stmt::Run { .. }));
-            assert!(matches!(body[5], Stmt::Run { .. }));
+            assert_eq!(fields.len(), 2);
+            assert_eq!(count_body_stmt_types(body), vec!["var", "fn", "run", "run"]);
+            assert!(matches!(body[0], Stmt::Var { .. }));
+            assert!(matches!(body[1], Stmt::Fn { .. }));
+            assert!(matches!(body[2], Stmt::Run { .. }));
+            assert!(matches!(body[3], Stmt::Run { .. }));
         }
         _ => panic!("expected ProjectDecl"),
     }
@@ -186,15 +185,47 @@ fn test_project_decl_with_body_stmts() {
 
 #[test]
 fn test_project_duplicate_fields() {
-    let input = "\npr x {\n    url = `a`;\n    url = `b`;\n    dir = `d`;\n}";
+    let input = "\npr x [\n    url = `a`,\n    url = `b`,\n    dir = `d`,\n] {\n}";
     let prog = parse_program(input).unwrap();
     match &prog.items[0] {
-        TopLevel::Stmt(Stmt::Project { body, .. }) => {
-            let field_count = body
+        TopLevel::Stmt(Stmt::Project { fields, .. }) => {
+            assert_eq!(fields.len(), 3);
+        }
+        _ => panic!("expected ProjectDecl"),
+    }
+}
+
+#[test]
+fn test_project_syntax_fields() {
+    let input = "\npr todo [\n    url = `git@github.com:user/repo.git`,\n    dir = `todo`,\n    sync = `clone`,\n    branch = `main`,\n] {\n    fn build {\n        log `building`;\n    }\n}";
+    let prog = parse_program(input).unwrap();
+    assert_eq!(count_stmt_types(&prog), vec!["pr"]);
+    match &prog.items[0] {
+        TopLevel::Stmt(Stmt::Project {
+            name, fields, body, ..
+        }) => {
+            assert_eq!(name, "todo");
+            // All 4 fields in the `[...]` section
+            assert_eq!(fields.len(), 4);
+            let keys: Vec<&ProjectField> = fields
                 .iter()
-                .filter(|s| matches!(s, Stmt::Field { .. }))
-                .count();
-            assert_eq!(field_count, 3);
+                .filter_map(|s| match s {
+                    Stmt::Field { key, .. } => Some(key),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                keys,
+                &[
+                    &ProjectField::Url,
+                    &ProjectField::Dir,
+                    &ProjectField::Sync,
+                    &ProjectField::Branch
+                ]
+            );
+            // 1 fn in the body
+            assert_eq!(body.len(), 1);
+            assert!(matches!(body[0], Stmt::Fn { .. }));
         }
         _ => panic!("expected ProjectDecl"),
     }
@@ -274,7 +305,7 @@ fn test_var_with_var_ref_value() {
 fn test_multiple_top_level_statements() {
     let input = "sanctuary = `/tmp`;\n\
                   var string x = `hello`;\n\
-                   pr p { url = `u`; dir = `d`; fn f { log `hi`; } run s { f; } }";
+                   pr p [url = `u`, dir = `d`] { fn f { log `hi`; } run s { f; } }";
     let prog = parse_program(input).unwrap();
     assert_eq!(count_stmt_types(&prog), vec!["sanctuary", "var", "pr"]);
 }
@@ -289,21 +320,6 @@ fn test_error_recovery_skips_bad_stmt() {
         Err(errs) => {
             assert!(errs.iter().any(|e| e.to_string().contains("expected log")));
         }
-    }
-}
-
-#[test]
-fn test_project_with_interleaved_fields_and_body() {
-    let input = "\npr todo {\n    url = `u`;\n    var string app = `todo`;\n    dir = `d`;\n    fn build { log `x`; }\n    sync = `clone`;\n}";
-    let prog = parse_program(input).unwrap();
-    match &prog.items[0] {
-        TopLevel::Stmt(Stmt::Project { body, .. }) => {
-            assert_eq!(
-                count_body_stmt_types(body),
-                vec!["field", "var", "field", "fn", "field"]
-            );
-        }
-        _ => panic!("expected ProjectDecl"),
     }
 }
 

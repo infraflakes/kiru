@@ -3,10 +3,12 @@ sanctuary = $workdir;
 
 var string kiru_dir = `${workdir}/kiru`;
 
-pr kiru {
-  url = `https://github.com/infraflakes/kiru.git`;
-  dir = $kiru_dir;
-  sync = `clone`;
+pr kiru [
+  url = `https://github.com/infraflakes/kiru.git`,
+  dir = $kiru_dir,
+  sync = `clone`,
+  branch = `dev`,
+] {
 }
 
 import `${kiru_dir}/.kiru/main.kiru`;

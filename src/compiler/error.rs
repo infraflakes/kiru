@@ -9,8 +9,6 @@ pub enum CompileError {
     Io(#[from] std::io::Error),
     /// One or more parse errors with source spans attached.
     ParseReports(Vec<miette::Report>),
-    /// A circular import chain detected during file resolution.
-    CircularImport(String),
     /// A validation error with source span information.
     ValidationReport(miette::Report),
 }
@@ -24,9 +22,6 @@ impl fmt::Display for CompileError {
                     writeln!(f, "{}", report)?;
                 }
                 Ok(())
-            }
-            CompileError::CircularImport(path) => {
-                write!(f, "Circular import detected: {}", path)
             }
             CompileError::ValidationReport(report) => write!(f, "{}", report),
         }

@@ -34,8 +34,6 @@ fn format_config_as_tree(config: &Sanctuary) -> String {
     sorted_projects.sort_by(|a, b| a.0.cmp(b.0));
 
     let has_projects = !sorted_projects.is_empty();
-    let has_top_level_fns = !config.functions.is_empty();
-    let has_top_level_runs = !config.runs.is_empty();
 
     if has_projects {
         formatted_output.push_str(&format!(
@@ -48,29 +46,6 @@ fn format_config_as_tree(config: &Sanctuary) -> String {
             let is_last_project = i == sorted_projects.len() - 1;
             draw_project(&mut formatted_output, name, project, is_last_project);
         }
-    }
-
-    if has_top_level_fns || has_top_level_runs {
-        let section_name = if has_projects { "Global" } else { "Top-level" };
-        let total_top_level = config.functions.len() + config.runs.len();
-        formatted_output.push_str(&format!(
-            "\n  {}  {}\n\n",
-            style!(colors::BOLD, "{}", section_name),
-            style!(colors::YELLOW, "{}", total_top_level)
-        ));
-
-        let mut function_names: Vec<&String> = config.functions.keys().collect();
-        function_names.sort_unstable();
-        let mut run_names: Vec<&String> = config.runs.keys().collect();
-        run_names.sort_unstable();
-
-        let items: &[(&str, &[&String])] = &[("fn", &function_names), ("run", &run_names)];
-        for (i, (label, names)) in items.iter().enumerate() {
-            let last_item = i == items.len() - 1;
-            let connector = if last_item { "└" } else { "├" };
-            draw_item_line(&mut formatted_output, "", connector, label, names);
-        }
-        formatted_output.push('\n');
     }
 
     footer_bar(&mut formatted_output, config);
@@ -207,21 +182,16 @@ fn draw_item_line(out: &mut String, indent: &str, connector: &str, label: &str, 
 // ── Footer ────────────────────────────────────────────────
 
 fn footer_bar(out: &mut String, config: &Sanctuary) {
-    let total_fns: usize = config
+    let fn_count: usize = config
         .projects
         .values()
         .map(|project| project.functions.len())
         .sum();
-    let total_runs: usize = config
+    let run_count: usize = config
         .projects
         .values()
         .map(|project| project.runs.len())
         .sum();
-    let standalone_fns = config.functions.len();
-    let standalone_runs = config.runs.len();
-
-    let fn_count = total_fns + standalone_fns;
-    let run_count = total_runs + standalone_runs;
 
     out.push_str(&style!(
         colors::GRAY,

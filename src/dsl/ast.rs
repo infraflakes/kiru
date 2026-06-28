@@ -26,9 +26,12 @@ pub enum Stmt {
         offset: usize,
         len: usize,
     },
-    /// A project block definition.
+    /// A project block: `pr name [ field = value, ... ] { fn/run/var ... }`.
+    /// Fields (`url`, `dir`, `sync`, `branch`) are in `fields`; function,
+    /// run, and var declarations are in `body`.
     Project {
         name: String,
+        fields: Vec<Stmt>,
         body: Vec<Stmt>,
         offset: usize,
         len: usize,

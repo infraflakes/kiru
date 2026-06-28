@@ -21,14 +21,10 @@ fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Sanctuary> {
 
 fn print_parse_errors(reports: Vec<miette::Report>) -> miette::Report {
     let count = reports.len();
-    let mut combined = String::new();
-    for (i, report) in reports.into_iter().enumerate() {
-        if i > 0 {
-            combined.push('\n');
-        }
-        combined.push_str(&format!("{:?}", report));
+    for report in &reports {
+        eprintln!("{:?}", report);
     }
-    miette::miette!("{}\n{} parse error(s) found", combined, count)
+    miette::miette!("{} parse error(s) found", count)
 }
 
 pub fn run_cli() -> miette::Result<()> {

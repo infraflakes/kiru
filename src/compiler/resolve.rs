@@ -250,8 +250,6 @@ pub(crate) fn resolve_with_scopes(
     let sanctuary_path = resolve_optional_expr(&unresolved.sanctuary_path, &global_scope, "", "")?
         .unwrap_or_default();
 
-    let functions = resolve_fn_body_map(&unresolved.functions, &global_scope, &HashMap::new())?;
-
     let mut projects = HashMap::new();
     for (name, unresolved_project) in unresolved.projects {
         let sync_offset_len = unresolved_project
@@ -300,8 +298,6 @@ pub(crate) fn resolve_with_scopes(
     Ok(Sanctuary {
         sanctuary_path,
         projects,
-        functions,
-        runs: unresolved.runs,
     })
 }
 

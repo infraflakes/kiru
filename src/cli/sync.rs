@@ -1,4 +1,4 @@
-use super::load_config;
+use crate::compiler::CompileError;
 use crate::runner::sync;
 use crate::runner::{self, TaskStatus, TuiEvent};
 use std::path::PathBuf;
@@ -9,14 +9,17 @@ pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
     if crate::compiler::is_sanctuary_disabled() {
         return Err(miette::miette!("sync is not available in SANCTUARY=0 mode"));
     }
-    let config = load_config(config_arg)?;
+    let config_path = super::get_config_path(config_arg);
+    let config = crate::compiler::extract_projects(&config_path).map_err(|e| match e {
+        CompileError::ParseReports(reports) => super::print_parse_errors(reports),
+        _ => miette::miette!("{}", e),
+    })?;
 
     let project_names: Vec<String> = config.projects.keys().cloned().collect();
     let chain_pairs: Vec<(String, Vec<String>)> = project_names
         .iter()
         .map(|name| (name.clone(), vec![name.clone()]))
         .collect();
-    let sanctuary = config.sanctuary_path.clone();
     let projects_map: std::collections::HashMap<String, Arc<crate::compiler::Project>> = config
         .projects
         .into_iter()
@@ -27,7 +30,6 @@ pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
     let projects_arc: Arc<std::collections::HashMap<String, Arc<crate::compiler::Project>>> =
         projects;
     if runner::run_tui_with_sync(chain_pairs, move |tx| {
-        let sanctuary = sanctuary.clone();
         let projects: Arc<std::collections::HashMap<String, Arc<crate::compiler::Project>>> =
             Arc::clone(&projects_arc);
         async move {
@@ -46,7 +48,6 @@ pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
                         continue;
                     }
                 };
-                let sanctuary = sanctuary.clone();
                 let tx_cb = tx.clone();
                 let project_index_clone = project_index;
                 let project_name = project_name_raw.clone();
@@ -56,17 +57,12 @@ pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
                         &tx_cb,
                         TuiEvent::UpdateStatus(project_index_clone, TaskStatus::Running),
                     );
-                    sync::sync_project_with_callback(
-                        &sanctuary,
-                        &project_name,
-                        &project_arc,
-                        |line: &str| {
-                            runner::send_tui_event(
-                                &tx_cb,
-                                TuiEvent::AppendOutput(project_index_clone, line.to_string()),
-                            );
-                        },
-                    )
+                    sync::sync_project_with_callback(&project_name, &project_arc, |line: &str| {
+                        runner::send_tui_event(
+                            &tx_cb,
+                            TuiEvent::AppendOutput(project_index_clone, line.to_string()),
+                        );
+                    })
                 });
 
                 join_handles.push((project_index, handle));
