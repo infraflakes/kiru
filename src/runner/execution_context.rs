@@ -1,12 +1,54 @@
 use super::colors;
 use crate::compiler::{Project, ResolvedEnvPair, ResolvedFnStmt, Sanctuary};
 use crate::runner::error::RuntimeError;
-use crate::runner::output::OutputTarget;
+use crate::shell;
 use std::collections::HashMap;
+use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
-
-pub type OutputCallback = Arc<dyn Fn(String) + Send + Sync>;
+use std::process::{Command, Stdio};
 use std::sync::Arc;
+
+/// A writer that implements `Send` for use across thread boundaries.
+type SendWriter = Box<dyn Write + Send>;
+
+/// Callback invoked for each line of output (used by the TUI).
+pub type OutputCallback = Arc<dyn Fn(String) + Send + Sync>;
+
+/// Where function output is directed: a direct writer or a callback.
+pub(crate) enum OutputTarget {
+    Direct(SendWriter),
+    Callback(OutputCallback),
+}
+
+impl OutputTarget {
+    pub(super) fn writeln(&mut self, content: &str) -> io::Result<()> {
+        match self {
+            OutputTarget::Direct(w) => writeln!(w, "{content}"),
+            OutputTarget::Callback(cb) => {
+                cb(content.to_string());
+                Ok(())
+            }
+        }
+    }
+
+    pub(super) fn writeln_colored(&mut self, content: &str, color: &str) -> io::Result<()> {
+        match self {
+            OutputTarget::Direct(w) => writeln!(w, "{color}{content}{}", colors::RESET),
+            OutputTarget::Callback(cb) => {
+                cb(content.to_string());
+                Ok(())
+            }
+        }
+    }
+
+    /// Clone the callback if this target is a callback variant.
+    pub(crate) fn clone_callback(&self) -> Option<OutputCallback> {
+        match self {
+            OutputTarget::Callback(cb) => Some(Arc::clone(cb)),
+            OutputTarget::Direct(_) => None,
+        }
+    }
+}
 
 /// Runtime execution context for a resolved function body.
 ///
@@ -50,7 +92,7 @@ impl<'a> ExecContext<'a> {
     }
 
     /// Chain system env vars with per-layer overrides for subprocess execution.
-    pub(super) fn build_env(&self) -> impl Iterator<Item = (String, String)> + '_ {
+    pub(super) fn build_environment_iterator_with_overrides(&self) -> impl Iterator<Item = (String, String)> + '_ {
         let system_env_vars = self
             .env_vars
             .iter()
@@ -64,7 +106,7 @@ impl<'a> ExecContext<'a> {
     }
 
     /// Compute indentation string based on current env block nesting depth.
-    pub(super) fn indent(&self, extra: usize) -> String {
+    pub(super) fn compute_indent_string(&self, extra: usize) -> String {
         "  ".repeat(self.env_stack.len() + extra)
     }
 
@@ -104,7 +146,7 @@ impl<'a> ExecContext<'a> {
     }
 
     fn exec_log(&mut self, msg: &str) -> Result<(), RuntimeError> {
-        let indent = self.indent(0);
+        let indent = self.compute_indent_string(0);
         let line = format!("{}log  {}", indent, msg);
         self.output
             .writeln_colored(&line, colors::LOG_ANSI)
@@ -151,7 +193,7 @@ impl<'a> ExecContext<'a> {
 
         self.work_dir = candidate;
 
-        let indent = self.indent(0);
+        let indent = self.compute_indent_string(0);
         let line = format!("{}cd   {}", indent, resolved);
         self.output
             .writeln_colored(&line, colors::CD_ANSI)
@@ -170,7 +212,7 @@ impl<'a> ExecContext<'a> {
         }
 
         let keys: Vec<&str> = pairs.iter().map(|p| p.key.as_str()).collect();
-        let indent = self.indent(0);
+        let indent = self.compute_indent_string(0);
         let line = format!("{}env  {}", indent, keys.join(", "));
 
         self.output
@@ -181,6 +223,64 @@ impl<'a> ExecContext<'a> {
         let result = self.exec_resolved_fn_body(body);
         self.env_stack.pop();
         result
+    }
+
+    pub(super) fn exec_command(&mut self, cmd_str: &str) -> Result<(), RuntimeError> {
+        let indent = self.compute_indent_string(0);
+        let line = format!("{}exec {}", indent, cmd_str);
+        self.output
+            .writeln_colored(&line, colors::EXEC_ANSI)
+            .map_err(RuntimeError::Io)?;
+
+        let shell = shell::get_current_shell_path();
+        let mut child = Command::new(&shell)
+            .arg("-c")
+            .arg(cmd_str)
+            .current_dir(&self.work_dir)
+            .envs(self.build_environment_iterator_with_overrides())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| RuntimeError::exec_io_error(cmd_str, e))?;
+
+        let indent = self.compute_indent_string(1);
+
+        let status = match self.output.clone_callback() {
+            Some(cb) => {
+                let stdout_thread =
+                    spawn_stream_reader(child.stdout.take(), indent.clone(), cb.clone());
+                let stderr_thread = spawn_stream_reader(child.stderr.take(), indent, cb);
+
+                let status = child
+                    .wait()
+                    .map_err(|e| RuntimeError::exec_io_error(cmd_str, e))?;
+
+                if let Some(result) = stdout_thread.map(|thread_handle| thread_handle.join()) {
+                    result
+                        .map_err(|_| RuntimeError::Panic("stdout reader panicked".to_string()))??;
+                }
+                if let Some(result) = stderr_thread.map(|thread_handle| thread_handle.join()) {
+                    result
+                        .map_err(|_| RuntimeError::Panic("stderr reader panicked".to_string()))??;
+                }
+
+                status
+            }
+            None => {
+                let output = child
+                    .wait_with_output()
+                    .map_err(|e| RuntimeError::exec_io_error(cmd_str, e))?;
+                write_output_lines(self.output, &output.stdout, &indent)?;
+                write_output_lines(self.output, &output.stderr, &indent)?;
+                output.status
+            }
+        };
+
+        if !status.success() {
+            return Err(RuntimeError::exec_exit_code(cmd_str, status.code()));
+        }
+
+        Ok(())
     }
 }
 
@@ -193,4 +293,38 @@ pub(crate) fn match_case_pattern(
         crate::compiler::ResolvedCasePattern::Literal(lit) => condition == lit,
         crate::compiler::ResolvedCasePattern::Default => true,
     }
+}
+
+/// Spawn a thread that reads lines from a child process stream and sends them
+/// to the output callback.  Returns `None` when the stream is `None`.
+fn spawn_stream_reader<R: std::io::Read + Send + 'static>(
+    stream: Option<R>,
+    indent: String,
+    cb: OutputCallback,
+) -> Option<std::thread::JoinHandle<Result<(), RuntimeError>>> {
+    stream.map(|child_stream| {
+        std::thread::spawn(move || {
+            let reader = std::io::BufReader::new(child_stream);
+            for line_result in reader.lines() {
+                let line_text = line_result.map_err(RuntimeError::Io)?;
+                cb([indent.as_str(), line_text.as_str()].concat());
+            }
+            Ok(())
+        })
+    })
+}
+
+/// Write captured stdout/stderr lines to the output target.
+fn write_output_lines(
+    output: &mut OutputTarget,
+    data: &[u8],
+    indent: &str,
+) -> Result<(), RuntimeError> {
+    for line_result in std::io::BufReader::new(data).lines() {
+        let line_text = line_result.map_err(RuntimeError::Io)?;
+        output
+            .writeln(&[indent, &line_text].concat())
+            .map_err(RuntimeError::Io)?;
+    }
+    Ok(())
 }

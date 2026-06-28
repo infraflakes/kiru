@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Sync all projects via the TUI.  Not available in SANCTUARY=0 mode.
-pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
+pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
     if crate::compiler::is_sanctuary_disabled() {
         return Err(miette::miette!("sync is not available in SANCTUARY=0 mode"));
     }
@@ -39,7 +39,7 @@ pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
                     Some(project_ref) => Arc::clone(project_ref),
                     None => {
                         had_errors = true;
-                        runner::send_event(
+                        runner::send_tui_event(
                             &tx,
                             TuiEvent::UpdateStatus(project_index, TaskStatus::Error),
                         );
@@ -52,7 +52,7 @@ pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
                 let project_name = project_name_raw.clone();
 
                 let handle = tokio::task::spawn_blocking(move || {
-                    runner::send_event(
+                    runner::send_tui_event(
                         &tx_cb,
                         TuiEvent::UpdateStatus(project_index_clone, TaskStatus::Running),
                     );
@@ -61,7 +61,7 @@ pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
                         &project_name,
                         &project_arc,
                         |line: &str| {
-                            runner::send_event(
+                            runner::send_tui_event(
                                 &tx_cb,
                                 TuiEvent::AppendOutput(project_index_clone, line.to_string()),
                             );
@@ -75,20 +75,20 @@ pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
             for (i, handle) in join_handles {
                 match handle.await {
                     Ok(Ok(())) => {
-                        runner::send_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Success));
+                        runner::send_tui_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Success));
                     }
                     Ok(Err(e)) => {
                         had_errors = true;
-                        runner::send_event(&tx, TuiEvent::AppendOutput(i, format!("Error: {}", e)));
-                        runner::send_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Error));
+                        runner::send_tui_event(&tx, TuiEvent::AppendOutput(i, format!("Error: {}", e)));
+                        runner::send_tui_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Error));
                     }
                     Err(e) => {
                         had_errors = true;
-                        runner::send_event(
+                        runner::send_tui_event(
                             &tx,
                             TuiEvent::AppendOutput(i, format!("Task panicked: {}", e)),
                         );
-                        runner::send_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Error));
+                        runner::send_tui_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Error));
                     }
                 }
             }

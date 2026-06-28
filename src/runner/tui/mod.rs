@@ -3,117 +3,24 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode},
 };
 
-use ratatui::{
-    Frame, Terminal, TerminalOptions, Viewport,
-    backend::{Backend, ClearType, CrosstermBackend, WindowSize},
-    buffer::Cell,
-    layout::{Position, Size},
-};
+use ratatui::{Frame, Terminal, TerminalOptions, Viewport, backend::CrosstermBackend};
 use std::future::Future;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-/// A wrapper around [`CrosstermBackend`] that returns fallback dimensions (80x24) if the
-/// terminal size query fails. This allows the TUI to function in non-TTY environments
-/// where `ioctl(TIOCGWINSZ)` would return "No such device or address".
-struct SafeBackend<W: Write> {
-    inner: CrosstermBackend<W>,
-}
+mod crossterm_backend;
+pub(super) mod model;
+pub(crate) mod render;
+pub(crate) mod run;
+pub(crate) mod sync;
 
-impl<W: Write> SafeBackend<W> {
-    fn new(inner: CrosstermBackend<W>) -> Self {
-        Self { inner }
-    }
-}
+pub(crate) use model::{Model, Task, TaskStatus};
 
-impl<W: Write> Write for SafeBackend<W> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.inner.write(buf)
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        io::Write::flush(&mut self.inner)
-    }
-}
+use crossterm_backend::SafeBackend;
 
-impl<W: Write> Backend for SafeBackend<W> {
-    type Error = io::Error;
-
-    fn draw<'a, I>(&mut self, content: I) -> Result<(), Self::Error>
-    where
-        I: Iterator<Item = (u16, u16, &'a Cell)>,
-    {
-        self.inner.draw(content)
-    }
-
-    fn hide_cursor(&mut self) -> Result<(), Self::Error> {
-        self.inner.hide_cursor()
-    }
-
-    fn show_cursor(&mut self) -> Result<(), Self::Error> {
-        self.inner.show_cursor()
-    }
-
-    fn get_cursor_position(&mut self) -> Result<Position, Self::Error> {
-        match self.inner.get_cursor_position() {
-            Ok(pos) => Ok(pos),
-            Err(_) => Ok(Position { x: 0, y: 0 }),
-        }
-    }
-
-    fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> Result<(), Self::Error> {
-        self.inner.set_cursor_position(position)
-    }
-
-    fn clear(&mut self) -> Result<(), Self::Error> {
-        self.inner.clear()
-    }
-
-    fn clear_region(&mut self, clear_type: ClearType) -> Result<(), Self::Error> {
-        self.inner.clear_region(clear_type)
-    }
-
-    fn append_lines(&mut self, n: u16) -> Result<(), Self::Error> {
-        self.inner.append_lines(n)
-    }
-
-    fn size(&self) -> Result<Size, Self::Error> {
-        match self.inner.size() {
-            Ok(size) => Ok(size),
-            Err(_) => Ok(Size {
-                width: 80,
-                height: 24,
-            }),
-        }
-    }
-
-    fn window_size(&mut self) -> Result<WindowSize, Self::Error> {
-        match self.inner.window_size() {
-            Ok(window_size) => Ok(window_size),
-            Err(_) => Ok(WindowSize {
-                columns_rows: Size {
-                    width: 80,
-                    height: 24,
-                },
-                pixels: Size {
-                    width: 0,
-                    height: 0,
-                },
-            }),
-        }
-    }
-
-    fn flush(&mut self) -> Result<(), Self::Error> {
-        Backend::flush(&mut self.inner)
-    }
-}
-
-pub mod render;
-pub mod run;
-pub mod sync;
-
-pub fn send_event(sender: &mpsc::UnboundedSender<TuiEvent>, event: TuiEvent) {
+pub fn send_tui_event(sender: &mpsc::UnboundedSender<TuiEvent>, event: TuiEvent) {
     if sender.send(event).is_err() {
         eprintln!("[kiru] warning: failed to send TUI event");
     }
@@ -121,110 +28,6 @@ pub fn send_event(sender: &mpsc::UnboundedSender<TuiEvent>, event: TuiEvent) {
 
 const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 pub(super) const MAX_PANEL_HEIGHT: usize = 15;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TaskStatus {
-    Pending,
-    Running,
-    Success,
-    Error,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct Task {
-    pub name: String,
-    pub status: TaskStatus,
-    pub output: Vec<String>,
-    pub finalized: bool,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct Chain {
-    pub label: String,
-    pub task_start: usize,
-    pub task_count: usize,
-}
-
-#[derive(Debug, Clone)]
-pub struct Model {
-    pub tasks: Vec<Task>,
-    pub chains: Vec<Chain>,
-}
-
-impl Model {
-    pub fn new() -> Self {
-        Self {
-            tasks: Vec::new(),
-            chains: Vec::new(),
-        }
-    }
-
-    fn lock(arc: &Arc<Mutex<Model>>) -> std::sync::MutexGuard<'_, Model> {
-        arc.lock().unwrap_or_else(|e| e.into_inner())
-    }
-
-    pub fn add_chain(&mut self, label: String, task_names: Vec<String>) {
-        let task_start = self.tasks.len();
-        let task_count = task_names.len();
-        for name in task_names {
-            self.tasks.push(Task {
-                name,
-                status: TaskStatus::Pending,
-                output: Vec::new(),
-                finalized: false,
-            });
-        }
-        self.chains.push(Chain {
-            label,
-            task_start,
-            task_count,
-        });
-    }
-
-    pub fn update_task_status(&mut self, index: usize, status: TaskStatus) {
-        if let Some(task) = self.tasks.get_mut(index) {
-            task.status = status;
-            task.finalized = matches!(status, TaskStatus::Success | TaskStatus::Error);
-        }
-    }
-
-    pub fn append_output(&mut self, idx: usize, line: String) {
-        if idx < self.tasks.len() {
-            self.tasks[idx].output.push(line);
-        }
-    }
-
-    pub fn all_done(&self) -> bool {
-        self.tasks
-            .iter()
-            .all(|t| matches!(t.status, TaskStatus::Success | TaskStatus::Error))
-    }
-
-    pub fn chain_status(&self, chain: &Chain) -> TaskStatus {
-        let mut has_error = false;
-        let mut has_running = false;
-        let mut has_pending = false;
-        for i in chain.task_start..chain.task_start + chain.task_count {
-            if let Some(task) = self.tasks.get(i) {
-                match task.status {
-                    TaskStatus::Error => has_error = true,
-                    TaskStatus::Running => has_running = true,
-                    TaskStatus::Pending => has_pending = true,
-                    _ => {}
-                }
-            }
-        }
-        if has_error {
-            TaskStatus::Error
-        } else if has_running {
-            TaskStatus::Running
-        } else if has_pending {
-            TaskStatus::Pending
-        } else {
-            TaskStatus::Success
-        }
-    }
-}
 
 enum RawMode {
     Enabled,
@@ -254,7 +57,7 @@ pub enum TuiEvent {
     AppendOutput(usize, String),
 }
 
-pub async fn run_tui(
+pub async fn run_tui_event_loop(
     model: Arc<Mutex<Model>>,
     mut event_receiver: mpsc::UnboundedReceiver<TuiEvent>,
     height: u16,
@@ -367,7 +170,7 @@ where
             .unwrap_or(u16::MAX);
         let model = Arc::new(Mutex::new(model));
         let (event_sender, event_receiver) = mpsc::unbounded_channel();
-        let tui = tokio::spawn(run_tui(model, event_receiver, height, render_fn, format_fn));
+        let tui = tokio::spawn(run_tui_event_loop(model, event_receiver, height, render_fn, format_fn));
         let worker = tokio::spawn(worker(event_sender));
 
         tui.await
@@ -387,7 +190,7 @@ where
     F: FnOnce(mpsc::UnboundedSender<TuiEvent>) -> Fut + Send + 'static,
     Fut: Future<Output = miette::Result<()>> + Send + 'static,
 {
-    run_tui_with(chains, worker, run::render, run::format_final_output)
+    run_tui_with(chains, worker, run::render_run_output, run::format_final_output)
 }
 
 pub(crate) fn run_tui_with_sync<F, Fut>(
@@ -398,5 +201,5 @@ where
     F: FnOnce(mpsc::UnboundedSender<TuiEvent>) -> Fut + Send + 'static,
     Fut: Future<Output = miette::Result<()>> + Send + 'static,
 {
-    run_tui_with(chains, worker, sync::render, |_| String::new())
+    run_tui_with(chains, worker, sync::render_sync_output, |_| String::new())
 }

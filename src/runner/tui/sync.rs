@@ -41,7 +41,7 @@ fn current_display(task: &super::Task) -> String {
     }
 }
 
-pub fn render(frame: &mut Frame, model: &Model, spinner_idx: usize) {
+pub fn render_sync_output(frame: &mut Frame, model: &Model, spinner_idx: usize) {
     let area = frame.area();
     frame.render_widget(Clear, area);
     if area.height < 1 {

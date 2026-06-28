@@ -1,9 +1,8 @@
 use super::load_config;
+use super::pager;
 use crate::compiler::Sanctuary;
 use crate::runner::colors;
-use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 
 macro_rules! style {
     ($code:expr, $($arg:tt)*) => {
@@ -11,38 +10,34 @@ macro_rules! style {
     };
 }
 
-pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
+pub fn run_validate_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
     let config = load_config(config_arg)?;
-    let output = format_config(&config);
-    display_output(&output)?;
+    let output = format_config_as_tree(&config);
+    display_output_through_pager(&output)?;
     Ok(())
 }
 
-fn format_config(config: &Sanctuary) -> String {
+fn format_config_as_tree(config: &Sanctuary) -> String {
     let mut formatted_output = String::new();
     formatted_output.push('\n');
     let box_width = 62usize;
     let label_width = 14usize;
 
-    let is_standalone = crate::compiler::is_sanctuary_disabled();
+    let hide_sanctuary = crate::compiler::is_sanctuary_disabled();
 
-    if !is_standalone {
+    if !hide_sanctuary {
         header_box(&mut formatted_output, box_width, label_width, config);
     }
 
-    if is_standalone {
-        let mut function_names: Vec<&String> = config.functions.keys().collect();
-        function_names.sort_unstable();
-        let mut run_names: Vec<&String> = config.runs.keys().collect();
-        run_names.sort_unstable();
+    let mut sorted_projects: Vec<(&String, &crate::compiler::Project)> =
+        config.projects.iter().collect();
+    sorted_projects.sort_by(|a, b| a.0.cmp(b.0));
 
-        draw_standalone(&mut formatted_output, &function_names, &run_names);
-        formatted_output.push('\n');
-    } else {
-        let mut sorted_projects: Vec<(&String, &crate::compiler::Project)> =
-            config.projects.iter().collect();
-        sorted_projects.sort_by(|a, b| a.0.cmp(b.0));
+    let has_projects = !sorted_projects.is_empty();
+    let has_top_level_fns = !config.functions.is_empty();
+    let has_top_level_runs = !config.runs.is_empty();
 
+    if has_projects {
         formatted_output.push_str(&format!(
             "\n  {}  {}\n\n",
             style!(colors::BOLD, "Projects"),
@@ -50,13 +45,32 @@ fn format_config(config: &Sanctuary) -> String {
         ));
 
         for (i, (name, project)) in sorted_projects.iter().enumerate() {
-            draw_project(
-                &mut formatted_output,
-                name,
-                project,
-                i == sorted_projects.len() - 1,
-            );
+            let is_last_project = i == sorted_projects.len() - 1;
+            draw_project(&mut formatted_output, name, project, is_last_project);
         }
+    }
+
+    if has_top_level_fns || has_top_level_runs {
+        let section_name = if has_projects { "Global" } else { "Top-level" };
+        let total_top_level = config.functions.len() + config.runs.len();
+        formatted_output.push_str(&format!(
+            "\n  {}  {}\n\n",
+            style!(colors::BOLD, "{}", section_name),
+            style!(colors::YELLOW, "{}", total_top_level)
+        ));
+
+        let mut function_names: Vec<&String> = config.functions.keys().collect();
+        function_names.sort_unstable();
+        let mut run_names: Vec<&String> = config.runs.keys().collect();
+        run_names.sort_unstable();
+
+        let items: &[(&str, &[&String])] = &[("fn", &function_names), ("run", &run_names)];
+        for (i, (label, names)) in items.iter().enumerate() {
+            let last_item = i == items.len() - 1;
+            let connector = if last_item { "└" } else { "├" };
+            draw_item_line(&mut formatted_output, "", connector, label, names);
+        }
+        formatted_output.push('\n');
     }
 
     footer_bar(&mut formatted_output, config);
@@ -114,31 +128,6 @@ fn key_value_row(
         styled_value,
         " ".repeat(right_padding),
     ));
-}
-
-// ── Standalone pseudo-project (SANCTUARY=0) ───────────────
-
-fn draw_standalone(out: &mut String, function_names: &[&String], run_names: &[&String]) {
-    let items: &[(&str, &[&String])] = &[("fn", function_names), ("run", run_names)];
-
-    for (label, names) in items {
-        let styled_label = style!(colors::YELLOW, "{}", label);
-        if names.is_empty() {
-            out.push_str(&format!(
-                "  {}:  {}\n",
-                styled_label,
-                style!(colors::GRAY, "—")
-            ));
-        } else {
-            let count = style!(colors::GRAY, "({})", names.len());
-            let joined = names
-                .iter()
-                .map(|name| style!(colors::BOLD, "{}", name))
-                .collect::<Vec<_>>()
-                .join(", ");
-            out.push_str(&format!("  {}:  {}  {}\n", styled_label, joined, count));
-        }
-    }
 }
 
 // ── Project tree ──────────────────────────────────────────
@@ -231,82 +220,20 @@ fn footer_bar(out: &mut String, config: &Sanctuary) {
     let standalone_fns = config.functions.len();
     let standalone_runs = config.runs.len();
 
-    let is_standalone = crate::compiler::is_sanctuary_disabled();
     let fn_count = total_fns + standalone_fns;
     let run_count = total_runs + standalone_runs;
 
-    if is_standalone {
-        out.push_str(&style!(
-            colors::GRAY,
-            "  ─ {} functions · {} runs ─\n",
-            fn_count,
-            run_count,
-        ));
-    } else {
-        out.push_str(&style!(
-            colors::GRAY,
-            "  ─ {} projects · {} functions · {} runs ─\n",
-            config.projects.len(),
-            fn_count,
-            run_count,
-        ));
-    }
+    out.push_str(&style!(
+        colors::GRAY,
+        "  ─ {} projects · {} functions · {} runs ─\n",
+        config.projects.len(),
+        fn_count,
+        run_count,
+    ));
 }
 
 // ── Display / pager ───────────────────────────────────────
 
-fn display_output(output: &str) -> miette::Result<()> {
-    use std::io::IsTerminal;
-
-    let use_pager = std::io::stdout().is_terminal()
-        && crossterm::terminal::size()
-            .ok()
-            .is_some_and(|(_, h)| output.lines().count() > h as usize);
-
-    if use_pager {
-        pipe_to_pager(output)
-    } else {
-        print!("{}", output);
-        Ok(())
-    }
-}
-
-fn pipe_to_pager(output: &str) -> miette::Result<()> {
-    let pager = std::env::var("PAGER").unwrap_or_else(|_| "less".to_string());
-    let pager_parts = shlex::split(&pager)
-        .filter(|v| !v.is_empty())
-        .ok_or_else(|| miette::miette!("failed to parse PAGER: '{}'", pager))?;
-    let (program, args) = pager_parts
-        .split_first()
-        .ok_or_else(|| miette::miette!("no pager command in PAGER='{}'", pager))?;
-
-    let mut cmd = Command::new(program)
-        .args(args)
-        .arg("-R")
-        .stdin(Stdio::piped())
-        .spawn()
-        .map_err(|e| miette::miette!("failed to spawn pager '{}': {}", pager, e))?;
-
-    if let Some(mut stdin) = cmd.stdin.take() {
-        stdin
-            .write_all(output.as_bytes())
-            .map_err(|e| miette::miette!("failed to write to pager: {}", e))?;
-    }
-
-    let status = cmd
-        .wait()
-        .map_err(|e| miette::miette!("pager exited with error: {}", e))?;
-
-    if !status.success() {
-        if status.code().is_none() {
-            std::process::exit(130);
-        }
-        return Err(miette::miette!(
-            "pager '{}' exited with code {:?}",
-            pager,
-            status.code()
-        ));
-    }
-
-    Ok(())
+fn display_output_through_pager(output: &str) -> miette::Result<()> {
+    pager::display_output_through_pager(output)
 }

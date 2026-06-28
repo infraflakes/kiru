@@ -1,4 +1,5 @@
 use crate::compiler::error::CompileError;
+use crate::compiler::imports;
 use crate::compiler::merge;
 use crate::compiler::resolve;
 use crate::compiler::types::{Sanctuary, UnresolvedProject};
@@ -17,7 +18,7 @@ use std::path::{Path, PathBuf};
 pub fn compile_and_resolve(entry_path: &Path) -> Result<Sanctuary, CompileError> {
     let abs_entry = canonicalize_entry(entry_path)?;
     let linear_result = resolve_linear(&abs_entry)?;
-    validation::validate(
+    validation::validate_configuration(
         &linear_result.unresolved,
         &linear_result.global_scope,
         &linear_result.project_var_scopes,
@@ -29,9 +30,7 @@ pub fn compile_and_resolve(entry_path: &Path) -> Result<Sanctuary, CompileError>
     )
 }
 
-// ---------------------------------------------------------------------------
 // Linear-processing pipeline
-// ---------------------------------------------------------------------------
 
 /// Mutable state threaded through the linear processing phase.
 struct LinearState {
@@ -247,7 +246,7 @@ fn linear_process_program(
                 }
             }
             TopLevel::Import(expr) => {
-                let path_str = resolve_import_path(expr, &state.global_scope)?;
+                let path_str = imports::resolve_import_path(expr, &state.global_scope)?;
                 let import_path = if Path::new(&path_str).is_absolute() {
                     PathBuf::from(path_str)
                 } else if let Some(dir) = base_dir {
@@ -265,47 +264,6 @@ fn linear_process_program(
         }
     }
     Ok(())
-}
-
-/// Resolve an import expression with variable interpolation support.
-fn resolve_import_path(
-    expr: &Expr,
-    scope: &HashMap<String, String>,
-) -> Result<String, CompileError> {
-    match expr {
-        Expr::BacktickLit { parts, .. } => {
-            let mut path_builder = String::new();
-            for part in parts {
-                if part.is_var {
-                    let resolved_value = scope.get(&part.value).ok_or_else(|| {
-                        CompileError::Io(std::io::Error::new(
-                            std::io::ErrorKind::InvalidInput,
-                            format!("undefined variable in import path: ${{{}}}", part.value),
-                        ))
-                    })?;
-                    path_builder.push_str(resolved_value);
-                } else {
-                    path_builder.push_str(&part.value);
-                }
-            }
-            if path_builder.is_empty() {
-                return Err(CompileError::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "import path cannot be empty".to_string(),
-                )));
-            }
-            Ok(path_builder)
-        }
-        Expr::VarRef { name, .. } => {
-            let resolved_value = scope.get(name).ok_or_else(|| {
-                CompileError::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    format!("undefined variable in import path: ${}", name),
-                ))
-            })?;
-            Ok(resolved_value.clone())
-        }
-    }
 }
 
 /// The core linear processing phase: entry point.

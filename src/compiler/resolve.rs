@@ -9,7 +9,7 @@ use crate::shell;
 use std::collections::HashMap;
 
 /// Parse the sync mode string from a resolved value.
-pub(crate) fn parse_sync_mode(value: &str) -> Result<SyncMode, String> {
+pub(crate) fn parse_sync_mode_value(value: &str) -> Result<SyncMode, String> {
     match value {
         "clone" => Ok(SyncMode::Clone),
         "ignore" => Ok(SyncMode::Ignore),
@@ -62,29 +62,6 @@ fn resolve_expr_in_scope(
     }
 }
 
-/// Execute a shell command to get its stdout, returning the output string.
-/// Non-zero exit codes produce an empty string (see [`shell::exec_and_get_stdout`]).
-pub(crate) fn exec_shell_var(
-    name: &str,
-    resolved_command: &str,
-    source_name: &str,
-    source_text: &str,
-    offset: usize,
-    len: usize,
-) -> Result<String, CompileError> {
-    match shell::exec_and_get_stdout(resolved_command, None, None) {
-        Ok(stdout) => Ok(stdout),
-        Err(shell::Error::Exit { .. }) => Ok(String::new()),
-        Err(e) => Err(spanned_err(
-            format!("shell var ${} failed: {}", name, e),
-            source_name,
-            source_text,
-            offset,
-            len,
-        )),
-    }
-}
-
 /// Resolve a `var` or `var shell` statement to a concrete string value.
 pub(crate) fn resolve_var_stmt(
     stmt: &Stmt,
@@ -103,7 +80,7 @@ pub(crate) fn resolve_var_stmt(
     {
         let resolved = resolve_expr_in_scope(value, scope, source_name, source_text)?;
         let final_val = if *var_type == VarType::Shell {
-            exec_shell_var(name, &resolved, source_name, source_text, *offset, *len)?
+            shell::execute_shell_variable(name, &resolved, source_name, source_text, *offset, *len)?
         } else {
             resolved
         };
@@ -157,7 +134,7 @@ pub(crate) fn resolve_with_scopes(
             .unwrap_or_default();
 
         let sync = match resolve_optional_expr(&unresolved_project.sync, &proj_scope, "", "")? {
-            Some(mode) => parse_sync_mode(&mode).map_err(|msg| spanned_err(msg, "", "", 0, 1))?,
+            Some(mode) => parse_sync_mode_value(&mode).map_err(|msg| spanned_err(msg, "", "", 0, 1))?,
             None => SyncMode::Clone,
         };
 
@@ -227,7 +204,14 @@ fn resolve_fn_body_inner(
                 let resolved_value = resolve_expr_in_scope(value, scope, source_name, source_text)?;
                 let (offset, len) = extract_expr_offset_len(value);
                 let final_value = if *var_type == VarType::Shell {
-                    exec_shell_var(name, &resolved_value, source_name, source_text, offset, len)?
+                    shell::execute_shell_variable(
+                        name,
+                        &resolved_value,
+                        source_name,
+                        source_text,
+                        offset,
+                        len,
+                    )?
                 } else {
                     resolved_value
                 };

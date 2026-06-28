@@ -1,3 +1,4 @@
+use crate::compiler::error::{CompileError, spanned_err};
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -78,7 +79,7 @@ pub(crate) fn exec_and_get_stdout(
     working_dir: Option<&Path>,
     env_overrides: Option<&std::collections::HashMap<String, String>>,
 ) -> Result<String, Error> {
-    let shell_path = current_shell();
+    let shell_path = get_current_shell_path();
     let mut shell_command = Command::new(shell_path);
     shell_command
         .arg("-c")
@@ -179,7 +180,31 @@ pub(crate) fn exec_and_get_stdout(
     Ok(stdout)
 }
 
+/// Execute a shell command for a `var shell` statement.
+/// Non-zero exit codes produce an empty string (callers use this to
+/// gracefully handle failed shell commands during variable resolution).
+pub(crate) fn execute_shell_variable(
+    name: &str,
+    resolved_command: &str,
+    source_name: &str,
+    source_text: &str,
+    offset: usize,
+    len: usize,
+) -> Result<String, CompileError> {
+    match exec_and_get_stdout(resolved_command, None, None) {
+        Ok(stdout) => Ok(stdout),
+        Err(Error::Exit { .. }) => Ok(String::new()),
+        Err(e) => Err(spanned_err(
+            format!("shell var ${} failed: {}", name, e),
+            source_name,
+            source_text,
+            offset,
+            len,
+        )),
+    }
+}
+
 /// Return the user's shell from `$SHELL`, defaulting to `"sh"`.
-pub(crate) fn current_shell() -> String {
+pub(crate) fn get_current_shell_path() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string())
 }

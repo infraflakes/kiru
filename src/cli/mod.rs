@@ -1,5 +1,6 @@
 mod args;
 mod exec;
+mod pager;
 mod sync;
 mod validate;
 
@@ -30,12 +31,12 @@ fn print_parse_errors(reports: Vec<miette::Report>) -> miette::Report {
     miette::miette!("{}\n{} parse error(s) found", combined, count)
 }
 
-pub fn run() -> miette::Result<()> {
+pub fn run_cli() -> miette::Result<()> {
     let parsed_cli = Cli::parse();
 
     match parsed_cli.command {
-        Commands::Validate => validate::run(parsed_cli.config),
-        Commands::Sync => sync::run(parsed_cli.config),
+        Commands::Validate => validate::run_validate_command(parsed_cli.config),
+        Commands::Sync => sync::run_sync_command(parsed_cli.config),
         Commands::Run { name, project } => {
             exec::execute_run_block(parsed_cli.config, name, project)
         }

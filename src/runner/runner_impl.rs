@@ -1,49 +1,9 @@
 use crate::compiler::Sanctuary;
 use crate::runner::OutputCallback;
-use crate::runner::colors;
 use crate::runner::error::RuntimeError;
-use crate::runner::parse::ExecContext;
-use std::io::{self, Write};
+use crate::runner::execution_context::{ExecContext, OutputTarget};
+use std::io;
 use std::sync::Arc;
-
-/// A writer that implements `Send` for use across thread boundaries.
-type SendWriter = Box<dyn Write + Send>;
-
-/// Where function output is directed: a direct writer or a callback.
-pub(crate) enum OutputTarget {
-    Direct(SendWriter),
-    Callback(OutputCallback),
-}
-
-impl OutputTarget {
-    pub(super) fn writeln(&mut self, content: &str) -> io::Result<()> {
-        match self {
-            OutputTarget::Direct(w) => writeln!(w, "{content}"),
-            OutputTarget::Callback(cb) => {
-                cb(content.to_string());
-                Ok(())
-            }
-        }
-    }
-
-    pub(super) fn writeln_colored(&mut self, content: &str, color: &str) -> io::Result<()> {
-        match self {
-            OutputTarget::Direct(w) => writeln!(w, "{color}{content}{}", colors::RESET),
-            OutputTarget::Callback(cb) => {
-                cb(content.to_string());
-                Ok(())
-            }
-        }
-    }
-
-    /// Clone the callback if this target is a callback variant.
-    pub(crate) fn clone_callback(&self) -> Option<OutputCallback> {
-        match self {
-            OutputTarget::Callback(cb) => Some(Arc::clone(cb)),
-            OutputTarget::Direct(_) => None,
-        }
-    }
-}
 
 /// Executes resolved function bodies against a compiled `Sanctuary` config.
 pub(crate) struct Runner {
@@ -56,7 +16,7 @@ impl Runner {
     pub(crate) fn new(cfg: Arc<Sanctuary>) -> Self {
         Runner {
             cfg,
-            output: OutputTarget::Direct(Box::new(io::stdout()) as SendWriter),
+            output: OutputTarget::Direct(Box::new(io::stdout())),
         }
     }
 

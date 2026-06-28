@@ -27,7 +27,7 @@ fn extract_string(expr: &Option<Expr>) -> Option<String> {
     }
 }
 
-pub fn validate(
+pub fn validate_configuration(
     cfg: &super::types::UnresolvedSanctuary,
     global_scope: &HashMap<String, String>,
     project_var_scopes: &HashMap<String, HashMap<String, String>>,

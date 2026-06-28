@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{Clear, Paragraph},
 };
 
-pub fn render(frame: &mut Frame, model: &Model, spinner_idx: usize) {
+pub fn render_run_output(frame: &mut Frame, model: &Model, spinner_idx: usize) {
     let area = frame.area();
     frame.render_widget(Clear, area);
     if area.height < 1 {

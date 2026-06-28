@@ -48,7 +48,7 @@ fn run_chains(
                         let current_task = Arc::clone(&current_task);
                         move |line: String| {
                             let task_index = current_task.load(Ordering::Relaxed);
-                            runner::send_event(&tx, TuiEvent::AppendOutput(task_index, line))
+                            runner::send_tui_event(&tx, TuiEvent::AppendOutput(task_index, line))
                         }
                     };
                     let mut runner = Runner::new(Arc::clone(&config))
@@ -57,24 +57,24 @@ fn run_chains(
                     for (fn_idx, function_name) in chain.iter().enumerate() {
                         let task_idx = start_index + fn_idx;
                         current_task.store(task_idx, Ordering::Relaxed);
-                        runner::send_event(
+                        runner::send_tui_event(
                             &tx,
                             TuiEvent::UpdateStatus(task_idx, TaskStatus::Running),
                         );
 
                         match exec_fn(&mut runner, function_name) {
                             Ok(()) => {
-                                runner::send_event(
+                                runner::send_tui_event(
                                     &tx,
                                     TuiEvent::UpdateStatus(task_idx, TaskStatus::Success),
                                 );
                             }
                             Err(e) => {
-                                runner::send_event(
+                                runner::send_tui_event(
                                     &tx,
                                     TuiEvent::AppendOutput(task_idx, format!("Error: {}", e)),
                                 );
-                                runner::send_event(
+                                runner::send_tui_event(
                                     &tx,
                                     TuiEvent::UpdateStatus(task_idx, TaskStatus::Error),
                                 );
