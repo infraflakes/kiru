@@ -128,12 +128,14 @@ impl Parser {
     }
 
     fn parse_case_pattern(&mut self) -> Result<CasePattern, ParseError> {
-        match &self.current_token().ty {
+        let tok = self.current_token().clone();
+        match &tok.ty {
             TokenType::Ident(ident) if ident == "_" => {
                 self.advance();
                 Ok(CasePattern::Default)
             }
             TokenType::Dollar => {
+                let start_offset = self.current_token().offset;
                 self.advance();
                 let name = match &self.current_token().ty {
                     TokenType::Ident(name_str) => name_str.clone(),
@@ -153,23 +155,29 @@ impl Parser {
                         ));
                     }
                 };
+                let end_offset = self.current_token().offset + self.current_token().len;
                 self.advance();
-                Ok(CasePattern::VarRef { name })
+                Ok(CasePattern::VarRef {
+                    name,
+                    offset: start_offset,
+                    len: end_offset - start_offset,
+                })
             }
             TokenType::Backtick(_) => {
-                let token = self.current_token().clone();
-                let TokenType::Backtick(content) = &token.ty else {
+                let offset = tok.offset;
+                let len = tok.len;
+                let TokenType::Backtick(content) = &tok.ty else {
                     return Err(ParseError::new(
                         self.eof_aware_span(),
                         "expected backtick string in case pattern".to_string(),
                     ));
                 };
                 self.advance();
-                let parts = parse_interpolation_parts(content, token.offset)?;
-                Ok(CasePattern::Literal { parts })
+                let parts = parse_interpolation_parts(content, offset)?;
+                Ok(CasePattern::Literal { parts, offset, len })
             }
             _ => {
-                let token_str = format_token(self.current_token());
+                let token_str = format_token(&tok);
                 Err(ParseError::new(
                     self.eof_aware_span(),
                     format!(

@@ -36,7 +36,6 @@ struct LinearState {
     global_scope: HashMap<String, String>,
     sanctuary_path: Option<Expr>,
     projects: HashMap<String, UnresolvedProject>,
-    project_seen_fields: HashMap<String, HashSet<String>>,
     config_fns: HashMap<String, Vec<FnStmt>>,
     config_runs: HashMap<String, Vec<Vec<String>>>,
     /// Per-project locally-declared variable overrides. Each block of the same
@@ -54,7 +53,6 @@ impl LinearState {
             global_scope: HashMap::new(),
             sanctuary_path: None,
             projects: HashMap::new(),
-            project_seen_fields: HashMap::new(),
             config_fns: HashMap::new(),
             config_runs: HashMap::new(),
             project_var_scopes: HashMap::new(),
@@ -236,7 +234,7 @@ pub(crate) fn merge_project_body_stmt(
             }
             project.runs.insert(name, chains);
         }
-        Stmt::Sanctuary { .. } | Stmt::Project { .. } => {
+        Stmt::Sanctuary { offset, len, .. } | Stmt::Project { offset, len, .. } => {
             return Err(spanned_err(
                 format!(
                     "unexpected statement in project '{}' (only var, fn, run, and fields are valid)",
@@ -244,8 +242,8 @@ pub(crate) fn merge_project_body_stmt(
                 ),
                 source_name,
                 source_text,
-                0,
-                1,
+                offset,
+                len,
             ));
         }
     }
@@ -258,6 +256,8 @@ fn linear_process_program(
     base_dir: Option<&Path>,
     state: &mut LinearState,
 ) -> Result<(), CompileError> {
+    // Tracks which project fields have been seen per project to detect duplicates.
+    let mut project_seen_fields: HashMap<String, HashSet<String>> = HashMap::new();
     for item in &program.items {
         match item {
             TopLevel::Stmt(stmt) => {
@@ -270,7 +270,7 @@ fn linear_process_program(
                             &program.source_text,
                         )?;
                     }
-                    Stmt::Sanctuary { value } => {
+                    Stmt::Sanctuary { value, .. } => {
                         if state.sanctuary_path.is_none() {
                             state.sanctuary_path = Some(value.clone());
                         }
@@ -290,8 +290,7 @@ fn linear_process_program(
                                     runs: HashMap::new(),
                                 });
 
-                        let seen_fields =
-                            state.project_seen_fields.entry(name.clone()).or_default();
+                        let seen_fields = project_seen_fields.entry(name.clone()).or_default();
 
                         // Refresh project scope from current globals, preserving
                         // any project-local vars already declared in prior blocks.

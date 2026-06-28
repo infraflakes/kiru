@@ -1,4 +1,4 @@
-use crate::compiler::error::{CompileError, spanned_err};
+use crate::compiler::error::CompileError;
 use crate::dsl::{CasePattern, Expr, FnStmt};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -119,7 +119,10 @@ pub fn validate_configuration(
     }
 
     if !errors.is_empty() {
-        return Err(spanned_err(errors.join("\n"), "", "", 0, 1));
+        return Err(CompileError::ValidationReport(miette::miette!(
+            "{}",
+            errors.join("\n")
+        )));
     }
 
     Ok(())
@@ -218,7 +221,7 @@ fn validate_fn_body(
                 validate_expr(condition, fn_name, scope, errors, proj_name);
                 for arm in scopes {
                     match &arm.pattern {
-                        CasePattern::VarRef { name } => {
+                        CasePattern::VarRef { name, .. } => {
                             validate_expr(
                                 &Expr::VarRef {
                                     name: name.clone(),
@@ -231,7 +234,7 @@ fn validate_fn_body(
                                 proj_name,
                             );
                         }
-                        CasePattern::Literal { parts } => {
+                        CasePattern::Literal { parts, .. } => {
                             for part in parts {
                                 if part.is_var && !scope.contains(&part.value) {
                                     errors.push(format!(

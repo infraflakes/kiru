@@ -13,7 +13,11 @@ pub enum ProjectField {
 #[derive(Debug, Clone)]
 pub enum Stmt {
     /// The top-level `sanctuary` declaration.
-    Sanctuary { value: Expr },
+    Sanctuary {
+        value: Expr,
+        offset: usize,
+        len: usize,
+    },
     /// A variable declaration (`var` or `var shell`).
     Var {
         var_type: VarType,
@@ -23,7 +27,12 @@ pub enum Stmt {
         len: usize,
     },
     /// A project block definition.
-    Project { name: String, body: Vec<Stmt> },
+    Project {
+        name: String,
+        body: Vec<Stmt>,
+        offset: usize,
+        len: usize,
+    },
     /// A named field inside a project block (url, dir, sync, branch).
     Field {
         key: ProjectField,

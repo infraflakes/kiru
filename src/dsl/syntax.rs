@@ -61,8 +61,16 @@ pub enum FnStmt {
 /// A pattern arm inside a `match` expression.
 #[derive(Debug, Clone)]
 pub enum CasePattern {
-    Literal { parts: Vec<InterpolationPart> },
-    VarRef { name: String },
+    Literal {
+        parts: Vec<InterpolationPart>,
+        offset: usize,
+        len: usize,
+    },
+    VarRef {
+        name: String,
+        offset: usize,
+        len: usize,
+    },
     Default,
 }
 
