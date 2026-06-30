@@ -4,48 +4,62 @@ use crate::compiler::types::{
     Project, ResolvedCaseArm, ResolvedCasePattern, ResolvedEnvPair, ResolvedFnStmt, Sanctuary,
     SyncMode, UnresolvedSanctuary,
 };
-use crate::dsl::{CasePattern, Expr, FnStmt, Stmt, VarType};
+use crate::dsl::{CaseArm, CasePattern, EnvPair, Expr, FnStmt, Stmt, VarType};
 use crate::shell;
 use std::collections::HashMap;
 
 /// A chain of scope frames for lexical scoping in function bodies.
 ///
-/// Each frame is a `HashMap<String, String>`. Lookups walk from the top
-/// (innermost) frame down to the base (outermost) frame, returning the first
-/// match. Inserts always go into the top frame.
+/// Global and project-level variables are stored as references and never
+/// cloned. Dynamic frames (for `env` blocks, `case` arms, and function-local
+/// `var` declarations) are pushed/popped as needed.
 ///
-/// This eliminates the need to clone entire HashMaps when entering branching
-/// constructs like `env` blocks and `case` arms — instead we push/pop a new
-/// empty frame, which is O(1). The cost is O(depth) lookups instead of O(1),
-/// but depth is bounded by nesting (typically ≤5).
-struct ScopeChain {
+/// Lookups walk from the innermost frame → project scope → global scope,
+/// returning the first match. Inserts always go into the top frame.
+struct ScopeChain<'a> {
+    global: &'a HashMap<String, String>,
+    project: &'a HashMap<String, String>,
     frames: Vec<HashMap<String, String>>,
 }
 
-impl ScopeChain {
-    fn from_base(base: HashMap<String, String>) -> Self {
-        Self { frames: vec![base] }
+impl<'a> ScopeChain<'a> {
+    /// Create a new scope chain with references to global and project
+    /// scopes, starting with one empty local frame.
+    fn new(global: &'a HashMap<String, String>, project: &'a HashMap<String, String>) -> Self {
+        Self {
+            global,
+            project,
+            frames: vec![HashMap::new()],
+        }
     }
 
+    /// Look up a variable by name, searching from innermost frame outward
+    /// to project scope, then global scope.
     fn get(&self, name: &str) -> Option<&String> {
         for frame in self.frames.iter().rev() {
             if let Some(val) = frame.get(name) {
                 return Some(val);
             }
         }
-        None
+        if let Some(val) = self.project.get(name) {
+            return Some(val);
+        }
+        self.global.get(name)
     }
 
+    /// Insert a variable into the top scope frame.
     fn insert(&mut self, name: String, value: String) {
         if let Some(top) = self.frames.last_mut() {
             top.insert(name, value);
         }
     }
 
+    /// Push a new empty frame onto the scope stack.
     fn push_frame(&mut self) {
         self.frames.push(HashMap::new());
     }
 
+    /// Pop the top frame from the scope stack.
     fn pop_frame(&mut self) {
         self.frames.pop();
     }
@@ -55,18 +69,18 @@ impl ScopeChain {
 /// but walks the chain for variable lookups.
 fn resolve_expr_in_chain(
     expr: &Expr,
-    chain: &ScopeChain,
+    chain: &ScopeChain<'_>,
     source_name: &str,
     source_text: &str,
 ) -> Result<String, CompileError> {
-    let err_for =
+    let make_span_error =
         |msg: String, o: usize, l: usize| spanned_err(msg, source_name, source_text, o, l);
     match expr {
         Expr::VarRef { name, offset, len } => {
             if let Some(val) = chain.get(name) {
                 return Ok(val.clone());
             }
-            Err(err_for(
+            Err(make_span_error(
                 format!("undefined variable: ${}", name),
                 *offset,
                 *len,
@@ -79,7 +93,7 @@ fn resolve_expr_in_chain(
                     if let Some(val) = chain.get(&part.value) {
                         result.push_str(val);
                     } else {
-                        return Err(err_for(
+                        return Err(make_span_error(
                             format!("undefined variable: ${}", part.value),
                             *offset,
                             *len,
@@ -97,11 +111,11 @@ fn resolve_expr_in_chain(
 /// Resolve a case pattern against a scope chain.
 fn resolve_case_pattern_in_chain(
     pattern: &CasePattern,
-    chain: &ScopeChain,
+    chain: &ScopeChain<'_>,
     source_name: &str,
     source_text: &str,
 ) -> Result<ResolvedCasePattern, CompileError> {
-    let err_for =
+    let make_span_error =
         |msg: String, o: usize, l: usize| spanned_err(msg, source_name, source_text, o, l);
     match pattern {
         CasePattern::Literal { parts, offset, len } => {
@@ -111,7 +125,7 @@ fn resolve_case_pattern_in_chain(
                     if let Some(val) = chain.get(&part.value) {
                         result.push_str(val);
                     } else {
-                        return Err(err_for(
+                        return Err(make_span_error(
                             format!("undefined variable: ${}", part.value),
                             *offset,
                             *len,
@@ -127,7 +141,7 @@ fn resolve_case_pattern_in_chain(
             if let Some(val) = chain.get(name) {
                 Ok(ResolvedCasePattern::Literal(val.clone()))
             } else {
-                Err(err_for(
+                Err(make_span_error(
                     format!("undefined variable: ${}", name),
                     *offset,
                     *len,
@@ -157,14 +171,14 @@ fn resolve_expr_in_scope(
     source_name: &str,
     source_text: &str,
 ) -> Result<String, CompileError> {
-    let err_for =
+    let make_span_error =
         |msg: String, o: usize, l: usize| spanned_err(msg, source_name, source_text, o, l);
     match expr {
         Expr::VarRef { name, offset, len } => {
             if let Some(val) = scope.get(name) {
                 return Ok(val.clone());
             }
-            Err(err_for(
+            Err(make_span_error(
                 format!("undefined variable: ${}", name),
                 *offset,
                 *len,
@@ -177,7 +191,7 @@ fn resolve_expr_in_scope(
                     if let Some(val) = scope.get(&part.value) {
                         result.push_str(val);
                     } else {
-                        return Err(err_for(
+                        return Err(make_span_error(
                             format!("undefined variable: ${}", part.value),
                             *offset,
                             *len,
@@ -245,7 +259,7 @@ pub(crate) fn resolve_optional_expr(
 pub(crate) fn resolve_with_scopes(
     unresolved: UnresolvedSanctuary,
     global_scope: HashMap<String, String>,
-    mut project_scopes: HashMap<String, HashMap<String, String>>,
+    project_scopes: HashMap<String, HashMap<String, String>>,
 ) -> Result<Sanctuary, CompileError> {
     let sanctuary_path = resolve_optional_expr(&unresolved.sanctuary_path, &global_scope, "", "")?
         .unwrap_or_default();
@@ -255,32 +269,29 @@ pub(crate) fn resolve_with_scopes(
         let sync_offset_len = unresolved_project
             .sync
             .as_ref()
-            .map(|e| match e {
-                Expr::BacktickLit { offset, len, .. } => (*offset, *len),
-                Expr::VarRef { offset, len, .. } => (*offset, *len),
-            })
+            .map(|e| e.offset_len())
             .unwrap_or((0, 1));
-        let proj_scope = project_scopes
-            .remove(&name)
-            .unwrap_or_else(|| global_scope.clone());
+        let proj_scope: &HashMap<String, String> =
+            project_scopes.get(&name).unwrap_or(&global_scope);
 
-        let url = resolve_optional_expr(&unresolved_project.url, &proj_scope, "", "")?
-            .unwrap_or_default();
-        let dir = resolve_optional_expr(&unresolved_project.dir, &proj_scope, "", "")?
-            .unwrap_or_default();
+        let url =
+            resolve_optional_expr(&unresolved_project.url, proj_scope, "", "")?.unwrap_or_default();
+        let dir =
+            resolve_optional_expr(&unresolved_project.dir, proj_scope, "", "")?.unwrap_or_default();
 
-        let sync = match resolve_optional_expr(&unresolved_project.sync, &proj_scope, "", "")? {
+        let sync = match resolve_optional_expr(&unresolved_project.sync, proj_scope, "", "")? {
             Some(mode) => {
-                let (so, sl) = sync_offset_len;
-                parse_sync_mode_value(&mode).map_err(|msg| spanned_err(msg, "", "", so, sl))?
+                let (sync_offset, sync_len) = sync_offset_len;
+                parse_sync_mode_value(&mode)
+                    .map_err(|msg| spanned_err(msg, "", "", sync_offset, sync_len))?
             }
             None => SyncMode::Clone,
         };
 
-        let branch = resolve_optional_expr(&unresolved_project.branch, &proj_scope, "", "")?;
+        let branch = resolve_optional_expr(&unresolved_project.branch, proj_scope, "", "")?;
 
         let proj_fns =
-            resolve_fn_body_map(&unresolved_project.functions, &global_scope, &proj_scope)?;
+            resolve_fn_body_map(&unresolved_project.functions, &global_scope, proj_scope)?;
 
         projects.insert(
             name,
@@ -316,20 +327,125 @@ pub(crate) fn resolve_fn_body(
     source_name: &str,
     source_text: &str,
 ) -> Result<Vec<ResolvedFnStmt>, CompileError> {
-    let mut base: HashMap<String, String> = HashMap::new();
-    base.extend(
-        global_vars
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone())),
-    );
-    base.extend(project_vars.iter().map(|(k, v)| (k.clone(), v.clone())));
-    let mut chain = ScopeChain::from_base(base);
+    let mut chain = ScopeChain::new(global_vars, project_vars);
     resolve_fn_body_inner(body, &mut chain, source_name, source_text)
 }
 
+/// Resolve a variable declaration, executing shell vars if needed, and
+/// insert the result into the scope chain.
+fn resolve_var_decl_stmt(
+    var_type: &VarType,
+    name: &str,
+    value: &Expr,
+    chain: &mut ScopeChain<'_>,
+    source_name: &str,
+    source_text: &str,
+) -> Result<(), CompileError> {
+    let resolved_value = resolve_expr_in_chain(value, chain, source_name, source_text)?;
+    let (offset, len) = extract_expr_offset_len(value);
+    let final_value = if *var_type == VarType::Shell {
+        shell::execute_shell_variable(name, &resolved_value, source_name, source_text, offset, len)?
+    } else {
+        resolved_value
+    };
+    chain.insert(name.to_string(), final_value);
+    Ok(())
+}
+
+/// Resolve the value expression in a log statement to a concrete string.
+fn resolve_log_stmt(
+    value: &Expr,
+    chain: &mut ScopeChain<'_>,
+    source_name: &str,
+    source_text: &str,
+) -> Result<ResolvedFnStmt, CompileError> {
+    let resolved_value = resolve_expr_in_chain(value, chain, source_name, source_text)?;
+    Ok(ResolvedFnStmt::Log {
+        value: resolved_value,
+    })
+}
+
+/// Resolve the value expression in an exec statement to a concrete string.
+fn resolve_exec_stmt(
+    value: &Expr,
+    chain: &mut ScopeChain<'_>,
+    source_name: &str,
+    source_text: &str,
+) -> Result<ResolvedFnStmt, CompileError> {
+    let resolved_value = resolve_expr_in_chain(value, chain, source_name, source_text)?;
+    Ok(ResolvedFnStmt::Exec {
+        value: resolved_value,
+    })
+}
+
+/// Resolve the value expression in a cd statement to a concrete string.
+fn resolve_cd_stmt(
+    value: &Expr,
+    chain: &mut ScopeChain<'_>,
+    source_name: &str,
+    source_text: &str,
+) -> Result<ResolvedFnStmt, CompileError> {
+    let resolved_value = resolve_expr_in_chain(value, chain, source_name, source_text)?;
+    Ok(ResolvedFnStmt::Cd {
+        value: resolved_value,
+    })
+}
+
+/// Resolve an env block: resolve each pair's value, push a scope frame,
+/// resolve the body, then pop the frame.
+fn resolve_env_block_stmt(
+    pairs: &[EnvPair],
+    body: &[FnStmt],
+    chain: &mut ScopeChain<'_>,
+    source_name: &str,
+    source_text: &str,
+) -> Result<ResolvedFnStmt, CompileError> {
+    let mut resolved_pairs = Vec::new();
+    for pair in pairs {
+        let resolved_value = resolve_expr_in_chain(&pair.value, chain, source_name, source_text)?;
+        resolved_pairs.push(ResolvedEnvPair {
+            key: pair.key.clone(),
+            value: resolved_value,
+        });
+    }
+    chain.push_frame();
+    let resolved_body = resolve_fn_body_inner(body, chain, source_name, source_text)?;
+    chain.pop_frame();
+    Ok(ResolvedFnStmt::EnvBlock {
+        pairs: resolved_pairs,
+        body: resolved_body,
+    })
+}
+
+/// Resolve a case statement: resolve the condition, then resolve each
+/// arm's pattern and body with a new scope frame per arm.
+fn resolve_case_stmt(
+    condition: &Expr,
+    scopes: &[CaseArm],
+    chain: &mut ScopeChain<'_>,
+    source_name: &str,
+    source_text: &str,
+) -> Result<ResolvedFnStmt, CompileError> {
+    let resolved_condition = resolve_expr_in_chain(condition, chain, source_name, source_text)?;
+    let mut resolved_scopes = Vec::new();
+    for arm in scopes {
+        let pattern = resolve_case_pattern_in_chain(&arm.pattern, chain, source_name, source_text)?;
+        chain.push_frame();
+        let body = resolve_fn_body_inner(&arm.body, chain, source_name, source_text)?;
+        chain.pop_frame();
+        resolved_scopes.push(ResolvedCaseArm { pattern, body });
+    }
+    Ok(ResolvedFnStmt::Case {
+        condition: resolved_condition,
+        scopes: resolved_scopes,
+    })
+}
+
+/// Recursively resolve a function body by dispatching each statement to
+/// the appropriate resolver.
 fn resolve_fn_body_inner(
     body: &[FnStmt],
-    chain: &mut ScopeChain,
+    chain: &mut ScopeChain<'_>,
     source_name: &str,
     source_text: &str,
 ) -> Result<Vec<ResolvedFnStmt>, CompileError> {
@@ -341,78 +457,34 @@ fn resolve_fn_body_inner(
                 name,
                 value,
             } => {
-                let resolved_value = resolve_expr_in_chain(value, chain, source_name, source_text)?;
-                let (offset, len) = extract_expr_offset_len(value);
-                let final_value = if *var_type == VarType::Shell {
-                    shell::execute_shell_variable(
-                        name,
-                        &resolved_value,
-                        source_name,
-                        source_text,
-                        offset,
-                        len,
-                    )?
-                } else {
-                    resolved_value
-                };
-                chain.insert(name.clone(), final_value);
+                resolve_var_decl_stmt(var_type, name, value, chain, source_name, source_text)?;
             }
             FnStmt::Log { value } => {
-                let resolved_value = resolve_expr_in_chain(value, chain, source_name, source_text)?;
-                resolved.push(ResolvedFnStmt::Log {
-                    value: resolved_value,
-                });
+                resolved.push(resolve_log_stmt(value, chain, source_name, source_text)?);
             }
             FnStmt::Exec { value } => {
-                let resolved_value = resolve_expr_in_chain(value, chain, source_name, source_text)?;
-                resolved.push(ResolvedFnStmt::Exec {
-                    value: resolved_value,
-                });
+                resolved.push(resolve_exec_stmt(value, chain, source_name, source_text)?);
             }
             FnStmt::Cd { value } => {
-                let resolved_value = resolve_expr_in_chain(value, chain, source_name, source_text)?;
-                resolved.push(ResolvedFnStmt::Cd {
-                    value: resolved_value,
-                });
+                resolved.push(resolve_cd_stmt(value, chain, source_name, source_text)?);
             }
             FnStmt::EnvBlock { pairs, body } => {
-                let mut resolved_pairs = Vec::new();
-                for pair in pairs {
-                    let resolved_value =
-                        resolve_expr_in_chain(&pair.value, chain, source_name, source_text)?;
-                    resolved_pairs.push(ResolvedEnvPair {
-                        key: pair.key.clone(),
-                        value: resolved_value,
-                    });
-                }
-                chain.push_frame();
-                let resolved_body = resolve_fn_body_inner(body, chain, source_name, source_text)?;
-                chain.pop_frame();
-                resolved.push(ResolvedFnStmt::EnvBlock {
-                    pairs: resolved_pairs,
-                    body: resolved_body,
-                });
+                resolved.push(resolve_env_block_stmt(
+                    pairs,
+                    body,
+                    chain,
+                    source_name,
+                    source_text,
+                )?);
             }
             FnStmt::Case { condition, scopes } => {
-                let resolved_condition =
-                    resolve_expr_in_chain(condition, chain, source_name, source_text)?;
-                let mut resolved_scopes = Vec::new();
-                for arm in scopes {
-                    let pattern = resolve_case_pattern_in_chain(
-                        &arm.pattern,
-                        chain,
-                        source_name,
-                        source_text,
-                    )?;
-                    chain.push_frame();
-                    let body = resolve_fn_body_inner(&arm.body, chain, source_name, source_text)?;
-                    chain.pop_frame();
-                    resolved_scopes.push(ResolvedCaseArm { pattern, body });
-                }
-                resolved.push(ResolvedFnStmt::Case {
-                    condition: resolved_condition,
-                    scopes: resolved_scopes,
-                });
+                resolved.push(resolve_case_stmt(
+                    condition,
+                    scopes,
+                    chain,
+                    source_name,
+                    source_text,
+                )?);
             }
         }
     }
@@ -421,10 +493,7 @@ fn resolve_fn_body_inner(
 
 /// Extract (offset, len) from an `Expr` for error reporting in shell var execution.
 fn extract_expr_offset_len(expr: &Expr) -> (usize, usize) {
-    match expr {
-        Expr::BacktickLit { offset, len, .. } => (*offset, *len),
-        Expr::VarRef { offset, len, .. } => (*offset, *len),
-    }
+    expr.offset_len()
 }
 
 /// Resolve all functions in a function map (top-level or per-project).

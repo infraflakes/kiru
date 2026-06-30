@@ -3,16 +3,6 @@ use std::io::Write;
 
 /// ANSI escape code to reset all formatting.
 pub(crate) const RESET: &str = "\x1b[0m";
-/// Bold text attribute.
-pub(crate) const BOLD: &str = "\x1b[1m";
-/// Yellow foreground color.
-pub(crate) const YELLOW: &str = "\x1b[33m";
-/// Cyan foreground color.
-pub(crate) const CYAN: &str = "\x1b[36m";
-/// Gray foreground color.
-pub(crate) const GRAY: &str = "\x1b[90m";
-/// Bold cyan foreground color.
-pub(crate) const BOLD_CYAN: &str = "\x1b[1;36m";
 
 /// Green ANSI color for success status.
 pub(crate) const OK_ANSI: &str = "\x1b[92m";

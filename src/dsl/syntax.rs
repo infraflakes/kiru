@@ -14,6 +14,17 @@ pub enum Expr {
     },
 }
 
+impl Expr {
+    /// Returns the source span `(offset, len)` for this expression.
+    /// Both variants carry identical offset/len fields.
+    pub fn offset_len(&self) -> (usize, usize) {
+        match self {
+            Expr::BacktickLit { offset, len, .. } => (*offset, *len),
+            Expr::VarRef { offset, len, .. } => (*offset, *len),
+        }
+    }
+}
+
 /// A segment of a backtick-quoted expression.
 /// If `is_var` is true, `value` is a variable name to substitute; otherwise it is literal text.
 #[derive(Debug, Clone)]

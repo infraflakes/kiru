@@ -85,7 +85,12 @@ pub(crate) fn canonicalize_entry(path: &Path) -> Result<PathBuf, CompileError> {
     std::fs::canonicalize(&abs_path).map_err(|e| {
         CompileError::Io(std::io::Error::new(
             e.kind(),
-            format!("Failed to resolve {}: {}", abs_path.display(), e),
+            format!(
+                "Failed to resolve {} (from {}): {}",
+                abs_path.display(),
+                path.display(),
+                e
+            ),
         ))
     })
 }
@@ -165,9 +170,11 @@ use crate::dsl::ProjectField;
 ///
 /// No expression resolution or shell execution occurs — all values are stored
 /// as raw `Expr` nodes and var declarations are stored as raw `Stmt::Var` nodes.
+/// Only clones the specific fields needed for storage (key/value for fields,
+/// name/body for functions and runs) instead of the entire `Stmt`.
 pub(crate) fn merge_project_body_stmt(
     project: &mut UnresolvedProject,
-    stmt: Stmt,
+    stmt: &Stmt,
     source_name: &str,
     source_text: &str,
     seen_fields: &mut HashSet<String>,
@@ -190,16 +197,16 @@ pub(crate) fn merge_project_body_stmt(
             if !seen_fields.insert(field_name) {
                 return Err(make_err(
                     format!("duplicate field '{:?}' in project '{}'", key, project.name),
-                    offset,
-                    len,
+                    *offset,
+                    *len,
                 ));
             }
 
             match key {
-                ProjectField::Url => project.url = Some(value),
-                ProjectField::Dir => project.dir = Some(value),
-                ProjectField::Sync => project.sync = Some(value),
-                ProjectField::Branch => project.branch = Some(value),
+                ProjectField::Url => project.url = Some(value.clone()),
+                ProjectField::Dir => project.dir = Some(value.clone()),
+                ProjectField::Sync => project.sync = Some(value.clone()),
+                ProjectField::Branch => project.branch = Some(value.clone()),
             }
         }
         Stmt::Fn {
@@ -209,14 +216,14 @@ pub(crate) fn merge_project_body_stmt(
             len,
             ..
         } => {
-            if project.functions.contains_key(&name) {
+            if project.functions.contains_key(name) {
                 return Err(make_err(
                     format!("duplicate function in project '{}': {}", project.name, name),
-                    offset,
-                    len,
+                    *offset,
+                    *len,
                 ));
             }
-            project.functions.insert(name, body);
+            project.functions.insert(name.clone(), body.clone());
         }
         Stmt::Run {
             name,
@@ -225,17 +232,17 @@ pub(crate) fn merge_project_body_stmt(
             len,
             ..
         } => {
-            if project.runs.contains_key(&name) {
+            if project.runs.contains_key(name) {
                 return Err(make_err(
                     format!(
                         "duplicate run block in project '{}': {}",
                         project.name, name
                     ),
-                    offset,
-                    len,
+                    *offset,
+                    *len,
                 ));
             }
-            project.runs.insert(name, chains);
+            project.runs.insert(name.clone(), chains.clone());
         }
         Stmt::Sanctuary { offset, len, .. } | Stmt::Project { offset, len, .. } => {
             return Err(spanned_err(
@@ -245,10 +252,75 @@ pub(crate) fn merge_project_body_stmt(
                 ),
                 source_name,
                 source_text,
-                offset,
-                len,
+                *offset,
+                *len,
             ));
         }
+    }
+    Ok(())
+}
+
+/// Process a `pr <name> { ... }` block: set up the project entry, populate
+/// fields, resolve var stmts in the project scope, and collect fn/run blocks.
+fn process_project_block(
+    name: &str,
+    fields: &[Stmt],
+    body: &[Stmt],
+    project_seen_fields: &mut HashMap<String, HashSet<String>>,
+    state: &mut LinearState,
+    program: &Program,
+) -> Result<(), CompileError> {
+    let project_entry =
+        state
+            .projects
+            .entry(name.to_owned())
+            .or_insert_with(|| UnresolvedProject {
+                name: name.to_owned(),
+                url: None,
+                dir: None,
+                sync: None,
+                branch: None,
+                functions: HashMap::new(),
+                runs: HashMap::new(),
+            });
+
+    let seen_fields = project_seen_fields.entry(name.to_owned()).or_default();
+
+    // Refresh project scope from current globals, preserving
+    // any project-local vars already declared in prior blocks.
+    let project_var_scopes = state.project_var_scopes.entry(name.to_owned()).or_default();
+    for (key, value) in &state.global_scope {
+        project_var_scopes
+            .entry(key.clone())
+            .or_insert(value.clone());
+    }
+
+    for field_stmt in fields {
+        merge_project_body_stmt(
+            project_entry,
+            field_stmt,
+            &program.source_name,
+            &program.source_text,
+            seen_fields,
+        )?;
+    }
+
+    for body_stmt in body {
+        if let Stmt::Var { .. } = body_stmt {
+            resolve::resolve_var_stmt(
+                body_stmt,
+                project_var_scopes,
+                &program.source_name,
+                &program.source_text,
+            )?;
+        }
+        merge_project_body_stmt(
+            project_entry,
+            body_stmt,
+            &program.source_name,
+            &program.source_text,
+            seen_fields,
+        )?;
     }
     Ok(())
 }
@@ -263,91 +335,56 @@ fn linear_process_program(
     let mut project_seen_fields: HashMap<String, HashSet<String>> = HashMap::new();
     for item in &program.items {
         match item {
-            TopLevel::Stmt(stmt) => {
-                match stmt {
-                    Stmt::Var { .. } => {
-                        resolve::resolve_var_stmt(
-                            stmt,
-                            &mut state.global_scope,
-                            &program.source_name,
-                            &program.source_text,
-                        )?;
-                    }
-                    Stmt::Sanctuary { value, .. } => {
-                        if state.sanctuary_path.is_none() {
-                            state.sanctuary_path = Some(value.clone());
-                        }
-                    }
-                    Stmt::Project {
-                        name, fields, body, ..
-                    } => {
-                        let project_entry =
-                            state
-                                .projects
-                                .entry(name.clone())
-                                .or_insert(UnresolvedProject {
-                                    name: name.clone(),
-                                    url: None,
-                                    dir: None,
-                                    sync: None,
-                                    branch: None,
-                                    functions: HashMap::new(),
-                                    runs: HashMap::new(),
-                                });
-
-                        let seen_fields = project_seen_fields.entry(name.clone()).or_default();
-
-                        // Refresh project scope from current globals, preserving
-                        // any project-local vars already declared in prior blocks.
-                        let project_var_scopes =
-                            state.project_var_scopes.entry(name.clone()).or_default();
-                        for (key, value) in &state.global_scope {
-                            project_var_scopes
-                                .entry(key.clone())
-                                .or_insert(value.clone());
-                        }
-
-                        for field_stmt in fields {
-                            merge_project_body_stmt(
-                                project_entry,
-                                field_stmt.clone(),
-                                &program.source_name,
-                                &program.source_text,
-                                seen_fields,
-                            )?;
-                        }
-
-                        for body_stmt in body {
-                            if let Stmt::Var { .. } = body_stmt {
-                                resolve::resolve_var_stmt(
-                                    body_stmt,
-                                    project_var_scopes,
-                                    &program.source_name,
-                                    &program.source_text,
-                                )?;
-                            }
-                            merge_project_body_stmt(
-                                project_entry,
-                                body_stmt.clone(),
-                                &program.source_name,
-                                &program.source_text,
-                                seen_fields,
-                            )?;
-                        }
-                    }
-                    Stmt::Fn { offset, len, .. }
-                    | Stmt::Run { offset, len, .. }
-                    | Stmt::Field { offset, len, .. } => {
-                        return Err(spanned_err(
-                            format!("unexpected statement in '{}'", program.source_name),
-                            &program.source_name,
-                            &program.source_text,
-                            *offset,
-                            *len,
-                        ));
+            TopLevel::Stmt(stmt) => match stmt {
+                Stmt::Var { .. } => {
+                    resolve::resolve_var_stmt(
+                        stmt,
+                        &mut state.global_scope,
+                        &program.source_name,
+                        &program.source_text,
+                    )?;
+                }
+                Stmt::Sanctuary { value, .. } => {
+                    if state.sanctuary_path.is_none() {
+                        state.sanctuary_path = Some(value.clone());
                     }
                 }
-            }
+                Stmt::Project {
+                    name, fields, body, ..
+                } => {
+                    process_project_block(
+                        name,
+                        fields,
+                        body,
+                        &mut project_seen_fields,
+                        state,
+                        program,
+                    )?;
+                }
+                Stmt::Fn { offset, len, .. } | Stmt::Run { offset, len, .. } => {
+                    return Err(spanned_err(
+                        format!("unexpected statement in '{}'", program.source_name),
+                        &program.source_name,
+                        &program.source_text,
+                        *offset,
+                        *len,
+                    ));
+                }
+                Stmt::Field {
+                    key, offset, len, ..
+                } => {
+                    return Err(spanned_err(
+                        format!(
+                            "field '{:?}' is not inside a project block in '{}'",
+                            key, program.source_name
+                        ),
+                        &program.source_name,
+                        &program.source_text,
+                        *offset,
+                        *len,
+                    ));
+                }
+            },
             TopLevel::Import(expr) => {
                 if !state.follow_imports {
                     continue;
@@ -367,8 +404,6 @@ fn linear_process_program(
                         "relative import path without base directory"
                     )));
                 };
-                let import_path = canonicalize_entry(&import_path)?;
-
                 linear_process_file(&import_path, state)?;
             }
         }
@@ -428,10 +463,7 @@ pub fn extract_projects(entry_path: &Path) -> Result<Sanctuary, CompileError> {
         let sync_offset_len = unresolved_project
             .sync
             .as_ref()
-            .map(|e| match e {
-                Expr::BacktickLit { offset, len, .. } => (*offset, *len),
-                Expr::VarRef { offset, len, .. } => (*offset, *len),
-            })
+            .map(|e| e.offset_len())
             .unwrap_or((0, 1));
 
         let url = resolve::resolve_optional_expr(&unresolved_project.url, &proj_scope, "", "")?
@@ -441,9 +473,9 @@ pub fn extract_projects(entry_path: &Path) -> Result<Sanctuary, CompileError> {
         let sync =
             match resolve::resolve_optional_expr(&unresolved_project.sync, &proj_scope, "", "")? {
                 Some(mode) => {
-                    let (so, sl) = sync_offset_len;
+                    let (sync_offset, sync_len) = sync_offset_len;
                     resolve::parse_sync_mode_value(&mode)
-                        .map_err(|msg| spanned_err(msg, "", "", so, sl))?
+                        .map_err(|msg| spanned_err(msg, "", "", sync_offset, sync_len))?
                 }
                 None => SyncMode::Clone,
             };

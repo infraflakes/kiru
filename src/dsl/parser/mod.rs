@@ -27,10 +27,12 @@ pub(crate) struct Parser {
 }
 
 impl Parser {
+    /// Convenience constructor that creates a Parser from a source string directly.
     pub(crate) fn from_source(source: String) -> Self {
         Parser::new(Lexer::new(source))
     }
 
+    /// Constructs a new Parser from the given Lexer, advancing to the first token.
     pub(crate) fn new(mut lexer: Lexer) -> Self {
         let source_len = lexer.source_len();
         let current = lexer.next_token();
@@ -41,14 +43,17 @@ impl Parser {
         }
     }
 
+    /// Returns a reference to the current token.
     fn current_token(&self) -> &Token {
         &self.current
     }
 
+    /// Advances to the next token from the lexer.
     fn advance(&mut self) {
         self.current = self.lexer.next_token();
     }
 
+    /// Returns a SourceSpan that safely handles EOF by pointing at the last byte.
     fn eof_aware_span(&self) -> SourceSpan {
         let tok = &self.current;
         if tok.len == 0 && tok.offset >= self.source_len && self.source_len > 0 {
@@ -63,6 +68,7 @@ impl Parser {
         SourceSpan::new(tok.offset.into(), len)
     }
 
+    /// Expects a specific token type and advances past it, returning an error with context on mismatch.
     fn expect_with_context(&mut self, ty: TokenType, context: &str) -> Result<(), ParseError> {
         if self.current_token().ty == ty {
             self.advance();
@@ -78,6 +84,7 @@ impl Parser {
         }
     }
 
+    /// Parses one top-level item, returning None on EOF.
     pub(crate) fn parse_toplevel(&mut self) -> Result<Option<TopLevel>, ParseError> {
         if self.current_token().ty == TokenType::Eof {
             return Ok(None);
@@ -121,6 +128,7 @@ impl Parser {
         }
     }
 
+    /// Dispatches to the correct parser based on the current token for top-level statements.
     fn parse_top_level_stmt(&mut self) -> Result<Stmt, ParseError> {
         if let TokenType::Illegal(msg) = &self.current_token().ty {
             return Err(ParseError::new(self.eof_aware_span(), msg.clone()));
@@ -154,6 +162,7 @@ impl Parser {
         }
     }
 
+    /// Dispatches to the correct statement parser for statements inside a project body.
     pub(crate) fn parse_project_body_stmt(&mut self) -> Result<Stmt, ParseError> {
         if let TokenType::Illegal(msg) = &self.current_token().ty {
             let token = self.current_token().clone();
@@ -204,6 +213,7 @@ impl Parser {
         }
     }
 
+    /// Parses `var string/shell name = expr` and returns the type, name, and value.
     pub(crate) fn parse_var_decl_common(&mut self) -> Result<(VarType, String, Expr), ParseError> {
         self.advance();
 
@@ -252,6 +262,7 @@ impl Parser {
         Ok((var_type, name, value))
     }
 
+    /// Dispatches to the correct statement parser for statements inside a function body.
     pub(crate) fn parse_fn_stmt(&mut self) -> Result<FnStmt, ParseError> {
         match &self.current_token().ty {
             TokenType::Log => self.parse_log_stmt(),

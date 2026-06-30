@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::os::unix::process::ExitStatusExt;
 use std::process::{Command, Stdio};
 
 /// Display output to stdout, automatically piping through `$PAGER` when the
@@ -47,8 +48,9 @@ fn pipe_to_pager(output: &str) -> miette::Result<()> {
         .map_err(|e| miette::miette!("pager exited with error: {}", e))?;
 
     if !status.success() {
-        if status.code().is_none() {
-            std::process::exit(130);
+        if let Some(signal) = status.signal() {
+            eprintln!("pager '{}' was terminated by signal {}", pager, signal);
+            std::process::exit(128 + signal);
         }
         return Err(miette::miette!(
             "pager '{}' exited with code {:?}",

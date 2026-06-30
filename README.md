@@ -44,7 +44,7 @@ Config lives at `~/.config/kiru/main.kiru`. Override with `-c <path>`.
 | **run** | an orchestration block — chains of function calls, concurrent by default |
 
 ---
-## Examples:
+## Examples (Currently outdated):
 
 - An introduction to [kiru](./assets/introduction.kiru).
 - Here's an [example](./assets/example.kiru) of what a `.kiru` file would look like.
@@ -62,7 +62,7 @@ Config lives at `~/.config/kiru/main.kiru`. Override with `-c <path>`.
 | `kiru validate` | parse and validate the config |
 | `kiru version` | print version |
 
-When `SANCTUARY=0`, kiru runs in standalone mode — no sanctuary, no projects, just top-level `fn` and `run` blocks. Config defaults to `.kiru/main.kiru`. `kiru sync` is not available in this mode. Useful for CI/CD.
+When `SANCTUARY=0`, kiru runs in standalone mode, no sanctuary. Config defaults to `.kiru/main.kiru`. `kiru sync` is not available in this mode. Useful for CI/CD.
 
 ---
 

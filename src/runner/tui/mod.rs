@@ -20,9 +20,10 @@ pub(crate) use model::{Model, Task, TaskStatus};
 
 use crossterm_backend::SafeBackend;
 
+/// Send a TuiEvent over the channel, printing a warning if the receiver disconnected.
 pub fn send_tui_event(sender: &mpsc::UnboundedSender<TuiEvent>, event: TuiEvent) {
     if sender.send(event).is_err() {
-        eprintln!("[kiru] warning: failed to send TUI event");
+        eprintln!("[kiru] warning: TUI event receiver disconnected");
     }
 }
 
@@ -51,12 +52,18 @@ impl Drop for RawMode {
     }
 }
 
+/// Events sent from worker threads to the TUI event loop.
+///
+/// - `UpdateStatus(i, s)` — set task at index `i` to status `s`.
+/// - `AppendOutput(i, line)` — append a line of output to task `i`.
 #[derive(Debug, Clone)]
 pub enum TuiEvent {
     UpdateStatus(usize, TaskStatus),
     AppendOutput(usize, String),
 }
 
+/// Main TUI event loop: drains events from the channel, draws frames, and
+/// handles keyboard input (q / Ctrl+C to quit).
 pub async fn run_tui_event_loop(
     model: Arc<Mutex<Model>>,
     mut event_receiver: mpsc::UnboundedReceiver<TuiEvent>,
@@ -146,6 +153,8 @@ pub async fn run_tui_event_loop(
     Ok(())
 }
 
+/// Set up the tokio runtime, build the model from chains, and run the TUI
+/// alongside the given worker future.
 pub(crate) fn run_tui_with<F, Fut>(
     chains: Vec<(String, Vec<String>)>,
     worker: F,
@@ -188,6 +197,7 @@ where
     })
 }
 
+/// Run the TUI with run-specific render and format functions.
 pub(crate) fn run_tui_with_run<F, Fut>(
     chains: Vec<(String, Vec<String>)>,
     worker: F,
@@ -204,6 +214,7 @@ where
     )
 }
 
+/// Run the TUI with sync-specific render and format functions.
 pub(crate) fn run_tui_with_sync<F, Fut>(
     chains: Vec<(String, Vec<String>)>,
     worker: F,

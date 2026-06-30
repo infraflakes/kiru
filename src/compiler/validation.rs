@@ -4,6 +4,8 @@ use miette::miette;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+/// Check whether the `SANCTUARY` environment variable is set to `"0"`,
+/// disabling sanctuary-mode validation.
 pub fn is_sanctuary_disabled() -> bool {
     std::env::var("SANCTUARY").as_deref() == Ok("0")
 }
@@ -28,6 +30,24 @@ fn extract_string(expr: &Option<Expr>) -> Option<String> {
     }
 }
 
+/// Check whether a variable name is defined across the full scope hierarchy:
+/// local frames (innermost first), then project scope, then global scope.
+fn is_var_defined(
+    name: &str,
+    global_scope: &HashSet<String>,
+    project_scope: &HashSet<String>,
+    local: &[HashSet<String>],
+) -> bool {
+    for frame in local.iter().rev() {
+        if frame.contains(name) {
+            return true;
+        }
+    }
+    project_scope.contains(name) || global_scope.contains(name)
+}
+
+/// Validate an `UnresolvedSanctuary` against global and project scopes,
+/// collecting all errors before returning.
 pub fn validate_configuration(
     cfg: &super::types::UnresolvedSanctuary,
     global_scope: &HashMap<String, String>,
@@ -130,6 +150,8 @@ pub fn validate_configuration(
     Ok(())
 }
 
+/// Check that all run chains reference functions that exist in the
+/// project's function map.
 fn validate_run_refs(
     runs: &std::collections::HashMap<String, Vec<Vec<String>>>,
     functions: &std::collections::HashMap<String, Vec<FnStmt>>,
@@ -152,6 +174,8 @@ fn validate_run_refs(
     }
 }
 
+/// Validate all function bodies in a project's function map, using a
+/// fresh scope stack for each function.
 fn validate_fn_bodies(
     functions: &std::collections::HashMap<String, Vec<FnStmt>>,
     global_scope: &HashSet<String>,
@@ -160,22 +184,35 @@ fn validate_fn_bodies(
     errors: &mut Vec<miette::Report>,
 ) {
     for (fn_name, body) in functions {
-        let mut mutable_scope: HashSet<String> =
-            global_scope.union(project_scope).cloned().collect();
-        validate_fn_body(fn_name, body, &mut mutable_scope, errors, proj_name);
+        // Use a scope stack with an initial empty frame for local vars.
+        // Global and project scopes are referenced directly and never cloned.
+        let mut local: Vec<HashSet<String>> = vec![HashSet::new()];
+        validate_fn_body(
+            fn_name,
+            body,
+            global_scope,
+            project_scope,
+            &mut local,
+            errors,
+            proj_name,
+        );
     }
 }
 
+/// Check that all variable references in an `Expr` are defined in the
+/// current scope hierarchy.
 fn validate_expr(
     expr: &Expr,
     fn_name: &str,
-    scope: &HashSet<String>,
+    global_scope: &HashSet<String>,
+    project_scope: &HashSet<String>,
+    local: &[HashSet<String>],
     errors: &mut Vec<miette::Report>,
     proj_name: &str,
 ) {
     match expr {
         Expr::VarRef { name, .. } => {
-            if !scope.contains(name) {
+            if !is_var_defined(name, global_scope, project_scope, local) {
                 errors.push(miette!(
                     "project {:?}: fn {:?}: undefined variable ${}",
                     proj_name,
@@ -188,7 +225,7 @@ fn validate_expr(
             for part in parts {
                 if part.is_var {
                     let var_name = part.value.trim_start_matches('$');
-                    if !scope.contains(var_name) {
+                    if !is_var_defined(var_name, global_scope, project_scope, local) {
                         errors.push(miette!(
                             "project {:?}: fn {:?}: undefined variable ${}",
                             proj_name,
@@ -202,31 +239,102 @@ fn validate_expr(
     }
 }
 
+/// Validate variable references in a function body, tracking local
+/// declarations in a scope stack.
 fn validate_fn_body(
     fn_name: &str,
     body: &[FnStmt],
-    scope: &mut HashSet<String>,
+    global_scope: &HashSet<String>,
+    project_scope: &HashSet<String>,
+    local: &mut Vec<HashSet<String>>,
     errors: &mut Vec<miette::Report>,
     proj_name: &str,
 ) {
     for stmt in body {
         match stmt {
             FnStmt::VarDecl { name, value, .. } => {
-                validate_expr(value, fn_name, scope, errors, proj_name);
-                scope.insert(name.clone());
-            }
-            FnStmt::Log { value, .. } => validate_expr(value, fn_name, scope, errors, proj_name),
-            FnStmt::Exec { value, .. } => validate_expr(value, fn_name, scope, errors, proj_name),
-            FnStmt::Cd { value, .. } => validate_expr(value, fn_name, scope, errors, proj_name),
-            FnStmt::EnvBlock { pairs, body, .. } => {
-                let mut block_scope = scope.clone();
-                for pair in pairs {
-                    validate_expr(&pair.value, fn_name, scope, errors, proj_name);
+                validate_expr(
+                    value,
+                    fn_name,
+                    global_scope,
+                    project_scope,
+                    local,
+                    errors,
+                    proj_name,
+                );
+                if let Some(top) = local.last_mut() {
+                    top.insert(name.clone());
                 }
-                validate_fn_body(fn_name, body, &mut block_scope, errors, proj_name);
+            }
+            FnStmt::Log { value, .. } => {
+                validate_expr(
+                    value,
+                    fn_name,
+                    global_scope,
+                    project_scope,
+                    local,
+                    errors,
+                    proj_name,
+                );
+            }
+            FnStmt::Exec { value, .. } => {
+                validate_expr(
+                    value,
+                    fn_name,
+                    global_scope,
+                    project_scope,
+                    local,
+                    errors,
+                    proj_name,
+                );
+            }
+            FnStmt::Cd { value, .. } => {
+                validate_expr(
+                    value,
+                    fn_name,
+                    global_scope,
+                    project_scope,
+                    local,
+                    errors,
+                    proj_name,
+                );
+            }
+            FnStmt::EnvBlock { pairs, body, .. } => {
+                for pair in pairs {
+                    validate_expr(
+                        &pair.value,
+                        fn_name,
+                        global_scope,
+                        project_scope,
+                        local,
+                        errors,
+                        proj_name,
+                    );
+                }
+                // Push a new scope frame so vars declared inside the env block
+                // do not leak to the outer scope.
+                local.push(HashSet::new());
+                validate_fn_body(
+                    fn_name,
+                    body,
+                    global_scope,
+                    project_scope,
+                    local,
+                    errors,
+                    proj_name,
+                );
+                local.pop();
             }
             FnStmt::Case { condition, scopes } => {
-                validate_expr(condition, fn_name, scope, errors, proj_name);
+                validate_expr(
+                    condition,
+                    fn_name,
+                    global_scope,
+                    project_scope,
+                    local,
+                    errors,
+                    proj_name,
+                );
                 for arm in scopes {
                     match &arm.pattern {
                         CasePattern::VarRef { name, .. } => {
@@ -237,14 +345,23 @@ fn validate_fn_body(
                                     len: 0,
                                 },
                                 fn_name,
-                                scope,
+                                global_scope,
+                                project_scope,
+                                local,
                                 errors,
                                 proj_name,
                             );
                         }
                         CasePattern::Literal { parts, .. } => {
                             for part in parts {
-                                if part.is_var && !scope.contains(&part.value) {
+                                if part.is_var
+                                    && !is_var_defined(
+                                        &part.value,
+                                        global_scope,
+                                        project_scope,
+                                        local,
+                                    )
+                                {
                                     errors.push(miette!(
                                         "project {:?}: fn {:?}: undefined variable ${}",
                                         proj_name,
@@ -256,8 +373,17 @@ fn validate_fn_body(
                         }
                         CasePattern::Default => {}
                     }
-                    let mut arm_scope = scope.clone();
-                    validate_fn_body(fn_name, &arm.body, &mut arm_scope, errors, proj_name);
+                    local.push(HashSet::new());
+                    validate_fn_body(
+                        fn_name,
+                        &arm.body,
+                        global_scope,
+                        project_scope,
+                        local,
+                        errors,
+                        proj_name,
+                    );
+                    local.pop();
                 }
             }
         }

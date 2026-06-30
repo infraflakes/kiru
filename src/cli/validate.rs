@@ -1,12 +1,18 @@
 use super::load_config;
 use super::pager;
 use crate::compiler::Sanctuary;
-use crate::runner::colors;
 use std::path::PathBuf;
+
+const RESET: &str = "\x1b[0m";
+const BOLD: &str = "\x1b[1m";
+const YELLOW: &str = "\x1b[33m";
+const CYAN: &str = "\x1b[36m";
+const GRAY: &str = "\x1b[90m";
+const BOLD_CYAN: &str = "\x1b[1;36m";
 
 macro_rules! style {
     ($code:expr, $($arg:tt)*) => {
-        format!("{}{}{}", $code, format_args!($($arg)*), colors::RESET)
+        format!("{}{}{}", $code, format_args!($($arg)*), RESET)
     };
 }
 
@@ -38,8 +44,8 @@ fn format_config_as_tree(config: &Sanctuary) -> String {
     if has_projects {
         formatted_output.push_str(&format!(
             "\n  {}  {}\n\n",
-            style!(colors::BOLD, "Projects"),
-            style!(colors::YELLOW, "{}", sorted_projects.len())
+            style!(BOLD, "Projects"),
+            style!(YELLOW, "{}", sorted_projects.len())
         ));
 
         for (i, (name, project)) in sorted_projects.iter().enumerate() {
@@ -67,7 +73,7 @@ fn header_box(output: &mut String, box_width: usize, label_width: usize, config:
         label_width,
         "Sanctuary",
         &config.sanctuary_path,
-        colors::CYAN,
+        CYAN,
     );
 
     output.push_str(&bottom_border);
@@ -93,7 +99,7 @@ fn key_value_row(
     let right_padding = interior.saturating_sub(visible_chars);
 
     let padded_key = format!("{:>label_width$}", key);
-    let styled_key = style!(colors::GRAY, "{}", padded_key);
+    let styled_key = style!(GRAY, "{}", padded_key);
     let styled_value = style!(value_color_code, "{}", value_plain_text);
 
     output.push_str(&format!(
@@ -112,7 +118,7 @@ fn draw_project(out: &mut String, name: &str, project: &crate::compiler::Project
     out.push_str(&format!(
         "  {}── {}\n",
         branch,
-        style!(colors::BOLD_CYAN, "{}", name)
+        style!(BOLD_CYAN, "{}", name)
     ));
 
     let indent = if last { "   " } else { "│  " };
@@ -147,7 +153,7 @@ fn project_field(out: &mut String, indent: &str, key: &str, value: &str) {
     out.push_str(&format!(
         "  {}  ├── {:>7}:  {}\n",
         indent,
-        style!(colors::CYAN, "{}", key),
+        style!(CYAN, "{}", key),
         value
     ));
 }
@@ -158,21 +164,21 @@ fn draw_item_line(out: &mut String, indent: &str, connector: &str, label: &str, 
             "  {}  {}── {:>7}:  {}\n",
             indent,
             connector,
-            style!(colors::YELLOW, "{}", label),
-            style!(colors::GRAY, "—")
+            style!(YELLOW, "{}", label),
+            style!(GRAY, "—")
         ));
     } else {
-        let count = style!(colors::GRAY, "({})", names.len());
+        let count = style!(GRAY, "({})", names.len());
         let joined = names
             .iter()
-            .map(|name| style!(colors::BOLD, "{}", name))
+            .map(|name| style!(BOLD, "{}", name))
             .collect::<Vec<_>>()
             .join(", ");
         out.push_str(&format!(
             "  {}  {}── {:>7}:  {}  {}\n",
             indent,
             connector,
-            style!(colors::YELLOW, "{}", label),
+            style!(YELLOW, "{}", label),
             joined,
             count
         ));
@@ -194,7 +200,7 @@ fn footer_bar(out: &mut String, config: &Sanctuary) {
         .sum();
 
     out.push_str(&style!(
-        colors::GRAY,
+        GRAY,
         "  ─ {} projects · {} functions · {} runs ─\n",
         config.projects.len(),
         fn_count,

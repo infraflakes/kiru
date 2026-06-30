@@ -1,5 +1,7 @@
 use crate::compiler::{Project, SyncMode};
 use crate::runner::error::RuntimeError;
+use crate::runner::{self, TaskStatus, TuiEvent};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -113,4 +115,71 @@ pub fn sync_project_with_callback(
     mut output_cb: impl FnMut(&str),
 ) -> Result<(), RuntimeError> {
     sync_project_inner(proj_name, proj, &mut output_cb)
+}
+
+/// Run sync for all projects through the TUI.
+pub fn run_sync_for_projects(
+    projects: HashMap<String, Project>,
+    chain_pairs: Vec<(String, Vec<String>)>,
+) -> miette::Result<()> {
+    if runner::run_tui_with_sync(chain_pairs, move |tx| async move {
+        let mut had_errors = false;
+        let mut join_handles = Vec::new();
+
+        for (project_index, (project_name, project)) in projects.into_iter().enumerate() {
+            let tx_cb = tx.clone();
+            let project_name_clone = project_name.clone();
+
+            let handle = tokio::task::spawn_blocking(move || {
+                runner::send_tui_event(
+                    &tx_cb,
+                    TuiEvent::UpdateStatus(project_index, TaskStatus::Running),
+                );
+                crate::runner::sync::sync_project_with_callback(
+                    &project_name_clone,
+                    &project,
+                    |line: &str| {
+                        runner::send_tui_event(
+                            &tx_cb,
+                            TuiEvent::AppendOutput(project_index, line.to_string()),
+                        );
+                    },
+                )
+            });
+
+            join_handles.push((project_index, handle));
+        }
+
+        for (i, handle) in join_handles {
+            match handle.await {
+                Ok(Ok(())) => {
+                    runner::send_tui_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Success));
+                }
+                Ok(Err(e)) => {
+                    had_errors = true;
+                    runner::send_tui_event(&tx, TuiEvent::AppendOutput(i, format!("Error: {}", e)));
+                    runner::send_tui_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Error));
+                }
+                Err(e) => {
+                    had_errors = true;
+                    runner::send_tui_event(
+                        &tx,
+                        TuiEvent::AppendOutput(i, format!("Task panicked: {}", e)),
+                    );
+                    runner::send_tui_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Error));
+                }
+            }
+        }
+
+        if had_errors {
+            Err(miette::miette!("One or more projects failed to sync"))
+        } else {
+            Ok(())
+        }
+    })
+    .is_err()
+    {
+        std::process::exit(1);
+    }
+    Ok(())
 }

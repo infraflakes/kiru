@@ -15,6 +15,7 @@ pub(crate) struct Lexer {
 }
 
 impl Lexer {
+    /// Constructs a new Lexer from the given input string.
     pub(crate) fn new(input: String) -> Self {
         let mut lexer = Self {
             input: input.chars().collect(),
@@ -29,10 +30,12 @@ impl Lexer {
         lexer
     }
 
+    /// Returns the source text length in bytes.
     pub(crate) fn source_len(&self) -> usize {
         self.input.iter().map(|ch| ch.len_utf8()).sum()
     }
 
+    /// Returns the next Token from the input.
     pub(crate) fn next_token(&mut self) -> Token {
         loop {
             self.skip_whitespace();

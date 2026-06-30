@@ -1,7 +1,8 @@
+use miette::Diagnostic;
 use std::fmt;
 
 /// Errors that can occur during function execution.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Diagnostic, thiserror::Error)]
 pub(crate) enum RuntimeError {
     Lookup(String),
     Io(#[from] std::io::Error),

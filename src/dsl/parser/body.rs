@@ -163,15 +163,9 @@ impl Parser {
                     len: end_offset - start_offset,
                 })
             }
-            TokenType::Backtick(_) => {
+            TokenType::Backtick(content) => {
                 let offset = tok.offset;
                 let len = tok.len;
-                let TokenType::Backtick(content) = &tok.ty else {
-                    return Err(ParseError::new(
-                        self.eof_aware_span(),
-                        "expected backtick string in case pattern".to_string(),
-                    ));
-                };
                 self.advance();
                 let parts = parse_interpolation_parts(content, offset)?;
                 Ok(CasePattern::Literal { parts, offset, len })

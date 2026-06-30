@@ -65,13 +65,14 @@ pub(crate) struct ExecContext<'a> {
 }
 
 impl<'a> ExecContext<'a> {
+    /// Construct a new execution context from a sanctuary config and optional project.
     pub(crate) fn new(
         cfg: &'a Sanctuary,
         project: Option<&'a Project>,
         output: &'a mut OutputTarget,
     ) -> Self {
         let base = if cfg.sanctuary_path.is_empty() {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+            std::env::current_dir().expect("current directory has been deleted or is inaccessible")
         } else {
             PathBuf::from(&cfg.sanctuary_path)
         };
@@ -92,9 +93,7 @@ impl<'a> ExecContext<'a> {
     }
 
     /// Chain system env vars with per-layer overrides for subprocess execution.
-    pub(super) fn build_environment_iterator_with_overrides(
-        &self,
-    ) -> impl Iterator<Item = (String, String)> + '_ {
+    pub(super) fn build_env_iter(&self) -> impl Iterator<Item = (String, String)> + '_ {
         let system_env_vars = self
             .env_vars
             .iter()
@@ -107,7 +106,7 @@ impl<'a> ExecContext<'a> {
         system_env_vars.chain(layer_overrides)
     }
 
-    /// Compute indentation string based on current env block nesting depth.
+    /// Return an indentation string based on the current env block nesting depth, plus an extra offset.
     pub(super) fn compute_indent_string(&self, extra: usize) -> String {
         "  ".repeat(self.env_stack.len() + extra)
     }
@@ -124,6 +123,7 @@ impl<'a> ExecContext<'a> {
         result
     }
 
+    /// Execute a slice of resolved function statements, recursing into env blocks and case arms.
     fn exec_resolved_fn_body_inner(&mut self, body: &[ResolvedFnStmt]) -> Result<(), RuntimeError> {
         for stmt in body {
             match stmt {
@@ -147,6 +147,7 @@ impl<'a> ExecContext<'a> {
         Ok(())
     }
 
+    /// Execute a log statement, writing the message to the output target with log styling.
     fn exec_log(&mut self, msg: &str) -> Result<(), RuntimeError> {
         let indent = self.compute_indent_string(0);
         let line = format!("{}log  {}", indent, msg);
@@ -156,6 +157,7 @@ impl<'a> ExecContext<'a> {
         Ok(())
     }
 
+    /// Execute a cd statement, changing the working directory within sanctuary bounds.
     fn exec_cd(&mut self, resolved: &str) -> Result<(), RuntimeError> {
         if Path::new(resolved).is_absolute() {
             return Err(RuntimeError::Lookup(format!(
@@ -178,7 +180,7 @@ impl<'a> ExecContext<'a> {
 
         if let Some(current_project) = self.project {
             let base = if self.cfg.sanctuary_path.is_empty() {
-                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+                std::env::current_dir().map_err(RuntimeError::Io)?
             } else {
                 PathBuf::from(&self.cfg.sanctuary_path)
             };
@@ -203,6 +205,7 @@ impl<'a> ExecContext<'a> {
         Ok(())
     }
 
+    /// Execute a resolved env block, pushing a new environment layer, running the body, then popping it.
     fn exec_resolved_env_block(
         &mut self,
         pairs: &[ResolvedEnvPair],
@@ -235,47 +238,21 @@ impl<'a> ExecContext<'a> {
             .map_err(RuntimeError::Io)?;
 
         let shell = shell::get_current_shell_path();
-        let mut child = Command::new(&shell)
+        let child = Command::new(&shell)
             .arg("-c")
             .arg(cmd_str)
             .current_dir(&self.work_dir)
-            .envs(self.build_environment_iterator_with_overrides())
+            .envs(self.build_env_iter())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| RuntimeError::exec_io_error(cmd_str, e))?;
 
-        let indent = self.compute_indent_string(1);
+        let indent_str = self.compute_indent_string(1);
 
         let status = match self.output.clone_callback() {
-            Some(cb) => {
-                let stdout_thread =
-                    spawn_stream_reader(child.stdout.take(), indent.clone(), cb.clone());
-                let stderr_thread = spawn_stream_reader(child.stderr.take(), indent, cb);
-
-                let status = child
-                    .wait()
-                    .map_err(|e| RuntimeError::exec_io_error(cmd_str, e))?;
-
-                if let Some(result) = stdout_thread.map(|thread_handle| thread_handle.join()) {
-                    result
-                        .map_err(|_| RuntimeError::Panic("stdout reader panicked".to_string()))??;
-                }
-                if let Some(result) = stderr_thread.map(|thread_handle| thread_handle.join()) {
-                    result
-                        .map_err(|_| RuntimeError::Panic("stderr reader panicked".to_string()))??;
-                }
-
-                status
-            }
-            None => {
-                let output = child
-                    .wait_with_output()
-                    .map_err(|e| RuntimeError::exec_io_error(cmd_str, e))?;
-                write_output_lines(self.output, &output.stdout, &indent)?;
-                write_output_lines(self.output, &output.stderr, &indent)?;
-                output.status
-            }
+            Some(cb) => wait_for_callback_output(child, indent_str, cb, cmd_str)?,
+            None => wait_for_direct_output(child, self.output, &indent_str, cmd_str)?,
         };
 
         if !status.success() {
@@ -284,6 +261,46 @@ impl<'a> ExecContext<'a> {
 
         Ok(())
     }
+}
+
+/// Wait for a child process to complete, streaming its output through the
+/// output callback via background reader threads.
+fn wait_for_callback_output(
+    mut child: std::process::Child,
+    indent: String,
+    cb: OutputCallback,
+    label: &str,
+) -> Result<std::process::ExitStatus, RuntimeError> {
+    let stdout_thread = spawn_stream_reader(child.stdout.take(), indent.clone(), cb.clone());
+    let stderr_thread = spawn_stream_reader(child.stderr.take(), indent, cb);
+
+    let status = child
+        .wait()
+        .map_err(|e| RuntimeError::exec_io_error(label, e))?;
+
+    if let Some(result) = stdout_thread.map(|h| h.join()) {
+        result.map_err(|_| RuntimeError::Panic("stdout reader panicked".to_string()))??;
+    }
+    if let Some(result) = stderr_thread.map(|h| h.join()) {
+        result.map_err(|_| RuntimeError::Panic("stderr reader panicked".to_string()))??;
+    }
+    Ok(status)
+}
+
+/// Wait for a child process to complete, buffering its output and writing
+/// lines directly to the output target.
+fn wait_for_direct_output(
+    child: std::process::Child,
+    output: &mut OutputTarget,
+    indent: &str,
+    label: &str,
+) -> Result<std::process::ExitStatus, RuntimeError> {
+    let cmd_output = child
+        .wait_with_output()
+        .map_err(|e| RuntimeError::exec_io_error(label, e))?;
+    write_output_lines(output, &cmd_output.stdout, indent)?;
+    write_output_lines(output, &cmd_output.stderr, indent)?;
+    Ok(cmd_output.status)
 }
 
 /// Check whether a runtime condition matches a resolved case pattern.

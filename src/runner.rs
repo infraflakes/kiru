@@ -1,3 +1,4 @@
+pub(crate) mod chain;
 pub(crate) mod colors;
 pub(crate) mod error;
 pub(crate) mod execution_context;

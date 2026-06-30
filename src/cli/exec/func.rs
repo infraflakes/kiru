@@ -34,9 +34,8 @@ pub fn execute_function(
             }
 
             let mut runner = Runner::new(Arc::new(config)).with_output_callback(callback);
-            runner
-                .execute_fn_call(&name, project_name)
-                .map_err(|e| miette::miette!("{}", e))
+            runner.execute_fn_call(&name, project_name)?;
+            Ok(())
         }
         None => Err(miette::miette!(
             "must specify a project to run function '{}' in",
