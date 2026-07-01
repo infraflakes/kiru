@@ -106,7 +106,7 @@ fn test_var_invalid_type() {
 
 #[test]
 fn test_project_decl_with_fields() {
-    let input = "\npr todo [\n    url = `git@github.com:user/repo.git`,\n    dir = `todo`,\n    sync = `clone`,\n    branch = `main`,\n] {\n}";
+    let input = "\npr todo [\n    url = `git@github.com:user/repo.git`\n    dir = `todo`\n    sync = `clone`\n    branch = `main`\n] {\n}";
     let prog = parse_program(input).unwrap();
     assert_eq!(count_stmt_types(&prog), vec!["pr"]);
     match &prog.items[0] {
@@ -136,7 +136,7 @@ fn test_project_decl_with_fields() {
 
 #[test]
 fn test_project_decl_with_body_stmts() {
-    let input = "\npr todo [\n    url = `git@github.com:user/repo.git`,\n    dir = `todo`,\n] {\n    var string app = `todo`;\n    fn build {\n        log `building`;\n    }\n    run release {\n        build;\n    }\n    run ci {\n        build;\n    }\n}";
+    let input = "\npr todo [\n    url = `git@github.com:user/repo.git`\n    dir = `todo`\n] {\n    var string app = `todo`;\n    fn build {\n        log `building`;\n    }\n    run release {\n        build;\n    }\n    run ci {\n        build;\n    }\n}";
     let prog = parse_program(input).unwrap();
     match &prog.items[0] {
         TopLevel::Stmt(Stmt::Project {
@@ -156,7 +156,7 @@ fn test_project_decl_with_body_stmts() {
 
 #[test]
 fn test_project_duplicate_fields() {
-    let input = "\npr x [\n    url = `a`,\n    url = `b`,\n    dir = `d`,\n] {\n}";
+    let input = "\npr x [\n    url = `a`\n    url = `b`\n    dir = `d`\n] {\n}";
     let prog = parse_program(input).unwrap();
     match &prog.items[0] {
         TopLevel::Stmt(Stmt::Project { fields, .. }) => {
@@ -168,7 +168,7 @@ fn test_project_duplicate_fields() {
 
 #[test]
 fn test_project_syntax_fields() {
-    let input = "\npr todo [\n    url = `git@github.com:user/repo.git`,\n    dir = `todo`,\n    sync = `clone`,\n    branch = `main`,\n] {\n    fn build {\n        log `building`;\n    }\n}";
+    let input = "\npr todo [\n    url = `git@github.com:user/repo.git`\n    dir = `todo`\n    sync = `clone`\n    branch = `main`\n] {\n    fn build {\n        log `building`;\n    }\n}";
     let prog = parse_program(input).unwrap();
     assert_eq!(count_stmt_types(&prog), vec!["pr"]);
     match &prog.items[0] {
@@ -275,7 +275,7 @@ fn test_var_with_var_ref_value() {
 #[test]
 fn test_multiple_top_level_statements() {
     let input = "var string x = `hello`;\n\
-                  pr p [url = `u`, dir = `d`] { fn f { log `hi`; } run s { f; } }";
+                  pr p [url = `u` dir = `d`] { fn f { log `hi`; } run s { f; } }";
     let prog = parse_program(input).unwrap();
     assert_eq!(count_stmt_types(&prog), vec!["var", "pr"]);
 }

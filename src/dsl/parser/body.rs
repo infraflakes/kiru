@@ -70,17 +70,8 @@ impl Parser {
             let value = self.parse_expr()?;
             pairs.push(EnvPair { key, value });
 
-            match &self.current_token().ty {
-                TokenType::Comma => {
-                    self.advance();
-                }
-                TokenType::RBracket => break,
-                _ => {
-                    return Err(ParseError::new(
-                        self.eof_aware_span(),
-                        "expected `,` or `]`".to_string(),
-                    ));
-                }
+            if self.current_token().ty == TokenType::RBracket {
+                break;
             }
         }
         self.expect_with_context(TokenType::RBracket, "to close env pairs")?;

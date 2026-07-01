@@ -8,7 +8,6 @@ fn test_single_tokens() {
         ("}", TokenType::RBrace),
         ("[", TokenType::LBracket),
         ("]", TokenType::RBracket),
-        (",", TokenType::Comma),
         (";", TokenType::Semicolon),
         ("$", TokenType::Dollar),
     ];

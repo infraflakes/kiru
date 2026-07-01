@@ -33,9 +33,9 @@ var shell os      = `uname -s`;
 
 # 3. PROJECT
 #
-# Syntax: pr <name> [field = value, ...] { ... }
+# Syntax: pr <name> [field = value ...] { ... }
 #
-# Fields (comma-separated inside brackets):
+# Fields (space-separated inside brackets):
 #   url     (required)  Git clone URL
 #   dir     (required)  Directory for the project
 #   sync    (optional)  `clone` (default) or `ignore`
@@ -47,10 +47,10 @@ var shell os      = `uname -s`;
 #   run <name> { ... }             Run blocks with chain syntax
 
 pr myapp [
-  url  = `git@github.com:${user}/myapp.git`,
-  dir  = `${app}`,
-  sync = `clone`,
-  branch = `main`,
+  url  = `git@github.com:${user}/myapp.git`
+  dir  = `${app}`
+  sync = `clone`
+  branch = `main`
 ] {
     # Project vars are accessible within this project's functions.
     var string docker_registry = `ghcr.io/${user}`;
@@ -88,7 +88,7 @@ pr myapp [
 
         case $os {
             `Linux` {
-                env [GOOS = `linux`, GOARCH = `amd64`] {
+                env [GOOS = `linux` GOARCH = `amd64`] {
                     exec `go build -o bin/${app} .`;
                 };
             };
@@ -109,8 +109,8 @@ pr myapp [
 
         # env block sets environment variables for its body.
         env [
-          CGO_ENABLED = `0`,
-          GOPATH = $gopath,
+          CGO_ENABLED = `0`
+          GOPATH = $gopath
         ] {
             log `Testing go program`;
             exec `go test -race ./...`;

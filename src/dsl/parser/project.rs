@@ -103,10 +103,6 @@ impl Parser {
                 offset: type_offset,
                 len: field_len,
             });
-
-            if self.current_token().ty == TokenType::Comma {
-                self.advance();
-            }
         }
 
         self.expect_with_context(TokenType::RBracket, "to close project field list")?;

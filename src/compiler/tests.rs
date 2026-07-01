@@ -22,7 +22,7 @@ fn test_load_basic() {
         "main.kiru",
         "\
 var string a = `hello`;\n\
-pr test [url = `http://example.com`, dir = `test`] { }\
+pr test [url = `http://example.com` dir = `test`] { }\
 ",
     );
     let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
@@ -38,8 +38,8 @@ fn test_load_with_project_body() {
         "main.kiru",
         "\
 pr test [\n\
-    url = `http://example.com`,\n\
-    dir = `test`,\n\
+    url = `http://example.com`\n\
+    dir = `test`\n\
 ] {\n\
     var string app = `todo`;\n\
     fn build { log `hi`; }\n\
@@ -66,7 +66,7 @@ fn test_import_resolution() {
         "main.kiru",
         "\
 import `./other.kiru`;\n\
-pr p [url = $extra, dir = `d`] { }
+pr p [url = $extra dir = `d`] { }
 ",
     );
     let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
@@ -96,7 +96,7 @@ fn test_shadowing_global_var() {
         "\
 var string x = `a`;\n\
 var string x = `b`;\n\
-pr p [url = $x, dir = `d`] { }
+pr p [url = $x dir = `d`] { }
 ",
     );
     let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
@@ -111,7 +111,7 @@ fn test_duplicate_project_merges() {
         dir.path(),
         "main.kiru",
         "\
-pr p1 [url = `u`, dir = `d1`] { }\n\
+pr p1 [url = `u` dir = `d1`] { }\n\
 pr p1 { fn build { log `x`; } }\
 ",
     );
@@ -133,7 +133,7 @@ fn test_variable_chain_resolution() {
 var string a = `x`;\n\
 var string b = $a;\n\
 var string c = $b;\n\
-pr p [url = $c, dir = `d`] { }
+pr p [url = $c dir = `d`] { }
 ",
     );
     let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
@@ -191,8 +191,8 @@ fn test_duplicate_dir() {
         dir.path(),
         "main.kiru",
         "\
-pr a [url = `ua`, dir = `shared`] { }\n\
-pr b [url = `ub`, dir = `shared`] { }\
+pr a [url = `ua` dir = `shared`] { }\n\
+pr b [url = `ub` dir = `shared`] { }\
 ",
     );
     let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
@@ -210,7 +210,7 @@ fn test_invalid_sync_value() {
         dir.path(),
         "main.kiru",
         "\
-pr p [url = `u`, dir = `d`, sync = `invalid`] { }\
+pr p [url = `u` dir = `d` sync = `invalid`] { }\
 ",
     );
     let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
@@ -224,7 +224,7 @@ fn test_duplicate_project_field() {
         dir.path(),
         "main.kiru",
         "\
-pr p [url = `u`, dir = `d`, dir = `e`] { }\
+pr p [url = `u` dir = `d` dir = `e`] { }\
 ",
     );
     let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
@@ -239,7 +239,7 @@ fn test_interpolation_in_backtick() {
         "main.kiru",
         "\
 var string name = `world`;\n\
-pr p [url = `http://${name}.com`, dir = `d`] { }\
+pr p [url = `http://${name}.com` dir = `d`] { }\
 ",
     );
     let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
@@ -254,7 +254,7 @@ fn test_project_field_with_var_ref() {
         "main.kiru",
         "\
 var string myurl = `http://example.com`;\n\
-pr x [url = $myurl, dir = `d`] { }\
+pr x [url = $myurl dir = `d`] { }\
 ",
     );
     let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
@@ -269,8 +269,8 @@ fn test_duplicate_fn_in_project() {
         "main.kiru",
         "\
 pr test [\n\
-    url = `u`,\n\
-    dir = `d`,\n\
+    url = `u`\n\
+    dir = `d`\n\
 ] {\n\
     fn dup { log `a`; }\n\
     fn dup { log `b`; }\n\
@@ -293,8 +293,8 @@ fn test_duplicate_run_in_project() {
         "main.kiru",
         "\
 pr test [\n\
-    url = `u`,\n\
-    dir = `d`,\n\
+    url = `u`\n\
+    dir = `d`\n\
 ] {\n\
     fn check { log `x`; }\n\
     run dup { check; }\n\
@@ -319,7 +319,7 @@ fn test_multi_file_parse_order() {
         "main.kiru",
         "\
 import `./a.kiru`;\n\
-pr p [url = $a, dir = `d`] { }\
+pr p [url = $a dir = `d`] { }\
 ",
     );
     let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
@@ -334,8 +334,8 @@ fn test_undefined_var_in_fn_body() {
         "main.kiru",
         "\
 pr test [\n\
-    url = `u`,\n\
-    dir = `d`,\n\
+    url = `u`\n\
+    dir = `d`\n\
 ] {\n\
     fn badfn { log $undefined; }\n\
 }\
@@ -357,8 +357,8 @@ fn test_run_reference_validation() {
         "main.kiru",
         "\
 pr test [\n\
-    url = `u`,\n\
-    dir = `d`,\n\
+    url = `u`\n\
+    dir = `d`\n\
 ] {\n\
     fn real { log `hi`; }\n\
     run s { unknown; }\n\
@@ -378,8 +378,8 @@ fn test_valid_run_references() {
         "main.kiru",
         "\
 pr test [\n\
-    url = `u`,\n\
-    dir = `d`,\n\
+    url = `u`\n\
+    dir = `d`\n\
 ] {\n\
     fn real { log `hi`; }\n\
     run s { real; }\n\
@@ -398,8 +398,8 @@ fn test_shadowing_var_in_fn_body() {
         "main.kiru",
         "\
 pr test [\n\
-    url = `u`,\n\
-    dir = `d`,\n\
+    url = `u`\n\
+    dir = `d`\n\
 ] {\n\
     fn bad {\n\
         var string x = `a`;\n\
@@ -424,8 +424,8 @@ fn test_project_var_chain_resolution() {
         "main.kiru",
         "\
 pr test [\n\
-    url = `u`,\n\
-    dir = `d`,\n\
+    url = `u`\n\
+    dir = `d`\n\
 ] {\n\
     var string a = `hello`;\n\
     var string b = $a;\n\
@@ -447,8 +447,8 @@ fn test_project_var_sees_global() {
         "\
 var string global_var = `global`;\n\
 pr test [\n\
-    url = `u`,\n\
-    dir = `d`,\n\
+    url = `u`\n\
+    dir = `d`\n\
 ] {\n\
     fn f { log $global_var; }\n\
 }\
@@ -466,8 +466,8 @@ fn test_undefined_var_in_case_condition() {
         "main.kiru",
         "\
 pr test [\n\
-    url = `u`,\n\
-    dir = `d`,\n\
+    url = `u`\n\
+    dir = `d`\n\
 ] {\n\
     fn badfn { case $undefined { _ { }; }; }\n\
 }\
@@ -489,8 +489,8 @@ fn test_undefined_var_in_case_varref_pattern() {
         "main.kiru",
         "\
 pr test [\n\
-    url = `u`,\n\
-    dir = `d`,\n\
+    url = `u`\n\
+    dir = `d`\n\
 ] {\n\
     fn badfn { var string x = `ok`; case $x { $undefined { }; _ { }; }; }\n\
 }\
@@ -512,8 +512,8 @@ fn test_case_runtime_matching_arm() {
         "main.kiru",
         "\
 pr test [\n\
-    url = `http://example.com`,\n\
-    dir = `test`,\n\
+    url = `http://example.com`\n\
+    dir = `test`\n\
 ] {\n\
     var string os = `Linux`;\n\
     fn deploy {\n\
@@ -538,8 +538,8 @@ fn test_case_runtime_no_match() {
         "main.kiru",
         "\
 pr test [\n\
-    url = `http://example.com`,\n\
-    dir = `test`,\n\
+    url = `http://example.com`\n\
+    dir = `test`\n\
 ] {\n\
     var string os = `Darwin`;\n\
     fn deploy {\n\
@@ -564,7 +564,7 @@ fn test_project_fn_collection() {
         dir.path(),
         "main.kiru",
         "\
-pr p [ url = `http://x`, dir = `x` ] {\n\
+pr p [ url = `http://x` dir = `x` ] {\n\
     fn build { log `building`; }\n\
     fn test { exec `check`; }\n\
 }\
@@ -584,7 +584,7 @@ fn test_project_run_collection() {
         dir.path(),
         "main.kiru",
         "\
-pr p [ url = `http://x`, dir = `x` ] {\n\
+pr p [ url = `http://x` dir = `x` ] {\n\
     fn build { log `x`; }\n\
     fn test { log `y`; }\n\
     run all { build => test; }\n\
@@ -607,7 +607,7 @@ fn test_duplicate_fn_in_project_errors() {
         dir.path(),
         "main.kiru",
         "\
-pr p [ url = `http://x`, dir = `x` ] {\n\
+pr p [ url = `http://x` dir = `x` ] {\n\
     fn dup { log `a`; }\n\
     fn dup { log `b`; }\n\
 }\
@@ -628,7 +628,7 @@ fn test_duplicate_run_in_project_errors() {
         dir.path(),
         "main.kiru",
         "\
-pr p [ url = `http://x`, dir = `x` ] {\n\
+pr p [ url = `http://x` dir = `x` ] {\n\
     fn x { log `a`; }\n\
     run dup { x; }\n\
     run dup { x; }\n\
@@ -646,7 +646,7 @@ fn test_run_validates_function_refs() {
         dir.path(),
         "main.kiru",
         "\
-pr p [ url = `http://x`, dir = `x` ] {\n\
+pr p [ url = `http://x` dir = `x` ] {\n\
     run bad { nonexistent; }\n\
 }\
 ",
@@ -662,7 +662,7 @@ fn test_fn_var_validation() {
         dir.path(),
         "main.kiru",
         "\
-pr p [ url = `http://x`, dir = `x` ] {\n\
+pr p [ url = `http://x` dir = `x` ] {\n\
     fn bad { log $undefined; }\n\
 }\
 ",
@@ -685,8 +685,8 @@ fn test_project_field_references_project_var() {
         "main.kiru",
         "\
 pr test [\n\
-    url = `http://example.com/${name}`,\n\
-    dir = $name,\n\
+    url = `http://example.com/${name}`\n\
+    dir = $name\n\
 ] {\n\
     var string name = `myproject`;\n\
 }\
@@ -707,8 +707,8 @@ fn test_global_var_shadowed_by_project_var() {
         "\
 var string name = `global`;\n\
 pr test [\n\
-    url = `http://example.com`,\n\
-    dir = $name,\n\
+    url = `http://example.com`\n\
+    dir = $name\n\
 ] {\n\
     var string name = `project`;\n\
 }\

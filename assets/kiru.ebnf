@@ -49,7 +49,7 @@ cd_stmt          = "cd"   expr ";" ;
 (* ── env block ──────────────────────────────────────────────────── *)
 
 env_block        = "env" "[" [ env_pairs ] "]" "{" { fn_stmt } "}" ";" ;
-env_pairs        = env_pair { "," env_pair } [ "," ] ;
+env_pairs        = env_pair { env_pair } ;
 env_pair         = ident "=" expr ;
 
 (* ── case block ─────────────────────────────────────────────────── *)

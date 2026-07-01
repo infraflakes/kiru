@@ -2,10 +2,9 @@ var string app    = `todo`;
 var shell os      = `uname -s`;
 
 pr todo [
-  url  = `git@github.com:yourname/todo.git`,
-  dir  = `todo`,
-  sync = `clone`,
-  branch = `dev`
+  url  = `git@github.com:yourname/todo.git`
+  dir  = `todo`
+  sync = `clone`
 ] {
     var shell version = `git describe --tags --always --dirty 2>/dev/null || echo dev`;
 
@@ -25,7 +24,7 @@ pr todo [
     }
 
     fn test {
-        env [CGO_ENABLED = `0`, GOPATH = `$HOME/go`] {
+        env [CGO_ENABLED = `0` GOPATH = `$HOME/go`] {
             exec `go test -race ./...`;
             exec `go vet ./...`;
         };

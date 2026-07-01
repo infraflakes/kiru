@@ -27,7 +27,7 @@ pr kiru {
   fn fail {
     log `Failing the task!`;
     env [
-      CGO_ENABLED = `0`,
+      CGO_ENABLED = `0`
       GOPATH = `$HOME/.local/share/go`
    ] {
       exec `go build ./...`;
