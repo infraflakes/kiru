@@ -10,10 +10,35 @@ pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
         _ => miette::miette!("{}", e),
     })?;
 
-    let chain_pairs: Vec<(String, Vec<String>)> = config
+    let projects: Vec<(String, crate::compiler::Project)> = config
         .projects
-        .keys()
-        .map(|name| (name.clone(), vec![name.clone()]))
+        .into_iter()
+        .filter(|(name, proj)| {
+            if proj.url.is_empty() && proj.dir.is_empty() {
+                eprintln!("{:?}", miette::miette!("project {:?}: missing url and dir, skipping sync", name));
+                false
+            } else if proj.url.is_empty() {
+                eprintln!("{:?}", miette::miette!("project {:?}: missing url, skipping sync", name));
+                false
+            } else if proj.dir.is_empty() {
+                eprintln!("{:?}", miette::miette!("project {:?}: missing dir, skipping sync", name));
+                false
+            } else {
+                true
+            }
+        })
         .collect();
-    runner::sync::run_sync_for_projects(config.projects, chain_pairs)
+
+    if projects.is_empty() {
+        eprintln!("{:?}", miette::miette!("no projects to sync"));
+        return Ok(());
+    }
+
+    let chain_pairs: Vec<(String, Vec<String>)> = projects
+        .iter()
+        .map(|(name, _)| (name.clone(), vec![name.clone()]))
+        .collect();
+    let projects: std::collections::HashMap<String, crate::compiler::Project> =
+        projects.into_iter().collect();
+    runner::sync::run_sync_for_projects(projects, chain_pairs)
 }
