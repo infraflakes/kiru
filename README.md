@@ -62,6 +62,10 @@ Config lives at `~/.config/kiru/main.kiru`. Override with `-c <path>`.
 | `kiru validate` | parse, resolve, and validate the config |
 | `kiru version` | print version |
 
+### Environment
+
+`KIRU_CWD=1` — run `fn` and `run` commands in the current working directory instead of depending on `dir` field in `pr`. Useful for CI/CD pipelines where you're already in the right directory.
+
 ---
 
 ## Contributing

@@ -65,11 +65,18 @@ pub(crate) struct ExecContext<'a> {
 impl<'a> ExecContext<'a> {
     /// Create a new execution context. The working directory is set to
     /// `project.dir` if a project is provided, falling back to the current
-    /// directory otherwise.
+    /// directory otherwise.  When `KIRU_CWD=1` is set, the current working
+    /// directory is always used (useful for CI/CD workflows).
     pub(crate) fn new(project: Option<&'a Project>, output: &'a mut OutputTarget) -> Self {
-        let work_dir = project.map(|p| PathBuf::from(&p.dir)).unwrap_or_else(|| {
+        let use_cwd = std::env::var("KIRU_CWD").as_deref() == Ok("1");
+        let work_dir = if use_cwd {
             std::env::current_dir().expect("current directory has been deleted or is inaccessible")
-        });
+        } else {
+            project.map(|p| PathBuf::from(&p.dir)).unwrap_or_else(|| {
+                std::env::current_dir()
+                    .expect("current directory has been deleted or is inaccessible")
+            })
+        };
         ExecContext {
             output,
             env_stack: Vec::new(),

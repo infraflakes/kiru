@@ -157,3 +157,12 @@ pr myapp [
         lint => test;
     }
 }
+
+# 6. CI/CD MODE
+#
+# Set KIRU_CWD=1 to run fn / run commands in the current directory
+# instead of the project's dir field:
+#
+#   KIRU_CWD=1 kiru fn build myapp
+#
+# Useful when you're already in the right directory (e.g. a CI job).
