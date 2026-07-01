@@ -2,10 +2,10 @@ use crate::compiler::error::CompileError;
 use crate::compiler::error::spanned_err;
 use crate::compiler::imports;
 use crate::compiler::resolve;
-use crate::compiler::types::{Project, Sanctuary, SyncMode, UnresolvedProject};
+use crate::compiler::types::{Config, Project, SyncMode, UnresolvedProject};
 use crate::compiler::validation;
 use crate::dsl::Parser;
-use crate::dsl::{Expr, Program, Stmt, TopLevel};
+use crate::dsl::{Program, Stmt, TopLevel};
 use miette::miette;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 ///    load imports with variable interpolation, accumulate projects.
 /// 2. Validate using the unresolved (but scope-resolved) state.
 /// 3. Fully resolve function bodies against the computed scopes.
-pub fn compile_and_resolve(entry_path: &Path) -> Result<Sanctuary, CompileError> {
+pub fn compile_and_resolve(entry_path: &Path) -> Result<Config, CompileError> {
     let abs_entry = canonicalize_entry(entry_path)?;
     let linear_result = resolve_linear(&abs_entry)?;
     validation::validate_configuration(
@@ -36,7 +36,6 @@ pub fn compile_and_resolve(entry_path: &Path) -> Result<Sanctuary, CompileError>
 /// Mutable state threaded through the linear processing phase.
 struct LinearState {
     global_scope: HashMap<String, String>,
-    sanctuary_path: Option<Expr>,
     projects: HashMap<String, UnresolvedProject>,
     /// Per-project locally-declared variable overrides. Each block of the same
     /// project refreshes from current globals (via `or_insert`), so later
@@ -55,7 +54,6 @@ impl LinearState {
     fn new() -> Self {
         Self {
             global_scope: HashMap::new(),
-            sanctuary_path: None,
             projects: HashMap::new(),
             project_var_scopes: HashMap::new(),
             loaded_files: HashSet::new(),
@@ -67,7 +65,7 @@ impl LinearState {
 
 /// Intermediate result from the linear processing phase.
 struct LinearResult {
-    unresolved: super::types::UnresolvedSanctuary,
+    unresolved: super::types::UnresolvedConfig,
     global_scope: HashMap<String, String>,
     project_var_scopes: HashMap<String, HashMap<String, String>>,
 }
@@ -244,7 +242,7 @@ pub(crate) fn merge_project_body_stmt(
             }
             project.runs.insert(name.clone(), chains.clone());
         }
-        Stmt::Sanctuary { offset, len, .. } | Stmt::Project { offset, len, .. } => {
+        Stmt::Project { offset, len, .. } => {
             return Err(spanned_err(
                 format!(
                     "unexpected statement in project '{}' (only var, fn, and run are valid)",
@@ -344,11 +342,6 @@ fn linear_process_program(
                         &program.source_text,
                     )?;
                 }
-                Stmt::Sanctuary { value, .. } => {
-                    if state.sanctuary_path.is_none() {
-                        state.sanctuary_path = Some(value.clone());
-                    }
-                }
                 Stmt::Project {
                     name, fields, body, ..
                 } => {
@@ -416,8 +409,7 @@ fn resolve_linear(entry_path: &Path) -> Result<LinearResult, CompileError> {
     let mut state = LinearState::new();
     linear_process_file(entry_path, &mut state)?;
 
-    let unresolved = super::types::UnresolvedSanctuary {
-        sanctuary_path: state.sanctuary_path,
+    let unresolved = super::types::UnresolvedConfig {
         projects: state.projects,
     };
 
@@ -437,9 +429,9 @@ fn resolve_linear(entry_path: &Path) -> Result<LinearResult, CompileError> {
 /// 2. Project field resolution — resolve each project's `url`, `dir`, `sync`,
 ///    and `branch` expressions against its computed scope.
 ///
-/// The returned [`Sanctuary`] has empty function maps — function and run
+/// The returned [`Config`] has empty function maps — function and run
 /// blocks are collected during linear processing but never resolved.
-pub fn extract_projects(entry_path: &Path) -> Result<Sanctuary, CompileError> {
+pub fn extract_projects(entry_path: &Path) -> Result<Config, CompileError> {
     let abs_entry = canonicalize_entry(entry_path)?;
 
     let mut state = LinearState {
@@ -447,10 +439,6 @@ pub fn extract_projects(entry_path: &Path) -> Result<Sanctuary, CompileError> {
         ..LinearState::new()
     };
     linear_process_file(&abs_entry, &mut state)?;
-
-    let sanctuary_path =
-        resolve::resolve_optional_expr(&state.sanctuary_path, &state.global_scope, "", "")?
-            .unwrap_or_default();
 
     let mut projects = HashMap::new();
     for (name, unresolved_project) in state.projects {
@@ -495,8 +483,5 @@ pub fn extract_projects(entry_path: &Path) -> Result<Sanctuary, CompileError> {
         );
     }
 
-    Ok(Sanctuary {
-        sanctuary_path,
-        projects,
-    })
+    Ok(Config { projects })
 }

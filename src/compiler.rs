@@ -3,7 +3,7 @@
 //! Kiru compiles its DSL in three stages. Parsing is a separate front-end that
 //! feeds the compiler; runtime is a separate back-end that consumes its output.
 //!
-//! The compiler's output is a [`Sanctuary`] — a fully lowered configuration where
+//! The compiler's output is a [`Config`] — a fully lowered configuration where
 //! every variable reference has been substituted and function bodies contain only
 //! pure [`ResolvedFnStmt`]s (no `Expr` or `VarDecl` nodes remain).  Structural
 //! metadata like project fields and `Run` declarations are collected and passed
@@ -17,9 +17,8 @@
 //!    representation.
 //!
 //! 2. **Validation** (`validation::validate_configuration`) — structural constraints
-//!    are checked against the pre-built variable scopes: required fields, duplicate
-//!    directories, run-to-function references, and undefined variable references
-//!    within function bodies.
+//!    are checked against the pre-built variable scopes: run-to-function references
+//!    and undefined variable references within function bodies.
 //!
 //! 3. **Resolution** (`resolve::resolve_with_scopes`) — all remaining variable
 //!    references (standalone `$var` in expressions; `` `${var}` `` interpolation
@@ -41,11 +40,7 @@ pub use compile::compile_and_resolve;
 /// Skips validation and function body lowering.  Used by `kiru sync`.
 pub use compile::extract_projects;
 pub use error::CompileError;
-pub use types::{
-    Project, ResolvedCasePattern, ResolvedEnvPair, ResolvedFnStmt, Sanctuary, SyncMode,
-};
-/// Returns true when the `SANCTUARY` environment variable is set to `0`.
-pub use validation::is_sanctuary_disabled;
+pub use types::{Config, Project, ResolvedCasePattern, ResolvedEnvPair, ResolvedFnStmt, SyncMode};
 
 #[cfg(test)]
 mod tests;

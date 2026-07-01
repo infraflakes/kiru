@@ -1,5 +1,5 @@
 use super::colors;
-use crate::compiler::{Project, ResolvedEnvPair, ResolvedFnStmt, Sanctuary};
+use crate::compiler::{Project, ResolvedEnvPair, ResolvedFnStmt};
 use crate::runner::error::RuntimeError;
 use crate::shell;
 use std::collections::HashMap;
@@ -56,8 +56,6 @@ impl OutputTarget {
 /// context has no variable lookup or scope-tracking logic — it only manages
 /// the working directory, environment variable layers, and output.
 pub(crate) struct ExecContext<'a> {
-    pub(super) cfg: &'a Sanctuary,
-    pub(super) project: Option<&'a Project>,
     pub(super) output: &'a mut OutputTarget,
     pub(super) env_stack: Vec<HashMap<String, String>>,
     pub(super) work_dir: PathBuf,
@@ -65,26 +63,14 @@ pub(crate) struct ExecContext<'a> {
 }
 
 impl<'a> ExecContext<'a> {
-    /// Construct a new execution context from a sanctuary config and optional project.
-    pub(crate) fn new(
-        cfg: &'a Sanctuary,
-        project: Option<&'a Project>,
-        output: &'a mut OutputTarget,
-    ) -> Self {
-        let base = if cfg.sanctuary_path.is_empty() {
+    /// Create a new execution context. The working directory is set to
+    /// `project.dir` if a project is provided, falling back to the current
+    /// directory otherwise.
+    pub(crate) fn new(project: Option<&'a Project>, output: &'a mut OutputTarget) -> Self {
+        let work_dir = project.map(|p| PathBuf::from(&p.dir)).unwrap_or_else(|| {
             std::env::current_dir().expect("current directory has been deleted or is inaccessible")
-        } else {
-            PathBuf::from(&cfg.sanctuary_path)
-        };
-        let dir = project.map(|p| &*p.dir).unwrap_or("");
-        let work_dir = if dir.is_empty() {
-            base
-        } else {
-            base.join(dir.trim_start_matches('/'))
-        };
+        });
         ExecContext {
-            cfg,
-            project,
             output,
             env_stack: Vec::new(),
             work_dir,
@@ -106,7 +92,7 @@ impl<'a> ExecContext<'a> {
         system_env_vars.chain(layer_overrides)
     }
 
-    /// Return an indentation string based on the current env block nesting depth, plus an extra offset.
+    /// Compute indentation string based on current env block nesting depth.
     pub(super) fn compute_indent_string(&self, extra: usize) -> String {
         "  ".repeat(self.env_stack.len() + extra)
     }
@@ -123,7 +109,6 @@ impl<'a> ExecContext<'a> {
         result
     }
 
-    /// Execute a slice of resolved function statements, recursing into env blocks and case arms.
     fn exec_resolved_fn_body_inner(&mut self, body: &[ResolvedFnStmt]) -> Result<(), RuntimeError> {
         for stmt in body {
             match stmt {
@@ -147,7 +132,6 @@ impl<'a> ExecContext<'a> {
         Ok(())
     }
 
-    /// Execute a log statement, writing the message to the output target with log styling.
     fn exec_log(&mut self, msg: &str) -> Result<(), RuntimeError> {
         let indent = self.compute_indent_string(0);
         let line = format!("{}log  {}", indent, msg);
@@ -157,7 +141,6 @@ impl<'a> ExecContext<'a> {
         Ok(())
     }
 
-    /// Execute a cd statement, changing the working directory within sanctuary bounds.
     fn exec_cd(&mut self, resolved: &str) -> Result<(), RuntimeError> {
         if Path::new(resolved).is_absolute() {
             return Err(RuntimeError::Lookup(format!(
@@ -178,23 +161,6 @@ impl<'a> ExecContext<'a> {
             )));
         }
 
-        if let Some(current_project) = self.project {
-            let base = if self.cfg.sanctuary_path.is_empty() {
-                std::env::current_dir().map_err(RuntimeError::Io)?
-            } else {
-                PathBuf::from(&self.cfg.sanctuary_path)
-            };
-            let base_canonical =
-                std::fs::canonicalize(base.join(current_project.dir.trim_start_matches('/')))
-                    .map_err(|e| RuntimeError::Lookup(format!("cd {}: {}", resolved, e)))?;
-            if !candidate.starts_with(&base_canonical) {
-                return Err(RuntimeError::Lookup(format!(
-                    "cd {}: path escapes project directory",
-                    resolved
-                )));
-            }
-        }
-
         self.work_dir = candidate;
 
         let indent = self.compute_indent_string(0);
@@ -205,7 +171,6 @@ impl<'a> ExecContext<'a> {
         Ok(())
     }
 
-    /// Execute a resolved env block, pushing a new environment layer, running the body, then popping it.
     fn exec_resolved_env_block(
         &mut self,
         pairs: &[ResolvedEnvPair],

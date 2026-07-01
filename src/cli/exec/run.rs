@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 /// Executes function chains within the scope of a specific named project.
 fn run_project_chains(
-    config: Arc<crate::compiler::Sanctuary>,
+    config: Arc<crate::compiler::Config>,
     project: &str,
     chains: Vec<Vec<String>>,
 ) -> miette::Result<()> {

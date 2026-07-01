@@ -1,6 +1,6 @@
 use super::load_config;
 use super::pager;
-use crate::compiler::Sanctuary;
+use crate::compiler::Config;
 use std::path::PathBuf;
 
 const RESET: &str = "\x1b[0m";
@@ -23,17 +23,9 @@ pub fn run_validate_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
     Ok(())
 }
 
-fn format_config_as_tree(config: &Sanctuary) -> String {
+fn format_config_as_tree(config: &Config) -> String {
     let mut formatted_output = String::new();
     formatted_output.push('\n');
-    let box_width = 62usize;
-    let label_width = 14usize;
-
-    let hide_sanctuary = crate::compiler::is_sanctuary_disabled();
-
-    if !hide_sanctuary {
-        header_box(&mut formatted_output, box_width, label_width, config);
-    }
 
     let mut sorted_projects: Vec<(&String, &crate::compiler::Project)> =
         config.projects.iter().collect();
@@ -59,60 +51,7 @@ fn format_config_as_tree(config: &Sanctuary) -> String {
     formatted_output
 }
 
-// ── Header box ────────────────────────────────────────────
-
-fn header_box(output: &mut String, box_width: usize, label_width: usize, config: &Sanctuary) {
-    let top_border = format!("  ╭─{:=^width$}─╮", " Sanctuary ", width = box_width - 2);
-    let bottom_border = format!("  ╰─{:=^width$}─╯", "", width = box_width - 2);
-    output.push_str(&top_border);
-    output.push('\n');
-
-    key_value_row(
-        output,
-        box_width,
-        label_width,
-        "Sanctuary",
-        &config.sanctuary_path,
-        CYAN,
-    );
-
-    output.push_str(&bottom_border);
-    output.push('\n');
-}
-
-/// Render a key-value row inside the box.
-///
-/// `val_plain` is the unstyled text used for alignment calculation;
-/// `val_color` is the ANSI colour code applied only to the value.
-fn key_value_row(
-    output: &mut String,
-    box_width: usize,
-    label_width: usize,
-    key: &str,
-    value_plain_text: &str,
-    value_color_code: &str,
-) {
-    let interior = box_width - 2;
-    let spacing_gap = 2;
-    let value_visual_len = value_plain_text.chars().count();
-    let visible_chars = label_width + spacing_gap + value_visual_len;
-    let right_padding = interior.saturating_sub(visible_chars);
-
-    let padded_key = format!("{:>label_width$}", key);
-    let styled_key = style!(GRAY, "{}", padded_key);
-    let styled_value = style!(value_color_code, "{}", value_plain_text);
-
-    output.push_str(&format!(
-        "  │ {}{}{}{} │\n",
-        styled_key,
-        "  ",
-        styled_value,
-        " ".repeat(right_padding),
-    ));
-}
-
-// ── Project tree ──────────────────────────────────────────
-
+/// Render a single project node with its fields and functions/runs.
 fn draw_project(out: &mut String, name: &str, project: &crate::compiler::Project, last: bool) {
     let branch = if last { "└" } else { "├" };
     out.push_str(&format!(
@@ -185,9 +124,7 @@ fn draw_item_line(out: &mut String, indent: &str, connector: &str, label: &str, 
     }
 }
 
-// ── Footer ────────────────────────────────────────────────
-
-fn footer_bar(out: &mut String, config: &Sanctuary) {
+fn footer_bar(out: &mut String, config: &Config) {
     let fn_count: usize = config
         .projects
         .values()
@@ -207,8 +144,6 @@ fn footer_bar(out: &mut String, config: &Sanctuary) {
         run_count,
     ));
 }
-
-// ── Display / pager ───────────────────────────────────────
 
 fn display_output_through_pager(output: &str) -> miette::Result<()> {
     pager::display_output_through_pager(output)

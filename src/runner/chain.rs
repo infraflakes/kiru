@@ -1,4 +1,4 @@
-use crate::compiler::Sanctuary;
+use crate::compiler::Config;
 use crate::runner::error::RuntimeError;
 use crate::runner::{self, Runner, TaskStatus, TuiEvent};
 use std::sync::Arc;
@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Execute a list of function chains through the TUI.
 pub fn execute_task_chains(
-    config: Arc<Sanctuary>,
+    config: Arc<Config>,
     chains: Vec<Vec<String>>,
     task_name_fn: impl Fn(&str) -> String + Send + 'static,
     exec_fn: impl Fn(&mut Runner, &str) -> Result<(), RuntimeError> + Send + Sync + 'static,

@@ -11,15 +11,15 @@
 (* ═══════════════════════════════════════════════════════════════════ *)
 
 program          = { statement } ;
-statement        = sanctuary_decl | import_decl | var_decl
+statement        = import_decl | var_decl
                  | project_decl | fn_decl | run_decl ;
 
 (* ═══════════════════════════════════════════════════════════════════ *)
 (*  SIMPLE DECLARATIONS                                               *)
 (* ═══════════════════════════════════════════════════════════════════ *)
 
-sanctuary_decl   = "sanctuary" "=" expr ";" ;
-import_decl      = "import"     expr ";" ;
+import_decl      = "import"  expr ";" ;
+var_decl         = "var" type ident "=" expr ";" ;
 var_decl         = "var" type ident "=" expr ";" ;
 type             = "string" | "shell" ;
 
@@ -87,7 +87,7 @@ digit            = "0" | "1" | … | "9" ;
 raw_char         = ? any character except "`" or "\n" ? ;
 
 (* Key identifiers are reserved and cannot be used as user-defined    *)
-(* names: sanctuary import var string shell pr fn run log exec cd     *)
+(* names: import var string shell pr fn run log exec cd               *)
 (* env case.                                                          *)
 (*                                                                    *)
 (* Comments start with # and run to end of line.                      *)

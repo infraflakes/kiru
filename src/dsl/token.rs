@@ -15,7 +15,6 @@ pub enum TokenType {
     Dollar,
     Import,
     Shell,
-    Sanctuary,
     Var,
     StringKw,
     Fn,
@@ -55,7 +54,6 @@ impl Token {
 /// or return `TokenType::Ident` if it is not a keyword.
 pub fn lookup_ident(ident: &str) -> TokenType {
     match ident {
-        "sanctuary" => TokenType::Sanctuary,
         "import" => TokenType::Import,
         "var" => TokenType::Var,
         "string" => TokenType::StringKw,
@@ -84,7 +82,6 @@ pub fn format_token_type(ty: &TokenType) -> &'static str {
         TokenType::Dollar => "`$`",
         TokenType::Shell => "`shell`",
         TokenType::StringKw => "`string`",
-        TokenType::Sanctuary => "`sanctuary`",
         TokenType::Import => "`import`",
         TokenType::Var => "`var`",
         TokenType::Pr => "`pr`",
@@ -126,7 +123,6 @@ pub fn is_keyword_token(ty: &TokenType) -> bool {
             | TokenType::Pr
             | TokenType::Shell
             | TokenType::StringKw
-            | TokenType::Sanctuary
             | TokenType::Import
     )
 }

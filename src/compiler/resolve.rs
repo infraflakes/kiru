@@ -1,8 +1,8 @@
 use crate::compiler::error::CompileError;
 use crate::compiler::error::spanned_err;
 use crate::compiler::types::{
-    Project, ResolvedCaseArm, ResolvedCasePattern, ResolvedEnvPair, ResolvedFnStmt, Sanctuary,
-    SyncMode, UnresolvedSanctuary,
+    Config, Project, ResolvedCaseArm, ResolvedCasePattern, ResolvedEnvPair, ResolvedFnStmt,
+    SyncMode, UnresolvedConfig,
 };
 use crate::dsl::{CaseArm, CasePattern, EnvPair, Expr, FnStmt, Stmt, VarType};
 use crate::shell;
@@ -257,13 +257,10 @@ pub(crate) fn resolve_optional_expr(
 /// the provided scopes directly. This avoids re-executing `var shell` commands
 /// that were already evaluated during the linear processing phase.
 pub(crate) fn resolve_with_scopes(
-    unresolved: UnresolvedSanctuary,
+    unresolved: UnresolvedConfig,
     global_scope: HashMap<String, String>,
     project_scopes: HashMap<String, HashMap<String, String>>,
-) -> Result<Sanctuary, CompileError> {
-    let sanctuary_path = resolve_optional_expr(&unresolved.sanctuary_path, &global_scope, "", "")?
-        .unwrap_or_default();
-
+) -> Result<Config, CompileError> {
     let mut projects = HashMap::new();
     for (name, unresolved_project) in unresolved.projects {
         let sync_offset_len = unresolved_project
@@ -306,10 +303,7 @@ pub(crate) fn resolve_with_scopes(
         );
     }
 
-    Ok(Sanctuary {
-        sanctuary_path,
-        projects,
-    })
+    Ok(Config { projects })
 }
 
 /// Resolve an entire function body — all `Expr` nodes are substituted with

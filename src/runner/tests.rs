@@ -1,10 +1,10 @@
 use crate::compiler::types::ResolvedCaseArm;
-use crate::compiler::{Project, ResolvedCasePattern, ResolvedFnStmt, Sanctuary, SyncMode};
+use crate::compiler::{Config, Project, ResolvedCasePattern, ResolvedFnStmt, SyncMode};
 use crate::runner::execution_context::OutputTarget;
 use crate::runner::execution_context::{ExecContext, match_case_pattern};
 use std::collections::HashMap;
 
-fn test_context() -> (Sanctuary, Project, OutputTarget) {
+fn test_context() -> (Config, Project, OutputTarget) {
     let project = Project {
         url: "http://example.com".to_string(),
         dir: "test".to_string(),
@@ -13,8 +13,7 @@ fn test_context() -> (Sanctuary, Project, OutputTarget) {
         functions: HashMap::new(),
         runs: HashMap::new(),
     };
-    let cfg = Sanctuary {
-        sanctuary_path: "/tmp".to_string(),
+    let cfg = Config {
         projects: HashMap::new(),
     };
     (cfg, project, OutputTarget::Direct(Box::new(Vec::new())))
@@ -43,8 +42,8 @@ fn test_match_empty_string() {
 
 #[test]
 fn test_case_first_match_wins() {
-    let (cfg, project, mut output) = test_context();
-    let mut ctx = ExecContext::new(&cfg, Some(&project), &mut output);
+    let (_cfg, project, mut output) = test_context();
+    let mut ctx = ExecContext::new(Some(&project), &mut output);
     let body = [ResolvedFnStmt::Case {
         condition: "a".to_string(),
         scopes: vec![
@@ -67,8 +66,8 @@ fn test_case_first_match_wins() {
 
 #[test]
 fn test_case_no_match_does_nothing() {
-    let (cfg, project, mut output) = test_context();
-    let mut ctx = ExecContext::new(&cfg, Some(&project), &mut output);
+    let (_cfg, project, mut output) = test_context();
+    let mut ctx = ExecContext::new(Some(&project), &mut output);
     let body = [ResolvedFnStmt::Case {
         condition: "no-match".to_string(),
         scopes: vec![ResolvedCaseArm {

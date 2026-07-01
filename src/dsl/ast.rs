@@ -12,12 +12,6 @@ pub enum ProjectField {
 /// A parsed statement node in the kiru DSL.
 #[derive(Debug, Clone)]
 pub enum Stmt {
-    /// The top-level `sanctuary` declaration.
-    Sanctuary {
-        value: Expr,
-        offset: usize,
-        len: usize,
-    },
     /// A variable declaration (`var` or `var shell`).
     Var {
         var_type: VarType,

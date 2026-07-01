@@ -6,11 +6,11 @@ mod validate;
 
 pub use args::{Cli, Commands};
 
-use crate::compiler::{CompileError, Sanctuary};
+use crate::compiler::{CompileError, Config};
 use clap::Parser;
 use std::path::PathBuf;
 
-fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Sanctuary> {
+fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Config> {
     let config_path = get_config_path(config_arg);
     crate::compiler::compile_and_resolve(&config_path).map_err(|e| match e {
         CompileError::ParseReports(reports) => print_parse_errors(reports),
@@ -46,9 +46,6 @@ fn get_config_path(config_arg: Option<PathBuf>) -> PathBuf {
         return path;
     }
 
-    if crate::compiler::is_sanctuary_disabled() {
-        return PathBuf::from(".kiru").join("main.kiru");
-    }
     if let Some(config_dir) = dirs::config_dir() {
         return config_dir.join("kiru").join("main.kiru");
     }

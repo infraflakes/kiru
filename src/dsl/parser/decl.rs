@@ -1,19 +1,6 @@
 use super::*;
 
 impl Parser {
-    pub(crate) fn parse_sanctuary_decl(&mut self) -> Result<Stmt, ParseError> {
-        let offset = self.current_token().offset;
-        let len = self.current_token().len;
-        self.advance();
-
-        self.expect_with_context(TokenType::Assign, "after `sanctuary`")?;
-
-        let value = self.parse_expr()?;
-        self.expect_with_context(TokenType::Semicolon, "after sanctuary declaration")?;
-
-        Ok(Stmt::Sanctuary { value, offset, len })
-    }
-
     pub(crate) fn parse_var_decl(&mut self) -> Result<Stmt, ParseError> {
         let offset = self.current_token().offset;
         let len = self.current_token().len;

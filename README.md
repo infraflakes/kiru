@@ -12,11 +12,9 @@
 > [!CAUTION]
 > `Kiru` is still in early development, breaking changes might happen!
 
-With **kiru** you declare and clone multiple repos, write shell functions, and chain them into pipelines, all in one DSL.
+With **kiru** you declare multiple git repos, write shell functions, and chain them into concurrent pipelines — all in one DSL.
 
-Static validation catches invalid syntax before anything executes. 
-
-All without even need to stay in the same directory as your repositories!
+Static validation catches invalid syntax, undefined variables, and broken function references before anything executes.
 
 ---
 
@@ -33,22 +31,24 @@ Config lives at `~/.config/kiru/main.kiru`. Override with `-c <path>`.
 
 ---
 
-## The five things
+## DSL overview
 
-| thing | what it is |
+| construct | what it does |
 |---|---|
-| **sanctuary** | the root directory where all your repos live |
-| **import** | import multiple `.kiru` files |
-| **pr** | declare repos with metadata fields |
+| **var** | declare a global or project-scoped variable (`string` or `shell`) |
+| **import** | split config across multiple `.kiru` files |
+| **pr** | declare a git repo with metadata fields — `url`, `dir`, `sync`, `branch` |
 | **fn** | a function with execution primitives `log`, `exec`, `cd`, `var`, `env`, `case` |
-| **run** | an orchestration block — chains of function calls, concurrent by default |
+| **run** | an orchestration block — chains of concurrent and sequential function calls |
 
 ---
-## Examples (Currently outdated):
 
-- An introduction to [kiru](./assets/introduction.kiru).
-- Here's an [example](./assets/example.kiru) of what a `.kiru` file would look like.
-- We also have [ebnf](./assets/kiru.ebnf) and our own kiru [files](./.kiru) (yes we are dogfooding):
+## Examples
+
+- [Introduction to kiru](./assets/introduction.kiru) — walks through every DSL feature.
+- [Example](./assets/example.kiru) — a compact `.kiru` file.
+- [EBNF grammar](./assets/kiru.ebnf) — the formal DSL specification.
+- We use kiru to build kiru — see our own [.kiru/](./.kiru) config.
 
 ---
 
@@ -56,13 +56,11 @@ Config lives at `~/.config/kiru/main.kiru`. Override with `-c <path>`.
 
 | command | what it does |
 |---------|-------------|
-| `kiru sync` | clone/update all declared repos into sanctuary |
-| `kiru run <name> [<project>]` | execute a run block |
-| `kiru fn <name> [<project>]` | execute one function |
-| `kiru validate` | parse and validate the config |
+| `kiru sync` | clone / update all declared repos |
+| `kiru run <name> <project>` | execute a run block |
+| `kiru fn <name> <project>` | execute one function |
+| `kiru validate` | parse, resolve, and validate the config |
 | `kiru version` | print version |
-
-When `SANCTUARY=0`, kiru runs in standalone mode, no sanctuary. Config defaults to `.kiru/main.kiru`. `kiru sync` is not available in this mode. Useful for CI/CD.
 
 ---
 

@@ -2,13 +2,6 @@ use crate::compiler::error::CompileError;
 use crate::dsl::{CasePattern, Expr, FnStmt};
 use miette::miette;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
-
-/// Check whether the `SANCTUARY` environment variable is set to `"0"`,
-/// disabling sanctuary-mode validation.
-pub fn is_sanctuary_disabled() -> bool {
-    std::env::var("SANCTUARY").as_deref() == Ok("0")
-}
 
 /// Extract a plain string from an `Expr` if it is a simple backtick literal
 /// with no variable interpolation. Returns `None` for var refs or interpolated
@@ -46,74 +39,34 @@ fn is_var_defined(
     project_scope.contains(name) || global_scope.contains(name)
 }
 
-/// Validate an `UnresolvedSanctuary` against global and project scopes,
+/// Validate an `UnresolvedConfig` against global and project scopes,
 /// collecting all errors before returning.
 pub fn validate_configuration(
-    cfg: &super::types::UnresolvedSanctuary,
+    cfg: &super::types::UnresolvedConfig,
     global_scope: &HashMap<String, String>,
     project_var_scopes: &HashMap<String, HashMap<String, String>>,
 ) -> Result<(), CompileError> {
     let mut errors = Vec::new();
 
-    // Sanity-check sanctuary path
-    if is_sanctuary_disabled() {
-        // SANCTUARY=0 mode: sanctuary and project fields are optional
-    } else {
-        match &cfg.sanctuary_path {
-            None => {
-                errors.push(miette!("sanctuary declaration is required"));
-            }
-            Some(Expr::VarRef { .. }) => {
-                // Uses a variable reference — can't validate at this stage.
-                // The resolve phase will catch undefined vars.
-            }
-            Some(Expr::BacktickLit { parts, .. }) => {
-                let path_str: String = parts.iter().map(|part| part.value.as_str()).collect();
-                if path_str.is_empty() {
-                    errors.push(miette!("sanctuary declaration is required"));
-                } else if !Path::new(&path_str).is_absolute() {
-                    errors.push(miette!("sanctuary path must be absolute: {}", path_str));
-                }
-            }
-        }
-    }
-
-    // Validate project fields (url/dir required, no duplicate dirs)
-    if !is_sanctuary_disabled() {
-        let mut seen_dirs = HashSet::<String>::new();
-        for project in cfg.projects.values() {
-            let url_str = extract_string(&project.url).unwrap_or_default();
-            let dir_str = extract_string(&project.dir).unwrap_or_default();
-
-            if url_str.is_empty() && project.url.is_some() {
-                // url is set but uses var refs — can't validate now
-            } else if project.url.is_none() || url_str.is_empty() {
-                errors.push(miette!("project {:?}: url is required", project.name));
-            }
-
-            if dir_str.is_empty() && project.dir.is_some() {
-                // dir is set but uses var refs
-            } else if project.dir.is_none() || dir_str.is_empty() {
-                errors.push(miette!("project {:?}: dir is required", project.name));
-            }
-
-            let normalized_dir = dir_str.trim_start_matches('/').to_string();
-            if !normalized_dir.is_empty() && !seen_dirs.insert(normalized_dir) {
-                errors.push(miette!(
-                    "project {:?}: duplicate directory {:?}",
-                    project.name,
-                    dir_str
-                ));
-            }
-        }
-    }
-
     let global_set: HashSet<String> = global_scope.keys().cloned().collect();
+
+    // Check for duplicate project directories (static backtick lits only)
+    let mut seen_dirs: HashSet<String> = HashSet::new();
+    for project in cfg.projects.values() {
+        if let Some(dir_str) = extract_string(&project.dir)
+            && !seen_dirs.insert(dir_str.clone())
+        {
+            errors.push(miette!(
+                "project {:?}: duplicate directory {:?}",
+                project.name,
+                dir_str
+            ));
+        }
+    }
 
     for (proj_name, project) in &cfg.projects {
         validate_run_refs(&project.runs, &project.functions, proj_name, &mut errors);
 
-        // Build project scope set from the pre-built project scope
         let project_set: HashSet<String> = project_var_scopes
             .get(proj_name)
             .map(|m| m.keys().cloned().collect())
@@ -184,8 +137,6 @@ fn validate_fn_bodies(
     errors: &mut Vec<miette::Report>,
 ) {
     for (fn_name, body) in functions {
-        // Use a scope stack with an initial empty frame for local vars.
-        // Global and project scopes are referenced directly and never cloned.
         let mut local: Vec<HashSet<String>> = vec![HashSet::new()];
         validate_fn_body(
             fn_name,
@@ -311,8 +262,6 @@ fn validate_fn_body(
                         proj_name,
                     );
                 }
-                // Push a new scope frame so vars declared inside the env block
-                // do not leak to the outer scope.
                 local.push(HashSet::new());
                 validate_fn_body(
                     fn_name,

@@ -1,4 +1,3 @@
-# OUTDATED
 # kiru — introductory example
 #
 # This file demonstrates every DSL feature in a single project.
@@ -7,8 +6,8 @@
 # Usage:
 #   kiru validate              # check that this config is correct
 #   kiru sync                  # clone the repository
-#   kiru fn <function name> [<project's name>]      # run a single function
-#   kiru run <name> [<project name>]       # run an orchestration plan (TUI)
+#   kiru fn <name> <project>   # run a single function
+#   kiru run <name> <project>  # run an orchestration plan (TUI)
 
 # 1. GLOBAL VARIABLES
 #
@@ -24,50 +23,40 @@ var string app    = `myapp`;
 var string user   = `yourname`;
 var string repo   = `${user}/${app}`;
 var shell os      = `uname -s`;
-var shell workdir = `echo $HOME/dev`;
 
-# 2. SANCTUARY
-#
-# The root directory where all project repositories are cloned.
-# Must be an absolute path. Accepts a literal or $variable reference.
-
-sanctuary = $workdir;
-
-#  3. IMPORT
+# 2. IMPORT
 #
 # Split config across multiple .kiru files.
 # Paths are relative to the current file's directory.
 #
 # import `common.kiru`;
 
-# 4. PROJECT
+# 3. PROJECT
 #
-# Syntax: pr <name> { ... }
+# Syntax: pr <name> [field = value, ...] { ... }
 #
-# Fields:
+# Fields (comma-separated inside brackets):
 #   url     (required)  Git clone URL
-#   dir     (required)  Directory inside sanctuary
+#   dir     (required)  Directory for the project
 #   sync    (optional)  `clone` (default) or `ignore`
 #   branch  (optional)  Git branch to clone
-  #   include (optional)  .kiru file inside the project to merge in; included kiru files can only use standalone-mode features (no pr blocks, no sanctuary)
 #
-# Inside a pr block you can also declare:
+# Inside the braces you declare:
 #   var <type> <name> = <value>;   Project-scoped variables
 #   fn <name> { ... }              Functions
 #   run <name> { ... }             Run blocks with chain syntax
 
-pr myapp {
-    url  = `git@github.com:${user}/myapp.git`;
-    dir  = `${app}`;
-    sync = `clone`;
-    branch = `main`;
-    include = `.kiru/main.kiru`;
-
+pr myapp [
+  url  = `git@github.com:${user}/myapp.git`,
+  dir  = `${app}`,
+  sync = `clone`,
+  branch = `main`,
+] {
     # Project vars are accessible within this project's functions.
     var string docker_registry = `ghcr.io/${user}`;
     var string port = `3000`;
 
-    # 5. FUNCTIONS
+    # 4. FUNCTIONS
     #
     # Primitives available inside fn { ... }:
     #
@@ -121,7 +110,7 @@ pr myapp {
         # env block sets environment variables for its body.
         env [
           CGO_ENABLED = `0`,
-          GOPATH = $gopath, # trailing is allowed
+          GOPATH = $gopath,
         ] {
             log `Testing go program`;
             exec `go test -race ./...`;
@@ -147,7 +136,7 @@ pr myapp {
         };
     }
 
-    # 6. RUN BLOCKS
+    # 5. RUN BLOCKS
     #
     # A run block declares an orchestration plan using chains.
     #
@@ -156,8 +145,8 @@ pr myapp {
     #
     # Example: run all { lint => check => build; test; }
     #
-    #   Chain 1: lint → check → build  (sequential)
-    #   Chain 2: test                  (runs concurrently with chain 1)
+    #   Chain 1: lint -> check -> build  (sequential)
+    #   Chain 2: test                    (runs concurrently with chain 1)
 
     run all {
         lint => check => build;
@@ -168,17 +157,3 @@ pr myapp {
         lint => test;
     }
 }
-
-# 7. STANDALONE MODE
-#
-# Set the environment variable SANCTUARY=0 to run without a sanctuary directory.
-# Useful for CI/CD pipelines. In this mode:
-#   - sanctuary and project blocks are not required
-#   - Top-level functions and run blocks are used directly
-#   - Config is read from .kiru/main.kiru in the current directory
-#   - kiru sync is not available
-#
-# Example:
-#   # SANCTUARY=0 kiru validate
-#   # SANCTUARY=0 kiru fn build
-#   # SANCTUARY=0 kiru run ci

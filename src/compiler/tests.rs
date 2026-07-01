@@ -2,72 +2,9 @@ use super::*;
 use crate::runner::Runner;
 use std::fs;
 use std::path::Path;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::Arc;
 
-/// Serializes tests that read or modify the SANCTUARY env var.
-static SANCTUARY_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
-
-/// Run a closure with SANCTUARY set to `val`, restoring the original value
-/// afterward. Holds SANCTUARY_MUTEX across the call and uses catch_unwind
-/// so that a panic inside f() neither leaks the modified env var nor poisons
-/// the mutex.
-fn with_sanctuary<R>(val: &str, f: impl FnOnce() -> R) -> R {
-    let _guard = SANCTUARY_MUTEX.lock().unwrap();
-    let prev = std::env::var("SANCTUARY").ok();
-    // SAFETY: set_var is safe here because SANCTUARY_MUTEX prevents
-    // concurrent env var access from other threads.
-    unsafe {
-        std::env::set_var("SANCTUARY", val);
-    }
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
-    match prev {
-        Some(v) => {
-            // SAFETY: Same mutex guard still held.
-            unsafe {
-                std::env::set_var("SANCTUARY", v);
-            }
-        }
-        None => {
-            // SAFETY: Same mutex guard still held.
-            unsafe {
-                std::env::remove_var("SANCTUARY");
-            }
-        }
-    }
-    drop(_guard);
-    match result {
-        Ok(r) => r,
-        Err(e) => std::panic::resume_unwind(e),
-    }
-}
-
-/// Run a closure with SANCTUARY removed from the environment, restoring
-/// the original value afterward. Holds SANCTUARY_MUTEX across the call
-/// and uses catch_unwind so that a panic inside f() neither leaks the
-/// modified env var nor poisons the mutex.
-fn without_sanctuary<R>(f: impl FnOnce() -> R) -> R {
-    let _guard = SANCTUARY_MUTEX.lock().unwrap();
-    let prev = std::env::var("SANCTUARY").ok();
-    // SAFETY: remove_var is safe here because SANCTUARY_MUTEX prevents
-    // concurrent env var access from other threads.
-    unsafe {
-        std::env::remove_var("SANCTUARY");
-    }
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
-    if let Some(v) = prev {
-        // SAFETY: Same mutex guard still held.
-        unsafe {
-            std::env::set_var("SANCTUARY", v);
-        }
-    }
-    drop(_guard);
-    match result {
-        Ok(r) => r,
-        Err(e) => std::panic::resume_unwind(e),
-    }
-}
-
-fn compile_full(entry_path: &Path) -> Result<Sanctuary, CompileError> {
+fn compile_full(entry_path: &Path) -> Result<Config, CompileError> {
     compile_and_resolve(entry_path)
 }
 
@@ -84,13 +21,11 @@ fn test_load_basic() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp/dev`;\n\
 var string a = `hello`;\n\
-pr test [url = `http://example.com`, dir = `test`] { }\n\
+pr test [url = `http://example.com`, dir = `test`] { }\
 ",
     );
     let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
-    assert_eq!(cfg.sanctuary_path, "/tmp/dev");
     assert!(cfg.projects.contains_key("test"));
     assert_eq!(cfg.projects["test"].url, "http://example.com");
 }
@@ -102,7 +37,6 @@ fn test_load_with_project_body() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp/dev`;\n\
 pr test [\n\
     url = `http://example.com`,\n\
     dir = `test`,\n\
@@ -111,7 +45,7 @@ pr test [\n\
     fn build { log `hi`; }\n\
     run release { build; }\n\
     run ci { build; }\n\
-}\n\
+}\
 ",
     );
     let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
@@ -131,7 +65,6 @@ fn test_import_resolution() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 import `./other.kiru`;\n\
 pr p [url = $extra, dir = `d`] { }
 ",
@@ -143,16 +76,8 @@ pr p [url = $extra, dir = `d`] { }
 #[test]
 fn test_circular_import() {
     let dir = tempfile::TempDir::new().unwrap();
-    write_config(
-        dir.path(),
-        "a.kiru",
-        "import `./b.kiru`; sanctuary = `/tmp`;",
-    );
-    write_config(
-        dir.path(),
-        "b.kiru",
-        "import `./a.kiru`; sanctuary = `/tmp`;",
-    );
+    write_config(dir.path(), "a.kiru", "import `./b.kiru`;");
+    write_config(dir.path(), "b.kiru", "import `./a.kiru`;");
     let err = compile_full(&dir.path().join("a.kiru")).unwrap_err();
     let err_str = err.to_string();
     assert!(
@@ -163,28 +88,12 @@ fn test_circular_import() {
 }
 
 #[test]
-fn test_first_sanctuary_wins() {
-    let dir = tempfile::TempDir::new().unwrap();
-    write_config(
-        dir.path(),
-        "main.kiru",
-        "\
-sanctuary = `/tmp`;\n\
-sanctuary = `/other`;\
-",
-    );
-    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
-    assert_eq!(cfg.sanctuary_path, "/tmp");
-}
-
-#[test]
 fn test_shadowing_global_var() {
     let dir = tempfile::TempDir::new().unwrap();
     write_config(
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 var string x = `a`;\n\
 var string x = `b`;\n\
 pr p [url = $x, dir = `d`] { }
@@ -202,7 +111,6 @@ fn test_duplicate_project_merges() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 pr p1 [url = `u`, dir = `d1`] { }\n\
 pr p1 { fn build { log `x`; } }\
 ",
@@ -222,7 +130,6 @@ fn test_variable_chain_resolution() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 var string a = `x`;\n\
 var string b = $a;\n\
 var string c = $b;\n\
@@ -240,7 +147,6 @@ fn test_undefined_variable() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 var string x = $missing;\
 ",
     );
@@ -253,139 +159,76 @@ var string x = $missing;\
 }
 
 #[test]
-fn test_missing_sanctuary() {
-    without_sanctuary(|| {
-        let dir = tempfile::TempDir::new().unwrap();
-        write_config(
-            dir.path(),
-            "main.kiru",
-            "\
-pr test [url = `http://example.com`, dir = `test`] { }\
-",
-        );
-        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(err.to_string().contains("sanctuary"), "got: {}", err);
-    })
-}
-
-#[test]
-fn test_sanctuary_absolute_path() {
-    without_sanctuary(|| {
-        let dir = tempfile::TempDir::new().unwrap();
-        write_config(
-            dir.path(),
-            "main.kiru",
-            "\
-sanctuary = `relative/path`;\
-",
-        );
-        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(err.to_string().contains("absolute"), "got: {}", err);
-    })
-}
-
-#[test]
 fn test_missing_url() {
-    without_sanctuary(|| {
-        let dir = tempfile::TempDir::new().unwrap();
-        write_config(
-            dir.path(),
-            "main.kiru",
-            "\
-sanctuary = `/tmp`;\n\
-pr p [dir = `d`] { }\
-",
-        );
-        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(err.to_string().contains("url is required"), "got: {}", err);
-    })
-}
-
-#[test]
-fn test_missing_dir() {
-    without_sanctuary(|| {
-        let dir = tempfile::TempDir::new().unwrap();
-        write_config(
-            dir.path(),
-            "main.kiru",
-            "\
-sanctuary = `/tmp`;\n\
-pr p [url = `u`] { }\
-",
-        );
-        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(err.to_string().contains("dir is required"), "got: {}", err);
-    })
-}
-
-#[test]
-fn test_duplicate_dir() {
-    without_sanctuary(|| {
-        let dir = tempfile::TempDir::new().unwrap();
-        write_config(
-            dir.path(),
-            "main.kiru",
-            "\
-sanctuary = `/tmp`;\n\
-pr a [url = `ua`, dir = `shared`] { }\n\
-pr b [url = `ub`, dir = `shared`] { }\
-",
-        );
-        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(
-            err.to_string().contains("duplicate directory"),
-            "got: {}",
-            err
-        );
-    })
-}
-
-#[test]
-fn test_invalid_sync_value() {
-    without_sanctuary(|| {
-        let dir = tempfile::TempDir::new().unwrap();
-        write_config(
-            dir.path(),
-            "main.kiru",
-            "\
-sanctuary = `/tmp`;\n\
-pr p [url = `u`, dir = `d`, sync = `invalid`] { }\
-",
-        );
-        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(err.to_string().contains("sync"), "got: {}", err);
-    })
-}
-
-#[test]
-fn test_duplicate_project_field() {
-    without_sanctuary(|| {
-        let dir = tempfile::TempDir::new().unwrap();
-        write_config(
-            dir.path(),
-            "main.kiru",
-            "\
-sanctuary = `/tmp`;\n\
-pr p [url = `u`, dir = `d`, dir = `e`] { }\
-",
-        );
-        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(err.to_string().contains("duplicate field"), "got: {}", err);
-    })
-}
-
-#[test]
-fn test_only_sanctuary() {
     let dir = tempfile::TempDir::new().unwrap();
     write_config(
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\
+pr p [dir = `d`] { }\
 ",
     );
-    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
-    assert_eq!(cfg.sanctuary_path, "/tmp");
+    compile_full(&dir.path().join("main.kiru")).unwrap();
+}
+
+#[test]
+fn test_missing_dir() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+pr p [url = `u`] { }\
+",
+    );
+    compile_full(&dir.path().join("main.kiru")).unwrap();
+}
+
+#[test]
+fn test_duplicate_dir() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+pr a [url = `ua`, dir = `shared`] { }\n\
+pr b [url = `ub`, dir = `shared`] { }\
+",
+    );
+    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+    assert!(
+        err.to_string().contains("duplicate directory"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn test_invalid_sync_value() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+pr p [url = `u`, dir = `d`, sync = `invalid`] { }\
+",
+    );
+    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+    assert!(err.to_string().contains("sync"), "got: {}", err);
+}
+
+#[test]
+fn test_duplicate_project_field() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+pr p [url = `u`, dir = `d`, dir = `e`] { }\
+",
+    );
+    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+    assert!(err.to_string().contains("duplicate field"), "got: {}", err);
 }
 
 #[test]
@@ -395,7 +238,6 @@ fn test_interpolation_in_backtick() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 var string name = `world`;\n\
 pr p [url = `http://${name}.com`, dir = `d`] { }\
 ",
@@ -411,7 +253,6 @@ fn test_project_field_with_var_ref() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 var string myurl = `http://example.com`;\n\
 pr x [url = $myurl, dir = `d`] { }\
 ",
@@ -427,7 +268,6 @@ fn test_duplicate_fn_in_project() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 pr test [\n\
     url = `u`,\n\
     dir = `d`,\n\
@@ -452,7 +292,6 @@ fn test_duplicate_run_in_project() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 pr test [\n\
     url = `u`,\n\
     dir = `d`,\n\
@@ -479,7 +318,6 @@ fn test_multi_file_parse_order() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 import `./a.kiru`;\n\
 pr p [url = $a, dir = `d`] { }\
 ",
@@ -495,7 +333,6 @@ fn test_undefined_var_in_fn_body() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 pr test [\n\
     url = `u`,\n\
     dir = `d`,\n\
@@ -519,7 +356,6 @@ fn test_run_reference_validation() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 pr test [\n\
     url = `u`,\n\
     dir = `d`,\n\
@@ -541,7 +377,6 @@ fn test_valid_run_references() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 pr test [\n\
     url = `u`,\n\
     dir = `d`,\n\
@@ -562,7 +397,6 @@ fn test_shadowing_var_in_fn_body() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 pr test [\n\
     url = `u`,\n\
     dir = `d`,\n\
@@ -583,31 +417,12 @@ pr test [\n\
 }
 
 #[test]
-fn test_sanctuary_with_var_ref() {
-    let dir = tempfile::TempDir::new().unwrap();
-    write_config(
-        dir.path(),
-        "main.kiru",
-        &format!(
-            "\
-var string workdir = `{}`;\n\
-sanctuary = $workdir;\
-",
-            dir.path().display()
-        ),
-    );
-    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
-    assert_eq!(cfg.sanctuary_path, dir.path().to_str().unwrap());
-}
-
-#[test]
 fn test_project_var_chain_resolution() {
     let dir = tempfile::TempDir::new().unwrap();
     write_config(
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 pr test [\n\
     url = `u`,\n\
     dir = `d`,\n\
@@ -617,7 +432,7 @@ pr test [\n\
 }\
 ",
     );
-    // We can't check project vars directly on the resolved Sanctuary,
+    // We can't check project vars directly on the resolved Config,
     // but the configuration should compile and resolve without errors.
     let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
     assert_eq!(cfg.projects["test"].dir, "d");
@@ -630,7 +445,6 @@ fn test_project_var_sees_global() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 var string global_var = `global`;\n\
 pr test [\n\
     url = `u`,\n\
@@ -651,7 +465,6 @@ fn test_undefined_var_in_case_condition() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 pr test [\n\
     url = `u`,\n\
     dir = `d`,\n\
@@ -675,7 +488,6 @@ fn test_undefined_var_in_case_varref_pattern() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 pr test [\n\
     url = `u`,\n\
     dir = `d`,\n\
@@ -698,24 +510,20 @@ fn test_case_runtime_matching_arm() {
     write_config(
         dir.path(),
         "main.kiru",
-        &format!(
-            "\
-sanctuary = `{}`;\n\
+        "\
 pr test [\n\
     url = `http://example.com`,\n\
     dir = `test`,\n\
-] {{\n\
+] {\n\
     var string os = `Linux`;\n\
-    fn deploy {{\n\
-        case $os {{\n\
-            `Linux` {{ log `matched`; }};\n\
-            _ {{ log `default`; }};\n\
-        }};\n\
-    }}\n\
-}}\
+    fn deploy {\n\
+        case $os {\n\
+            `Linux` { log `matched`; };\n\
+            _ { log `default`; };\n\
+        };\n\
+    }\n\
+}\
 ",
-            dir.path().display()
-        ),
     );
     let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
     let mut runner = Runner::new(Arc::new(cfg));
@@ -728,23 +536,19 @@ fn test_case_runtime_no_match() {
     write_config(
         dir.path(),
         "main.kiru",
-        &format!(
-            "\
-sanctuary = `{}`;\n\
+        "\
 pr test [\n\
     url = `http://example.com`,\n\
     dir = `test`,\n\
-] {{\n\
+] {\n\
     var string os = `Darwin`;\n\
-    fn deploy {{\n\
-        case $os {{\n\
-            `Linux` {{ log `only-linux`; }};\n\
-        }};\n\
-    }}\n\
-}}\
+    fn deploy {\n\
+        case $os {\n\
+            `Linux` { log `only-linux`; };\n\
+        };\n\
+    }\n\
+}\
 ",
-            dir.path().display()
-        ),
     );
     let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
     let mut runner = Runner::new(Arc::new(cfg));
@@ -760,11 +564,10 @@ fn test_project_fn_collection() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 pr p [ url = `http://x`, dir = `x` ] {\n\
     fn build { log `building`; }\n\
     fn test { exec `check`; }\n\
-}\n\
+}\
 ",
     );
     let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
@@ -781,13 +584,12 @@ fn test_project_run_collection() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 pr p [ url = `http://x`, dir = `x` ] {\n\
     fn build { log `x`; }\n\
     fn test { log `y`; }\n\
     run all { build => test; }\n\
     run ci { build; }\n\
-}\n\
+}\
 ",
     );
     let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
@@ -805,11 +607,10 @@ fn test_duplicate_fn_in_project_errors() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 pr p [ url = `http://x`, dir = `x` ] {\n\
     fn dup { log `a`; }\n\
     fn dup { log `b`; }\n\
-}\n\
+}\
 ",
     );
     let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
@@ -827,12 +628,11 @@ fn test_duplicate_run_in_project_errors() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 pr p [ url = `http://x`, dir = `x` ] {\n\
     fn x { log `a`; }\n\
     run dup { x; }\n\
     run dup { x; }\n\
-}\n\
+}\
 ",
     );
     let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
@@ -846,10 +646,9 @@ fn test_run_validates_function_refs() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 pr p [ url = `http://x`, dir = `x` ] {\n\
     run bad { nonexistent; }\n\
-}\n\
+}\
 ",
     );
     let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
@@ -863,10 +662,9 @@ fn test_fn_var_validation() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 pr p [ url = `http://x`, dir = `x` ] {\n\
     fn bad { log $undefined; }\n\
-}\n\
+}\
 ",
     );
     let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
@@ -886,7 +684,6 @@ fn test_project_field_references_project_var() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 pr test [\n\
     url = `http://example.com/${name}`,\n\
     dir = $name,\n\
@@ -908,7 +705,6 @@ fn test_global_var_shadowed_by_project_var() {
         dir.path(),
         "main.kiru",
         "\
-sanctuary = `/tmp`;\n\
 var string name = `global`;\n\
 pr test [\n\
     url = `http://example.com`,\n\
@@ -922,31 +718,4 @@ pr test [\n\
     let proj = &cfg.projects["test"];
     // Project-level var "name" shadows the global "name"
     assert_eq!(proj.dir, "project");
-}
-
-// --- SANCTUARY=0 standalone mode (env var required) ---
-
-#[test]
-fn test_standalone_config_no_sanctuary() {
-    with_sanctuary("0", || {
-        let dir = tempfile::TempDir::new().unwrap();
-        write_config(
-            dir.path(),
-            "main.kiru",
-            "\
-pr p {\n\
-    fn build { log `building`; }\n\
-    fn test { exec `check`; }\n\
-    run all { build => test; }\n\
-}\n\
-",
-        );
-        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
-        assert_eq!(cfg.sanctuary_path, "");
-        let proj = &cfg.projects["p"];
-        assert!(proj.functions.contains_key("build"));
-        assert!(proj.functions.contains_key("test"));
-        assert!(proj.runs.contains_key("all"));
-        assert!(!cfg.projects.is_empty());
-    })
 }

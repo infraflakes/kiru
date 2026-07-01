@@ -1,19 +1,19 @@
-use crate::compiler::Sanctuary;
+use crate::compiler::Config;
 use crate::runner::OutputCallback;
 use crate::runner::error::RuntimeError;
 use crate::runner::execution_context::{ExecContext, OutputTarget};
 use std::io;
 use std::sync::Arc;
 
-/// Executes resolved function bodies against a compiled `Sanctuary` config.
+/// Executes resolved function bodies against a compiled `Config`.
 pub(crate) struct Runner {
-    cfg: Arc<Sanctuary>,
+    cfg: Arc<Config>,
     output: OutputTarget,
 }
 
 impl Runner {
     /// Create a new runner that writes directly to stdout.
-    pub(crate) fn new(cfg: Arc<Sanctuary>) -> Self {
+    pub(crate) fn new(cfg: Arc<Config>) -> Self {
         Runner {
             cfg,
             output: OutputTarget::Direct(Box::new(io::stdout())),
@@ -42,7 +42,7 @@ impl Runner {
             .get(fn_name)
             .ok_or_else(|| RuntimeError::Lookup(format!("unknown function: {}", fn_name)))?;
 
-        let mut ctx = ExecContext::new(&self.cfg, Some(project), &mut self.output);
+        let mut ctx = ExecContext::new(Some(project), &mut self.output);
         ctx.exec_resolved_fn_body(fn_body)
     }
 }

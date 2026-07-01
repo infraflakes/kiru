@@ -25,7 +25,6 @@ fn count_stmt_types(program: &Program) -> Vec<&'static str> {
         .items
         .iter()
         .map(|s| match s {
-            TopLevel::Stmt(Stmt::Sanctuary { .. }) => "sanctuary",
             TopLevel::Stmt(Stmt::Var { .. }) => "var",
             TopLevel::Stmt(Stmt::Project { .. }) => "pr",
             TopLevel::Stmt(Stmt::Field { .. }) => "field",
@@ -42,37 +41,9 @@ fn count_body_stmt_types(body: &[Stmt]) -> Vec<&'static str> {
             Stmt::Var { .. } => "var",
             Stmt::Fn { .. } => "fn",
             Stmt::Run { .. } => "run",
-            Stmt::Sanctuary { .. } | Stmt::Project { .. } | Stmt::Field { .. } => "other",
+            Stmt::Project { .. } | Stmt::Field { .. } => "other",
         })
         .collect()
-}
-
-#[test]
-fn test_sanctuary_decl() {
-    let prog = parse_program("sanctuary = `/tmp/dev`;").unwrap();
-    assert_eq!(count_stmt_types(&prog), vec!["sanctuary"]);
-    match &prog.items[0] {
-        TopLevel::Stmt(Stmt::Sanctuary { value, .. }) => match value {
-            Expr::BacktickLit { parts, .. } => {
-                let concat: String = parts.iter().map(|p| p.value.as_str()).collect();
-                assert_eq!(concat, "/tmp/dev");
-            }
-            _ => panic!("expected BacktickLit"),
-        },
-        _ => panic!("expected SanctuaryDecl"),
-    }
-}
-
-#[test]
-fn test_sanctuary_with_var_ref() {
-    let prog = parse_program("sanctuary = $workdir;").unwrap();
-    match &prog.items[0] {
-        TopLevel::Stmt(Stmt::Sanctuary { value, .. }) => match value {
-            Expr::VarRef { name, .. } => assert_eq!(name, "workdir"),
-            _ => panic!("expected VarRef"),
-        },
-        _ => panic!("expected SanctuaryDecl"),
-    }
 }
 
 #[test]
@@ -253,7 +224,7 @@ fn test_run_name_ref_not_allowed() {
 
 #[test]
 fn test_missing_semicolon() {
-    let result = parse_program("sanctuary = `$HOME`");
+    let result = parse_program("var string x = `hello`");
     assert!(result.is_err());
     let errs = result.unwrap_err();
     assert!(errs.iter().any(|e| e.to_string().contains("expected")));
@@ -278,7 +249,7 @@ fn test_unexpected_token_at_top_level() {
     let errs = result.unwrap_err();
     assert!(
         errs.iter()
-            .any(|e| e.to_string().contains("expected sanctuary"))
+            .any(|e| e.to_string().contains("expected var, pr, fn, or run"))
     );
 }
 
@@ -303,16 +274,15 @@ fn test_var_with_var_ref_value() {
 
 #[test]
 fn test_multiple_top_level_statements() {
-    let input = "sanctuary = `/tmp`;\n\
-                  var string x = `hello`;\n\
-                   pr p [url = `u`, dir = `d`] { fn f { log `hi`; } run s { f; } }";
+    let input = "var string x = `hello`;\n\
+                  pr p [url = `u`, dir = `d`] { fn f { log `hi`; } run s { f; } }";
     let prog = parse_program(input).unwrap();
-    assert_eq!(count_stmt_types(&prog), vec!["sanctuary", "var", "pr"]);
+    assert_eq!(count_stmt_types(&prog), vec!["var", "pr"]);
 }
 
 #[test]
 fn test_error_recovery_skips_bad_stmt() {
-    let result = parse_program("sanctuary = `/tmp`;\nfn bad { unknown }");
+    let result = parse_program("var string x = `hello`;\nfn bad { unknown }");
     match result {
         Ok(prog) => {
             assert_eq!(prog.items.len(), 1);

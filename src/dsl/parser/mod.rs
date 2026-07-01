@@ -134,7 +134,6 @@ impl Parser {
             return Err(ParseError::new(self.eof_aware_span(), msg.clone()));
         }
         match self.current_token().ty {
-            TokenType::Sanctuary => self.parse_sanctuary_decl(),
             TokenType::Var => self.parse_var_decl(),
             TokenType::Pr => self.parse_project_decl(),
             TokenType::Fn => self.parse_fn_decl(),
@@ -153,7 +152,7 @@ impl Parser {
                     Err(ParseError::new(
                         self.eof_aware_span(),
                         format!(
-                            "expected sanctuary, var, pr, fn, or run, found {}",
+                            "expected var, pr, fn, or run, found {}",
                             format_token(self.current_token())
                         ),
                     ))
@@ -207,7 +206,7 @@ impl Parser {
                 Semicolon | RBrace => {
                     self.advance();
                 }
-                Sanctuary | Var | Pr | Fn | Run => break,
+                Var | Pr | Fn | Run => break,
                 _ => self.advance(),
             }
         }

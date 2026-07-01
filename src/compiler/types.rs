@@ -83,8 +83,7 @@ pub struct UnresolvedProject {
 /// The pre-resolution config with unresolved AST fields.
 /// Validation operates on this type so errors surface before any shell execution.
 #[derive(Debug, Clone)]
-pub struct UnresolvedSanctuary {
-    pub sanctuary_path: Option<Expr>,
+pub struct UnresolvedConfig {
     pub projects: HashMap<String, UnresolvedProject>,
 }
 
@@ -107,10 +106,9 @@ pub struct Project {
 /// `var shell` commands executed. The runner works exclusively with this type.
 ///
 /// `vars` is absent from this type — all variables have been inlined into function
-/// bodies at compile time. See [`UnresolvedSanctuary`] for the pre-resolution type
+/// bodies at compile time. See [`UnresolvedConfig`] for the pre-resolution type
 /// that carries variable declarations.
 #[derive(Debug, Clone)]
-pub struct Sanctuary {
-    pub sanctuary_path: String,
+pub struct Config {
     pub projects: HashMap<String, Project>,
 }
