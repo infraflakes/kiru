@@ -31,14 +31,10 @@ fn current_display(task: &super::Task) -> String {
     if task.output.is_empty() {
         return String::new();
     }
-    if task.finalized {
-        // Show summary (first line) for finalized tasks
-        sync_message(&task.output[0]).to_string()
-    } else if let Some(last) = task.output.last() {
-        sync_message(last).to_string()
-    } else {
-        String::new()
-    }
+    task.output
+        .last()
+        .map(|line| sync_message(line).to_string())
+        .unwrap_or_default()
 }
 
 pub fn render_sync_output(frame: &mut Frame, model: &Model, spinner_idx: usize) {
