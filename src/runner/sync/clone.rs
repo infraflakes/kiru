@@ -119,14 +119,23 @@ pub fn sync_project_with_callback(
 
 /// Run sync for all projects through the TUI.
 pub fn run_sync_for_projects(
-    projects: HashMap<String, Project>,
+    mut projects: HashMap<String, Project>,
     chain_pairs: Vec<(String, Vec<String>)>,
 ) -> miette::Result<()> {
+    let name_indices: Vec<(String, usize)> = chain_pairs
+        .iter()
+        .enumerate()
+        .map(|(i, (name, _))| (name.clone(), i))
+        .collect();
+
     if runner::run_tui_with_sync(chain_pairs, move |tx| async move {
         let mut had_errors = false;
         let mut join_handles = Vec::new();
 
-        for (project_index, (project_name, project)) in projects.into_iter().enumerate() {
+        for (project_name, project_index) in name_indices {
+            let Some(project) = projects.remove(&project_name) else {
+                continue;
+            };
             let tx_cb = tx.clone();
             let project_name_clone = project_name.clone();
 
