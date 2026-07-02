@@ -42,6 +42,9 @@ struct LinearState {
     /// global vars are visible across blocks. Project-local vars accumulate
     /// and take priority over globals.
     project_var_scopes: HashMap<String, HashMap<String, String>>,
+    /// Tracks which project fields have been seen per project to detect
+    /// duplicates across the full import tree — not just per file.
+    project_seen_fields: HashMap<String, HashSet<String>>,
     loaded_files: HashSet<PathBuf>,
     recursion_stack: HashSet<PathBuf>,
 }
@@ -52,6 +55,7 @@ impl LinearState {
             global_scope: HashMap::new(),
             projects: HashMap::new(),
             project_var_scopes: HashMap::new(),
+            project_seen_fields: HashMap::new(),
             loaded_files: HashSet::new(),
             recursion_stack: HashSet::new(),
         }
@@ -259,7 +263,6 @@ fn process_project_block(
     name: &str,
     fields: &[Stmt],
     body: &[Stmt],
-    project_seen_fields: &mut HashMap<String, HashSet<String>>,
     state: &mut LinearState,
     program: &Program,
 ) -> Result<(), CompileError> {
@@ -277,7 +280,10 @@ fn process_project_block(
                 runs: HashMap::new(),
             });
 
-    let seen_fields = project_seen_fields.entry(name.to_owned()).or_default();
+    let seen_fields = state
+        .project_seen_fields
+        .entry(name.to_owned())
+        .or_default();
 
     // Refresh project scope from current globals, preserving
     // any project-local vars already declared in prior blocks.
@@ -324,8 +330,6 @@ fn linear_process_program(
     base_dir: Option<&Path>,
     state: &mut LinearState,
 ) -> Result<(), CompileError> {
-    // Tracks which project fields have been seen per project to detect duplicates.
-    let mut project_seen_fields: HashMap<String, HashSet<String>> = HashMap::new();
     for item in &program.items {
         match item {
             TopLevel::Stmt(stmt) => match stmt {
@@ -340,14 +344,7 @@ fn linear_process_program(
                 Stmt::Project {
                     name, fields, body, ..
                 } => {
-                    process_project_block(
-                        name,
-                        fields,
-                        body,
-                        &mut project_seen_fields,
-                        state,
-                        program,
-                    )?;
+                    process_project_block(name, fields, body, state, program)?;
                 }
                 Stmt::Fn { offset, len, .. } | Stmt::Run { offset, len, .. } => {
                     return Err(spanned_err(
