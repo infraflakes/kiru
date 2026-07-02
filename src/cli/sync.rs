@@ -5,7 +5,7 @@ use std::path::PathBuf;
 /// Sync all projects via the TUI.
 pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
     let config_path = super::get_config_path(config_arg);
-    let config = crate::compiler::extract_projects(&config_path).map_err(|e| match e {
+    let config = crate::compiler::parse_projects_metadata(&config_path).map_err(|e| match e {
         CompileError::ParseReports(reports) => super::print_parse_errors(reports),
         _ => miette::miette!("{}", e),
     })?;
@@ -15,13 +15,22 @@ pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
         .into_iter()
         .filter(|(name, proj)| {
             if proj.url.is_empty() && proj.dir.is_empty() {
-                eprintln!("{:?}", miette::miette!("project {:?}: missing url and dir, skipping sync", name));
+                eprintln!(
+                    "{:?}",
+                    miette::miette!("project {:?}: missing url and dir, skipping sync", name)
+                );
                 false
             } else if proj.url.is_empty() {
-                eprintln!("{:?}", miette::miette!("project {:?}: missing url, skipping sync", name));
+                eprintln!(
+                    "{:?}",
+                    miette::miette!("project {:?}: missing url, skipping sync", name)
+                );
                 false
             } else if proj.dir.is_empty() {
-                eprintln!("{:?}", miette::miette!("project {:?}: missing dir, skipping sync", name));
+                eprintln!(
+                    "{:?}",
+                    miette::miette!("project {:?}: missing dir, skipping sync", name)
+                );
                 false
             } else {
                 true

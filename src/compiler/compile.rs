@@ -44,10 +44,6 @@ struct LinearState {
     project_var_scopes: HashMap<String, HashMap<String, String>>,
     loaded_files: HashSet<PathBuf>,
     recursion_stack: HashSet<PathBuf>,
-    /// When false, `import` items are silently skipped instead of followed.
-    /// Used by `extract_projects` which only needs project fields from the
-    /// entry file and must not fail on missing import targets.
-    follow_imports: bool,
 }
 
 impl LinearState {
@@ -58,7 +54,6 @@ impl LinearState {
             project_var_scopes: HashMap::new(),
             loaded_files: HashSet::new(),
             recursion_stack: HashSet::new(),
-            follow_imports: true,
         }
     }
 }
@@ -379,9 +374,6 @@ fn linear_process_program(
                 }
             },
             TopLevel::Import(expr) => {
-                if !state.follow_imports {
-                    continue;
-                }
                 let path_str = imports::resolve_import_path(
                     expr,
                     &state.global_scope,
@@ -424,20 +416,16 @@ fn resolve_linear(entry_path: &Path) -> Result<LinearResult, CompileError> {
 /// or lowering function bodies.
 ///
 /// 1. Linear processing — parse the entry file, resolve `var` and `var shell`
-///    declarations, build global and project scopes.  Imports are **skipped**
-///    (sync only needs the entry file's project list).
+///    declarations, build global and project scopes, follow imports.
 /// 2. Project field resolution — resolve each project's `url`, `dir`, `sync`,
 ///    and `branch` expressions against its computed scope.
 ///
 /// The returned [`Config`] has empty function maps — function and run
 /// blocks are collected during linear processing but never resolved.
-pub fn extract_projects(entry_path: &Path) -> Result<Config, CompileError> {
+pub fn parse_projects_metadata(entry_path: &Path) -> Result<Config, CompileError> {
     let abs_entry = canonicalize_entry(entry_path)?;
 
-    let mut state = LinearState {
-        follow_imports: false,
-        ..LinearState::new()
-    };
+    let mut state = LinearState::new();
     linear_process_file(&abs_entry, &mut state)?;
 
     let mut projects = HashMap::new();
