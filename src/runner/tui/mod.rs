@@ -20,11 +20,9 @@ pub(crate) use model::{Model, Task, TaskStatus};
 
 use crossterm_backend::SafeBackend;
 
-/// Send a TuiEvent over the channel, printing a warning if the receiver disconnected.
+/// Send a TuiEvent over the channel. Ok to fail — receiver may have disconnected.
 pub fn send_tui_event(sender: &mpsc::UnboundedSender<TuiEvent>, event: TuiEvent) {
-    if sender.send(event).is_err() {
-        eprintln!("[kiru] warning: TUI event receiver disconnected");
-    }
+    let _ = sender.send(event);
 }
 
 const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -113,8 +111,16 @@ pub async fn run_tui_event_loop(
                 && let Event::Key(key) = event::read()?
             {
                 match key.code {
-                    KeyCode::Char('q') => break,
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
+                    KeyCode::Char('q') => {
+                        let _ = disable_raw_mode();
+                        eprintln!("Kiru force exited");
+                        std::process::exit(0);
+                    }
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        let _ = disable_raw_mode();
+                        eprintln!("Kiru force exited");
+                        std::process::exit(0);
+                    }
                     _ => {}
                 }
             }
