@@ -157,13 +157,13 @@ fn test_project_decl_with_body_stmts() {
 #[test]
 fn test_project_duplicate_fields() {
     let input = "\npr x [\n    url = `a`\n    url = `b`\n    dir = `d`\n] {\n}";
-    let prog = parse_program(input).unwrap();
-    match &prog.items[0] {
-        TopLevel::Stmt(Stmt::Project { fields, .. }) => {
-            assert_eq!(fields.len(), 3);
-        }
-        _ => panic!("expected ProjectDecl"),
-    }
+    let errs = parse_program(input).unwrap_err();
+    let msg = errs
+        .iter()
+        .map(|e| e.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(msg.contains("duplicate project field"), "got: {}", msg);
 }
 
 #[test]

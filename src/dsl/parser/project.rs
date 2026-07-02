@@ -57,6 +57,8 @@ impl Parser {
         self.advance(); // skip '['
 
         let mut fields = Vec::new();
+        let mut seen_fields: std::collections::HashSet<ProjectField> =
+            std::collections::HashSet::new();
         while self.current_token().ty != TokenType::RBracket {
             let type_offset = self.current_token().offset;
             let key_str = match &self.current_token().ty {
@@ -91,6 +93,13 @@ impl Parser {
                     ));
                 }
             };
+
+            if !seen_fields.insert(key.clone()) {
+                return Err(ParseError::new(
+                    self.eof_aware_span(),
+                    format!("duplicate project field: {}", key_str),
+                ));
+            }
 
             self.expect_with_context(TokenType::Assign, "in project field")?;
 

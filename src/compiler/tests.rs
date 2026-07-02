@@ -228,7 +228,7 @@ pr p [url = `u` dir = `d` dir = `e`] { }\
 ",
     );
     let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-    assert!(err.to_string().contains("duplicate field"), "got: {}", err);
+    assert!(err.to_string().contains("duplicate"), "got: {}", err);
 }
 
 #[test]

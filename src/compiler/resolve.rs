@@ -6,7 +6,8 @@ use crate::compiler::types::{
 };
 use crate::dsl::{CaseArm, CasePattern, EnvPair, Expr, FnStmt, Stmt, VarType};
 use crate::shell;
-use std::collections::HashMap;
+use miette::miette;
+use std::collections::{HashMap, HashSet};
 
 /// A chain of scope frames for lexical scoping in function bodies.
 ///
@@ -262,6 +263,7 @@ pub(crate) fn resolve_with_scopes(
     project_scopes: HashMap<String, HashMap<String, String>>,
 ) -> Result<Config, CompileError> {
     let mut projects = HashMap::new();
+    let mut seen_dirs: HashSet<String> = HashSet::new();
     for (name, unresolved_project) in unresolved.projects {
         let sync_offset_len = unresolved_project
             .sync
@@ -275,6 +277,14 @@ pub(crate) fn resolve_with_scopes(
             resolve_optional_expr(&unresolved_project.url, proj_scope, "", "")?.unwrap_or_default();
         let dir =
             resolve_optional_expr(&unresolved_project.dir, proj_scope, "", "")?.unwrap_or_default();
+
+        if !dir.is_empty() && !seen_dirs.insert(dir.clone()) {
+            return Err(CompileError::ValidationReport(miette!(
+                "project {:?}: duplicate directory {:?}",
+                name,
+                dir
+            )));
+        }
 
         let sync = match resolve_optional_expr(&unresolved_project.sync, proj_scope, "", "")? {
             Some(mode) => {

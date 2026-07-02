@@ -1,7 +1,7 @@
 use crate::dsl::{Expr, FnStmt, VarType};
 
 /// The key of a project block field (e.g., `url`, `dir`, `sync`, `branch`).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ProjectField {
     Url,
     Dir,

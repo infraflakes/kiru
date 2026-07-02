@@ -3,26 +3,6 @@ use crate::dsl::{CasePattern, Expr, FnStmt};
 use miette::miette;
 use std::collections::{HashMap, HashSet};
 
-/// Extract a plain string from an `Expr` if it is a simple backtick literal
-/// with no variable interpolation. Returns `None` for var refs or interpolated
-/// strings.
-fn extract_string(expr: &Option<Expr>) -> Option<String> {
-    let expr = expr.as_ref()?;
-    match expr {
-        Expr::BacktickLit { parts, .. } => {
-            let mut extracted_string = String::new();
-            for part in parts {
-                if part.is_var {
-                    return None;
-                }
-                extracted_string.push_str(&part.value);
-            }
-            Some(extracted_string)
-        }
-        Expr::VarRef { .. } => None,
-    }
-}
-
 /// Check whether a variable name is defined across the full scope hierarchy:
 /// local frames (innermost first), then project scope, then global scope.
 fn is_var_defined(
@@ -49,20 +29,6 @@ pub fn validate_configuration(
     let mut errors = Vec::new();
 
     let global_set: HashSet<String> = global_scope.keys().cloned().collect();
-
-    // Check for duplicate project directories (static backtick lits only)
-    let mut seen_dirs: HashSet<String> = HashSet::new();
-    for project in cfg.projects.values() {
-        if let Some(dir_str) = extract_string(&project.dir)
-            && !seen_dirs.insert(dir_str.clone())
-        {
-            errors.push(miette!(
-                "project {:?}: duplicate directory {:?}",
-                project.name,
-                dir_str
-            ));
-        }
-    }
 
     for (proj_name, project) in &cfg.projects {
         validate_run_refs(&project.runs, &project.functions, proj_name, &mut errors);

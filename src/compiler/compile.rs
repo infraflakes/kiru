@@ -42,9 +42,6 @@ struct LinearState {
     /// global vars are visible across blocks. Project-local vars accumulate
     /// and take priority over globals.
     project_var_scopes: HashMap<String, HashMap<String, String>>,
-    /// Tracks which project fields have been seen per project to detect
-    /// duplicates across the full import tree — not just per file.
-    project_seen_fields: HashMap<String, HashSet<String>>,
     loaded_files: HashSet<PathBuf>,
     recursion_stack: HashSet<PathBuf>,
 }
@@ -55,7 +52,6 @@ impl LinearState {
             global_scope: HashMap::new(),
             projects: HashMap::new(),
             project_var_scopes: HashMap::new(),
-            project_seen_fields: HashMap::new(),
             loaded_files: HashSet::new(),
             recursion_stack: HashSet::new(),
         }
@@ -174,7 +170,6 @@ pub(crate) fn merge_project_body_stmt(
     stmt: &Stmt,
     source_name: &str,
     source_text: &str,
-    seen_fields: &mut HashSet<String>,
 ) -> Result<(), CompileError> {
     let make_err = |msg: String, offset: usize, len: usize| -> CompileError {
         spanned_err(msg, source_name, source_text, offset, len)
@@ -190,15 +185,19 @@ pub(crate) fn merge_project_body_stmt(
             len,
             ..
         } => {
-            let field_name = format!("{:?}", key);
-            if !seen_fields.insert(field_name) {
+            let already_set = match key {
+                ProjectField::Url => project.url.is_some(),
+                ProjectField::Dir => project.dir.is_some(),
+                ProjectField::Sync => project.sync.is_some(),
+                ProjectField::Branch => project.branch.is_some(),
+            };
+            if already_set {
                 return Err(make_err(
                     format!("duplicate field '{:?}' in project '{}'", key, project.name),
                     *offset,
                     *len,
                 ));
             }
-
             match key {
                 ProjectField::Url => project.url = Some(value.clone()),
                 ProjectField::Dir => project.dir = Some(value.clone()),
@@ -280,11 +279,6 @@ fn process_project_block(
                 runs: HashMap::new(),
             });
 
-    let seen_fields = state
-        .project_seen_fields
-        .entry(name.to_owned())
-        .or_default();
-
     // Refresh project scope from current globals, preserving
     // any project-local vars already declared in prior blocks.
     let project_var_scopes = state.project_var_scopes.entry(name.to_owned()).or_default();
@@ -300,7 +294,6 @@ fn process_project_block(
             field_stmt,
             &program.source_name,
             &program.source_text,
-            seen_fields,
         )?;
     }
 
@@ -318,7 +311,6 @@ fn process_project_block(
             body_stmt,
             &program.source_name,
             &program.source_text,
-            seen_fields,
         )?;
     }
     Ok(())
