@@ -104,19 +104,19 @@ impl<'a> ExecContext<'a> {
         "  ".repeat(self.env_stack.len() + extra)
     }
 
-    /// Execute a fully resolved function body.
-    /// All values are concrete strings — no variable resolution happens here.
-    pub(crate) fn exec_resolved_fn_body(
-        &mut self,
-        body: &[ResolvedFnStmt],
-    ) -> Result<(), RuntimeError> {
-        let saved_work_dir = self.work_dir.clone();
-        let result = self.exec_resolved_fn_body_inner(body);
-        self.work_dir = saved_work_dir;
-        result
-    }
-
-    fn exec_resolved_fn_body_inner(&mut self, body: &[ResolvedFnStmt]) -> Result<(), RuntimeError> {
+    /// Run a sequence of resolved function statements sequentially.
+    ///
+    /// Every statement primitive (`log`, `exec`, `cd`, `env`, `case`) is
+    /// dispatched to its dedicated handler.  The function is re-entrant:
+    /// `case` arms and `env` blocks call back into `exec_stmts` for their
+    /// inner bodies.  The caller is responsible for saving and restoring
+    /// `work_dir` if `cd` isolation is needed — `exec_stmts` itself never
+    /// resets state.
+    ///
+    /// This is the single execution entry point used both by direct function
+    /// calls (`Runner::execute_fn_call`) and by internal constructs (`env`,
+    /// `case`).
+    pub(crate) fn exec_stmts(&mut self, body: &[ResolvedFnStmt]) -> Result<(), RuntimeError> {
         for stmt in body {
             match stmt {
                 ResolvedFnStmt::Log { value } => self.exec_log(value)?,
@@ -128,7 +128,7 @@ impl<'a> ExecContext<'a> {
                 ResolvedFnStmt::Case { condition, scopes } => {
                     for arm in scopes {
                         if match_case_pattern(&arm.pattern, condition) {
-                            let result = self.exec_resolved_fn_body_inner(&arm.body);
+                            let result = self.exec_stmts(&arm.body);
                             result?;
                             break;
                         }
@@ -197,7 +197,7 @@ impl<'a> ExecContext<'a> {
             .map_err(RuntimeError::Io)?;
 
         self.env_stack.push(layer);
-        let result = self.exec_resolved_fn_body(body);
+        let result = self.exec_stmts(body);
         self.env_stack.pop();
         result
     }

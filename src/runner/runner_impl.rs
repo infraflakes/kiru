@@ -43,6 +43,6 @@ impl Runner {
             .ok_or_else(|| RuntimeError::Lookup(format!("unknown function: {}", fn_name)))?;
 
         let mut ctx = ExecContext::new(Some(project), &mut self.output);
-        ctx.exec_resolved_fn_body(fn_body)
+        ctx.exec_stmts(fn_body)
     }
 }

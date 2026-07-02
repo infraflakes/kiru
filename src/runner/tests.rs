@@ -61,7 +61,7 @@ fn test_case_first_match_wins() {
             },
         ],
     }];
-    ctx.exec_resolved_fn_body(&body).unwrap();
+    ctx.exec_stmts(&body).unwrap();
 }
 
 #[test]
@@ -77,5 +77,5 @@ fn test_case_no_match_does_nothing() {
             }],
         }],
     }];
-    ctx.exec_resolved_fn_body(&body).unwrap();
+    ctx.exec_stmts(&body).unwrap();
 }
