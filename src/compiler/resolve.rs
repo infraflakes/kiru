@@ -175,12 +175,6 @@ pub(crate) fn resolve_var_stmt(
         ..
     } = stmt
     {
-        let resolved = resolve_expr(value, &*scope, &[], source_name, source_text)?;
-        let final_val = if *var_type == VarType::Shell {
-            shell::execute_shell_variable(name, &resolved, source_name, source_text, *offset, *len)?
-        } else {
-            resolved
-        };
         if scope.contains_key(name) {
             return Err(spanned_err(
                 format!("${} is already defined", name),
@@ -190,6 +184,12 @@ pub(crate) fn resolve_var_stmt(
                 *len,
             ));
         }
+        let resolved = resolve_expr(value, &*scope, &[], source_name, source_text)?;
+        let final_val = if *var_type == VarType::Shell {
+            shell::execute_shell_variable(name, &resolved, source_name, source_text, *offset, *len)?
+        } else {
+            resolved
+        };
         scope.insert(name.clone(), final_val);
     }
     Ok(())
@@ -210,16 +210,9 @@ pub(crate) fn resolve_var_decl_stmt(
     source_name: &str,
     source_text: &str,
 ) -> Result<(), CompileError> {
-    let resolved_value = resolve_expr(value, &*vars, &*local, source_name, source_text)?;
     let (offset, len) = value.offset_len();
-    let final_value = if *var_type == VarType::Shell {
-        shell::execute_shell_variable(name, &resolved_value, source_name, source_text, offset, len)?
-    } else {
-        resolved_value
-    };
 
     if local.is_empty() {
-        // Outside any case arm — bind into the flat global pool.
         if vars.contains_key(name) {
             return Err(spanned_err(
                 format!("${} is already defined", name),
@@ -229,10 +222,8 @@ pub(crate) fn resolve_var_decl_stmt(
                 len,
             ));
         }
-        vars.insert(name.to_string(), final_value);
     } else {
-        // Inside a case arm — bind into the arm-local frame only.
-        let top = local.last_mut().ok_or_else(|| {
+        let top = local.last().ok_or_else(|| {
             spanned_err(
                 "internal error: empty local frame in case arm variable declaration".to_string(),
                 source_name,
@@ -250,6 +241,27 @@ pub(crate) fn resolve_var_decl_stmt(
                 len,
             ));
         }
+    }
+
+    let resolved_value = resolve_expr(value, &*vars, &*local, source_name, source_text)?;
+    let final_value = if *var_type == VarType::Shell {
+        shell::execute_shell_variable(name, &resolved_value, source_name, source_text, offset, len)?
+    } else {
+        resolved_value
+    };
+
+    if local.is_empty() {
+        vars.insert(name.to_string(), final_value);
+    } else {
+        let top = local.last_mut().ok_or_else(|| {
+            spanned_err(
+                "internal error: empty local frame in case arm variable declaration".to_string(),
+                source_name,
+                source_text,
+                offset,
+                len,
+            )
+        })?;
         top.insert(name.to_string(), final_value);
     }
     Ok(())
