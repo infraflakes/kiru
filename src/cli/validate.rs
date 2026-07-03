@@ -1,14 +1,8 @@
 use super::load_config;
 use super::pager;
 use crate::compiler::Config;
+use crate::runner::colors::{BOLD, BOLD_CYAN, CYAN, GRAY, RESET, YELLOW};
 use std::path::PathBuf;
-
-const RESET: &str = "\x1b[0m";
-const BOLD: &str = "\x1b[1m";
-const YELLOW: &str = "\x1b[33m";
-const CYAN: &str = "\x1b[36m";
-const GRAY: &str = "\x1b[90m";
-const BOLD_CYAN: &str = "\x1b[1;36m";
 
 macro_rules! style {
     ($code:expr, $($arg:tt)*) => {

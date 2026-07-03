@@ -4,6 +4,94 @@ use crate::runner::{self, TaskStatus, TuiEvent};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::mpsc;
+use std::thread;
+
+type GitOutputReaders = (
+    mpsc::Receiver<String>,
+    Option<thread::JoinHandle<()>>,
+    Option<thread::JoinHandle<()>>,
+    thread::JoinHandle<std::io::Result<std::process::ExitStatus>>,
+);
+
+/// Spawn reader threads for git command stdout/stderr, forwarding each line
+/// through an mpsc channel. Returns the channel receiver, reader thread handles,
+/// and a wait handle for the child process.
+fn spawn_git_output_readers(mut child: std::process::Child) -> GitOutputReaders {
+    use std::io::BufRead;
+
+    let (line_sender, line_receiver) = mpsc::channel::<String>();
+
+    let stdout_handle = child.stdout.take().map(|stream| {
+        let sender = line_sender.clone();
+        thread::spawn(move || {
+            for line in std::io::BufReader::new(stream)
+                .lines()
+                .map_while(Result::ok)
+            {
+                let _ = sender.send(format!("    {}", line));
+            }
+        })
+    });
+    let stderr_handle = child.stderr.take().map(|stream| {
+        let sender = line_sender.clone();
+        thread::spawn(move || {
+            for line in std::io::BufReader::new(stream)
+                .lines()
+                .map_while(Result::ok)
+            {
+                let _ = sender.send(line);
+            }
+        })
+    });
+    drop(line_sender);
+
+    let wait_handle = thread::spawn(move || child.wait());
+
+    (line_receiver, stdout_handle, stderr_handle, wait_handle)
+}
+
+/// Drain all lines from the channel (feeding them to `output`), wait for the
+/// git process, and validate its exit status.
+fn drain_and_check_git_output(
+    proj_name: &str,
+    line_receiver: mpsc::Receiver<String>,
+    stdout_handle: Option<thread::JoinHandle<()>>,
+    stderr_handle: Option<thread::JoinHandle<()>>,
+    wait_handle: thread::JoinHandle<std::io::Result<std::process::ExitStatus>>,
+    output: &mut dyn FnMut(&str),
+) -> Result<(), RuntimeError> {
+    for received_line in line_receiver {
+        output(&received_line);
+    }
+
+    let status = wait_handle
+        .join()
+        .map_err(|_| RuntimeError::Panic("wait thread panicked".to_string()))?
+        .map_err(|e| RuntimeError::exec_io_error(format!("git clone {}", proj_name), e))?;
+
+    if let Some(h) = stdout_handle {
+        let _ = h.join();
+    }
+    if let Some(h) = stderr_handle {
+        let _ = h.join();
+    }
+
+    if !status.success() {
+        if status.code().is_none() {
+            return Err(RuntimeError::exec_io_error(
+                format!("git clone {}", proj_name),
+                "interrupted by signal",
+            ));
+        }
+        return Err(RuntimeError::exec_exit_code(
+            format!("git clone {}", proj_name),
+            status.code(),
+        ));
+    }
+
+    Ok(())
+}
 
 /// Clone (or skip) a single project's git repo into `proj.dir`.
 /// Reports progress through the `output` callback.
@@ -33,78 +121,24 @@ fn sync_project_inner(
         None => vec!["clone", &proj.url, &target_dir_str],
     };
 
-    use std::io::BufRead;
-    use std::process::Stdio;
-    use std::sync::mpsc;
-    use std::thread;
-
-    let mut child = Command::new("git")
+    let child = Command::new("git")
         .args(&args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| RuntimeError::exec_io_error(format!("git clone {}", proj_name), e))?;
 
-    // Stream git output in real-time: reader threads send lines through a channel,
-    // main thread drains them while child.wait() runs in a background thread.
-    let (line_sender, line_receiver) = mpsc::channel::<String>();
+    let (line_receiver, stdout_handle, stderr_handle, wait_handle) =
+        spawn_git_output_readers(child);
 
-    let stdout_handle = child.stdout.take().map(|stdout_stream| {
-        let line_sender = line_sender.clone();
-        thread::spawn(move || {
-            for line in std::io::BufReader::new(stdout_stream)
-                .lines()
-                .map_while(Result::ok)
-            {
-                let _ = line_sender.send(format!("    {}", line));
-            }
-        })
-    });
-    let stderr_handle = child.stderr.take().map(|stderr_stream| {
-        let line_sender = line_sender.clone();
-        thread::spawn(move || {
-            for line in std::io::BufReader::new(stderr_stream)
-                .lines()
-                .map_while(Result::ok)
-            {
-                let _ = line_sender.send(line);
-            }
-        })
-    });
-    drop(line_sender);
-
-    let wait_handle = thread::spawn(move || child.wait());
-
-    for received_line in line_receiver {
-        output(&received_line);
-    }
-
-    let status = wait_handle
-        .join()
-        .map_err(|_| RuntimeError::Panic("wait thread panicked".to_string()))?
-        .map_err(|e| RuntimeError::exec_io_error(format!("git clone {}", proj_name), e))?;
-
-    if let Some(thread_handle) = stdout_handle {
-        let _ = thread_handle.join();
-    }
-    if let Some(thread_handle) = stderr_handle {
-        let _ = thread_handle.join();
-    }
-
-    if !status.success() {
-        if status.code().is_none() {
-            return Err(RuntimeError::exec_io_error(
-                format!("git clone {}", proj_name),
-                "interrupted by signal",
-            ));
-        }
-        return Err(RuntimeError::exec_exit_code(
-            format!("git clone {}", proj_name),
-            status.code(),
-        ));
-    }
-
-    Ok(())
+    drain_and_check_git_output(
+        proj_name,
+        line_receiver,
+        stdout_handle,
+        stderr_handle,
+        wait_handle,
+        output,
+    )
 }
 
 /// Synchronize a single project into `proj.dir`.

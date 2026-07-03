@@ -9,8 +9,9 @@ use ratatui::{
     widgets::{Clear, Paragraph},
 };
 
-/// Extract just the meaningful message from a sync summary line.
-/// For git output lines (no known prefix), returns the line as-is.
+/// Extract the meaningful payload from a sync summary line by stripping
+/// the known prefix ("skip  ", "exists  ", "clone  "). Returns the
+/// line unchanged if no recognised prefix is found.
 fn sync_message(line: &str) -> &str {
     if let Some(rest) = line
         .strip_prefix("skip  ")
@@ -27,6 +28,8 @@ fn sync_message(line: &str) -> &str {
     }
 }
 
+/// Return the most recent output line of a task, extracted to its
+/// meaningful message via `sync_message`.
 fn current_display(task: &super::Task) -> String {
     if task.output.is_empty() {
         return String::new();
@@ -37,6 +40,8 @@ fn current_display(task: &super::Task) -> String {
         .unwrap_or_default()
 }
 
+/// Render the TUI frame for a `sync` command: a header showing sync
+/// progress and a per-project status line for each entry.
 pub fn render_sync_output(frame: &mut Frame, model: &Model, spinner_idx: usize) {
     let area = frame.area();
     frame.render_widget(Clear, area);

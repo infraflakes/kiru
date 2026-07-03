@@ -1,5 +1,6 @@
 use crate::compiler::error::CompileError;
-use crate::dsl::{CasePattern, Expr, FnStmt};
+use crate::compiler::resolve;
+use crate::dsl::{Expr, FnStmt};
 use miette::miette;
 use std::collections::{HashMap, HashSet};
 
@@ -100,33 +101,16 @@ fn validate_expr(
     errors: &mut Vec<miette::Report>,
     proj_name: &str,
 ) {
-    match expr {
-        Expr::VarRef { name, .. } => {
-            if !var_is_declared(name, vars, local) {
-                errors.push(miette!(
-                    "project {:?}: fn {:?}: undefined variable ${}",
-                    proj_name,
-                    fn_name,
-                    name
-                ));
-            }
+    resolve::visit_expr_vars(expr, |name| {
+        if !var_is_declared(name, vars, local) {
+            errors.push(miette!(
+                "project {:?}: fn {:?}: undefined variable ${}",
+                proj_name,
+                fn_name,
+                name
+            ));
         }
-        Expr::BacktickLit { parts, .. } => {
-            for part in parts {
-                if part.is_var {
-                    let var_name = part.value.trim_start_matches('$');
-                    if !var_is_declared(var_name, vars, local) {
-                        errors.push(miette!(
-                            "project {:?}: fn {:?}: undefined variable ${}",
-                            proj_name,
-                            fn_name,
-                            var_name
-                        ));
-                    }
-                }
-            }
-        }
-    }
+    });
 }
 
 /// Validate variable references in a function body, tracking local
@@ -165,35 +149,16 @@ fn validate_fn_body(
             FnStmt::Case { condition, scopes } => {
                 validate_expr(condition, fn_name, vars, local, errors, proj_name);
                 for arm in scopes {
-                    match &arm.pattern {
-                        CasePattern::VarRef { name, .. } => {
-                            validate_expr(
-                                &Expr::VarRef {
-                                    name: name.clone(),
-                                    offset: 0,
-                                    len: 0,
-                                },
-                                fn_name,
-                                vars,
-                                local,
-                                errors,
+                    resolve::visit_case_pattern_vars(&arm.pattern, |name| {
+                        if !var_is_declared(name, vars, local) {
+                            errors.push(miette!(
+                                "project {:?}: fn {:?}: undefined variable ${}",
                                 proj_name,
-                            );
+                                fn_name,
+                                name
+                            ));
                         }
-                        CasePattern::Literal { parts, .. } => {
-                            for part in parts {
-                                if part.is_var && !var_is_declared(&part.value, vars, local) {
-                                    errors.push(miette!(
-                                        "project {:?}: fn {:?}: undefined variable ${}",
-                                        proj_name,
-                                        fn_name,
-                                        part.value
-                                    ));
-                                }
-                            }
-                        }
-                        CasePattern::Default => {}
-                    }
+                    });
                     local.push(HashSet::new());
                     validate_fn_body(fn_name, &arm.body, vars, local, errors, proj_name);
                     local.pop();

@@ -1,11 +1,11 @@
 use crate::compiler::error::CompileError;
 use crate::compiler::error::spanned_err;
-use crate::compiler::imports;
+
 use crate::compiler::resolve;
 use crate::compiler::types::{Config, Project, UnresolvedProject};
 use crate::compiler::validation;
 use crate::dsl::Parser;
-use crate::dsl::{Program, Stmt, TopLevel};
+use crate::dsl::{Expr, Program, Stmt, TopLevel};
 use miette::miette;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -132,11 +132,8 @@ fn linear_process_file(file_path: &Path, state: &mut LinearState) -> Result<(), 
 
     state.recursion_stack.insert(canon_path.clone());
     let program = parse_file(&canon_path, &mut state.loaded_files)?;
-    let base_dir = canon_path
-        .parent()
-        .map(|parent_path| parent_path.to_path_buf());
 
-    let result = linear_process_program(&program, base_dir.as_deref(), state);
+    let result = linear_process_program(&program, state);
 
     state.recursion_stack.remove(&canon_path);
     result
@@ -285,12 +282,43 @@ fn process_project_block(
     Ok(())
 }
 
-/// Process a program's items in lexical order.
-fn linear_process_program(
-    program: &Program,
-    base_dir: Option<&Path>,
+/// Resolve and load an `import` statement. The expression is first
+/// interpolated (variable substitution), then resolved against the
+/// directory of the source file.  `Path::join` handles absolute vs
+/// relative transparently.
+fn process_import(
+    expr: &Expr,
     state: &mut LinearState,
+    program: &Program,
 ) -> Result<(), CompileError> {
+    let path_str = resolve::resolve_expr(
+        expr,
+        &state.var_scope,
+        &[],
+        &program.source_name,
+        &program.source_text,
+    )?;
+    if path_str.is_empty() {
+        let (offset, len) = expr.offset_len();
+        return Err(spanned_err(
+            "import path cannot be empty".to_string(),
+            &program.source_name,
+            &program.source_text,
+            offset,
+            len,
+        ));
+    }
+    let base_dir = Path::new(&program.source_name).parent().ok_or_else(|| {
+        CompileError::ValidationReport(miette!(
+            "cannot determine base directory for import from '{}'",
+            program.source_name
+        ))
+    })?;
+    linear_process_file(&base_dir.join(&path_str), state)
+}
+
+/// Process a program's items in lexical order.
+fn linear_process_program(program: &Program, state: &mut LinearState) -> Result<(), CompileError> {
     for item in &program.items {
         match item {
             TopLevel::Stmt(stmt) => match stmt {
@@ -331,24 +359,7 @@ fn linear_process_program(
                     ));
                 }
             },
-            TopLevel::Import(expr) => {
-                let path_str = imports::resolve_import_path(
-                    expr,
-                    &state.var_scope,
-                    &program.source_name,
-                    &program.source_text,
-                )?;
-                let import_path = if Path::new(&path_str).is_absolute() {
-                    PathBuf::from(path_str)
-                } else if let Some(dir) = base_dir {
-                    dir.join(path_str)
-                } else {
-                    return Err(CompileError::ValidationReport(miette!(
-                        "relative import path without base directory"
-                    )));
-                };
-                linear_process_file(&import_path, state)?;
-            }
+            TopLevel::Import(expr) => process_import(expr, state, program)?,
         }
     }
     Ok(())

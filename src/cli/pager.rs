@@ -49,8 +49,11 @@ fn pipe_to_pager(output: &str) -> miette::Result<()> {
 
     if !status.success() {
         if let Some(signal) = status.signal() {
-            eprintln!("pager '{}' was terminated by signal {}", pager, signal);
-            std::process::exit(128 + signal);
+            return Err(miette::miette!(
+                "pager '{}' was terminated by signal {}",
+                pager,
+                signal
+            ));
         }
         return Err(miette::miette!(
             "pager '{}' exited with code {:?}",

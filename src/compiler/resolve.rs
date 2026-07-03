@@ -24,9 +24,41 @@ fn lookup_var<'a>(
     vars.get(name)
 }
 
+/// Invoke a callback with the name of every variable referenced in `expr`,
+/// whether as a bare `$name` or an interpolation `${name}` in a backtick literal.
+pub(crate) fn visit_expr_vars(expr: &Expr, mut f: impl FnMut(&str)) {
+    match expr {
+        Expr::VarRef { name, .. } => f(name),
+        Expr::BacktickLit { parts, .. } => {
+            for part in parts {
+                if part.is_var {
+                    f(&part.value);
+                }
+            }
+        }
+    }
+}
+
+/// Invoke a callback with the name of every variable referenced in a case
+/// pattern, including bare `$name`, backtick interpolation `${name}`, and
+/// default (`_`) patterns (which reference no variables).
+pub(crate) fn visit_case_pattern_vars(pattern: &CasePattern, mut f: impl FnMut(&str)) {
+    match pattern {
+        CasePattern::VarRef { name, .. } => f(name),
+        CasePattern::Literal { parts, .. } => {
+            for part in parts {
+                if part.is_var {
+                    f(&part.value);
+                }
+            }
+        }
+        CasePattern::Default => {}
+    }
+}
+
 /// Resolve an `Expr` to a concrete string. Looks up `$var` references
 /// in local case-arm frames first, then the flat var scope.
-fn resolve_expr(
+pub(crate) fn resolve_expr(
     expr: &Expr,
     vars: &HashMap<String, String>,
     local: &[HashMap<String, String>],
@@ -168,7 +200,6 @@ pub(crate) fn resolve_var_stmt(
 /// the top local frame only — it is invisible outside that arm and does not
 /// participate in the global uniqueness check.  When outside any case arm,
 /// the variable is bound into the flat var scope and checked for duplicates.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_var_decl_stmt(
     var_type: &VarType,
     name: &str,
@@ -200,7 +231,15 @@ pub(crate) fn resolve_var_decl_stmt(
         vars.insert(name.to_string(), final_value);
     } else {
         // Inside a case arm — bind into the arm-local frame only.
-        let top = local.last_mut().unwrap();
+        let top = local.last_mut().ok_or_else(|| {
+            spanned_err(
+                "internal error: empty local frame in case arm variable declaration".to_string(),
+                source_name,
+                source_text,
+                offset,
+                len,
+            )
+        })?;
         if top.contains_key(name) {
             return Err(spanned_err(
                 format!("${} is already defined in this case arm", name),

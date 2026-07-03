@@ -59,12 +59,11 @@ impl<'a> ExecContext<'a> {
     pub(crate) fn new(project: Option<&'a Project>, output: &'a mut OutputTarget) -> Self {
         let use_cwd = std::env::var("KIRU_CWD").as_deref() == Ok("1");
         let work_dir = if use_cwd {
-            std::env::current_dir().expect("current directory has been deleted or is inaccessible")
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
         } else {
-            project.map(|p| PathBuf::from(&p.dir)).unwrap_or_else(|| {
-                std::env::current_dir()
-                    .expect("current directory has been deleted or is inaccessible")
-            })
+            project
+                .map(|p| PathBuf::from(&p.dir))
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")))
         };
         ExecContext {
             output,
@@ -191,6 +190,17 @@ impl<'a> ExecContext<'a> {
         result
     }
 
+    /// Write each line of `data` as indented output lines.
+    fn process_output_lines(&mut self, data: &[u8], indent_str: &str) -> Result<(), RuntimeError> {
+        for line_result in io::BufReader::new(data).lines() {
+            let line_text = line_result.map_err(RuntimeError::Io)?;
+            self.output
+                .writeln(&[indent_str, &line_text].concat())
+                .map_err(RuntimeError::Io)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn exec_command(&mut self, cmd_str: &str) -> Result<(), RuntimeError> {
         let indent = self.compute_indent_string(0);
         let line = format!("{}exec {}", indent, cmd_str);
@@ -212,18 +222,8 @@ impl<'a> ExecContext<'a> {
             .map_err(|e| RuntimeError::exec_io_error(cmd_str, e))?;
 
         let indent_str = self.compute_indent_string(1);
-        for line_result in io::BufReader::new(&output.stdout[..]).lines() {
-            let line_text = line_result.map_err(RuntimeError::Io)?;
-            self.output
-                .writeln(&[indent_str.as_str(), &line_text].concat())
-                .map_err(RuntimeError::Io)?;
-        }
-        for line_result in io::BufReader::new(&output.stderr[..]).lines() {
-            let line_text = line_result.map_err(RuntimeError::Io)?;
-            self.output
-                .writeln(&[indent_str.as_str(), &line_text].concat())
-                .map_err(RuntimeError::Io)?;
-        }
+        self.process_output_lines(&output.stdout, &indent_str)?;
+        self.process_output_lines(&output.stderr, &indent_str)?;
 
         if !output.status.success() {
             return Err(RuntimeError::exec_exit_code(cmd_str, output.status.code()));

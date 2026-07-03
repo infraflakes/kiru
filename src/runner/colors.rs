@@ -13,6 +13,17 @@ pub(crate) const FAILED_ANSI: &str = "\x1b[91m";
 /// Gray ANSI color for pending status.
 pub(crate) const PENDING_ANSI: &str = "\x1b[90m";
 
+/// Bold ANSI escape code.
+pub(crate) const BOLD: &str = "\x1b[1m";
+/// Yellow ANSI color.
+pub(crate) const YELLOW: &str = "\x1b[33m";
+/// Cyan ANSI color.
+pub(crate) const CYAN: &str = "\x1b[36m";
+/// Gray ANSI color (alias for muted text).
+pub(crate) const GRAY: &str = "\x1b[90m";
+/// Bold cyan ANSI color.
+pub(crate) const BOLD_CYAN: &str = "\x1b[1;36m";
+
 /// Muted text color.
 pub(crate) const MUTED_ANSI: &str = "\x1b[90m";
 /// Bright white text color.

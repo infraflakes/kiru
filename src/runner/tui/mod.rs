@@ -60,6 +60,51 @@ pub enum TuiEvent {
     AppendOutput(usize, String),
 }
 
+/// Drain all available events from the channel, updating the model.
+/// Returns `true` if the sender has disconnected.
+fn drain_events(
+    model: &Arc<Mutex<Model>>,
+    event_receiver: &mut mpsc::UnboundedReceiver<TuiEvent>,
+) -> bool {
+    loop {
+        match event_receiver.try_recv() {
+            Ok(TuiEvent::UpdateStatus(idx, status)) => {
+                Model::lock(model).update_task_status(idx, status);
+            }
+            Ok(TuiEvent::AppendOutput(idx, line)) => {
+                Model::lock(model).append_output(idx, line);
+            }
+            Err(mpsc::error::TryRecvError::Empty) => return false,
+            Err(mpsc::error::TryRecvError::Disconnected) => return true,
+        }
+    }
+}
+
+/// Poll for keyboard input.  Returns `true` when the user requested exit.
+fn handle_keyboard_input() -> bool {
+    if matches!(event::poll(Duration::from_millis(50)), Ok(true))
+        && let Ok(Event::Key(key)) = event::read()
+    {
+        matches!(key.code, KeyCode::Char('q'))
+            || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
+    } else {
+        false
+    }
+}
+
+/// Scroll past the TUI viewport and write the final formatted output to stdout.
+fn dump_final_output(height: u16, dump: &str) -> Result<(), io::Error> {
+    let mut out = io::stdout().lock();
+    for _ in 0..height {
+        out.write_all(b"\n")?;
+    }
+    out.flush()?;
+    let mut out = io::stdout().lock();
+    out.write_all(dump.as_bytes())?;
+    out.flush()?;
+    Ok(())
+}
+
 /// Main TUI event loop: drains events from the channel, draws frames, and
 /// handles keyboard input (q / Ctrl+C to quit).
 pub async fn run_tui_event_loop(
@@ -79,24 +124,9 @@ pub async fn run_tui_event_loop(
     )?;
 
     let mut spinner_idx = 0;
-    let mut disconnected = false;
 
     loop {
-        loop {
-            match event_receiver.try_recv() {
-                Ok(TuiEvent::UpdateStatus(idx, status)) => {
-                    Model::lock(&model).update_task_status(idx, status);
-                }
-                Ok(TuiEvent::AppendOutput(idx, line)) => {
-                    Model::lock(&model).append_output(idx, line);
-                }
-                Err(mpsc::error::TryRecvError::Empty) => break,
-                Err(mpsc::error::TryRecvError::Disconnected) => {
-                    disconnected = true;
-                    break;
-                }
-            }
-        }
+        let disconnected = drain_events(&model, &mut event_receiver);
 
         if disconnected || Model::lock(&model).all_done() {
             terminal.draw(|frame| {
@@ -107,22 +137,10 @@ pub async fn run_tui_event_loop(
         }
 
         if matches!(raw, RawMode::Enabled) {
-            if event::poll(Duration::from_millis(50))?
-                && let Event::Key(key) = event::read()?
-            {
-                match key.code {
-                    KeyCode::Char('q') => {
-                        let _ = disable_raw_mode();
-                        eprintln!("Kiru force exited");
-                        std::process::exit(0);
-                    }
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        let _ = disable_raw_mode();
-                        eprintln!("Kiru force exited");
-                        std::process::exit(0);
-                    }
-                    _ => {}
-                }
+            if handle_keyboard_input() {
+                let _ = disable_raw_mode();
+                eprintln!("Kiru force exited");
+                std::process::exit(0);
             }
         } else {
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -143,18 +161,7 @@ pub async fn run_tui_event_loop(
     drop(guard);
 
     if !dump.is_empty() {
-        // scroll past the TUI viewport so the ANSI dump doesn't overlay
-        // leftover TUI content on the terminal (which caused visual corruption
-        // like " ✓ fmt(kiru)u)  ✗ failed")
-        let mut out = io::stdout().lock();
-        for _ in 0..height {
-            out.write_all(b"\n")?;
-        }
-        out.flush()?;
-
-        let mut out = io::stdout().lock();
-        out.write_all(dump.as_bytes())?;
-        out.flush()?;
+        dump_final_output(height, &dump)?;
     }
     Ok(())
 }

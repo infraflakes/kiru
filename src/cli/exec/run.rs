@@ -9,15 +9,15 @@ fn run_project_chains(
     project: &str,
     chains: Vec<Vec<String>>,
 ) -> miette::Result<()> {
-    let project = project.to_string();
+    let project_string = project.to_string();
     runner::chain::execute_task_chains(
         config,
         chains,
         {
-            let project = project.clone();
-            move |function_name| format!("{}({})", function_name, project)
+            let project_clone = project_string.clone();
+            move |function_name| format!("{}({})", function_name, project_clone)
         },
-        move |runner, function_name| runner.execute_fn_call(function_name, &project),
+        move |runner, function_name| runner.execute_fn_call(function_name, &project_string),
     )
 }
 

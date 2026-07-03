@@ -7,7 +7,7 @@ pr kiru [
   branch = `dev`
 ] {}
 
-import `${kiru_dir}/.kiru/main.kiru`;
+import `main.kiru`;
 
 pr todo [
   url = `https://github.com/null/err.git`
