@@ -69,9 +69,13 @@ pub struct ResolvedCaseArm {
 
 /// A project block with unresolved AST (Expr) fields.
 /// No string resolution has been performed — fields are raw `Expr` nodes.
+/// `source_file` records the canonical path of the `.kiru` file that defined
+/// the project, used to resolve relative `dir` paths against the source file's
+/// directory at resolution time.
 #[derive(Debug, Clone)]
 pub struct UnresolvedProject {
     pub name: String,
+    pub source_file: String,
     pub url: Option<Expr>,
     pub dir: Option<Expr>,
     pub sync: Option<Expr>,

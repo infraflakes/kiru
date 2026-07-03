@@ -121,7 +121,7 @@ pr p1 { fn build { log `x`; } }\
     assert!(cfg.projects.contains_key("p1"));
     let proj = &cfg.projects["p1"];
     assert_eq!(proj.url, "u");
-    assert_eq!(proj.dir, "d1");
+    assert_eq!(proj.dir, dir.path().join("d1").to_string_lossy());
     assert!(proj.functions.contains_key("build"));
 }
 
@@ -437,7 +437,10 @@ pr test [\n\
     // We can't check project vars directly on the resolved Config,
     // but the configuration should compile and resolve without errors.
     let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
-    assert_eq!(cfg.projects["test"].dir, "d");
+    assert_eq!(
+        cfg.projects["test"].dir,
+        dir.path().join("d").to_string_lossy()
+    );
 }
 
 #[test]
@@ -697,7 +700,7 @@ pr test [\n\
     let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
     let proj = &cfg.projects["test"];
     assert_eq!(proj.url, "http://example.com/myproject");
-    assert_eq!(proj.dir, "myproject");
+    assert_eq!(proj.dir, dir.path().join("myproject").to_string_lossy());
 }
 
 #[test]

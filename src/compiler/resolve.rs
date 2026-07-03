@@ -8,6 +8,7 @@ use crate::dsl::{CaseArm, CasePattern, EnvPair, Expr, FnStmt, Stmt, VarType};
 use crate::shell;
 use miette::miette;
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 /// Look up a variable name across local case-arm frames (innermost first),
 /// then the flat var scope.
@@ -274,6 +275,28 @@ pub(crate) fn resolve_optional_expr(
     }
 }
 
+/// Resolve a `dir` field, joining relative paths against the source file's
+/// directory so that `dir = \`./foo\`` resolves relative to the `.kiru` file.
+fn resolve_dir_field(
+    unresolved: &UnresolvedProject,
+    var_scope: &HashMap<String, String>,
+) -> Result<String, CompileError> {
+    let raw = resolve_optional_expr(&unresolved.dir, var_scope, "", "")?.unwrap_or_default();
+    if raw.is_empty() || Path::new(&raw).is_absolute() {
+        return Ok(raw);
+    }
+    let base_dir = Path::new(&unresolved.source_file).parent().ok_or_else(|| {
+        spanned_err(
+            "cannot determine base directory for dir".to_string(),
+            "",
+            "",
+            0,
+            0,
+        )
+    })?;
+    Ok(base_dir.join(&raw).to_string_lossy().to_string())
+}
+
 /// Resolve an unresolved project's field expressions against the var scope.
 pub(crate) fn resolve_project_fields(
     unresolved: &UnresolvedProject,
@@ -285,7 +308,7 @@ pub(crate) fn resolve_project_fields(
         .map(|e| e.offset_len())
         .unwrap_or((0, 1));
     let url = resolve_optional_expr(&unresolved.url, var_scope, "", "")?.unwrap_or_default();
-    let dir = resolve_optional_expr(&unresolved.dir, var_scope, "", "")?.unwrap_or_default();
+    let dir = resolve_dir_field(unresolved, var_scope)?;
     let sync = match resolve_optional_expr(&unresolved.sync, var_scope, "", "")? {
         Some(mode) => {
             let (sync_offset, sync_len) = sync_offset_len;

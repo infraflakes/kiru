@@ -246,6 +246,7 @@ fn process_project_block(
             .entry(name.to_owned())
             .or_insert_with(|| UnresolvedProject {
                 name: name.to_owned(),
+                source_file: program.source_name.clone(),
                 url: None,
                 dir: None,
                 sync: None,
