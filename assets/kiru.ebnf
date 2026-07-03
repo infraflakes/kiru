@@ -1,4 +1,3 @@
-[OUTDATED]
 (* ──────────────────────────────────────────────────────────────────── *)
 (*  kiru DSL — EBNF Grammar                                          *)
 (*  This is the authoritative grammar of the kiru configuration DSL.  *)
@@ -20,19 +19,18 @@ statement        = import_decl | var_decl
 
 import_decl      = "import"  expr ";" ;
 var_decl         = "var" type ident "=" expr ";" ;
-var_decl         = "var" type ident "=" expr ";" ;
 type             = "string" | "shell" ;
 
 (* ═══════════════════════════════════════════════════════════════════ *)
 (*  PROJECT BLOCK                                                     *)
 (* ═══════════════════════════════════════════════════════════════════ *)
 
-project_decl     = "pr" ident "{" { project_stmt } "}" ;
+project_decl     = "pr" ident [ "[" field_decl { field_decl } "]" ] "{" { project_stmt } "}" ;
 project_stmt     = field_decl | var_decl | fn_decl | run_decl ;
 field_decl       = ident "=" expr ";" ;
 
-(* Note: recognised field names are url, dir, sync, branch, include.  *)
-(* The parser accepts any ident — invalid names are caught at parse.  *)
+(* Recognised field names: url, dir, sync, branch.                      *)
+(* Unknown field names are rejected at parse time.                      *)
 
 (* ═══════════════════════════════════════════════════════════════════ *)
 (*  FUNCTION BLOCK                                                    *)
@@ -81,7 +79,7 @@ interpolation    = "${" ident "}" ;
 (*  LEXICAL TOKENS                                                    *)
 (* ═══════════════════════════════════════════════════════════════════ *)
 
-ident            = letter { letter | digit | "_" } ;
+ident            = ( letter | "_" ) { letter | digit | "_" } ;
 letter           = "A" | "B" | … | "Z" | "a" | "b" | … | "z" ;
 digit            = "0" | "1" | … | "9" ;
 raw_char         = ? any character except "`" or "\n" ? ;
