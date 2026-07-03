@@ -2,7 +2,7 @@ use crate::compiler::error::CompileError;
 use crate::compiler::error::spanned_err;
 use crate::compiler::imports;
 use crate::compiler::resolve;
-use crate::compiler::types::{Config, Project, SyncMode, UnresolvedProject};
+use crate::compiler::types::{Config, Project, UnresolvedProject};
 use crate::compiler::validation;
 use crate::dsl::Parser;
 use crate::dsl::{Program, Stmt, TopLevel};
@@ -14,34 +14,21 @@ use std::path::{Path, PathBuf};
 /// Run the full compilation pipeline:
 /// 1. Linear processing: walk items in source order, resolve vars and fields,
 ///    load imports with variable interpolation, accumulate projects.
-/// 2. Validate using the unresolved (but scope-resolved) state.
-/// 3. Fully resolve function bodies against the computed scopes.
+/// 2. Validate using the resolved state.
+/// 3. Fully resolve function bodies against the flat var scope.
 pub fn compile_and_resolve(entry_path: &Path) -> Result<Config, CompileError> {
     let abs_entry = canonicalize_entry(entry_path)?;
     let linear_result = resolve_linear(&abs_entry)?;
-    validation::validate_configuration(
-        &linear_result.unresolved,
-        &linear_result.global_scope,
-        &linear_result.project_var_scopes,
-    )?;
-    resolve::resolve_with_scopes(
-        linear_result.unresolved,
-        linear_result.global_scope,
-        linear_result.project_var_scopes,
-    )
+    validation::validate_configuration(&linear_result.unresolved, &linear_result.var_scope)?;
+    resolve::resolve_with_scopes(linear_result.unresolved, linear_result.var_scope)
 }
 
 // Linear-processing pipeline
 
 /// Mutable state threaded through the linear processing phase.
 struct LinearState {
-    global_scope: HashMap<String, String>,
+    var_scope: HashMap<String, String>,
     projects: HashMap<String, UnresolvedProject>,
-    /// Per-project locally-declared variable overrides. Each block of the same
-    /// project refreshes from current globals (via `or_insert`), so later
-    /// global vars are visible across blocks. Project-local vars accumulate
-    /// and take priority over globals.
-    project_var_scopes: HashMap<String, HashMap<String, String>>,
     loaded_files: HashSet<PathBuf>,
     recursion_stack: HashSet<PathBuf>,
 }
@@ -49,9 +36,8 @@ struct LinearState {
 impl LinearState {
     fn new() -> Self {
         Self {
-            global_scope: HashMap::new(),
+            var_scope: HashMap::new(),
             projects: HashMap::new(),
-            project_var_scopes: HashMap::new(),
             loaded_files: HashSet::new(),
             recursion_stack: HashSet::new(),
         }
@@ -61,8 +47,7 @@ impl LinearState {
 /// Intermediate result from the linear processing phase.
 struct LinearResult {
     unresolved: super::types::UnresolvedConfig,
-    global_scope: HashMap<String, String>,
-    project_var_scopes: HashMap<String, HashMap<String, String>>,
+    var_scope: HashMap<String, String>,
 }
 
 /// Canonicalize the entry path, resolving relative paths against the current
@@ -160,11 +145,6 @@ fn linear_process_file(file_path: &Path, state: &mut LinearState) -> Result<(), 
 use crate::dsl::ProjectField;
 
 /// Merge a single statement into a project body during AST collection.
-///
-/// No expression resolution or shell execution occurs — all values are stored
-/// as raw `Expr` nodes and var declarations are stored as raw `Stmt::Var` nodes.
-/// Only clones the specific fields needed for storage (key/value for fields,
-/// name/body for functions and runs) instead of the entire `Stmt`.
 pub(crate) fn merge_project_body_stmt(
     project: &mut UnresolvedProject,
     stmt: &Stmt,
@@ -175,8 +155,6 @@ pub(crate) fn merge_project_body_stmt(
         spanned_err(msg, source_name, source_text, offset, len)
     };
     match stmt {
-        // Var stmts were already resolved during linear processing and
-        // do not need to be stored in the project struct.
         Stmt::Var { .. } => {}
         Stmt::Field {
             key,
@@ -279,15 +257,6 @@ fn process_project_block(
                 runs: HashMap::new(),
             });
 
-    // Refresh project scope from current globals, preserving
-    // any project-local vars already declared in prior blocks.
-    let project_var_scopes = state.project_var_scopes.entry(name.to_owned()).or_default();
-    for (key, value) in &state.global_scope {
-        project_var_scopes
-            .entry(key.clone())
-            .or_insert(value.clone());
-    }
-
     for field_stmt in fields {
         merge_project_body_stmt(
             project_entry,
@@ -301,7 +270,7 @@ fn process_project_block(
         if let Stmt::Var { .. } = body_stmt {
             resolve::resolve_var_stmt(
                 body_stmt,
-                project_var_scopes,
+                &mut state.var_scope,
                 &program.source_name,
                 &program.source_text,
             )?;
@@ -328,7 +297,7 @@ fn linear_process_program(
                 Stmt::Var { .. } => {
                     resolve::resolve_var_stmt(
                         stmt,
-                        &mut state.global_scope,
+                        &mut state.var_scope,
                         &program.source_name,
                         &program.source_text,
                     )?;
@@ -365,7 +334,7 @@ fn linear_process_program(
             TopLevel::Import(expr) => {
                 let path_str = imports::resolve_import_path(
                     expr,
-                    &state.global_scope,
+                    &state.var_scope,
                     &program.source_name,
                     &program.source_text,
                 )?;
@@ -396,8 +365,7 @@ fn resolve_linear(entry_path: &Path) -> Result<LinearResult, CompileError> {
 
     Ok(LinearResult {
         unresolved,
-        global_scope: state.global_scope,
-        project_var_scopes: state.project_var_scopes,
+        var_scope: state.var_scope,
     })
 }
 
@@ -405,47 +373,20 @@ fn resolve_linear(entry_path: &Path) -> Result<LinearResult, CompileError> {
 /// or lowering function bodies.
 ///
 /// 1. Linear processing — parse the entry file, resolve `var` and `var shell`
-///    declarations, build global and project scopes, follow imports.
+///    declarations, build the flat var scope, follow imports.
 /// 2. Project field resolution — resolve each project's `url`, `dir`, `sync`,
-///    and `branch` expressions against its computed scope.
+///    and `branch` expressions against the flat scope.
 ///
 /// The returned [`Config`] has empty function maps — function and run
 /// blocks are collected during linear processing but never resolved.
 pub fn parse_projects_metadata(entry_path: &Path) -> Result<Config, CompileError> {
     let abs_entry = canonicalize_entry(entry_path)?;
-
-    let mut state = LinearState::new();
-    linear_process_file(&abs_entry, &mut state)?;
+    let linear = resolve_linear(&abs_entry)?;
 
     let mut projects = HashMap::new();
-    for (name, unresolved_project) in state.projects {
-        let proj_scope = state
-            .project_var_scopes
-            .get(&name)
-            .cloned()
-            .unwrap_or_else(|| state.global_scope.clone());
-
-        let sync_offset_len = unresolved_project
-            .sync
-            .as_ref()
-            .map(|e| e.offset_len())
-            .unwrap_or((0, 1));
-
-        let url = resolve::resolve_optional_expr(&unresolved_project.url, &proj_scope, "", "")?
-            .unwrap_or_default();
-        let dir = resolve::resolve_optional_expr(&unresolved_project.dir, &proj_scope, "", "")?
-            .unwrap_or_default();
-        let sync =
-            match resolve::resolve_optional_expr(&unresolved_project.sync, &proj_scope, "", "")? {
-                Some(mode) => {
-                    let (sync_offset, sync_len) = sync_offset_len;
-                    resolve::parse_sync_mode_value(&mode)
-                        .map_err(|msg| spanned_err(msg, "", "", sync_offset, sync_len))?
-                }
-                None => SyncMode::Clone,
-            };
-        let branch =
-            resolve::resolve_optional_expr(&unresolved_project.branch, &proj_scope, "", "")?;
+    for (name, unresolved_project) in linear.unresolved.projects {
+        let (url, dir, sync, branch) =
+            resolve::resolve_project_fields(&unresolved_project, &linear.var_scope)?;
 
         projects.insert(
             name,

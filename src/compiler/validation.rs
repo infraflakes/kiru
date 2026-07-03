@@ -3,48 +3,29 @@ use crate::dsl::{CasePattern, Expr, FnStmt};
 use miette::miette;
 use std::collections::{HashMap, HashSet};
 
-/// Check whether a variable name is defined across the full scope hierarchy:
-/// local frames (innermost first), then project scope, then global scope.
-fn is_var_defined(
-    name: &str,
-    global_scope: &HashSet<String>,
-    project_scope: &HashSet<String>,
-    local: &[HashSet<String>],
-) -> bool {
+/// Check whether a variable name is defined: local frames (innermost first),
+/// then the flat var scope.
+fn var_is_declared(name: &str, vars: &HashMap<String, String>, local: &[HashSet<String>]) -> bool {
     for frame in local.iter().rev() {
         if frame.contains(name) {
             return true;
         }
     }
-    project_scope.contains(name) || global_scope.contains(name)
+    vars.contains_key(name)
 }
 
-/// Validate an `UnresolvedConfig` against global and project scopes,
+/// Validate an `UnresolvedConfig` against the flat var scope,
 /// collecting all errors before returning.
 pub fn validate_configuration(
     cfg: &super::types::UnresolvedConfig,
-    global_scope: &HashMap<String, String>,
-    project_var_scopes: &HashMap<String, HashMap<String, String>>,
+    var_scope: &HashMap<String, String>,
 ) -> Result<(), CompileError> {
     let mut errors = Vec::new();
-
-    let global_set: HashSet<String> = global_scope.keys().cloned().collect();
 
     for (proj_name, project) in &cfg.projects {
         validate_run_refs(&project.runs, &project.functions, proj_name, &mut errors);
 
-        let project_set: HashSet<String> = project_var_scopes
-            .get(proj_name)
-            .map(|m| m.keys().cloned().collect())
-            .unwrap_or_default();
-
-        validate_fn_bodies(
-            &project.functions,
-            &global_set,
-            &project_set,
-            proj_name,
-            &mut errors,
-        );
+        validate_fn_bodies(&project.functions, var_scope, proj_name, &mut errors);
     }
 
     if errors.len() == 1 {
@@ -97,22 +78,15 @@ fn validate_run_refs(
 /// fresh scope stack for each function.
 fn validate_fn_bodies(
     functions: &std::collections::HashMap<String, Vec<FnStmt>>,
-    global_scope: &HashSet<String>,
-    project_scope: &HashSet<String>,
+    vars: &HashMap<String, String>,
     proj_name: &str,
     errors: &mut Vec<miette::Report>,
 ) {
     for (fn_name, body) in functions {
+        // Initial empty frame so VarDecl tracking and references resolve
+        // against the flat scope.
         let mut local: Vec<HashSet<String>> = vec![HashSet::new()];
-        validate_fn_body(
-            fn_name,
-            body,
-            global_scope,
-            project_scope,
-            &mut local,
-            errors,
-            proj_name,
-        );
+        validate_fn_body(fn_name, body, vars, &mut local, errors, proj_name);
     }
 }
 
@@ -121,15 +95,14 @@ fn validate_fn_bodies(
 fn validate_expr(
     expr: &Expr,
     fn_name: &str,
-    global_scope: &HashSet<String>,
-    project_scope: &HashSet<String>,
+    vars: &HashMap<String, String>,
     local: &[HashSet<String>],
     errors: &mut Vec<miette::Report>,
     proj_name: &str,
 ) {
     match expr {
         Expr::VarRef { name, .. } => {
-            if !is_var_defined(name, global_scope, project_scope, local) {
+            if !var_is_declared(name, vars, local) {
                 errors.push(miette!(
                     "project {:?}: fn {:?}: undefined variable ${}",
                     proj_name,
@@ -142,7 +115,7 @@ fn validate_expr(
             for part in parts {
                 if part.is_var {
                     let var_name = part.value.trim_start_matches('$');
-                    if !is_var_defined(var_name, global_scope, project_scope, local) {
+                    if !var_is_declared(var_name, vars, local) {
                         errors.push(miette!(
                             "project {:?}: fn {:?}: undefined variable ${}",
                             proj_name,
@@ -161,8 +134,7 @@ fn validate_expr(
 fn validate_fn_body(
     fn_name: &str,
     body: &[FnStmt],
-    global_scope: &HashSet<String>,
-    project_scope: &HashSet<String>,
+    vars: &HashMap<String, String>,
     local: &mut Vec<HashSet<String>>,
     errors: &mut Vec<miette::Report>,
     proj_name: &str,
@@ -170,86 +142,28 @@ fn validate_fn_body(
     for stmt in body {
         match stmt {
             FnStmt::VarDecl { name, value, .. } => {
-                validate_expr(
-                    value,
-                    fn_name,
-                    global_scope,
-                    project_scope,
-                    local,
-                    errors,
-                    proj_name,
-                );
+                validate_expr(value, fn_name, vars, local, errors, proj_name);
                 if let Some(top) = local.last_mut() {
                     top.insert(name.clone());
                 }
             }
             FnStmt::Log { value, .. } => {
-                validate_expr(
-                    value,
-                    fn_name,
-                    global_scope,
-                    project_scope,
-                    local,
-                    errors,
-                    proj_name,
-                );
+                validate_expr(value, fn_name, vars, local, errors, proj_name);
             }
             FnStmt::Exec { value, .. } => {
-                validate_expr(
-                    value,
-                    fn_name,
-                    global_scope,
-                    project_scope,
-                    local,
-                    errors,
-                    proj_name,
-                );
+                validate_expr(value, fn_name, vars, local, errors, proj_name);
             }
             FnStmt::Cd { value, .. } => {
-                validate_expr(
-                    value,
-                    fn_name,
-                    global_scope,
-                    project_scope,
-                    local,
-                    errors,
-                    proj_name,
-                );
+                validate_expr(value, fn_name, vars, local, errors, proj_name);
             }
             FnStmt::EnvBlock { pairs, body, .. } => {
                 for pair in pairs {
-                    validate_expr(
-                        &pair.value,
-                        fn_name,
-                        global_scope,
-                        project_scope,
-                        local,
-                        errors,
-                        proj_name,
-                    );
+                    validate_expr(&pair.value, fn_name, vars, local, errors, proj_name);
                 }
-                local.push(HashSet::new());
-                validate_fn_body(
-                    fn_name,
-                    body,
-                    global_scope,
-                    project_scope,
-                    local,
-                    errors,
-                    proj_name,
-                );
-                local.pop();
+                validate_fn_body(fn_name, body, vars, local, errors, proj_name);
             }
             FnStmt::Case { condition, scopes } => {
-                validate_expr(
-                    condition,
-                    fn_name,
-                    global_scope,
-                    project_scope,
-                    local,
-                    errors,
-                    proj_name,
-                );
+                validate_expr(condition, fn_name, vars, local, errors, proj_name);
                 for arm in scopes {
                     match &arm.pattern {
                         CasePattern::VarRef { name, .. } => {
@@ -260,8 +174,7 @@ fn validate_fn_body(
                                     len: 0,
                                 },
                                 fn_name,
-                                global_scope,
-                                project_scope,
+                                vars,
                                 local,
                                 errors,
                                 proj_name,
@@ -269,14 +182,7 @@ fn validate_fn_body(
                         }
                         CasePattern::Literal { parts, .. } => {
                             for part in parts {
-                                if part.is_var
-                                    && !is_var_defined(
-                                        &part.value,
-                                        global_scope,
-                                        project_scope,
-                                        local,
-                                    )
-                                {
+                                if part.is_var && !var_is_declared(&part.value, vars, local) {
                                     errors.push(miette!(
                                         "project {:?}: fn {:?}: undefined variable ${}",
                                         proj_name,
@@ -289,15 +195,7 @@ fn validate_fn_body(
                         CasePattern::Default => {}
                     }
                     local.push(HashSet::new());
-                    validate_fn_body(
-                        fn_name,
-                        &arm.body,
-                        global_scope,
-                        project_scope,
-                        local,
-                        errors,
-                        proj_name,
-                    );
+                    validate_fn_body(fn_name, &arm.body, vars, local, errors, proj_name);
                     local.pop();
                 }
             }

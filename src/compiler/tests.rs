@@ -88,7 +88,7 @@ fn test_circular_import() {
 }
 
 #[test]
-fn test_shadowing_global_var() {
+fn test_duplicate_global_var() {
     let dir = tempfile::TempDir::new().unwrap();
     write_config(
         dir.path(),
@@ -96,12 +96,14 @@ fn test_shadowing_global_var() {
         "\
 var string x = `a`;\n\
 var string x = `b`;\n\
-pr p [url = $x dir = `d`] { }
 ",
     );
-    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
-    // Later declaration shadows earlier one (top-down evaluation)
-    assert_eq!(cfg.projects["p"].url, "b");
+    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+    assert!(
+        err.to_string().contains("$x is already defined"),
+        "got: {}",
+        err
+    );
 }
 
 #[test]
@@ -391,7 +393,7 @@ pr test [\n\
 }
 
 #[test]
-fn test_shadowing_var_in_fn_body() {
+fn test_duplicate_var_in_fn_body() {
     let dir = tempfile::TempDir::new().unwrap();
     write_config(
         dir.path(),
@@ -408,12 +410,12 @@ pr test [\n\
 }\
 ",
     );
-    // Shadowing is allowed in fn bodies — latest declaration wins within its scope
-    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
-    assert!(cfg.projects["test"].functions.contains_key("bad"));
-    // VarDecls are inlined at compile time, so the resolved body is empty
-    let body = &cfg.projects["test"].functions["bad"];
-    assert_eq!(body.len(), 0);
+    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+    assert!(
+        err.to_string().contains("$x is already defined"),
+        "got: {}",
+        err
+    );
 }
 
 #[test]
@@ -699,7 +701,7 @@ pr test [\n\
 }
 
 #[test]
-fn test_global_var_shadowed_by_project_var() {
+fn test_project_var_cannot_shadow_global() {
     let dir = tempfile::TempDir::new().unwrap();
     write_config(
         dir.path(),
@@ -714,8 +716,10 @@ pr test [\n\
 }\
 ",
     );
-    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
-    let proj = &cfg.projects["test"];
-    // Project-level var "name" shadows the global "name"
-    assert_eq!(proj.dir, "project");
+    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+    assert!(
+        err.to_string().contains("$name is already defined"),
+        "got: {}",
+        err
+    );
 }

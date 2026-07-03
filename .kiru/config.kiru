@@ -8,3 +8,14 @@ pr kiru [
 ] {}
 
 import `${kiru_dir}/.kiru/main.kiru`;
+
+pr todo [
+  url = `https://github.com/null/err.git`
+  dir = `whatever`
+] {
+  fn build {}
+  fn test {}
+  run ci {
+    build => test;
+  }
+}
