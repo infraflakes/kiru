@@ -8,15 +8,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
-/// A writer that implements `Send` for use across thread boundaries.
-type SendWriter = Box<dyn Write + Send>;
-
 /// Callback invoked for each line of output (used by the TUI).
 pub type OutputCallback = Arc<dyn Fn(String) + Send + Sync>;
 
 /// Where function output is directed: a direct writer or a callback.
 pub(crate) enum OutputTarget {
-    Direct(SendWriter),
+    Direct(Box<dyn Write + Send>),
     Callback(OutputCallback),
 }
 
@@ -38,14 +35,6 @@ impl OutputTarget {
                 cb(content.to_string());
                 Ok(())
             }
-        }
-    }
-
-    /// Clone the callback if this target is a callback variant.
-    pub(crate) fn clone_callback(&self) -> Option<OutputCallback> {
-        match self {
-            OutputTarget::Callback(cb) => Some(Arc::clone(cb)),
-            OutputTarget::Direct(_) => None,
         }
     }
 }
@@ -210,7 +199,7 @@ impl<'a> ExecContext<'a> {
             .map_err(RuntimeError::Io)?;
 
         let shell = shell::get_current_shell_path();
-        let child = Command::new(&shell)
+        let output = Command::new(&shell)
             .arg("-c")
             .arg(cmd_str)
             .current_dir(&self.work_dir)
@@ -218,61 +207,30 @@ impl<'a> ExecContext<'a> {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
+            .map_err(|e| RuntimeError::exec_io_error(cmd_str, e))?
+            .wait_with_output()
             .map_err(|e| RuntimeError::exec_io_error(cmd_str, e))?;
 
         let indent_str = self.compute_indent_string(1);
+        for line_result in io::BufReader::new(&output.stdout[..]).lines() {
+            let line_text = line_result.map_err(RuntimeError::Io)?;
+            self.output
+                .writeln(&[indent_str.as_str(), &line_text].concat())
+                .map_err(RuntimeError::Io)?;
+        }
+        for line_result in io::BufReader::new(&output.stderr[..]).lines() {
+            let line_text = line_result.map_err(RuntimeError::Io)?;
+            self.output
+                .writeln(&[indent_str.as_str(), &line_text].concat())
+                .map_err(RuntimeError::Io)?;
+        }
 
-        let status = match self.output.clone_callback() {
-            Some(cb) => wait_for_callback_output(child, indent_str, cb, cmd_str)?,
-            None => wait_for_direct_output(child, self.output, &indent_str, cmd_str)?,
-        };
-
-        if !status.success() {
-            return Err(RuntimeError::exec_exit_code(cmd_str, status.code()));
+        if !output.status.success() {
+            return Err(RuntimeError::exec_exit_code(cmd_str, output.status.code()));
         }
 
         Ok(())
     }
-}
-
-/// Wait for a child process to complete, streaming its output through the
-/// output callback via background reader threads.
-fn wait_for_callback_output(
-    mut child: std::process::Child,
-    indent: String,
-    cb: OutputCallback,
-    label: &str,
-) -> Result<std::process::ExitStatus, RuntimeError> {
-    let stdout_thread = spawn_stream_reader(child.stdout.take(), indent.clone(), cb.clone());
-    let stderr_thread = spawn_stream_reader(child.stderr.take(), indent, cb);
-
-    let status = child
-        .wait()
-        .map_err(|e| RuntimeError::exec_io_error(label, e))?;
-
-    if let Some(result) = stdout_thread.map(|h| h.join()) {
-        result.map_err(|_| RuntimeError::Panic("stdout reader panicked".to_string()))??;
-    }
-    if let Some(result) = stderr_thread.map(|h| h.join()) {
-        result.map_err(|_| RuntimeError::Panic("stderr reader panicked".to_string()))??;
-    }
-    Ok(status)
-}
-
-/// Wait for a child process to complete, buffering its output and writing
-/// lines directly to the output target.
-fn wait_for_direct_output(
-    child: std::process::Child,
-    output: &mut OutputTarget,
-    indent: &str,
-    label: &str,
-) -> Result<std::process::ExitStatus, RuntimeError> {
-    let cmd_output = child
-        .wait_with_output()
-        .map_err(|e| RuntimeError::exec_io_error(label, e))?;
-    write_output_lines(output, &cmd_output.stdout, indent)?;
-    write_output_lines(output, &cmd_output.stderr, indent)?;
-    Ok(cmd_output.status)
 }
 
 /// Check whether a runtime condition matches a resolved case pattern.
@@ -284,38 +242,4 @@ pub(crate) fn match_case_pattern(
         crate::compiler::ResolvedCasePattern::Literal(lit) => condition == lit,
         crate::compiler::ResolvedCasePattern::Default => true,
     }
-}
-
-/// Spawn a thread that reads lines from a child process stream and sends them
-/// to the output callback.  Returns `None` when the stream is `None`.
-fn spawn_stream_reader<R: std::io::Read + Send + 'static>(
-    stream: Option<R>,
-    indent: String,
-    cb: OutputCallback,
-) -> Option<std::thread::JoinHandle<Result<(), RuntimeError>>> {
-    stream.map(|child_stream| {
-        std::thread::spawn(move || {
-            let reader = std::io::BufReader::new(child_stream);
-            for line_result in reader.lines() {
-                let line_text = line_result.map_err(RuntimeError::Io)?;
-                cb([indent.as_str(), line_text.as_str()].concat());
-            }
-            Ok(())
-        })
-    })
-}
-
-/// Write captured stdout/stderr lines to the output target.
-fn write_output_lines(
-    output: &mut OutputTarget,
-    data: &[u8],
-    indent: &str,
-) -> Result<(), RuntimeError> {
-    for line_result in std::io::BufReader::new(data).lines() {
-        let line_text = line_result.map_err(RuntimeError::Io)?;
-        output
-            .writeln(&[indent, &line_text].concat())
-            .map_err(RuntimeError::Io)?;
-    }
-    Ok(())
 }
