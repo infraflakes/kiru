@@ -1,10 +1,21 @@
-shell = `bash`;
-var shell workdir = `echo $HOME/dev`;
-sanctuary = $workdir;
+var shell kiru_dir = `echo $HOME/kiru`;
 
-pr kiru {
-  url = `https://github.com/infraflakes/kiru.git`;
-  dir = `kiru`;
-  sync = `clone`;
-  include = `.kiru/main.kiru`;
+pr kiru [
+  url = `https://github.com/infraflakes/kiru.git`
+  dir = $kiru_dir
+  sync = `clone`
+  branch = `dev`
+] {}
+
+import `main.kiru`;
+
+pr todo [
+  url = `https://github.com/null/err.git`
+  dir = `whatever`
+] {
+  fn build {}
+  fn test {}
+  run ci {
+    build => test;
+  }
 }

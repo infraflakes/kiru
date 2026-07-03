@@ -1,93 +1,51 @@
-#[derive(Debug, Clone)]
-pub enum Expr {
-    BacktickLit {
-        parts: Vec<TemplatePart>,
-        offset: usize,
-        len: usize,
-    },
-    VarRef {
-        name: String,
-        offset: usize,
-        len: usize,
-    },
+use crate::dsl::{Expr, FnStmt, VarType};
+
+/// The key of a project block field (e.g., `url`, `dir`, `sync`, `branch`).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ProjectField {
+    Url,
+    Dir,
+    Sync,
+    Branch,
 }
 
-impl Expr {
-    pub fn span(&self) -> (usize, usize) {
-        match self {
-            Expr::BacktickLit { offset, len, .. } => (*offset, *len),
-            Expr::VarRef { offset, len, .. } => (*offset, *len),
-        }
-    }
-
-    pub fn resolve(
-        &self,
-        vars: &std::collections::HashMap<String, String>,
-    ) -> Result<String, String> {
-        match self {
-            Expr::BacktickLit { parts, .. } => {
-                let mut result = String::new();
-                for part in parts {
-                    if part.is_var {
-                        match vars.get(&part.value) {
-                            Some(value) => result.push_str(value),
-                            None => return Err(format!("undefined variable: ${}", part.value)),
-                        }
-                    } else {
-                        result.push_str(&part.value);
-                    }
-                }
-                Ok(result)
-            }
-            Expr::VarRef { name, .. } => match vars.get(name) {
-                Some(value) => Ok(value.clone()),
-                None => Err(format!("undefined variable: ${}", name)),
-            },
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct TemplatePart {
-    pub is_var: bool,
-    pub value: String,
-}
-
-#[allow(clippy::enum_variant_names)]
+/// A parsed statement node in the kiru DSL.
 #[derive(Debug, Clone)]
 pub enum Stmt {
-    ShellDecl {
-        value: String,
-        offset: usize,
-        len: usize,
-    },
-    SanctuaryDecl {
-        value: Expr,
-    },
-    ImportDecl {
-        path: Expr,
-    },
-    VarDecl {
+    /// A variable declaration (`var` or `var shell`).
+    Var {
         var_type: VarType,
         name: String,
         value: Expr,
         offset: usize,
         len: usize,
     },
-    ProjectDecl {
+    /// A project block: `pr name [ field = value ... ] { fn/run/var ... }`.
+    /// Fields (`url`, `dir`, `sync`, `branch`) are in `fields`; function,
+    /// run, and var declarations are in `body`.
+    Project {
         name: String,
-        fields: Vec<ProjectField>,
+        fields: Vec<Stmt>,
         body: Vec<Stmt>,
         offset: usize,
         len: usize,
     },
-    FnDecl {
+    /// A named field inside a project block (url, dir, sync, branch).
+    Field {
+        key: ProjectField,
+        value: Expr,
+        offset: usize,
+        len: usize,
+    },
+    /// A function definition (`fn ... { ... }`).
+    Fn {
         name: String,
         body: Vec<FnStmt>,
         offset: usize,
         len: usize,
     },
-    RunDecl {
+    /// A run block definition (`run ... { ... }`).
+    Run {
         name: String,
         chains: Vec<Vec<String>>,
         offset: usize,
@@ -95,66 +53,19 @@ pub enum Stmt {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum VarType {
-    String,
-    Shell,
-}
-
+/// A top-level item returned by the parser: either a DSL statement or an import directive.
 #[derive(Debug, Clone)]
-pub struct ProjectField {
-    pub key: String,
-    pub value: Expr,
+pub enum TopLevel {
+    Stmt(Stmt),
+    Import(Expr),
 }
 
-#[derive(Debug, Clone)]
-pub enum FnStmt {
-    Log {
-        value: Expr,
-    },
-    Exec {
-        value: Expr,
-    },
-    Cd {
-        arg: Expr,
-    },
-    VarDecl {
-        var_type: VarType,
-        name: String,
-        value: Expr,
-    },
-    EnvBlock {
-        pairs: Vec<EnvPair>,
-        body: Vec<FnStmt>,
-    },
-    Case {
-        condition: Expr,
-        arms: Vec<CaseArm>,
-    },
-}
-
-#[derive(Debug, Clone)]
-pub enum CasePattern {
-    Literal { parts: Vec<TemplatePart> },
-    VarRef { name: String },
-    Default,
-}
-
-#[derive(Debug, Clone)]
-pub struct CaseArm {
-    pub pattern: CasePattern,
-    pub body: Vec<FnStmt>,
-}
-
-#[derive(Debug, Clone)]
-pub struct EnvPair {
-    pub key: String,
-    pub value: Expr,
-}
-
+/// A set of parsed top-level items from a single source file, with source tracking
+/// for error reporting. Items preserve source order and include both statements
+/// and import directives.
 #[derive(Debug, Clone)]
 pub struct Program {
-    pub stmts: Vec<Stmt>,
+    pub items: Vec<TopLevel>,
     pub source_name: String,
     pub source_text: String,
 }
@@ -162,7 +73,7 @@ pub struct Program {
 impl Program {
     pub fn new() -> Self {
         Self {
-            stmts: Vec::new(),
+            items: Vec::new(),
             source_name: String::new(),
             source_text: String::new(),
         }

@@ -1,16 +1,17 @@
+use crate::compiler::error::{CompileError, spanned_err};
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-#[derive(Debug)]
-pub struct Output {
-    pub stdout: String,
-}
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
+/// Errors from shell command execution.
 #[derive(Debug)]
-pub enum Error {
+pub(crate) enum Error {
     Spawn(std::io::Error),
     Exit {
         command: String,
@@ -75,103 +76,123 @@ impl std::error::Error for Error {
     }
 }
 
-pub fn run_captured(
-    shell: &str,
+/// Spawn a thread that reads a child process stdout/stderr pipe to EOF and
+/// appends every byte into a shared `Mutex<Vec<u8>>` buffer.
+fn spawn_reader_thread<T: Read + Send + 'static>(
+    child_stream: Option<T>,
+    buffer: Arc<Mutex<Vec<u8>>>,
+) -> Option<JoinHandle<()>> {
+    child_stream.map(|stream| {
+        std::thread::spawn(move || {
+            let mut read_buffer = Vec::new();
+            let _ = std::io::BufReader::new(stream).read_to_end(&mut read_buffer);
+            buffer
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .extend(read_buffer);
+        })
+    })
+}
+
+/// Wait for a child process to finish, polling with a timeout.
+/// Returns the exit status on success, or a `Timeout`/`Spawn` error.
+/// On timeout the reader threads are joined and their partial output
+/// captured in the error.
+fn poll_child_with_timeout(
+    child: &mut std::process::Child,
     command: &str,
-    dir: Option<&Path>,
-    env: Option<&std::collections::HashMap<String, String>>,
-    timeout: Option<Duration>,
-) -> Result<Output, Error> {
-    let mut cmd = Command::new(shell);
-    cmd.arg("-c")
+    start: Instant,
+    stdout_reader: &mut Option<JoinHandle<()>>,
+    stderr_reader: &mut Option<JoinHandle<()>>,
+    stdout_buf: &Arc<Mutex<Vec<u8>>>,
+    stderr_buf: &Arc<Mutex<Vec<u8>>>,
+) -> Result<std::process::ExitStatus, Error> {
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {
+                if start.elapsed() >= COMMAND_TIMEOUT {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    if let Some(h) = stdout_reader.take() {
+                        let _ = h.join();
+                    }
+                    if let Some(h) = stderr_reader.take() {
+                        let _ = h.join();
+                    }
+                    let so = stdout_buf.lock().unwrap_or_else(|e| e.into_inner());
+                    let se = stderr_buf.lock().unwrap_or_else(|e| e.into_inner());
+                    return Err(Error::Timeout {
+                        command: command.to_string(),
+                        partial_stdout: String::from_utf8_lossy(&so).into_owned(),
+                        partial_stderr: String::from_utf8_lossy(&se).into_owned(),
+                    });
+                }
+                std::thread::sleep(POLL_INTERVAL);
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(Error::Spawn(e));
+            }
+        }
+    }
+}
+
+/// Execute a shell command and capture stdout.  Applies an optional working
+/// directory and environment variable overrides.  Times out after 30 seconds.
+pub(crate) fn exec_and_get_stdout(
+    command: &str,
+    working_dir: Option<&Path>,
+    env_overrides: Option<&std::collections::HashMap<String, String>>,
+) -> Result<String, Error> {
+    let shell_path = get_current_shell_path();
+    let mut shell_command = Command::new(shell_path);
+    shell_command
+        .arg("-c")
         .arg(command)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    if let Some(dir) = dir {
-        cmd.current_dir(dir);
+    if let Some(dir) = working_dir {
+        shell_command.current_dir(dir);
     }
-    if let Some(env) = env {
-        cmd.envs(env);
+    if let Some(overrides) = env_overrides {
+        shell_command.envs(overrides);
     }
 
-    let mut child = cmd.spawn().map_err(Error::Spawn)?;
+    let mut child = shell_command.spawn().map_err(Error::Spawn)?;
 
-    let (status, stdout_buf, stderr_buf) = match timeout {
-        Some(dur) => {
-            let start = Instant::now();
+    let start = Instant::now();
 
-            let stdout_buf = Arc::new(Mutex::new(Vec::new()));
-            let stderr_buf = Arc::new(Mutex::new(Vec::new()));
+    let stdout_buf = Arc::new(Mutex::new(Vec::new()));
+    let stderr_buf = Arc::new(Mutex::new(Vec::new()));
 
-            let stdout_reader = child.stdout.take().map(|s| {
-                let buf = Arc::clone(&stdout_buf);
-                std::thread::spawn(move || {
-                    let mut tmp = Vec::new();
-                    let _ = std::io::BufReader::new(s).read_to_end(&mut tmp);
-                    buf.lock().unwrap_or_else(|e| e.into_inner()).extend(tmp);
-                })
-            });
-            let stderr_reader = child.stderr.take().map(|s| {
-                let buf = Arc::clone(&stderr_buf);
-                std::thread::spawn(move || {
-                    let mut tmp = Vec::new();
-                    let _ = std::io::BufReader::new(s).read_to_end(&mut tmp);
-                    buf.lock().unwrap_or_else(|e| e.into_inner()).extend(tmp);
-                })
-            });
+    let mut stdout_reader = spawn_reader_thread(child.stdout.take(), Arc::clone(&stdout_buf));
+    let mut stderr_reader = spawn_reader_thread(child.stderr.take(), Arc::clone(&stderr_buf));
 
-            let status = loop {
-                match child.try_wait() {
-                    Ok(Some(status)) => break status,
-                    Ok(None) => {
-                        if start.elapsed() >= dur {
-                            let _ = child.kill();
-                            let _ = child.wait();
-                            if let Some(h) = stdout_reader {
-                                let _ = h.join();
-                            }
-                            if let Some(h) = stderr_reader {
-                                let _ = h.join();
-                            }
-                            let out = stdout_buf.lock().unwrap_or_else(|e| e.into_inner());
-                            let err = stderr_buf.lock().unwrap_or_else(|e| e.into_inner());
-                            return Err(Error::Timeout {
-                                command: command.to_string(),
-                                partial_stdout: String::from_utf8_lossy(&out).into_owned(),
-                                partial_stderr: String::from_utf8_lossy(&err).into_owned(),
-                            });
-                        }
-                        std::thread::sleep(Duration::from_millis(50));
-                    }
-                    Err(e) => {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        return Err(Error::Spawn(e));
-                    }
-                }
-            };
+    let status = poll_child_with_timeout(
+        &mut child,
+        command,
+        start,
+        &mut stdout_reader,
+        &mut stderr_reader,
+        &stdout_buf,
+        &stderr_buf,
+    )?;
 
-            if let Some(h) = stdout_reader {
-                let _ = h.join();
-            }
-            if let Some(h) = stderr_reader {
-                let _ = h.join();
-            }
+    if let Some(h) = stdout_reader {
+        let _ = h.join();
+    }
+    if let Some(h) = stderr_reader {
+        let _ = h.join();
+    }
 
-            let out = stdout_buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
-            let err = stderr_buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let stdout_data = stdout_buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let stderr_data = stderr_buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
 
-            (status, out, err)
-        }
-        None => {
-            let output = child.wait_with_output().map_err(Error::Spawn)?;
-            (output.status, output.stdout, output.stderr)
-        }
-    };
-
-    let stdout = String::from_utf8_lossy(&stdout_buf).trim_end().to_string();
-    let stderr = String::from_utf8_lossy(&stderr_buf).to_string();
+    let stdout = String::from_utf8_lossy(&stdout_data).trim_end().to_string();
+    let stderr = String::from_utf8_lossy(&stderr_data).to_string();
 
     if !status.success() {
         return Err(Error::Exit {
@@ -181,5 +202,36 @@ pub fn run_captured(
         });
     }
 
-    Ok(Output { stdout })
+    Ok(stdout)
+}
+
+/// Execute a shell command for a `var shell` statement.
+/// Non-zero exit codes produce an empty string (callers use this to
+/// gracefully handle failed shell commands during variable resolution).
+pub(crate) fn execute_shell_variable(
+    name: &str,
+    resolved_command: &str,
+    source_name: &str,
+    source_text: &str,
+    offset: usize,
+    len: usize,
+) -> Result<String, CompileError> {
+    match exec_and_get_stdout(resolved_command, None, None) {
+        Ok(stdout) => Ok(stdout),
+        // Non-zero exit is not an error — empty string is a valid value
+        // in Kiru's type system.
+        Err(Error::Exit { .. }) => Ok(String::new()),
+        Err(e) => Err(spanned_err(
+            format!("shell var ${} failed: {}", name, e),
+            source_name,
+            source_text,
+            offset,
+            len,
+        )),
+    }
+}
+
+/// Return the user's shell from `$SHELL`, defaulting to `"sh"`.
+pub(crate) fn get_current_shell_path() -> String {
+    std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string())
 }

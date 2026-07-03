@@ -1,4 +1,4 @@
-use super::expr::parse_template_parts;
+use super::expr::parse_interpolation_parts;
 use super::*;
 
 impl Parser {
@@ -26,7 +26,7 @@ impl Parser {
         let arg = self.parse_expr()?;
         self.expect_with_context(TokenType::Semicolon, "after `cd`")?;
 
-        Ok(FnStmt::Cd { arg })
+        Ok(FnStmt::Cd { value: arg })
     }
 
     pub(crate) fn parse_fn_var_decl(&mut self) -> Result<FnStmt, ParseError> {
@@ -46,7 +46,7 @@ impl Parser {
         let mut pairs = Vec::new();
         while self.current_token().ty != TokenType::RBracket {
             let key = match &self.current_token().ty {
-                TokenType::Ident(k) => k.clone(),
+                TokenType::Ident(key_str) => key_str.clone(),
                 ty if is_keyword_token(ty) => {
                     return Err(ParseError::new(
                         self.eof_aware_span(),
@@ -70,17 +70,8 @@ impl Parser {
             let value = self.parse_expr()?;
             pairs.push(EnvPair { key, value });
 
-            match &self.current_token().ty {
-                TokenType::Comma => {
-                    self.advance();
-                }
-                TokenType::RBracket => break,
-                _ => {
-                    return Err(ParseError::new(
-                        self.eof_aware_span(),
-                        "expected `,` or `]`".to_string(),
-                    ));
-                }
+            if self.current_token().ty == TokenType::RBracket {
+                break;
             }
         }
         self.expect_with_context(TokenType::RBracket, "to close env pairs")?;
@@ -105,7 +96,7 @@ impl Parser {
 
         self.expect_with_context(TokenType::LBrace, "to open case arms")?;
 
-        let mut arms = Vec::new();
+        let mut scopes = Vec::new();
         while self.current_token().ty != TokenType::RBrace {
             let pattern = self.parse_case_pattern()?;
 
@@ -118,25 +109,27 @@ impl Parser {
 
             self.expect_with_context(TokenType::Semicolon, "after case arm")?;
 
-            arms.push(CaseArm { pattern, body });
+            scopes.push(CaseArm { pattern, body });
         }
         self.expect_with_context(TokenType::RBrace, "to close case block")?;
 
         self.expect_with_context(TokenType::Semicolon, "after case block")?;
 
-        Ok(FnStmt::Case { condition, arms })
+        Ok(FnStmt::Case { condition, scopes })
     }
 
     fn parse_case_pattern(&mut self) -> Result<CasePattern, ParseError> {
-        match &self.current_token().ty {
-            TokenType::Ident(s) if s == "_" => {
+        let tok = self.current_token().clone();
+        match &tok.ty {
+            TokenType::Ident(ident) if ident == "_" => {
                 self.advance();
                 Ok(CasePattern::Default)
             }
             TokenType::Dollar => {
+                let start_offset = self.current_token().offset;
                 self.advance();
                 let name = match &self.current_token().ty {
-                    TokenType::Ident(n) => n.clone(),
+                    TokenType::Ident(name_str) => name_str.clone(),
                     ty if is_keyword_token(ty) => {
                         return Err(ParseError::new(
                             self.eof_aware_span(),
@@ -153,25 +146,28 @@ impl Parser {
                         ));
                     }
                 };
+                let end_offset = self.current_token().offset + self.current_token().len;
                 self.advance();
-                Ok(CasePattern::VarRef { name })
+                Ok(CasePattern::VarRef {
+                    name,
+                    offset: start_offset,
+                    len: end_offset - start_offset,
+                })
             }
-            TokenType::Backtick(_) => {
-                let token = self.current_token().clone();
-                let TokenType::Backtick(content) = &token.ty else {
-                    unreachable!()
-                };
+            TokenType::Backtick(content) => {
+                let offset = tok.offset;
+                let len = tok.len;
                 self.advance();
-                let parts = parse_template_parts(content, token.offset)?;
-                Ok(CasePattern::Literal { parts })
+                let parts = parse_interpolation_parts(content, offset)?;
+                Ok(CasePattern::Literal { parts, offset, len })
             }
             _ => {
-                let tok = format_token(self.current_token());
+                let token_str = format_token(&tok);
                 Err(ParseError::new(
                     self.eof_aware_span(),
                     format!(
                         "expected pattern before {}; are you missing a case arm pattern?",
-                        tok
+                        token_str
                     ),
                 ))
             }

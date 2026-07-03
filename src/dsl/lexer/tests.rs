@@ -8,7 +8,6 @@ fn test_single_tokens() {
         ("}", TokenType::RBrace),
         ("[", TokenType::LBracket),
         ("]", TokenType::RBracket),
-        (",", TokenType::Comma),
         (";", TokenType::Semicolon),
         ("$", TokenType::Dollar),
     ];
@@ -20,11 +19,10 @@ fn test_single_tokens() {
 
 #[test]
 fn test_keywords() {
-    let tokens = collect_tokens("sanctuary import var string pr fn run env log exec cd shell");
+    let tokens = collect_tokens("import var string pr fn run env log exec cd shell");
     assert_eq!(
         tokens,
         vec![
-            TokenType::Sanctuary,
             TokenType::Import,
             TokenType::Var,
             TokenType::StringKw,
@@ -235,8 +233,7 @@ fn test_default_pattern() {
 
 #[test]
 fn test_full_snippet() {
-    let input = "sanctuary = `$HOME/dev`;\n\
-                  import `./a.kiru`;\n\
+    let input = "import `./a.kiru`;\n\
                   var string port1 = `127.0.0.1:8080`;\n\
                   pr hello {\n\
                       url = `git@github.com:foo/bar.git`;\n\
@@ -247,7 +244,6 @@ fn test_full_snippet() {
                       exec `go build`;\n\
                   }";
     let tokens = collect_tokens(input);
-    assert!(tokens.contains(&TokenType::Sanctuary));
     assert!(tokens.contains(&TokenType::Import));
     assert!(tokens.contains(&TokenType::Var));
     assert!(tokens.contains(&TokenType::Pr));

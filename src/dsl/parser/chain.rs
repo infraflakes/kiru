@@ -2,22 +2,22 @@ use super::*;
 
 impl Parser {
     pub(crate) fn parse_chain(&mut self) -> Result<Vec<String>, ParseError> {
-        let mut fns = Vec::new();
-        fns.push(self.parse_block_fn_name_in_run()?);
+        let mut fn_names = Vec::new();
+        fn_names.push(self.parse_fn_name_in_run()?);
 
         while self.current_token().ty == TokenType::Arrow {
             self.advance();
-            fns.push(self.parse_block_fn_name_in_run()?);
+            fn_names.push(self.parse_fn_name_in_run()?);
         }
 
         self.expect_with_context(TokenType::Semicolon, "after run chain")?;
-        Ok(fns)
+        Ok(fn_names)
     }
 
-    fn parse_block_fn_name_in_run(&mut self) -> Result<String, ParseError> {
+    fn parse_fn_name_in_run(&mut self) -> Result<String, ParseError> {
         match &self.current_token().ty {
-            TokenType::Ident(n) => {
-                let name = n.clone();
+            TokenType::Ident(ident) => {
+                let name = ident.clone();
                 self.advance();
                 Ok(name)
             }

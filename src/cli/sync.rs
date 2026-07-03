@@ -1,120 +1,60 @@
-use super::load_config;
-use crate::sync;
-use crate::tui::{self, TaskStatus, TuiEvent};
+use crate::compiler::CompileError;
+use crate::runner;
 use std::path::PathBuf;
-use std::sync::Arc;
 
-pub fn run(config_arg: Option<PathBuf>) -> miette::Result<()> {
-    if crate::config::is_sanctuary_disabled() {
-        return Err(miette::miette!("sync is not available in SANCTUARY=0 mode"));
-    }
-    let config = load_config(config_arg)?;
+/// Sync all projects via the TUI.
+pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
+    let config_path = super::get_config_path(config_arg);
+    let config = crate::compiler::parse_projects_metadata(&config_path).map_err(|e| match e {
+        CompileError::ParseReports(reports) => super::print_parse_errors(reports),
+        _ => miette::miette!("{}", e),
+    })?;
 
-    let project_names: Vec<String> = config.projects.keys().cloned().collect();
-    let chain_pairs: Vec<(String, Vec<String>)> = project_names
-        .iter()
-        .map(|name| (name.clone(), vec![name.clone()]))
+    let total_project_count = config.projects.len();
+
+    let projects: Vec<(String, crate::compiler::Project)> = config
+        .projects
+        .into_iter()
+        .filter(|(name, proj)| {
+            if proj.url.is_empty() && proj.dir.is_empty() {
+                eprintln!(
+                    "{:?}",
+                    miette::miette!("project {:?}: missing url and dir, skipping sync", name)
+                );
+                false
+            } else if proj.url.is_empty() {
+                eprintln!(
+                    "{:?}",
+                    miette::miette!("project {:?}: missing url, skipping sync", name)
+                );
+                false
+            } else if proj.dir.is_empty() {
+                eprintln!(
+                    "{:?}",
+                    miette::miette!("project {:?}: missing dir, skipping sync", name)
+                );
+                false
+            } else {
+                true
+            }
+        })
         .collect();
-    let sanctuary = config.sanctuary.clone();
-    let projects = Arc::new(config.projects);
 
-    if let Err(e) = tui::run_tui_with(chain_pairs, move |tx| {
-        let sanctuary = sanctuary.clone();
-        let projects = Arc::clone(&projects);
-        async move {
-            let mut join_handles = Vec::new();
-
-            for (i, proj_name) in project_names.iter().enumerate() {
-                let proj = match projects.get(proj_name) {
-                    Some(p) => p.clone(),
-                    None => {
-                        crate::tui::send_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Error));
-                        continue;
-                    }
-                };
-                let sanctuary = sanctuary.clone();
-                let tx_cb = tx.clone();
-                let idx = i;
-
-                let handle = tokio::task::spawn_blocking(move || {
-                    crate::tui::send_event(
-                        &tx_cb,
-                        TuiEvent::UpdateStatus(idx, TaskStatus::Running),
-                    );
-                    sync::sync_project_with_callback(&sanctuary, &proj, |line: &str| {
-                        crate::tui::send_event(
-                            &tx_cb,
-                            TuiEvent::AppendOutput(idx, line.to_string()),
-                        );
-                    })
-                });
-
-                join_handles.push((i, handle));
-            }
-
-            for (i, handle) in join_handles {
-                match handle.await {
-                    Ok(Ok(())) => {
-                        crate::tui::send_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Success));
-                    }
-                    Ok(Err(e)) => {
-                        crate::tui::send_event(
-                            &tx,
-                            TuiEvent::AppendOutput(i, format!("Error: {}", e)),
-                        );
-                        crate::tui::send_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Error));
-                    }
-                    Err(e) => {
-                        crate::tui::send_event(
-                            &tx,
-                            TuiEvent::AppendOutput(i, format!("Task panicked: {}", e)),
-                        );
-                        crate::tui::send_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Error));
-                    }
-                }
-            }
-
-            let projects = Arc::clone(&projects);
-            let sanctuary = sanctuary.clone();
-            let tx = tx.clone();
-            let warn_result = tokio::task::spawn_blocking(move || {
-                sync::warn_unknown_repos(&sanctuary, Arc::as_ref(&projects))
-            })
-            .await;
-
-            let has_tasks = !project_names.is_empty();
-            match warn_result {
-                Ok(Err(e)) => {
-                    if has_tasks {
-                        crate::tui::send_event(
-                            &tx,
-                            TuiEvent::AppendOutput(0, format!("Warning: {}", e)),
-                        );
-                    } else {
-                        eprintln!("[kiru] Warning: {}", e);
-                    }
-                }
-                Err(e) => {
-                    if has_tasks {
-                        crate::tui::send_event(
-                            &tx,
-                            TuiEvent::AppendOutput(
-                                0,
-                                format!("Warning: blocking task failed: {}", e),
-                            ),
-                        );
-                    } else {
-                        eprintln!("[kiru] Warning: blocking task failed: {}", e);
-                    }
-                }
-                _ => {}
-            }
-
-            Ok(())
+    if projects.is_empty() {
+        if total_project_count == 0 {
+            eprintln!("{:?}", miette::miette!("no projects to sync"));
+            return Ok(());
         }
-    }) {
-        eprintln!("TUI error: {}", e);
-        std::process::exit(1);
+        return Err(miette::miette!(
+            "all projects were skipped due to missing url or dir"
+        ));
     }
-    Ok(())
+
+    let chain_pairs: Vec<(String, Vec<String>)> = projects
+        .iter()
+        .map(|(name, _)| (name.clone(), vec![name.clone()]))
+        .collect();
+    let projects: std::collections::HashMap<String, crate::compiler::Project> =
+        projects.into_iter().collect();
+    runner::sync::run_sync_for_projects(projects, chain_pairs)
 }

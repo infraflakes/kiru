@@ -1,64 +1,42 @@
 mod args;
 mod exec;
+mod pager;
 mod sync;
 mod validate;
 
 pub use args::{Cli, Commands};
 
-use crate::config::{Config, ConfigError, load};
+use crate::compiler::{CompileError, Config};
 use clap::Parser;
 use std::path::PathBuf;
 
 fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Config> {
     let config_path = get_config_path(config_arg);
-    load(&config_path).map_err(|e| match e {
-        ConfigError::ParseReports(reports) => print_parse_errors(reports),
-        ConfigError::ValidationReport(report) => report,
+    crate::compiler::compile_and_resolve(&config_path).map_err(|e| match e {
+        CompileError::ParseReports(reports) => print_parse_errors(reports),
+        CompileError::ValidationReport(report) => report,
         _ => miette::miette!("{}", e),
     })
 }
 
-fn load_config_and_resolve(config_arg: Option<PathBuf>) -> miette::Result<Config> {
-    let mut config = load_config(config_arg)?;
-    match crate::config::resolve_includes(&mut config) {
-        Ok(()) => {}
-        Err(crate::config::ConfigError::ParseReports(reports)) => {
-            return Err(print_parse_errors(reports));
-        }
-        Err(crate::config::ConfigError::ValidationReport(report)) => {
-            return Err(report);
-        }
-        Err(e) => {
-            return Err(miette::miette!("{}", e));
-        }
-    }
-    Ok(config)
-}
-
 fn print_parse_errors(reports: Vec<miette::Report>) -> miette::Report {
     let count = reports.len();
-    if count == 1 {
-        reports.into_iter().next().unwrap()
-    } else {
-        let mut combined = String::new();
-        for (i, report) in reports.into_iter().enumerate() {
-            if i > 0 {
-                combined.push('\n');
-            }
-            combined.push_str(&format!("{:?}", report));
-        }
-        miette::miette!("{}\n{} parse error(s) found", combined, count)
+    for report in &reports {
+        eprintln!("{:?}", report);
     }
+    miette::miette!("{} parse error(s) found", count)
 }
 
-pub fn run() -> miette::Result<()> {
-    let cli = Cli::parse();
+pub fn run_cli() -> miette::Result<()> {
+    let parsed_cli = Cli::parse();
 
-    match cli.command {
-        Commands::Validate => validate::run(cli.config),
-        Commands::Sync => sync::run(cli.config),
-        Commands::Run { name, project } => exec::run_run(cli.config, name, project),
-        Commands::Fn { name, project } => exec::run_fn(cli.config, name, project),
+    match parsed_cli.command {
+        Commands::Validate => validate::run_validate_command(parsed_cli.config),
+        Commands::Sync => sync::run_sync_command(parsed_cli.config),
+        Commands::Run { name, project } => {
+            exec::execute_run_block(parsed_cli.config, name, project)
+        }
+        Commands::Fn { name, project } => exec::execute_function(parsed_cli.config, name, project),
         Commands::Version => run_version(),
     }
 }
@@ -68,7 +46,10 @@ fn get_config_path(config_arg: Option<PathBuf>) -> PathBuf {
         return path;
     }
 
-    crate::config::default_config_path()
+    if let Some(config_dir) = dirs::config_dir() {
+        return config_dir.join("kiru").join("main.kiru");
+    }
+    PathBuf::from("main.kiru")
 }
 
 fn run_version() -> miette::Result<()> {

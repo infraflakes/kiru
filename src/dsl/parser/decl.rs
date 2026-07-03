@@ -1,44 +1,11 @@
 use super::*;
 
 impl Parser {
-    pub(crate) fn parse_shell_decl(&mut self) -> Result<Stmt, ParseError> {
-        let offset = self.current_token().offset;
-        let len = self.current_token().len;
-        self.advance();
-
-        self.expect_with_context(TokenType::Assign, "after `shell`")?;
-
-        let value = self.parse_simple_backtick()?;
-        self.expect_with_context(TokenType::Semicolon, "after shell declaration")?;
-
-        Ok(Stmt::ShellDecl { value, offset, len })
-    }
-
-    pub(crate) fn parse_sanctuary_decl(&mut self) -> Result<Stmt, ParseError> {
-        self.advance();
-
-        self.expect_with_context(TokenType::Assign, "after `sanctuary`")?;
-
-        let value = self.parse_expr()?;
-        self.expect_with_context(TokenType::Semicolon, "after sanctuary declaration")?;
-
-        Ok(Stmt::SanctuaryDecl { value })
-    }
-
-    pub(crate) fn parse_import_decl(&mut self) -> Result<Stmt, ParseError> {
-        self.advance();
-
-        let path = self.parse_expr()?;
-        self.expect_with_context(TokenType::Semicolon, "after import path")?;
-
-        Ok(Stmt::ImportDecl { path })
-    }
-
     pub(crate) fn parse_var_decl(&mut self) -> Result<Stmt, ParseError> {
         let offset = self.current_token().offset;
         let len = self.current_token().len;
         let (var_type, name, value) = self.parse_var_decl_common()?;
-        Ok(Stmt::VarDecl {
+        Ok(Stmt::Var {
             var_type,
             name,
             value,
@@ -53,7 +20,7 @@ impl Parser {
         self.advance();
 
         let name = match &self.current_token().ty {
-            TokenType::Ident(n) => n.clone(),
+            TokenType::Ident(name_str) => name_str.clone(),
             ty if is_keyword_token(ty) => {
                 return Err(ParseError::new(
                     self.eof_aware_span(),
@@ -81,7 +48,7 @@ impl Parser {
 
         self.expect_with_context(TokenType::RBrace, "to close function body")?;
 
-        Ok(Stmt::FnDecl {
+        Ok(Stmt::Fn {
             name,
             body,
             offset,
@@ -95,7 +62,7 @@ impl Parser {
         self.advance();
 
         let name = match &self.current_token().ty {
-            TokenType::Ident(n) => n.clone(),
+            TokenType::Ident(name_str) => name_str.clone(),
             ty if is_keyword_token(ty) => {
                 return Err(ParseError::new(
                     self.eof_aware_span(),
@@ -118,7 +85,7 @@ impl Parser {
 
         let mut chains = Vec::new();
         while self.current_token().ty != TokenType::RBrace {
-            if self.current_token().ty == TokenType::EOF {
+            if self.current_token().ty == TokenType::Eof {
                 return Err(ParseError::new(
                     self.eof_aware_span(),
                     "unexpected end of file in run declaration (expected '}')".to_string(),
@@ -129,7 +96,7 @@ impl Parser {
 
         self.expect_with_context(TokenType::RBrace, "to close run block body")?;
 
-        Ok(Stmt::RunDecl {
+        Ok(Stmt::Run {
             name,
             chains,
             offset,

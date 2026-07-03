@@ -2,8 +2,9 @@ use crate::dsl::token::{Token, TokenType};
 
 mod tokenizer;
 
+/// Character-level lexer that emits tokens from source text.
 #[derive(Debug)]
-pub struct Lexer {
+pub(crate) struct Lexer {
     pub(super) input: Vec<char>,
     pub(super) pos: usize,
     pub(super) read_pos: usize,
@@ -14,7 +15,8 @@ pub struct Lexer {
 }
 
 impl Lexer {
-    pub fn new(input: String) -> Self {
+    /// Constructs a new Lexer from the given input string.
+    pub(crate) fn new(input: String) -> Self {
         let mut lexer = Self {
             input: input.chars().collect(),
             pos: 0,
@@ -28,15 +30,13 @@ impl Lexer {
         lexer
     }
 
-    pub(crate) fn into_source(self) -> String {
-        self.input.into_iter().collect()
+    /// Returns the source text length in bytes.
+    pub(crate) fn source_len(&self) -> usize {
+        self.input.iter().map(|ch| ch.len_utf8()).sum()
     }
 
-    pub fn source_len(&self) -> usize {
-        self.input.iter().map(|c| c.len_utf8()).sum()
-    }
-
-    pub fn next_token(&mut self) -> Token {
+    /// Returns the next Token from the input.
+    pub(crate) fn next_token(&mut self) -> Token {
         loop {
             self.skip_whitespace();
             if self.ch != Some('#') {
@@ -51,7 +51,7 @@ impl Lexer {
         let ch = self.ch;
 
         match ch {
-            None => Token::new(TokenType::EOF, start_line, start_col, start_byte_offset, 0),
+            None => Token::new(TokenType::Eof, start_line, start_col, start_byte_offset, 0),
             Some('{') => {
                 self.read_char();
                 Token::new(
@@ -92,26 +92,17 @@ impl Lexer {
                     self.byte_offset - start_byte_offset,
                 )
             }
-            Some('(') | Some(')') => {
+            Some(ch @ ('(' | ')')) => {
                 self.read_char();
                 Token::new(
-                    TokenType::Illegal(format!("unexpected character: {}", ch.unwrap())),
+                    TokenType::Illegal(format!("unexpected character: {}", ch)),
                     start_line,
                     start_col,
                     start_byte_offset,
                     self.byte_offset - start_byte_offset,
                 )
             }
-            Some(',') => {
-                self.read_char();
-                Token::new(
-                    TokenType::Comma,
-                    start_line,
-                    start_col,
-                    start_byte_offset,
-                    self.byte_offset - start_byte_offset,
-                )
-            }
+
             Some('.') => {
                 self.read_char();
                 Token::new(
@@ -164,11 +155,11 @@ impl Lexer {
                 }
             }
             Some('`') => self.read_backtick(),
-            Some(c) if c.is_alphabetic() || c == '_' => self.read_ident(),
-            Some(c) => {
+            Some(ch) if ch.is_alphabetic() || ch == '_' => self.read_ident(),
+            Some(ch) => {
                 self.read_char();
                 Token::new(
-                    TokenType::Illegal(format!("unexpected character: {}", c)),
+                    TokenType::Illegal(format!("unexpected character: {}", ch)),
                     start_line,
                     start_col,
                     start_byte_offset,
@@ -185,8 +176,8 @@ fn collect_tokens(input: &str) -> Vec<TokenType> {
     let mut tokens = Vec::new();
     loop {
         let tok = lexer.next_token();
-        let is_eof = matches!(tok.ty, TokenType::EOF);
-        if !matches!(tok.ty, TokenType::EOF | TokenType::Illegal(_)) {
+        let is_eof = matches!(tok.ty, TokenType::Eof);
+        if !matches!(tok.ty, TokenType::Eof | TokenType::Illegal(_)) {
             tokens.push(tok.ty);
         }
         if is_eof {
@@ -202,7 +193,7 @@ fn collect_all_tokens(input: &str) -> Vec<Token> {
     let mut tokens = Vec::new();
     loop {
         let tok = lexer.next_token();
-        let is_eof = matches!(tok.ty, TokenType::EOF);
+        let is_eof = matches!(tok.ty, TokenType::Eof);
         tokens.push(tok);
         if is_eof {
             break;
@@ -218,7 +209,7 @@ fn extract_errors(input: &str) -> Vec<String> {
     loop {
         let tok = lexer.next_token();
         match tok.ty {
-            TokenType::EOF => break,
+            TokenType::Eof => break,
             TokenType::Illegal(msg) => errors.push(msg),
             _ => {}
         }
