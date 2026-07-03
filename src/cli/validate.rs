@@ -40,6 +40,7 @@ fn format_config_as_tree(config: &Config) -> String {
         }
     }
 
+    formatted_output.push('\n');
     footer_bar(&mut formatted_output, config);
     formatted_output.push('\n');
     formatted_output
@@ -78,8 +79,6 @@ fn draw_project(out: &mut String, name: &str, project: &crate::compiler::Project
         let connector = if last_item { "└" } else { "├" };
         draw_item_line(out, indent, connector, label, names);
     }
-
-    out.push('\n');
 }
 
 fn project_field(out: &mut String, indent: &str, key: &str, value: &str) {

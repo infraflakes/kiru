@@ -10,6 +10,8 @@ pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
         _ => miette::miette!("{}", e),
     })?;
 
+    let total_project_count = config.projects.len();
+
     let projects: Vec<(String, crate::compiler::Project)> = config
         .projects
         .into_iter()
@@ -39,8 +41,13 @@ pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
         .collect();
 
     if projects.is_empty() {
-        eprintln!("{:?}", miette::miette!("no projects to sync"));
-        return Ok(());
+        if total_project_count == 0 {
+            eprintln!("{:?}", miette::miette!("no projects to sync"));
+            return Ok(());
+        }
+        return Err(miette::miette!(
+            "all projects were skipped due to missing url or dir"
+        ));
     }
 
     let chain_pairs: Vec<(String, Vec<String>)> = projects

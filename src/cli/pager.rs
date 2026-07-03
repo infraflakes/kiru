@@ -22,17 +22,24 @@ pub(crate) fn display_output_through_pager(output: &str) -> miette::Result<()> {
 
 /// Pipe output through `$PAGER` (defaults to `less -R`).
 fn pipe_to_pager(output: &str) -> miette::Result<()> {
-    let pager = std::env::var("PAGER").unwrap_or_else(|_| "less".to_string());
+    let (pager, is_default) = match std::env::var("PAGER") {
+        Ok(v) => (v, false),
+        Err(_) => ("less".to_string(), true),
+    };
     let pager_parts = shlex::split(&pager)
         .filter(|v| !v.is_empty())
         .ok_or_else(|| miette::miette!("failed to parse PAGER: '{}'", pager))?;
-    let (program, args) = pager_parts
+    let (program, rest) = pager_parts
         .split_first()
         .ok_or_else(|| miette::miette!("no pager command in PAGER='{}'", pager))?;
+    let mut args: Vec<String> = rest.iter().map(|s| s.to_string()).collect();
+
+    if is_default {
+        args.push("-R".to_string());
+    }
 
     let mut cmd = Command::new(program)
         .args(args)
-        .arg("-R")
         .stdin(Stdio::piped())
         .spawn()
         .map_err(|e| miette::miette!("failed to spawn pager '{}': {}", pager, e))?;
