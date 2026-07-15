@@ -2,14 +2,26 @@ use crate::compiler::error::CompileError;
 use crate::compiler::error::spanned_err;
 use crate::compiler::scope::{Redeclaration, ScopeKind, ScopeStack};
 use crate::compiler::types::{
-    Config, Project, ResolvedCaseArm, ResolvedCasePattern, ResolvedEnvPair, ResolvedFnStmt,
-    SyncMode, UnresolvedConfig, UnresolvedProject,
+    Config, Project, ProjectVarStmt, ResolvedCaseArm, ResolvedCasePattern, ResolvedEnvPair,
+    ResolvedFnStmt, SyncMode, UnresolvedConfig, UnresolvedProject,
 };
 use crate::dsl::{CaseArm, CasePattern, EnvPair, Expr, FnStmt, Stmt};
 use crate::shell;
 use miette::miette;
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+
+// Thread-local override for `KIRU_CWD` env var, used by tests so they
+// don't race writing to process-global `std::env::set_var`.
+thread_local! {
+    static KIRU_CWD_OVERRIDE: Cell<Option<bool>> = const { Cell::new(None) };
+}
+
+#[doc(hidden)]
+pub fn __test_set_kiru_cwd(val: Option<bool>) -> Option<bool> {
+    KIRU_CWD_OVERRIDE.replace(val)
+}
 
 /// Invoke a callback with the name of every variable referenced in `expr`,
 /// whether as a bare `$name` or an interpolation `${name}` in a backtick literal.
@@ -140,9 +152,49 @@ pub(crate) fn parse_sync_mode_value(value: &str) -> Result<SyncMode, String> {
 
 /// Resolve and bind a `var` or `var shell` into a scope stack.
 /// All duplicate detection flows through `ScopeStack::declare`.
+///
+/// `working_dir` — the directory in which to execute `var shell` commands;
+/// `None` means the current process directory.
+/// Resolve a `var` / `var shell` declaration from individual fields (shared
+/// implementation for both `resolve_var_stmt` and `resolve_project_var`).
+#[allow(clippy::too_many_arguments)]
+fn resolve_var_stmt_inner(
+    var_type: &crate::dsl::VarType,
+    name: &str,
+    value: &Expr,
+    offset: usize,
+    len: usize,
+    scope: &mut ScopeStack<String>,
+    working_dir: Option<&Path>,
+    source_name: &str,
+    source_text: &str,
+) -> Result<(), CompileError> {
+    let resolved = resolve_expr(value, scope, source_name, source_text)?;
+    let final_val = if *var_type == crate::dsl::VarType::Shell {
+        shell::execute_shell_variable(
+            name,
+            &resolved,
+            working_dir,
+            source_name,
+            source_text,
+            offset,
+            len,
+        )?
+    } else {
+        resolved
+    };
+    scope
+        .declare(name.to_owned(), final_val)
+        .map_err(|r| redeclaration_err(r, source_name, source_text, offset, len))?;
+    Ok(())
+}
+
+/// Resolve a `var` / `var shell` from a full `Stmt::Var` AST node (linear
+/// phase for top-level vars outside project blocks).
 pub(crate) fn resolve_var_stmt(
     stmt: &Stmt,
     scope: &mut ScopeStack<String>,
+    working_dir: Option<&Path>,
     source_name: &str,
     source_text: &str,
 ) -> Result<(), CompileError> {
@@ -155,21 +207,46 @@ pub(crate) fn resolve_var_stmt(
         ..
     } = stmt
     {
-        let resolved = resolve_expr(value, scope, source_name, source_text)?;
-        let final_val = if *var_type == crate::dsl::VarType::Shell {
-            shell::execute_shell_variable(name, &resolved, source_name, source_text, *offset, *len)?
-        } else {
-            resolved
-        };
-        scope
-            .declare(name.clone(), final_val)
-            .map_err(|r| redeclaration_err(r, source_name, source_text, *offset, *len))?;
+        resolve_var_stmt_inner(
+            var_type,
+            name,
+            value,
+            *offset,
+            *len,
+            scope,
+            working_dir,
+            source_name,
+            source_text,
+        )
+    } else {
+        Ok(())
     }
-    Ok(())
+}
+
+/// Resolve a `var` / `var shell` from a `ProjectVarStmt` (second pass in
+/// `resolve_with_scopes`).
+pub(crate) fn resolve_project_var(
+    var: &ProjectVarStmt,
+    scope: &mut ScopeStack<String>,
+    working_dir: Option<&Path>,
+    source_name: &str,
+    source_text: &str,
+) -> Result<(), CompileError> {
+    resolve_var_stmt_inner(
+        &var.var_type,
+        &var.name,
+        &var.value,
+        var.offset,
+        var.len,
+        scope,
+        working_dir,
+        source_name,
+        source_text,
+    )
 }
 
 /// Build a spanned error from a `Redeclaration`.
-fn redeclaration_err(
+pub(crate) fn redeclaration_err(
     r: Redeclaration,
     source_name: &str,
     source_text: &str,
@@ -271,12 +348,65 @@ pub(crate) fn resolve_with_scopes(
             )));
         }
 
+        // ── Re-resolve project-scope var stmts with project dir ────────
+        // After `resolve_project_fields` we know the final `dir`.  Pop the
+        // Project frame that was seeded with linear-phase values, re-push
+        // one, and resolve the raw var stmts in order with the correct
+        // working directory so `var shell` commands inside project body
+        // execute in the project dir.  Fields that interpolated a project
+        // shell var already used the linear-phase (current-dir) value —
+        // that is correct per the ordering rule (item 4 in todo.md).
+        let use_cwd = KIRU_CWD_OVERRIDE
+            .with(|cell| cell.get())
+            .unwrap_or_else(|| std::env::var("KIRU_CWD").as_deref() == Ok("1"));
+        let working_dir: Option<&Path> = if use_cwd || dir.is_empty() {
+            None
+        } else {
+            Some(Path::new(&dir))
+        };
+
+        // Rebuild the project frame with fresh values.
+        let (_prev_entries, _prev_reserved) = project_scope.pop_frame_entries();
+        project_scope.push_frame(ScopeKind::Project);
+        for var_stmt in &unresolved_project.var_stmts {
+            if unresolved_project.field_refd_vars.contains(&var_stmt.name) {
+                // Seed the pre-resolved (linear-phase) value — these
+                // ran with current-dir so fields that reference them
+                // are consistent.  Do NOT re-execute.
+                let val = unresolved_project
+                    .vars
+                    .get(&var_stmt.name)
+                    .cloned()
+                    .unwrap_or_default();
+                project_scope
+                    .declare(var_stmt.name.clone(), val)
+                    .map_err(|r| {
+                        redeclaration_err(
+                            r,
+                            &unresolved_project.source_file,
+                            &unresolved_project.source_text,
+                            var_stmt.offset,
+                            var_stmt.len,
+                        )
+                    })?;
+            } else {
+                resolve_project_var(
+                    var_stmt,
+                    &mut project_scope,
+                    working_dir,
+                    &unresolved_project.source_file,
+                    &unresolved_project.source_text,
+                )?;
+            }
+        }
+
         let mut functions = HashMap::new();
 
         for (fn_name, body) in &unresolved_project.functions {
             // Push a Function frame via RAII guard — no clone needed.
             let guard = project_scope.enter(ScopeKind::Function);
-            let resolved_body = resolve_fn_body_inner(body, &mut *guard.stack, "", "")?;
+            let resolved_body =
+                resolve_fn_body_inner(body, &mut *guard.stack, working_dir, "", "")?;
             functions.insert(fn_name.clone(), resolved_body);
             // guard drops here, popping the Function frame
         }
@@ -303,6 +433,7 @@ fn resolve_env_block_stmt(
     pairs: &[EnvPair],
     body: &[FnStmt],
     scope: &mut ScopeStack<String>,
+    working_dir: Option<&Path>,
     source_name: &str,
     source_text: &str,
 ) -> Result<ResolvedFnStmt, CompileError> {
@@ -314,7 +445,7 @@ fn resolve_env_block_stmt(
             value: resolved_value,
         });
     }
-    let resolved_body = resolve_fn_body_inner(body, scope, source_name, source_text)?;
+    let resolved_body = resolve_fn_body_inner(body, scope, working_dir, source_name, source_text)?;
     Ok(ResolvedFnStmt::EnvBlock {
         pairs: resolved_pairs,
         body: resolved_body,
@@ -327,6 +458,7 @@ fn resolve_case_stmt(
     condition: &Expr,
     scopes: &[CaseArm],
     scope: &mut ScopeStack<String>,
+    working_dir: Option<&Path>,
     source_name: &str,
     source_text: &str,
 ) -> Result<ResolvedFnStmt, CompileError> {
@@ -335,7 +467,13 @@ fn resolve_case_stmt(
     for arm in scopes {
         let pattern = resolve_case_pattern(&arm.pattern, scope, source_name, source_text)?;
         let guard = scope.enter(ScopeKind::Case);
-        let body = resolve_fn_body_inner(&arm.body, guard.stack, source_name, source_text)?;
+        let body = resolve_fn_body_inner(
+            &arm.body,
+            guard.stack,
+            working_dir,
+            source_name,
+            source_text,
+        )?;
         resolved_scopes.push(ResolvedCaseArm { pattern, body });
     }
     Ok(ResolvedFnStmt::Case {
@@ -349,6 +487,7 @@ fn resolve_case_stmt(
 fn resolve_fn_body_inner(
     body: &[FnStmt],
     scope: &mut ScopeStack<String>,
+    working_dir: Option<&Path>,
     source_name: &str,
     source_text: &str,
 ) -> Result<Vec<ResolvedFnStmt>, CompileError> {
@@ -366,6 +505,7 @@ fn resolve_fn_body_inner(
                     shell::execute_shell_variable(
                         name,
                         &resolved_value,
+                        working_dir,
                         source_name,
                         source_text,
                         offset,
@@ -395,6 +535,7 @@ fn resolve_fn_body_inner(
                     pairs,
                     body,
                     scope,
+                    working_dir,
                     source_name,
                     source_text,
                 )?);
@@ -404,6 +545,7 @@ fn resolve_fn_body_inner(
                     condition,
                     scopes,
                     scope,
+                    working_dir,
                     source_name,
                     source_text,
                 )?);

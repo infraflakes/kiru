@@ -2,8 +2,9 @@ use crate::compiler::error::CompileError;
 use crate::compiler::error::spanned_err;
 
 use crate::compiler::resolve;
+use crate::compiler::resolve::redeclaration_err;
 use crate::compiler::scope::{ScopeKind, ScopeStack};
-use crate::compiler::types::{Config, Project, UnresolvedProject};
+use crate::compiler::types::{Config, Project, ProjectVarStmt, UnresolvedProject};
 use crate::compiler::validation;
 use crate::dsl::Parser;
 use crate::dsl::{Expr, Program, Stmt, TopLevel};
@@ -254,6 +255,9 @@ fn process_project_block(
                 sync: None,
                 branch: None,
                 vars: HashMap::new(),
+                field_refd_vars: HashSet::new(),
+                declared_var_names: HashSet::new(),
+                var_stmts: Vec::new(),
                 functions: HashMap::new(),
                 runs: HashMap::new(),
             });
@@ -267,17 +271,76 @@ fn process_project_block(
         )?;
     }
 
+    // Collect names of project vars referenced by field expressions.
+    // These must run eagerly (current-dir) so field interpolation works.
+    let mut field_refd_vars: HashSet<String> = HashSet::new();
+    for field_stmt in fields {
+        if let Stmt::Field { value, .. } = field_stmt {
+            resolve::visit_expr_vars(value, |name| {
+                field_refd_vars.insert(name.to_owned());
+            });
+        }
+    }
+    project_entry.field_refd_vars = field_refd_vars;
+
     // Push a Project frame so project body vars go into it and duplicate
-    // detection (via ScopeStack::declare) checks global + project chain.
+    // detection (via declare/declare_name) checks global + project chain.
     state.var_scope.push_frame(ScopeKind::Project);
     for body_stmt in body {
-        if let Stmt::Var { .. } = body_stmt {
-            resolve::resolve_var_stmt(
-                body_stmt,
-                &mut state.var_scope,
-                &program.source_name,
-                &program.source_text,
-            )?;
+        if let Stmt::Var {
+            var_type,
+            name,
+            value,
+            offset,
+            len,
+            ..
+        } = body_stmt
+        {
+            let pv_stmt = ProjectVarStmt {
+                var_type: var_type.clone(),
+                name: name.clone(),
+                value: value.clone(),
+                offset: *offset,
+                len: *len,
+            };
+
+            let is_field_refd = project_entry.field_refd_vars.contains(name);
+            if is_field_refd {
+                // Resolve eagerly with current-dir for shell vars so fields
+                // that interpolate project vars work (see ordering rule).
+                // `resolve_project_var` calls `declare` internally, which
+                // runs the shared name_exists duplicate check.
+                resolve::resolve_project_var(
+                    &pv_stmt,
+                    &mut state.var_scope,
+                    None,
+                    &program.source_name,
+                    &program.source_text,
+                )?;
+            } else {
+                // Reserve the name in the Project frame so the duplicate-
+                // detection logic in `declare_name` (the same visibility
+                // walk as `declare`) prevents shadowing global/outer vars
+                // or duplicate names within the same project body.
+                // The real resolution happens in `resolve_with_scopes`
+                // with the correct project working directory.
+                state
+                    .var_scope
+                    .declare_name(pv_stmt.name.clone())
+                    .map_err(|r| {
+                        redeclaration_err(
+                            r,
+                            &program.source_name,
+                            &program.source_text,
+                            pv_stmt.offset,
+                            pv_stmt.len,
+                        )
+                    })?;
+            }
+            // Store minimal var data for the second pass
+            // (field-refd: seed with pre-resolved value + real span;
+            //  non-field-refd: first real resolution with project dir).
+            project_entry.var_stmts.push(pv_stmt);
         }
         merge_project_body_stmt(
             project_entry,
@@ -286,7 +349,17 @@ fn process_project_block(
             &program.source_text,
         )?;
     }
-    let entries = state.var_scope.pop_frame_entries();
+    let (entries, reserved) = state.var_scope.pop_frame_entries();
+    // Derive declared_var_names from both real entries and reserved names
+    // (reserved names are non-field-referenced vars that have no value yet).
+    project_entry.declared_var_names = entries
+        .iter()
+        .map(|(k, _)| k.clone())
+        .chain(reserved)
+        .collect();
+    // Only field-referenced vars carry meaningful values into the second pass;
+    // non-field-referenced vars were reserved (no sentinel value stored) and
+    // are resolved for the first time in resolve_with_scopes.
     project_entry.vars = entries.into_iter().collect();
     Ok(())
 }
@@ -334,6 +407,7 @@ fn linear_process_program(program: &Program, state: &mut LinearState) -> Result<
                     resolve::resolve_var_stmt(
                         stmt,
                         &mut state.var_scope,
+                        None,
                         &program.source_name,
                         &program.source_text,
                     )?;

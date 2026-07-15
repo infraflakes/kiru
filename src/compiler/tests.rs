@@ -14,6 +14,27 @@ fn write_config(dir: &Path, name: &str, content: &str) {
         .unwrap_or_else(|e| panic!("failed to write {}: {}", path.display(), e));
 }
 
+/// RAII guard that overrides `KIRU_CWD` for the duration of a test and
+/// restores the previous value on drop.  Prevents test interference when
+/// the parent process (e.g. `kiru` itself) has the env var set.
+struct KiruCwdGuard(Option<bool>);
+impl KiruCwdGuard {
+    /// Opt out of `KIRU_CWD` — project-scope `var shell` tests expect
+    /// the project working directory, not the current process directory.
+    fn with_project_dir() -> Self {
+        KiruCwdGuard(resolve::__test_set_kiru_cwd(Some(false)))
+    }
+    /// Opt into `KIRU_CWD` — verify the env-var override forces CWD.
+    fn with_kiru_cwd() -> Self {
+        KiruCwdGuard(resolve::__test_set_kiru_cwd(Some(true)))
+    }
+}
+impl Drop for KiruCwdGuard {
+    fn drop(&mut self) {
+        resolve::__test_set_kiru_cwd(self.0);
+    }
+}
+
 #[test]
 fn test_load_basic() {
     let dir = tempfile::TempDir::new().unwrap();
@@ -203,6 +224,47 @@ pr b [url = `ub` dir = `shared`] { }\
         "got: {}",
         err
     );
+}
+
+#[test]
+fn test_kiru_cwd_forces_current_dir_for_project_scope_var_shell() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let subdir = dir.path().join("projectdir");
+    std::fs::create_dir(&subdir).unwrap();
+    let current_dir = std::env::current_dir().unwrap();
+
+    write_config(
+        dir.path(),
+        "main.kiru",
+        &format!(
+            "\
+pr test [\n\
+    url = `http://example.com`\n\
+    dir = `{}`\n\
+] {{\n\
+    var shell cwd = `pwd`;\n\
+    fn check {{\n\
+        log $cwd;\n\
+    }}\n\
+}}\n\
+",
+            subdir.to_string_lossy()
+        ),
+    );
+
+    let _guard = KiruCwdGuard::with_kiru_cwd();
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+
+    let proj = &cfg.projects["test"];
+    let fn_body = &proj.functions["check"];
+    assert_eq!(fn_body.len(), 1);
+    match &fn_body[0] {
+        ResolvedFnStmt::Log { value } => {
+            let expected = current_dir.to_string_lossy().to_string();
+            assert_eq!(*value, expected);
+        }
+        other => panic!("expected Log, got {:?}", other),
+    }
 }
 
 #[test]
@@ -878,6 +940,206 @@ pr test [\n\
         err.to_string().contains("$x is already defined"),
         "got: {}",
         err
+    );
+}
+
+// --- var shell working directory tests ---
+
+#[test]
+fn test_project_scope_var_shell_uses_project_dir() {
+    let _guard = KiruCwdGuard::with_project_dir();
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let subdir = dir.path().join("myproject");
+    std::fs::create_dir(&subdir).unwrap();
+
+    write_config(
+        dir.path(),
+        "main.kiru",
+        &format!(
+            "\
+pr test [\n\
+    url = `http://example.com`\n\
+    dir = `{}`\n\
+] {{\n\
+    var shell cwd = `pwd`;\n\
+    fn check {{\n\
+        log $cwd;\n\
+    }}\n\
+}}\n\
+",
+            subdir.to_string_lossy()
+        ),
+    );
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+    let proj = &cfg.projects["test"];
+    let fn_body = &proj.functions["check"];
+    assert_eq!(fn_body.len(), 1);
+    match &fn_body[0] {
+        ResolvedFnStmt::Log { value } => {
+            let expected = std::fs::canonicalize(&subdir)
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
+            assert_eq!(*value, expected);
+        }
+        other => panic!("expected Log, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_fn_scope_var_shell_uses_project_dir() {
+    let _guard = KiruCwdGuard::with_project_dir();
+    let dir = tempfile::TempDir::new().unwrap();
+    let subdir = dir.path().join("myproject");
+    std::fs::create_dir(&subdir).unwrap();
+
+    write_config(
+        dir.path(),
+        "main.kiru",
+        &format!(
+            "\
+pr test [\n\
+    url = `http://example.com`\n\
+    dir = `{}`\n\
+] {{\n\
+    fn check {{\n\
+        var shell cwd = `pwd`;\n\
+        log $cwd;\n\
+    }}\n\
+}}\n\
+",
+            subdir.to_string_lossy()
+        ),
+    );
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+    let proj = &cfg.projects["test"];
+    let fn_body = &proj.functions["check"];
+    assert_eq!(fn_body.len(), 1); // VarDecl consumed, only log emitted
+    match &fn_body[0] {
+        ResolvedFnStmt::Log { value } => {
+            let expected = std::fs::canonicalize(&subdir)
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
+            assert_eq!(*value, expected);
+        }
+        other => panic!("expected Log, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_global_var_shell_uses_current_dir() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+var shell msg = `echo hello-from-global`;\n\
+pr test [\n\
+    url = $msg\n\
+    dir = `d`\n\
+] {\n\
+    fn check { log $msg; }\n\
+}\
+",
+    );
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+    let proj = &cfg.projects["test"];
+    assert_eq!(proj.url, "hello-from-global");
+    let fn_body = &proj.functions["check"];
+    match &fn_body[0] {
+        ResolvedFnStmt::Log { value } => {
+            assert_eq!(value, "hello-from-global");
+        }
+        other => panic!("expected Log, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_var_shell_used_in_dir_field_no_deadlock() {
+    let _guard = KiruCwdGuard::with_project_dir();
+    let dir = tempfile::TempDir::new().unwrap();
+    // The `dir` field resolves to `$x` (linear-phase value "workspace"),
+    // which gets joined with the source directory.  Create that directory
+    // so the re-resolved shell can spawn there.
+    let resolved_dir = dir.path().join("workspace");
+    std::fs::create_dir(&resolved_dir).unwrap();
+
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+pr test [\n\
+    url = $x\n\
+    dir = $x\n\
+] {\n\
+    var shell x = `echo workspace`;\n\
+    fn check { log $x; }\n\
+}\
+",
+    );
+    // Must not deadlock/cycle.  The dir field uses the linear-phase value
+    // of $x (current-dir shell execution), so dir resolves to a relative
+    // path that is joined with the source file's directory.
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+    let proj = &cfg.projects["test"];
+    assert!(proj.url.contains("workspace"));
+    assert!(proj.dir.contains("workspace"));
+    // The re-resolved x (in project dir) is also "workspace" because
+    // `echo` doesn't depend on working directory.
+    let fn_body = &proj.functions["check"];
+    match &fn_body[0] {
+        ResolvedFnStmt::Log { value } => {
+            assert_eq!(value, "workspace");
+        }
+        other => panic!("expected Log, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_project_var_shell_runs_once() {
+    let _guard = KiruCwdGuard::with_project_dir();
+    let dir = tempfile::TempDir::new().unwrap();
+    let subdir = dir.path().join("myproject");
+    std::fs::create_dir(&subdir).unwrap();
+    let marker = subdir.join("run_count.txt");
+
+    write_config(
+        dir.path(),
+        "main.kiru",
+        &format!(
+            "\
+pr test [\n\
+    url = `http://example.com`\n\
+    dir = `{}`\n\
+] {{\n\
+    var shell x = `echo 1 >> {} && echo done`;\n\
+    fn check {{\n\
+        log $x;\n\
+    }}\n\
+}}\n\
+",
+            subdir.to_string_lossy(),
+            marker.to_string_lossy(),
+        ),
+    );
+    let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+    let proj = &cfg.projects["test"];
+    let fn_body = &proj.functions["check"];
+    assert_eq!(fn_body.len(), 1);
+    match &fn_body[0] {
+        ResolvedFnStmt::Log { value } => {
+            assert_eq!(value, "done");
+        }
+        other => panic!("expected Log, got {:?}", other),
+    }
+    let count = std::fs::read_to_string(&marker).unwrap();
+    assert_eq!(
+        count.lines().count(),
+        1,
+        "var shell should execute exactly once, got {} lines",
+        count.lines().count()
     );
 }
 

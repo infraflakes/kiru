@@ -208,15 +208,19 @@ pub(crate) fn exec_and_get_stdout(
 /// Execute a shell command for a `var shell` statement.
 /// Non-zero exit codes produce an empty string (callers use this to
 /// gracefully handle failed shell commands during variable resolution).
+///
+/// `working_dir` — when `Some`, runs the command in that directory;
+/// when `None`, runs in the current process directory.
 pub(crate) fn execute_shell_variable(
     name: &str,
     resolved_command: &str,
+    working_dir: Option<&Path>,
     source_name: &str,
     source_text: &str,
     offset: usize,
     len: usize,
 ) -> Result<String, CompileError> {
-    match exec_and_get_stdout(resolved_command, None, None) {
+    match exec_and_get_stdout(resolved_command, working_dir, None) {
         Ok(stdout) => Ok(stdout),
         // Non-zero exit is not an error — empty string is a valid value
         // in Kiru's type system.

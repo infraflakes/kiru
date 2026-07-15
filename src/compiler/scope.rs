@@ -16,6 +16,7 @@
 //! The Global frame is stored as a separate field so the top frame is always
 //! reachable without `unwrap`/`expect`.
 
+use std::collections::HashSet;
 use std::fmt;
 
 /// Identifies which kind of scope a frame represents.
@@ -43,6 +44,10 @@ impl fmt::Display for ScopeKind {
 struct Frame<V> {
     kind: ScopeKind,
     entries: Vec<(String, V)>,
+    /// Names that have been reserved (e.g. non-field-referenced project vars
+    /// during linear processing) but not yet given a real value.  These are
+    /// checked for duplicate detection but never returned by [`lookup`].
+    reserved: HashSet<String>,
 }
 
 /// Error returned when a variable is redeclared.
@@ -71,6 +76,7 @@ impl<V> ScopeStack<V> {
             global: Frame {
                 kind: ScopeKind::Global,
                 entries: Vec::new(),
+                reserved: HashSet::new(),
             },
             frames: Vec::new(),
         }
@@ -82,6 +88,7 @@ impl<V> ScopeStack<V> {
         self.frames.push(Frame {
             kind,
             entries: Vec::new(),
+            reserved: HashSet::new(),
         });
         ScopeGuard { stack: self }
     }
@@ -91,14 +98,18 @@ impl<V> ScopeStack<V> {
         self.frames.push(Frame {
             kind,
             entries: Vec::new(),
+            reserved: HashSet::new(),
         });
     }
 
-    /// Pop the topmost pushed frame and return its entries.
-    /// Returns an empty `Vec` when there are no pushed frames (only the
+    /// Pop the topmost pushed frame and return its entries and reserved names.
+    /// Returns an empty pair when there are no pushed frames (only the
     /// Global frame remains).
-    pub fn pop_frame_entries(&mut self) -> Vec<(String, V)> {
-        self.frames.pop().map(|f| f.entries).unwrap_or_default()
+    pub fn pop_frame_entries(&mut self) -> (Vec<(String, V)>, HashSet<String>) {
+        self.frames
+            .pop()
+            .map(|f| (f.entries, f.reserved))
+            .unwrap_or_default()
     }
 
     /// Seed the global frame with pre-validated entries.
@@ -122,10 +133,12 @@ impl<V> ScopeStack<V> {
         self.global.entries.iter().map(|(k, v)| (k, v))
     }
 
-    // ── single private chain-walk helper ──────────────────────────────
+    // ── private chain-walk helpers ───────────────────────────────────
 
     /// Walk the frame chain (pushed frames then global) looking for `name`.
     /// Returns the value and the kind of the declaring frame if found.
+    /// Only checks real entries — reserved names (with no value) are not
+    /// returned.  Used by [`lookup`].
     fn find_entry(&self, name: &str) -> Option<(&V, ScopeKind)> {
         for frame in self.frames.iter().rev() {
             for (k, v) in &frame.entries {
@@ -142,41 +155,84 @@ impl<V> ScopeStack<V> {
         None
     }
 
+    /// Check whether `name` exists anywhere in the visible frame chain,
+    /// including reserved-but-unresolved names.  Returns the kind of the
+    /// innermost declaring/reserving frame.
+    fn name_exists(&self, name: &str) -> Option<ScopeKind> {
+        for frame in self.frames.iter().rev() {
+            for (k, _) in &frame.entries {
+                if k == name {
+                    return Some(frame.kind);
+                }
+            }
+            if frame.reserved.contains(name) {
+                return Some(frame.kind);
+            }
+        }
+        for (k, _) in &self.global.entries {
+            if k == name {
+                return Some(self.global.kind);
+            }
+        }
+        None
+    }
+
     // ── public accessors ──────────────────────────────────────────────
 
     /// Look up a name walking innermost-first over the whole chain
-    /// (pushed frames then global).
+    /// (pushed frames then global).  Reserved names are invisible to
+    /// lookups because they carry no value.
     pub fn lookup(&self, name: &str) -> Option<&V> {
         self.find_entry(name).map(|(v, _)| v)
     }
 
-    /// Check whether a name is declared in any visible scope.
+    /// Check whether a name is declared or reserved in any visible scope.
     pub fn is_declared(&self, name: &str) -> bool {
-        self.find_entry(name).is_some()
+        self.name_exists(name).is_some()
     }
 
-    /// Find the [`ScopeKind`] of the (innermost) frame where `name` is declared.
-    /// Returns `None` if the name is not visible in any scope.
+    /// Find the [`ScopeKind`] of the (innermost) frame where `name` is
+    /// declared or reserved.  Returns `None` if the name is not visible
+    /// in any scope.
     pub fn declaring_kind(&self, name: &str) -> Option<ScopeKind> {
-        self.find_entry(name).map(|(_, kind)| kind)
+        self.name_exists(name)
     }
 
     /// Declare a variable in the top (innermost) frame.
     ///
     /// Returns `Err(Redeclaration)` if the name is already visible from the
-    /// current scope or any enclosing scope.  Otherwise inserts the value
-    /// into the top frame and returns `Ok(())`.
+    /// current scope or any enclosing scope (including reserved names).
+    /// Otherwise inserts the value into the top frame and returns `Ok(())`.
     ///
     /// The frame chain is walked once to compute both presence and the
     /// declaring scope kind.
     pub fn declare(&mut self, name: String, value: V) -> Result<(), Redeclaration> {
-        if let Some((_, kind)) = self.find_entry(&name) {
+        if let Some(kind) = self.name_exists(&name) {
             return Err(Redeclaration {
                 name,
                 existing_kind: kind,
             });
         }
         self.top_mut().entries.push((name, value));
+        Ok(())
+    }
+
+    /// Reserve a name in the top frame without a value.  Runs the same
+    /// visibility-based duplicate check as [`declare`].
+    ///
+    /// The name is tracked so subsequent [`declare`] or [`declare_name`]
+    /// calls for the same name are rejected, but [`lookup`] will not find
+    /// it (there is no value to return).  This is useful when a name must
+    /// be registered for duplicate-detection purposes early but will be
+    /// given a real value in a later pass.
+    pub fn declare_name(&mut self, name: String) -> Result<(), Redeclaration> {
+        if let Some(kind) = self.name_exists(&name) {
+            return Err(Redeclaration {
+                name,
+                existing_kind: kind,
+            });
+        }
+        self.top_mut().reserved.insert(name);
         Ok(())
     }
 
@@ -300,7 +356,7 @@ mod tests {
         stack.push_frame(ScopeKind::Project);
         stack.declare("a".to_string(), "1".to_string()).unwrap();
         stack.declare("b".to_string(), "2".to_string()).unwrap();
-        let entries = stack.pop_frame_entries();
+        let (entries, _reserved) = stack.pop_frame_entries();
         assert_eq!(entries.len(), 2);
         assert!(!stack.is_declared("a"));
     }

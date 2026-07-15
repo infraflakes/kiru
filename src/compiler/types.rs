@@ -1,6 +1,5 @@
-use crate::dsl::Expr;
-use crate::dsl::FnStmt;
-use std::collections::HashMap;
+use crate::dsl::{Expr, FnStmt, VarType};
+use std::collections::{HashMap, HashSet};
 
 /// How a project's dotfiles are synchronized from its git remote.
 #[derive(Debug, Clone, PartialEq)]
@@ -67,6 +66,18 @@ pub struct ResolvedCaseArm {
     pub body: Vec<ResolvedFnStmt>,
 }
 
+/// Minimal representation of a `var` / `var shell` statement inside a project
+/// body, extracted from the full `Stmt::Var` AST node to avoid cloning the
+/// entire `Stmt` enum (which carries unrelated variants).
+#[derive(Debug, Clone)]
+pub struct ProjectVarStmt {
+    pub var_type: VarType,
+    pub name: String,
+    pub value: Expr,
+    pub offset: usize,
+    pub len: usize,
+}
+
 /// A project block with unresolved AST (Expr) fields.
 /// No string resolution has been performed — fields are raw `Expr` nodes.
 /// `source_file` records the canonical path of the `.kiru` file that defined
@@ -81,7 +92,29 @@ pub struct UnresolvedProject {
     pub dir: Option<Expr>,
     pub sync: Option<Expr>,
     pub branch: Option<Expr>,
+    /// Stores the resolved values of field-referenced project `var shell`
+    /// commands, computed during the linear phase (current-dir).  These are
+    /// seeded back into the scope during `resolve_with_scopes` so fields
+    /// that reference them stay consistent.  Non-field-referenced vars do
+    /// NOT appear here — they are resolved for the first time in the second
+    /// pass with the correct project working directory.
     pub vars: HashMap<String, String>,
+    /// Names of project var stmts that are referenced by at least one field
+    /// expression (url/dir/sync/branch).  These must run eagerly in the linear
+    /// phase (with current-dir) so field interpolation works.  The recorded
+    /// linear-phase value is seeded back during re-resolution — no second exec.
+    pub field_refd_vars: HashSet<String>,
+    /// All variable names declared in the project body, regardless of whether
+    /// they are field-referenced.  Used by validation to seed the scope so
+    /// function bodies can reference project-level vars.  Populated during
+    /// the linear phase from the body's `var` / `var shell` statements.
+    pub declared_var_names: HashSet<String>,
+    /// Minimal var-statement data for re-resolution in `resolve_with_scopes`.
+    /// Non-field-referenced vars are skipped during the linear phase and
+    /// resolved for the first time here with the correct working directory.
+    /// Field-referenced vars carry the offset/len used for span-accurate
+    /// redeclaration diagnostics when seeding.
+    pub var_stmts: Vec<ProjectVarStmt>,
     pub functions: HashMap<String, Vec<FnStmt>>,
     pub runs: HashMap<String, Vec<Vec<String>>>,
 }

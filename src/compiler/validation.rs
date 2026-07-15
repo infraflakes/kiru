@@ -4,7 +4,7 @@ use crate::compiler::resolve;
 use crate::compiler::scope::{ScopeKind, ScopeStack};
 use crate::dsl::{Expr, FnStmt};
 use miette::miette;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Validate an `UnresolvedConfig` against the global var scope,
 /// collecting all errors before returning.
@@ -20,7 +20,7 @@ pub fn validate_configuration(
         validate_project_bodies(
             &project.functions,
             global,
-            &project.vars,
+            &project.declared_var_names,
             proj_name,
             &project.source_file,
             &project.source_text,
@@ -80,7 +80,7 @@ fn validate_run_refs(
 fn validate_project_bodies(
     functions: &HashMap<String, Vec<FnStmt>>,
     global: &ScopeStack<String>,
-    project_vars: &HashMap<String, String>,
+    declared_var_names: &HashSet<String>,
     proj_name: &str,
     source_name: &str,
     source_text: &str,
@@ -90,7 +90,7 @@ fn validate_project_bodies(
         let mut scope = ScopeStack::<()>::new();
         scope.seed_global(global.iter_global().map(|(k, _)| (k.clone(), ())));
         scope.push_frame(ScopeKind::Project);
-        scope.seed_top(project_vars.keys().map(|k| (k.clone(), ())));
+        scope.seed_top(declared_var_names.iter().map(|k| (k.clone(), ())));
 
         let guard = scope.enter(ScopeKind::Function);
         validate_fn_body(
