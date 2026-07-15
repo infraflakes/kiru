@@ -76,10 +76,12 @@ pub struct ResolvedCaseArm {
 pub struct UnresolvedProject {
     pub name: String,
     pub source_file: String,
+    pub source_text: String,
     pub url: Option<Expr>,
     pub dir: Option<Expr>,
     pub sync: Option<Expr>,
     pub branch: Option<Expr>,
+    pub vars: HashMap<String, String>,
     pub functions: HashMap<String, Vec<FnStmt>>,
     pub runs: HashMap<String, Vec<Vec<String>>>,
 }

@@ -1,32 +1,31 @@
 use crate::compiler::error::CompileError;
+use crate::compiler::error::SpannedValidationError;
 use crate::compiler::resolve;
+use crate::compiler::scope::{ScopeKind, ScopeStack};
 use crate::dsl::{Expr, FnStmt};
 use miette::miette;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-/// Check whether a variable name is defined: local frames (innermost first),
-/// then the flat var scope.
-fn var_is_declared(name: &str, vars: &HashMap<String, String>, local: &[HashSet<String>]) -> bool {
-    for frame in local.iter().rev() {
-        if frame.contains(name) {
-            return true;
-        }
-    }
-    vars.contains_key(name)
-}
-
-/// Validate an `UnresolvedConfig` against the flat var scope,
+/// Validate an `UnresolvedConfig` against the global var scope,
 /// collecting all errors before returning.
 pub fn validate_configuration(
     cfg: &super::types::UnresolvedConfig,
-    var_scope: &HashMap<String, String>,
+    global: &ScopeStack<String>,
 ) -> Result<(), CompileError> {
     let mut errors = Vec::new();
 
     for (proj_name, project) in &cfg.projects {
         validate_run_refs(&project.runs, &project.functions, proj_name, &mut errors);
 
-        validate_fn_bodies(&project.functions, var_scope, proj_name, &mut errors);
+        validate_project_bodies(
+            &project.functions,
+            global,
+            &project.vars,
+            proj_name,
+            &project.source_file,
+            &project.source_text,
+            &mut errors,
+        );
     }
 
     if errors.len() == 1 {
@@ -54,8 +53,8 @@ pub fn validate_configuration(
 /// Check that all run chains reference functions that exist in the
 /// project's function map.
 fn validate_run_refs(
-    runs: &std::collections::HashMap<String, Vec<Vec<String>>>,
-    functions: &std::collections::HashMap<String, Vec<FnStmt>>,
+    runs: &HashMap<String, Vec<Vec<String>>>,
+    functions: &HashMap<String, Vec<FnStmt>>,
     prefix: &str,
     errors: &mut Vec<miette::Report>,
 ) {
@@ -75,19 +74,34 @@ fn validate_run_refs(
     }
 }
 
-/// Validate all function bodies in a project's function map, using a
-/// fresh scope stack for each function.
-fn validate_fn_bodies(
-    functions: &std::collections::HashMap<String, Vec<FnStmt>>,
-    vars: &HashMap<String, String>,
+/// Validate all function bodies in a project's function map.  Builds a
+/// scope stack seeded with global + project vars and pushes a fresh
+/// Function frame per function.
+fn validate_project_bodies(
+    functions: &HashMap<String, Vec<FnStmt>>,
+    global: &ScopeStack<String>,
+    project_vars: &HashMap<String, String>,
     proj_name: &str,
+    source_name: &str,
+    source_text: &str,
     errors: &mut Vec<miette::Report>,
 ) {
     for (fn_name, body) in functions {
-        // Initial empty frame so VarDecl tracking and references resolve
-        // against the flat scope.
-        let mut local: Vec<HashSet<String>> = vec![HashSet::new()];
-        validate_fn_body(fn_name, body, vars, &mut local, errors, proj_name);
+        let mut scope = ScopeStack::<()>::new();
+        scope.seed_global(global.iter_global().map(|(k, _)| (k.clone(), ())));
+        scope.push_frame(ScopeKind::Project);
+        scope.seed_top(project_vars.keys().map(|k| (k.clone(), ())));
+
+        let guard = scope.enter(ScopeKind::Function);
+        validate_fn_body(
+            fn_name,
+            body,
+            &mut *guard.stack,
+            errors,
+            proj_name,
+            source_name,
+            source_text,
+        );
     }
 }
 
@@ -96,13 +110,12 @@ fn validate_fn_bodies(
 fn validate_expr(
     expr: &Expr,
     fn_name: &str,
-    vars: &HashMap<String, String>,
-    local: &[HashSet<String>],
+    scope: &ScopeStack<()>,
     errors: &mut Vec<miette::Report>,
     proj_name: &str,
 ) {
     resolve::visit_expr_vars(expr, |name| {
-        if !var_is_declared(name, vars, local) {
+        if !scope.is_declared(name) {
             errors.push(miette!(
                 "project {:?}: fn {:?}: undefined variable ${}",
                 proj_name,
@@ -113,44 +126,61 @@ fn validate_expr(
     });
 }
 
-/// Validate variable references in a function body, tracking local
-/// declarations in a scope stack.
+/// Validate variable references and duplicate declarations in a function
+/// body.  The caller owns the scope; this function does not push/pop
+/// frames at the top level but handles case-arm frames internally.
 fn validate_fn_body(
     fn_name: &str,
     body: &[FnStmt],
-    vars: &HashMap<String, String>,
-    local: &mut Vec<HashSet<String>>,
+    scope: &mut ScopeStack<()>,
     errors: &mut Vec<miette::Report>,
     proj_name: &str,
+    source_name: &str,
+    source_text: &str,
 ) {
     for stmt in body {
         match stmt {
             FnStmt::VarDecl { name, value, .. } => {
-                validate_expr(value, fn_name, vars, local, errors, proj_name);
-                if let Some(top) = local.last_mut() {
-                    top.insert(name.clone());
+                validate_expr(value, fn_name, scope, errors, proj_name);
+                if scope.is_declared(name) {
+                    let (offset, len) = value.offset_len();
+                    let kind = scope.declaring_kind(name).unwrap_or(ScopeKind::Global);
+                    errors.push(miette::Report::new(SpannedValidationError {
+                        message: format!("${} is already defined at {}", name, kind),
+                        span: miette::SourceSpan::new(offset.into(), len.max(1)),
+                        source_code: miette::NamedSource::new(source_name, source_text.to_owned()),
+                    }));
                 }
+                let _ = scope.declare(name.clone(), ());
             }
             FnStmt::Log { value, .. } => {
-                validate_expr(value, fn_name, vars, local, errors, proj_name);
+                validate_expr(value, fn_name, scope, errors, proj_name);
             }
             FnStmt::Exec { value, .. } => {
-                validate_expr(value, fn_name, vars, local, errors, proj_name);
+                validate_expr(value, fn_name, scope, errors, proj_name);
             }
             FnStmt::Cd { value, .. } => {
-                validate_expr(value, fn_name, vars, local, errors, proj_name);
+                validate_expr(value, fn_name, scope, errors, proj_name);
             }
             FnStmt::EnvBlock { pairs, body, .. } => {
                 for pair in pairs {
-                    validate_expr(&pair.value, fn_name, vars, local, errors, proj_name);
+                    validate_expr(&pair.value, fn_name, scope, errors, proj_name);
                 }
-                validate_fn_body(fn_name, body, vars, local, errors, proj_name);
+                validate_fn_body(
+                    fn_name,
+                    body,
+                    scope,
+                    errors,
+                    proj_name,
+                    source_name,
+                    source_text,
+                );
             }
             FnStmt::Case { condition, scopes } => {
-                validate_expr(condition, fn_name, vars, local, errors, proj_name);
+                validate_expr(condition, fn_name, scope, errors, proj_name);
                 for arm in scopes {
                     resolve::visit_case_pattern_vars(&arm.pattern, |name| {
-                        if !var_is_declared(name, vars, local) {
+                        if !scope.is_declared(name) {
                             errors.push(miette!(
                                 "project {:?}: fn {:?}: undefined variable ${}",
                                 proj_name,
@@ -159,9 +189,16 @@ fn validate_fn_body(
                             ));
                         }
                     });
-                    local.push(HashSet::new());
-                    validate_fn_body(fn_name, &arm.body, vars, local, errors, proj_name);
-                    local.pop();
+                    let guard = scope.enter(ScopeKind::Case);
+                    validate_fn_body(
+                        fn_name,
+                        &arm.body,
+                        &mut *guard.stack,
+                        errors,
+                        proj_name,
+                        source_name,
+                        source_text,
+                    );
                 }
             }
         }

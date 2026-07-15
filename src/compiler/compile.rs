@@ -2,6 +2,7 @@ use crate::compiler::error::CompileError;
 use crate::compiler::error::spanned_err;
 
 use crate::compiler::resolve;
+use crate::compiler::scope::{ScopeKind, ScopeStack};
 use crate::compiler::types::{Config, Project, UnresolvedProject};
 use crate::compiler::validation;
 use crate::dsl::Parser;
@@ -27,7 +28,7 @@ pub fn compile_and_resolve(entry_path: &Path) -> Result<Config, CompileError> {
 
 /// Mutable state threaded through the linear processing phase.
 struct LinearState {
-    var_scope: HashMap<String, String>,
+    var_scope: ScopeStack<String>,
     projects: HashMap<String, UnresolvedProject>,
     loaded_files: HashSet<PathBuf>,
     recursion_stack: HashSet<PathBuf>,
@@ -36,7 +37,7 @@ struct LinearState {
 impl LinearState {
     fn new() -> Self {
         Self {
-            var_scope: HashMap::new(),
+            var_scope: ScopeStack::new(),
             projects: HashMap::new(),
             loaded_files: HashSet::new(),
             recursion_stack: HashSet::new(),
@@ -47,7 +48,7 @@ impl LinearState {
 /// Intermediate result from the linear processing phase.
 struct LinearResult {
     unresolved: super::types::UnresolvedConfig,
-    var_scope: HashMap<String, String>,
+    var_scope: ScopeStack<String>,
 }
 
 /// Canonicalize the entry path, resolving relative paths against the current
@@ -232,7 +233,7 @@ pub(crate) fn merge_project_body_stmt(
 }
 
 /// Process a `pr <name> { ... }` block: set up the project entry, populate
-/// fields, resolve var stmts in the project scope, and collect fn/run blocks.
+/// fields, resolve var stmts into a Project frame, and collect fn/run blocks.
 fn process_project_block(
     name: &str,
     fields: &[Stmt],
@@ -247,10 +248,12 @@ fn process_project_block(
             .or_insert_with(|| UnresolvedProject {
                 name: name.to_owned(),
                 source_file: program.source_name.clone(),
+                source_text: program.source_text.clone(),
                 url: None,
                 dir: None,
                 sync: None,
                 branch: None,
+                vars: HashMap::new(),
                 functions: HashMap::new(),
                 runs: HashMap::new(),
             });
@@ -264,6 +267,9 @@ fn process_project_block(
         )?;
     }
 
+    // Push a Project frame so project body vars go into it and duplicate
+    // detection (via ScopeStack::declare) checks global + project chain.
+    state.var_scope.push_frame(ScopeKind::Project);
     for body_stmt in body {
         if let Stmt::Var { .. } = body_stmt {
             resolve::resolve_var_stmt(
@@ -280,6 +286,8 @@ fn process_project_block(
             &program.source_text,
         )?;
     }
+    let entries = state.var_scope.pop_frame_entries();
+    project_entry.vars = entries.into_iter().collect();
     Ok(())
 }
 
@@ -295,7 +303,6 @@ fn process_import(
     let path_str = resolve::resolve_expr(
         expr,
         &state.var_scope,
-        &[],
         &program.source_name,
         &program.source_text,
     )?;
@@ -397,8 +404,19 @@ pub fn parse_projects_metadata(entry_path: &Path) -> Result<Config, CompileError
 
     let mut projects = HashMap::new();
     for (name, unresolved_project) in linear.unresolved.projects {
+        // Build a combined scope (global + project vars) for field resolution.
+        let mut scope = ScopeStack::new();
+        scope.seed_global(
+            linear
+                .var_scope
+                .iter_global()
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
+        scope.push_frame(ScopeKind::Project);
+        scope.seed_top(unresolved_project.vars.clone());
+
         let (url, dir, sync, branch) =
-            resolve::resolve_project_fields(&unresolved_project, &linear.var_scope)?;
+            resolve::resolve_project_fields(&unresolved_project, &scope)?;
 
         projects.insert(
             name,

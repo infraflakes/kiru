@@ -721,7 +721,214 @@ pr test [\n\
     );
     let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
     assert!(
-        err.to_string().contains("$name is already defined"),
+        err.to_string()
+            .contains("$name is already defined at top level"),
+        "got: {}",
+        err
+    );
+}
+
+// --- No-shadowing false-positive fixes ---
+
+#[test]
+fn test_sibling_fns_same_var_name_no_error() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+pr test [\n\
+    url = `u`\n\
+    dir = `d`\n\
+] {\n\
+    fn a { var string x = `a`; log $x; }\n\
+    fn b { var string x = `b`; log $x; }\n\
+}\
+",
+    );
+    compile_full(&dir.path().join("main.kiru")).unwrap();
+}
+
+#[test]
+fn test_different_projects_same_var_name_no_error() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+pr p1 [\n\
+    url = `u1`\n\
+    dir = `d1`\n\
+] {\n\
+    var string x = `from-p1`;\n\
+}\n\
+pr p2 [\n\
+    url = `u2`\n\
+    dir = `d2`\n\
+] {\n\
+    var string x = `from-p2`;\n\
+}\
+",
+    );
+    compile_full(&dir.path().join("main.kiru")).unwrap();
+}
+
+#[test]
+fn test_sibling_case_arms_same_var_name_no_error() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+pr test [\n\
+    url = `u`\n\
+    dir = `d`\n\
+] {\n\
+    var string os = `Linux`;\n\
+    fn deploy {\n\
+        case $os {\n\
+            `Linux` { var string x = `matched`; log $x; };\n\
+            _ { var string x = `default`; log $x; };\n\
+        };\n\
+    }\n\
+}\
+",
+    );
+    compile_full(&dir.path().join("main.kiru")).unwrap();
+}
+
+// --- Error cases for shadowing within a chain ---
+
+#[test]
+fn test_project_var_then_fn_var_shadow_errors() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+pr test [\n\
+    url = `u`\n\
+    dir = `d`\n\
+] {\n\
+    var string x = `project`;\n\
+    fn bad {\n\
+        var string x = `fn`;\n\
+    }\n\
+}\
+",
+    );
+    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+    assert!(
+        err.to_string().contains("$x is already defined"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn test_fn_var_then_case_var_shadow_errors() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+pr test [\n\
+    url = `u`\n\
+    dir = `d`\n\
+] {\n\
+    var string os = `Linux`;\n\
+    fn bad {\n\
+        var string x = `fn`;\n\
+        case $os {\n\
+            `Linux` { var string x = `arm`; };\n\
+            _ { };\n\
+        };\n\
+    }\n\
+}\
+",
+    );
+    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+    assert!(
+        err.to_string().contains("$x is already defined"),
+        "got: {}",
+        err
+    );
+}
+
+#[test]
+fn test_duplicate_var_in_fn_body_errors() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+pr test [\n\
+    url = `u`\n\
+    dir = `d`\n\
+] {\n\
+    fn bad {\n\
+        var string x = `a`;\n\
+        var string x = `b`;\n\
+    }\n\
+}\
+",
+    );
+    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+    assert!(
+        err.to_string().contains("$x is already defined"),
+        "got: {}",
+        err
+    );
+}
+
+// --- env block var participates in enclosing fn frame ---
+
+#[test]
+fn test_env_var_participates_in_enclosing_fn() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+pr test [\n\
+    url = `u`\n\
+    dir = `d`\n\
+] {\n\
+    fn deploy {\n\
+        env [MY_VAR = `hello`] {\n\
+            var string x = `inside-env`;\n\
+        };\n\
+        log $x;\n\
+    }\n\
+}\
+",
+    );
+    compile_full(&dir.path().join("main.kiru")).unwrap();
+}
+
+#[test]
+fn test_env_var_redeclare_in_enclosing_fn_errors() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_config(
+        dir.path(),
+        "main.kiru",
+        "\
+pr test [\n\
+    url = `u`\n\
+    dir = `d`\n\
+] {\n\
+    fn deploy {\n\
+        var string x = `a`;\n\
+        env [MY_VAR = `hello`] {\n\
+            var string x = `b`;\n\
+        };\n\
+    }\n\
+}\
+",
+    );
+    let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+    assert!(
+        err.to_string().contains("$x is already defined"),
         "got: {}",
         err
     );
