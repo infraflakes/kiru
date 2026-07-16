@@ -1,5 +1,5 @@
 <h1 align="center">kiru</h1>
-<p align="center">A statically validated DSL and CLI for multiple git projects orchestration.</p>
+<p align="center">Infrastructure as Code meets local task runner.</p>
 <p align="center">
     <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
     <a href="https://github.com/infraflakes/kiru/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/infraflakes/kiru?logo=github"></a>
@@ -12,13 +12,15 @@
 > [!CAUTION]
 > `Kiru` is still in early development, breaking changes might happen!
 
-With **kiru** you declare multiple git repos, write shell functions, and chain them into concurrent pipelines — all in one DSL.
+With **kiru** you declare multiple git repos, write strongly-typed syntax, and chain functions into concurrent pipelines, **all in one DSL**.
 
 ## Why kiru?
 
 Keeping several git repositories in sync usually means a folder of brittle shell scripts or a separate Makefile per project. Scattered, hard to read, and easy to break in ways you only notice once something is already running. **kiru** gives you one small DSL to declare your repos, write the shell commands you already know as functions, and wire them into concurrent or sequential pipelines.
 
 The part we care about most: **kiru statically validates your config**. It catches invalid syntax, undefined variables, and broken function references *before* anything executes so you spot mistakes while editing, not halfway through a deploy.
+
+**Kiru** is when Infrastructure as Code meets local task runner.
 
 ---
 

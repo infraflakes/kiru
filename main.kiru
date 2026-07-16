@@ -1,24 +1,4 @@
-var shell kiru_dir = `echo $HOME/Projects/kiru`;
-
 import `.kiru/run.kiru`;
 import `.kiru/clean.kiru`;
 import `.kiru/build.kiru`;
-
-pr kiru [
-  url = `https://github.com/infraflakes/kiru.git`
-  dir = $kiru_dir
-  sync = `clone`
-  branch = `dev`
-] {
-
-  fn fail {
-    log `Failing the task!`;
-    env [
-      CGO_ENABLED = `0`
-      GOPATH = `$HOME/.local/share/go`
-   ] {
-      exec `go build ./...`;
-    };
-  }
-
-}
+import `.kiru/test.kiru`;
