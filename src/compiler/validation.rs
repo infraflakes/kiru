@@ -204,3 +204,172 @@ fn validate_fn_body(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::compiler::test_support::*;
+
+    #[test]
+    fn test_undefined_variable() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        var string x = $missing;\
+        ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(
+            err.to_string().contains("undefined variable"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_undefined_var_in_fn_body() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr test [\n\
+            url = `u`\n\
+            dir = `d`\n\
+        ] {\n\
+            fn badfn { log $undefined; }\n\
+        }\
+        ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(
+            err.to_string().contains("undefined variable"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_run_reference_validation() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr test [\n\
+            url = `u`\n\
+            dir = `d`\n\
+        ] {\n\
+            fn real { log `hi`; }\n\
+            run s { unknown; }\n\
+        }\
+        ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        let err_str = err.to_string();
+        assert!(err_str.contains("unknown function"), "got: {}", err_str);
+    }
+
+    #[test]
+    fn test_valid_run_references() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr test [\n\
+            url = `u`\n\
+            dir = `d`\n\
+        ] {\n\
+            fn real { log `hi`; }\n\
+            run s { real; }\n\
+        }\
+        ",
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        assert!(cfg.projects["test"].runs.contains_key("s"));
+    }
+
+    #[test]
+    fn test_undefined_var_in_case_condition() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr test [\n\
+            url = `u`\n\
+            dir = `d`\n\
+        ] {\n\
+            fn badfn { case $undefined { _ { }; }; }\n\
+        }\
+        ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(
+            err.to_string().contains("undefined variable"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_undefined_var_in_case_varref_pattern() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr test [\n\
+            url = `u`\n\
+            dir = `d`\n\
+        ] {\n\
+            fn badfn { var string x = `ok`; case $x { $undefined { }; _ { }; }; }\n\
+        }\
+        ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(
+            err.to_string().contains("undefined variable"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_run_validates_function_refs() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr p [ url = `http://x` dir = `x` ] {\n\
+            run bad { nonexistent; }\n\
+        }\
+        ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(err.to_string().contains("unknown function"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_fn_var_validation() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr p [ url = `http://x` dir = `x` ] {\n\
+            fn bad { log $undefined; }\n\
+        }\
+        ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(
+            err.to_string().contains("undefined variable"),
+            "got: {}",
+            err
+        );
+    }
+}

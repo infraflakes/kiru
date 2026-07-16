@@ -243,3 +243,71 @@ pub(crate) fn match_case_pattern(
         crate::compiler::ResolvedCasePattern::Default => true,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compiler::types::ResolvedCaseArm;
+    use crate::compiler::{ResolvedCasePattern, ResolvedFnStmt};
+
+    #[test]
+    fn test_match_literal_pattern() {
+        let pattern = ResolvedCasePattern::Literal("Linux".to_string());
+        assert!(match_case_pattern(&pattern, "Linux"));
+        assert!(!match_case_pattern(&pattern, "Darwin"));
+    }
+
+    #[test]
+    fn test_match_default_pattern() {
+        let pattern = ResolvedCasePattern::Default;
+        assert!(match_case_pattern(&pattern, "anything"));
+        assert!(match_case_pattern(&pattern, ""));
+    }
+
+    #[test]
+    fn test_match_empty_string() {
+        let pattern = ResolvedCasePattern::Literal(String::new());
+        assert!(match_case_pattern(&pattern, ""));
+        assert!(!match_case_pattern(&pattern, "x"));
+    }
+
+    #[test]
+    fn test_case_first_match_wins() {
+        let (_cfg, project, mut output) = crate::runner::test_support::test_context();
+        let mut ctx = ExecContext::new(Some(&project), &mut output);
+        let body = [ResolvedFnStmt::Case {
+            condition: "a".to_string(),
+            scopes: vec![
+                ResolvedCaseArm {
+                    pattern: ResolvedCasePattern::Literal("a".to_string()),
+                    body: vec![ResolvedFnStmt::Log {
+                        value: "first".to_string(),
+                    }],
+                },
+                ResolvedCaseArm {
+                    pattern: ResolvedCasePattern::Default,
+                    body: vec![ResolvedFnStmt::Log {
+                        value: "second".to_string(),
+                    }],
+                },
+            ],
+        }];
+        ctx.exec_stmts(&body).unwrap();
+    }
+
+    #[test]
+    fn test_case_no_match_does_nothing() {
+        let (_cfg, project, mut output) = crate::runner::test_support::test_context();
+        let mut ctx = ExecContext::new(Some(&project), &mut output);
+        let body = [ResolvedFnStmt::Case {
+            condition: "no-match".to_string(),
+            scopes: vec![ResolvedCaseArm {
+                pattern: ResolvedCasePattern::Literal("a".to_string()),
+                body: vec![ResolvedFnStmt::Log {
+                    value: "should-not-run".to_string(),
+                }],
+            }],
+        }];
+        ctx.exec_stmts(&body).unwrap();
+    }
+}

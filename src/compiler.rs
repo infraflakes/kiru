@@ -43,4 +43,4 @@ pub use error::CompileError;
 pub use types::{Config, Project, ResolvedCasePattern, ResolvedEnvPair, ResolvedFnStmt, SyncMode};
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod test_support;

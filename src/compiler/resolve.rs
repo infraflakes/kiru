@@ -554,3 +554,374 @@ fn resolve_fn_body_inner(
     }
     Ok(resolved)
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::compiler::test_support::*;
+    use crate::compiler::types::ResolvedFnStmt;
+
+    #[test]
+    fn test_variable_chain_resolution() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        var string a = `x`;\n\
+        var string b = $a;\n\
+        var string c = $b;\n\
+        pr p [url = $c dir = `d`] { }
+        ",
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        assert_eq!(cfg.projects["p"].url, "x");
+    }
+
+    #[test]
+    fn test_interpolation_in_backtick() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        var string name = `world`;\n\
+        pr p [url = `http://${name}.com` dir = `d`] { }\
+        ",
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        assert_eq!(cfg.projects["p"].url, "http://world.com");
+    }
+
+    #[test]
+    fn test_project_field_with_var_ref() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        var string myurl = `http://example.com`;\n\
+        pr x [url = $myurl dir = `d`] { }\
+        ",
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        assert_eq!(cfg.projects["x"].url, "http://example.com");
+    }
+
+    #[test]
+    fn test_project_var_chain_resolution() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr test [\n\
+            url = `u`\n\
+            dir = `d`\n\
+        ] {\n\
+            var string a = `hello`;\n\
+            var string b = $a;\n\
+        }\
+        ",
+        );
+        // We can't check project vars directly on the resolved Config,
+        // but the configuration should compile and resolve without errors.
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        assert_eq!(
+            cfg.projects["test"].dir,
+            dir.path().join("d").to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn test_duplicate_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr a [url = `ua` dir = `shared`] { }\n\
+        pr b [url = `ub` dir = `shared`] { }\
+        ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(
+            err.to_string().contains("duplicate directory"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_invalid_sync_value() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr p [url = `u` dir = `d` sync = `invalid`] { }\
+        ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(err.to_string().contains("sync"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_project_field_references_project_var() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr test [\n\
+            url = `http://example.com/${name}`\n\
+            dir = $name\n\
+        ] {\n\
+            var string name = `myproject`;\n\
+        }\
+        ",
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        let proj = &cfg.projects["test"];
+        assert_eq!(proj.url, "http://example.com/myproject");
+        assert_eq!(proj.dir, dir.path().join("myproject").to_string_lossy());
+    }
+
+    #[test]
+    fn test_kiru_cwd_forces_current_dir_for_project_scope_var_shell() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let subdir = dir.path().join("projectdir");
+        std::fs::create_dir(&subdir).unwrap();
+        let current_dir = std::env::current_dir().unwrap();
+
+        write_config(
+            dir.path(),
+            "main.kiru",
+            &format!(
+                "\
+        pr test [\n\
+            url = `http://example.com`\n\
+            dir = `{}`\n\
+        ] {{\n\
+            var shell cwd = `pwd`;\n\
+            fn check {{\n\
+                log $cwd;\n\
+            }}\n\
+        }}\n\
+        ",
+                subdir.to_string_lossy()
+            ),
+        );
+
+        let _guard = KiruCwdGuard::with_kiru_cwd();
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+
+        let proj = &cfg.projects["test"];
+        let fn_body = &proj.functions["check"];
+        assert_eq!(fn_body.len(), 1);
+        match &fn_body[0] {
+            ResolvedFnStmt::Log { value } => {
+                let expected = current_dir.to_string_lossy().to_string();
+                assert_eq!(*value, expected);
+            }
+            other => panic!("expected Log, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_project_scope_var_shell_uses_project_dir() {
+        let _guard = KiruCwdGuard::with_project_dir();
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let subdir = dir.path().join("myproject");
+        std::fs::create_dir(&subdir).unwrap();
+
+        write_config(
+            dir.path(),
+            "main.kiru",
+            &format!(
+                "\
+        pr test [\n\
+            url = `http://example.com`\n\
+            dir = `{}`\n\
+        ] {{\n\
+            var shell cwd = `pwd`;\n\
+            fn check {{\n\
+                log $cwd;\n\
+            }}\n\
+        }}\n\
+        ",
+                subdir.to_string_lossy()
+            ),
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        let proj = &cfg.projects["test"];
+        let fn_body = &proj.functions["check"];
+        assert_eq!(fn_body.len(), 1);
+        match &fn_body[0] {
+            ResolvedFnStmt::Log { value } => {
+                let expected = std::fs::canonicalize(&subdir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string();
+                assert_eq!(*value, expected);
+            }
+            other => panic!("expected Log, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_fn_scope_var_shell_uses_project_dir() {
+        let _guard = KiruCwdGuard::with_project_dir();
+        let dir = tempfile::TempDir::new().unwrap();
+        let subdir = dir.path().join("myproject");
+        std::fs::create_dir(&subdir).unwrap();
+
+        write_config(
+            dir.path(),
+            "main.kiru",
+            &format!(
+                "\
+        pr test [\n\
+            url = `http://example.com`\n\
+            dir = `{}`\n\
+        ] {{\n\
+            fn check {{\n\
+                var shell cwd = `pwd`;\n\
+                log $cwd;\n\
+            }}\n\
+        }}\n\
+        ",
+                subdir.to_string_lossy()
+            ),
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        let proj = &cfg.projects["test"];
+        let fn_body = &proj.functions["check"];
+        assert_eq!(fn_body.len(), 1); // VarDecl consumed, only log emitted
+        match &fn_body[0] {
+            ResolvedFnStmt::Log { value } => {
+                let expected = std::fs::canonicalize(&subdir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string();
+                assert_eq!(*value, expected);
+            }
+            other => panic!("expected Log, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_global_var_shell_uses_current_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        var shell msg = `echo hello-from-global`;\n\
+        pr test [\n\
+            url = $msg\n\
+            dir = `d`\n\
+        ] {\n\
+            fn check { log $msg; }\n\
+        }\
+        ",
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        let proj = &cfg.projects["test"];
+        assert_eq!(proj.url, "hello-from-global");
+        let fn_body = &proj.functions["check"];
+        match &fn_body[0] {
+            ResolvedFnStmt::Log { value } => {
+                assert_eq!(value, "hello-from-global");
+            }
+            other => panic!("expected Log, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_var_shell_used_in_dir_field_no_deadlock() {
+        let _guard = KiruCwdGuard::with_project_dir();
+        let dir = tempfile::TempDir::new().unwrap();
+        // The `dir` field resolves to `$x` (linear-phase value "workspace"),
+        // which gets joined with the source directory.  Create that directory
+        // so the re-resolved shell can spawn there.
+        let resolved_dir = dir.path().join("workspace");
+        std::fs::create_dir(&resolved_dir).unwrap();
+
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr test [\n\
+            url = $x\n\
+            dir = $x\n\
+        ] {\n\
+            var shell x = `echo workspace`;\n\
+            fn check { log $x; }\n\
+        }\
+        ",
+        );
+        // Must not deadlock/cycle.  The dir field uses the linear-phase value
+        // of $x (current-dir shell execution), so dir resolves to a relative
+        // path that is joined with the source file's directory.
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        let proj = &cfg.projects["test"];
+        assert!(proj.url.contains("workspace"));
+        assert!(proj.dir.contains("workspace"));
+        // The re-resolved x (in project dir) is also "workspace" because
+        // `echo` doesn't depend on working directory.
+        let fn_body = &proj.functions["check"];
+        match &fn_body[0] {
+            ResolvedFnStmt::Log { value } => {
+                assert_eq!(value, "workspace");
+            }
+            other => panic!("expected Log, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_project_var_shell_runs_once() {
+        let _guard = KiruCwdGuard::with_project_dir();
+        let dir = tempfile::TempDir::new().unwrap();
+        let subdir = dir.path().join("myproject");
+        std::fs::create_dir(&subdir).unwrap();
+        let marker = subdir.join("run_count.txt");
+
+        write_config(
+            dir.path(),
+            "main.kiru",
+            &format!(
+                "\
+        pr test [\n\
+            url = `http://example.com`\n\
+            dir = `{}`\n\
+        ] {{\n\
+            var shell x = `echo 1 >> {} && echo done`;\n\
+            fn check {{\n\
+                log $x;\n\
+            }}\n\
+        }}\n\
+        ",
+                subdir.to_string_lossy(),
+                marker.to_string_lossy(),
+            ),
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        let proj = &cfg.projects["test"];
+        let fn_body = &proj.functions["check"];
+        assert_eq!(fn_body.len(), 1);
+        match &fn_body[0] {
+            ResolvedFnStmt::Log { value } => {
+                assert_eq!(value, "done");
+            }
+            other => panic!("expected Log, got {:?}", other),
+        }
+        let count = std::fs::read_to_string(&marker).unwrap();
+        assert_eq!(
+            count.lines().count(),
+            1,
+            "var shell should execute exactly once, got {} lines",
+            count.lines().count()
+        );
+    }
+}

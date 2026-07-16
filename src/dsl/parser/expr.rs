@@ -140,3 +140,40 @@ pub(crate) fn parse_interpolation_parts(
 
     Ok(parts)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::parse_interpolation_parts;
+
+    #[test]
+    fn test_basic_template_part() {
+        let parts = parse_interpolation_parts("hello", 0).unwrap();
+        assert_eq!(parts.len(), 1);
+        assert!(!parts[0].is_var);
+        assert_eq!(parts[0].value, "hello");
+    }
+
+    #[test]
+    fn test_template_with_var() {
+        let parts = parse_interpolation_parts("hello ${name} world", 0).unwrap();
+        assert_eq!(parts.len(), 3);
+        assert!(!parts[0].is_var);
+        assert_eq!(parts[0].value, "hello ");
+        assert!(parts[1].is_var);
+        assert_eq!(parts[1].value, "name");
+        assert!(!parts[2].is_var);
+        assert_eq!(parts[2].value, " world");
+    }
+
+    #[test]
+    fn test_template_empty_var_name() {
+        let result = parse_interpolation_parts("hello ${}", 0);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("empty variable name")
+        );
+    }
+}

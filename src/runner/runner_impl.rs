@@ -46,3 +46,60 @@ impl Runner {
         ctx.exec_stmts(fn_body)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compiler::test_support::*;
+
+    #[test]
+    fn test_case_runtime_matching_arm() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr test [\n\
+            url = `http://example.com`\n\
+            dir = `test`\n\
+        ] {\n\
+            var string os = `Linux`;\n\
+            fn deploy {\n\
+                case $os {\n\
+                    `Linux` { log `matched`; };\n\
+                    _ { log `default`; };\n\
+                };\n\
+            }\n\
+        }\
+        ",
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        let mut runner = Runner::new(Arc::new(cfg));
+        runner.execute_fn_call("deploy", "test").unwrap();
+    }
+
+    #[test]
+    fn test_case_runtime_no_match() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr test [\n\
+            url = `http://example.com`\n\
+            dir = `test`\n\
+        ] {\n\
+            var string os = `Darwin`;\n\
+            fn deploy {\n\
+                case $os {\n\
+                    `Linux` { log `only-linux`; };\n\
+                };\n\
+            }\n\
+        }\
+        ",
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        let mut runner = Runner::new(Arc::new(cfg));
+        runner.execute_fn_call("deploy", "test").unwrap();
+    }
+}

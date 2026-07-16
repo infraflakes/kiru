@@ -137,3 +137,101 @@ impl Parser {
         Ok(body)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::dsl::parser::test_support::*;
+    use crate::dsl::{ProjectField, Stmt, TopLevel};
+
+    #[test]
+    fn test_project_with_url_and_dir() {
+        let input = "pr myproj [url = `u` dir = `d`] { fn build { exec `make`; } }";
+        let prog = parse_program(input).unwrap();
+        assert_eq!(count_stmt_types(&prog), vec!["pr"]);
+        match &prog.items[0] {
+            TopLevel::Stmt(Stmt::Project {
+                name, fields, body, ..
+            }) => {
+                assert_eq!(name, "myproj");
+                assert_eq!(fields.len(), 2);
+                assert!(matches!(
+                    &fields[0],
+                    Stmt::Field {
+                        key: ProjectField::Url,
+                        ..
+                    }
+                ));
+                assert!(matches!(
+                    &fields[1],
+                    Stmt::Field {
+                        key: ProjectField::Dir,
+                        ..
+                    }
+                ));
+                assert_eq!(count_body_stmt_types(body), vec!["fn"]);
+            }
+            _ => panic!("expected Project"),
+        }
+    }
+
+    #[test]
+    fn test_project_with_all_fields() {
+        let input = "pr p [url = `u` dir = `d` sync = `s` branch = `b`] { fn f { log `x`; } }";
+        let prog = parse_program(input).unwrap();
+        match &prog.items[0] {
+            TopLevel::Stmt(Stmt::Project { fields, .. }) => {
+                assert_eq!(fields.len(), 4);
+            }
+            _ => panic!("expected Project"),
+        }
+    }
+
+    #[test]
+    fn test_project_missing_opening_bracket() {
+        let result = parse_program("pr p url = `u`] { }");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_project_missing_closing_bracket() {
+        let result = parse_program("pr p [url = `u` { }");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_project_empty_fields() {
+        let input = "pr p [] { fn b { log `x`; } }";
+        let prog = parse_program(input).unwrap();
+        match &prog.items[0] {
+            TopLevel::Stmt(Stmt::Project { fields, body, .. }) => {
+                assert!(fields.is_empty());
+                assert_eq!(count_body_stmt_types(body), vec!["fn"]);
+            }
+            _ => panic!("expected Project"),
+        }
+    }
+
+    #[test]
+    fn test_project_without_fields_errors() {
+        let result = parse_program("pr p { fn b { log `x`; }; }");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_project_unknown_field_key_errors() {
+        let result = parse_program("pr p [unknown = `v`] { }");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_project_missing_field_value() {
+        let result = parse_program("pr p [url = ] { }");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_project_duplicate_field_errors() {
+        let result = parse_program("pr p [url = `a` url = `b`] { }");
+        assert!(result.is_err());
+    }
+}

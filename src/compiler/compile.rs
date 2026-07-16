@@ -507,3 +507,287 @@ pub fn parse_projects_metadata(entry_path: &Path) -> Result<Config, CompileError
 
     Ok(Config { projects })
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::compiler::test_support::*;
+
+    #[test]
+    fn test_load_basic() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        var string a = `hello`;\n\
+        pr test [url = `http://example.com` dir = `test`] { }\
+        ",
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        assert!(cfg.projects.contains_key("test"));
+        assert_eq!(cfg.projects["test"].url, "http://example.com");
+    }
+
+    #[test]
+    fn test_load_with_project_body() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr test [\n\
+            url = `http://example.com`\n\
+            dir = `test`\n\
+        ] {\n\
+            var string app = `todo`;\n\
+            fn build { log `hi`; }\n\
+            run release { build; }\n\
+            run ci { build; }\n\
+        }\
+        ",
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        let proj = &cfg.projects["test"];
+        assert!(proj.functions.contains_key("build"));
+        assert!(proj.runs.contains_key("release"));
+        assert!(proj.runs.contains_key("ci"));
+        assert_eq!(proj.runs["release"], vec![vec!["build"]]);
+        assert_eq!(proj.runs["ci"], vec![vec!["build"]]);
+    }
+
+    #[test]
+    fn test_import_resolution() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(dir.path(), "other.kiru", "var string extra = `from-other`;");
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        import `./other.kiru`;\n\
+        pr p [url = $extra dir = `d`] { }
+        ",
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        assert_eq!(cfg.projects["p"].url, "from-other");
+    }
+
+    #[test]
+    fn test_circular_import() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(dir.path(), "a.kiru", "import `./b.kiru`;");
+        write_config(dir.path(), "b.kiru", "import `./a.kiru`;");
+        let err = compile_full(&dir.path().join("a.kiru")).unwrap_err();
+        let err_str = err.to_string();
+        assert!(
+            err_str.contains("circular") || err_str.contains("Circular"),
+            "got: {}",
+            err_str
+        );
+    }
+
+    #[test]
+    fn test_duplicate_project_merges() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr p1 [url = `u` dir = `d1`] { }\n\
+        pr p1 { fn build { log `x`; } }\
+        ",
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        assert!(cfg.projects.contains_key("p1"));
+        let proj = &cfg.projects["p1"];
+        assert_eq!(proj.url, "u");
+        assert_eq!(proj.dir, dir.path().join("d1").to_string_lossy());
+        assert!(proj.functions.contains_key("build"));
+    }
+
+    #[test]
+    fn test_missing_url() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr p [dir = `d`] { }\
+        ",
+        );
+        compile_full(&dir.path().join("main.kiru")).unwrap();
+    }
+
+    #[test]
+    fn test_missing_dir() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr p [url = `u`] { }\
+        ",
+        );
+        compile_full(&dir.path().join("main.kiru")).unwrap();
+    }
+
+    #[test]
+    fn test_multi_file_parse_order() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(dir.path(), "a.kiru", "var string a = `from-a`;");
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        import `./a.kiru`;\n\
+        pr p [url = $a dir = `d`] { }\
+        ",
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        assert_eq!(cfg.projects["p"].url, "from-a");
+    }
+
+    #[test]
+    fn test_duplicate_project_field() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr p [url = `u` dir = `d` dir = `e`] { }\
+        ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(err.to_string().contains("duplicate"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_project_fn_collection() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr p [ url = `http://x` dir = `x` ] {\n\
+            fn build { log `building`; }\n\
+            fn test { exec `check`; }\n\
+        }\
+        ",
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        let proj = &cfg.projects["p"];
+        assert!(proj.functions.contains_key("build"));
+        assert!(proj.functions.contains_key("test"));
+        assert_eq!(proj.functions.len(), 2);
+    }
+
+    #[test]
+    fn test_project_run_collection() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr p [ url = `http://x` dir = `x` ] {\n\
+            fn build { log `x`; }\n\
+            fn test { log `y`; }\n\
+            run all { build => test; }\n\
+            run ci { build; }\n\
+        }\
+        ",
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        let proj = &cfg.projects["p"];
+        assert!(proj.runs.contains_key("all"));
+        assert!(proj.runs.contains_key("ci"));
+        assert_eq!(proj.runs.len(), 2);
+        assert_eq!(proj.runs["all"], vec![vec!["build", "test"]]);
+    }
+
+    #[test]
+    fn test_duplicate_fn_in_project() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr test [\n\
+            url = `u`\n\
+            dir = `d`\n\
+        ] {\n\
+            fn dup { log `a`; }\n\
+            fn dup { log `b`; }\n\
+        }\
+        ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(
+            err.to_string().contains("duplicate function"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_duplicate_run_in_project() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr test [\n\
+            url = `u`\n\
+            dir = `d`\n\
+        ] {\n\
+            fn check { log `x`; }\n\
+            run dup { check; }\n\
+            run dup { check; }\n\
+        }\
+        ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(
+            err.to_string().contains("duplicate run block"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_duplicate_fn_in_project_errors() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr p [ url = `http://x` dir = `x` ] {\n\
+            fn dup { log `a`; }\n\
+            fn dup { log `b`; }\n\
+        }\
+        ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(
+            err.to_string().contains("duplicate function"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_duplicate_run_in_project_errors() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr p [ url = `http://x` dir = `x` ] {\n\
+            fn x { log `a`; }\n\
+            run dup { x; }\n\
+            run dup { x; }\n\
+        }\
+        ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(err.to_string().contains("duplicate run"), "got: {}", err);
+    }
+}

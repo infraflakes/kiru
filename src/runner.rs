@@ -7,7 +7,7 @@ pub(crate) mod sync;
 pub(crate) mod tui;
 
 #[cfg(test)]
-mod tests;
+mod test_support;
 
 pub(crate) use execution_context::OutputCallback;
 pub(crate) use runner_impl::Runner;

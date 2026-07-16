@@ -16,7 +16,7 @@ mod expr;
 mod project;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod test_support;
 
 /// Recursive-descent parser for the kiru DSL. Wraps a `Lexer` and produces
 /// a sequence of `TopLevel` items (statements and imports).
@@ -302,5 +302,55 @@ impl Parser {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::dsl::parser::test_support::*;
+
+    #[test]
+    fn test_multiple_top_level_statements() {
+        let input = "var string x = `hello`;\n\
+                      pr p [url = `u` dir = `d`] { fn f { log `hi`; } run s { f; } }";
+        let prog = parse_program(input).unwrap();
+        assert_eq!(count_stmt_types(&prog), vec!["var", "pr"]);
+    }
+
+    #[test]
+    fn test_unexpected_token_at_top_level() {
+        let result = parse_program("fooobar = `bar`;");
+        assert!(result.is_err());
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.to_string().contains("expected var, pr, fn, or run"))
+        );
+    }
+
+    #[test]
+    fn test_error_recovery_skips_bad_stmt() {
+        let result = parse_program("var string x = `hello`;\nfn bad { unknown }");
+        match result {
+            Ok(prog) => {
+                assert_eq!(prog.items.len(), 1);
+            }
+            Err(errs) => {
+                assert!(errs.iter().any(|e| e.to_string().contains("expected log")));
+            }
+        }
+    }
+
+    #[test]
+    fn test_underscore_outside_case_pattern() {
+        let result = parse_program("pr p { fn test { log `_`; _; } }");
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter().any(|e| e
+                .to_string()
+                .contains("`_` is only valid as a case pattern")),
+            "got: {:?}",
+            errs
+        );
     }
 }
