@@ -1,8 +1,8 @@
 mod args;
 mod exec;
 mod pager;
+mod status;
 mod sync;
-mod validate;
 
 pub use args::{Cli, Commands};
 
@@ -45,7 +45,7 @@ pub fn run_cli() -> miette::Result<()> {
     let parsed_cli = Cli::parse();
 
     match parsed_cli.command {
-        Commands::Validate => validate::run_validate_command(parsed_cli.config),
+        Commands::Status => status::run_status_command(parsed_cli.config),
         Commands::Sync => sync::run_sync_command(parsed_cli.config),
         Commands::Run { name, project } => {
             exec::execute_run_block(parsed_cli.config, name, project)

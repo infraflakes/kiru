@@ -10,7 +10,7 @@ macro_rules! style {
     };
 }
 
-pub fn run_validate_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
+pub fn run_status_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
     let config = load_config(config_arg)?;
     let output = format_config_as_tree(&config);
     display_output_through_pager(&output)?;

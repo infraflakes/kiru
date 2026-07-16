@@ -5,10 +5,11 @@ pr kiru {
     fail => fmt;
   }
   run build {
-   init => test => build;
+   init => build;
   }
   run test {
-    fmt => test;
+    test;
+    build;
   }
   run ci {
     init => test;
