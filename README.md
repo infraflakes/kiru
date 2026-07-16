@@ -57,7 +57,7 @@ Config lives at `~/.config/kiru/main.kiru`. Override with `-c <path>`.
 | command | what it does |
 |---------|-------------|
 | `kiru sync` | clone / update all declared repos |
-| `kiru run <name> <project>` | execute a run block |
+| `kiru run <name> <project>` | execute a run block that orchestrate functions sequentially or concurrently |
 | `kiru fn <name> <project>` | execute one function |
 | `kiru validate` | parse, resolve, and validate the config |
 | `kiru version` | print version |
