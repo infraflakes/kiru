@@ -1,11 +1,10 @@
-use crate::compiler::error::CompileError;
-use crate::compiler::error::spanned_err;
+use crate::compiler::error::{CompileError, SourceFile, spanned_err};
 use crate::compiler::scope::{Redeclaration, ScopeKind, ScopeStack};
 use crate::compiler::types::{
     Config, Project, ProjectVarStmt, ResolvedCaseArm, ResolvedCasePattern, ResolvedEnvPair,
     ResolvedFnStmt, SyncMode, UnresolvedConfig, UnresolvedProject,
 };
-use crate::dsl::{CaseArm, CasePattern, EnvPair, Expr, FnStmt, Stmt};
+use crate::dsl::{CaseArm, CasePattern, EnvPair, Expr, FnStmt, InterpolationPart, Stmt};
 use crate::shell;
 use miette::miette;
 use std::cell::Cell;
@@ -55,44 +54,83 @@ pub(crate) fn visit_case_pattern_vars(pattern: &CasePattern, mut f: impl FnMut(&
     }
 }
 
+/// Builds the "undefined variable" error for a `$name` reference absent
+/// from `scope`. Centralizes the repeated `format!("undefined variable:
+/// ${}", ..)` construction used by both expression and case-pattern
+/// resolution (bare `VarRef` and interpolated backtick literals).
+fn undefined_var_err(
+    name: &str,
+    offset: usize,
+    len: usize,
+    sources: &HashMap<String, String>,
+    source_name: &str,
+) -> CompileError {
+    spanned_err(
+        format!("undefined variable: ${}", name),
+        &SourceFile::from_registry(sources, source_name),
+        offset,
+        len,
+    )
+}
+
+/// Resolves the interpolation `parts` of a backtick literal (or case-
+/// pattern literal) into a concrete string, substituting `$name` /
+/// `${name}` references against `scope`. Shared by `resolve_expr` and
+/// `resolve_case_pattern` so the substitution loop is defined once.
+/// On an undefined reference, the error spans the whole literal
+/// (`literal_offset`/`literal_len`), matching prior behavior.
+fn resolve_interpolation_to_string(
+    parts: &[InterpolationPart],
+    scope: &ScopeStack<String>,
+    literal_offset: usize,
+    literal_len: usize,
+    sources: &HashMap<String, String>,
+    source_name: &str,
+) -> Result<String, CompileError> {
+    let mut result = String::new();
+    for part in parts {
+        if part.is_var {
+            match scope.lookup(&part.value) {
+                Some(val) => result.push_str(val),
+                None => {
+                    return Err(undefined_var_err(
+                        &part.value,
+                        literal_offset,
+                        literal_len,
+                        sources,
+                        source_name,
+                    ));
+                }
+            }
+        } else {
+            result.push_str(&part.value);
+        }
+    }
+    Ok(result)
+}
+
 /// Resolve an `Expr` to a concrete string using a scope stack.
 pub(crate) fn resolve_expr(
     expr: &Expr,
     scope: &ScopeStack<String>,
-    source_name: &str,
-    source_text: &str,
+    sources: &HashMap<String, String>,
 ) -> Result<String, CompileError> {
-    let make_span_error =
-        |msg: String, o: usize, l: usize| spanned_err(msg, source_name, source_text, o, l);
     match expr {
-        Expr::VarRef { name, offset, len } => match scope.lookup(name) {
+        Expr::VarRef {
+            name,
+            offset,
+            len,
+            source_name,
+        } => match scope.lookup(name) {
             Some(val) => Ok(val.clone()),
-            None => Err(make_span_error(
-                format!("undefined variable: ${}", name),
-                *offset,
-                *len,
-            )),
+            None => Err(undefined_var_err(name, *offset, *len, sources, source_name)),
         },
-        Expr::BacktickLit { parts, offset, len } => {
-            let mut result = String::new();
-            for part in parts {
-                if part.is_var {
-                    match scope.lookup(&part.value) {
-                        Some(val) => result.push_str(val),
-                        None => {
-                            return Err(make_span_error(
-                                format!("undefined variable: ${}", part.value),
-                                *offset,
-                                *len,
-                            ));
-                        }
-                    }
-                } else {
-                    result.push_str(&part.value);
-                }
-            }
-            Ok(result)
-        }
+        Expr::BacktickLit {
+            parts,
+            offset,
+            len,
+            source_name,
+        } => resolve_interpolation_to_string(parts, scope, *offset, *len, sources, source_name),
     }
 }
 
@@ -100,39 +138,27 @@ pub(crate) fn resolve_expr(
 fn resolve_case_pattern(
     pattern: &CasePattern,
     scope: &ScopeStack<String>,
-    source_name: &str,
-    source_text: &str,
+    sources: &HashMap<String, String>,
 ) -> Result<ResolvedCasePattern, CompileError> {
-    let make_span_error =
-        |msg: String, o: usize, l: usize| spanned_err(msg, source_name, source_text, o, l);
     match pattern {
-        CasePattern::Literal { parts, offset, len } => {
-            let mut result = String::new();
-            for part in parts {
-                if part.is_var {
-                    match scope.lookup(&part.value) {
-                        Some(val) => result.push_str(val),
-                        None => {
-                            return Err(make_span_error(
-                                format!("undefined variable: ${}", part.value),
-                                *offset,
-                                *len,
-                            ));
-                        }
-                    }
-                } else {
-                    result.push_str(&part.value);
-                }
-            }
-            Ok(ResolvedCasePattern::Literal(result))
+        CasePattern::Literal {
+            parts,
+            offset,
+            len,
+            source_name,
+        } => {
+            let resolved =
+                resolve_interpolation_to_string(parts, scope, *offset, *len, sources, source_name)?;
+            Ok(ResolvedCasePattern::Literal(resolved))
         }
-        CasePattern::VarRef { name, offset, len } => match scope.lookup(name) {
+        CasePattern::VarRef {
+            name,
+            offset,
+            len,
+            source_name,
+        } => match scope.lookup(name) {
             Some(val) => Ok(ResolvedCasePattern::Literal(val.clone())),
-            None => Err(make_span_error(
-                format!("undefined variable: ${}", name),
-                *offset,
-                *len,
-            )),
+            None => Err(undefined_var_err(name, *offset, *len, sources, source_name)),
         },
         CasePattern::Default => Ok(ResolvedCasePattern::Default),
     }
@@ -166,26 +192,18 @@ fn resolve_var_stmt_inner(
     len: usize,
     scope: &mut ScopeStack<String>,
     working_dir: Option<&Path>,
-    source_name: &str,
-    source_text: &str,
+    sources: &HashMap<String, String>,
 ) -> Result<(), CompileError> {
-    let resolved = resolve_expr(value, scope, source_name, source_text)?;
+    let source = SourceFile::from_registry(sources, value.source_name());
+    let resolved = resolve_expr(value, scope, sources)?;
     let final_val = if *var_type == crate::dsl::VarType::Shell {
-        shell::execute_shell_variable(
-            name,
-            &resolved,
-            working_dir,
-            source_name,
-            source_text,
-            offset,
-            len,
-        )?
+        shell::execute_shell_variable(name, &resolved, working_dir, &source, offset, len)?
     } else {
         resolved
     };
     scope
         .declare(name.to_owned(), final_val)
-        .map_err(|r| redeclaration_err(r, source_name, source_text, offset, len))?;
+        .map_err(|r| redeclaration_err(r, &source, offset, len))?;
     Ok(())
 }
 
@@ -195,8 +213,7 @@ pub(crate) fn resolve_var_stmt(
     stmt: &Stmt,
     scope: &mut ScopeStack<String>,
     working_dir: Option<&Path>,
-    source_name: &str,
-    source_text: &str,
+    sources: &HashMap<String, String>,
 ) -> Result<(), CompileError> {
     if let Stmt::Var {
         var_type,
@@ -215,8 +232,7 @@ pub(crate) fn resolve_var_stmt(
             *len,
             scope,
             working_dir,
-            source_name,
-            source_text,
+            sources,
         )
     } else {
         Ok(())
@@ -229,8 +245,7 @@ pub(crate) fn resolve_project_var(
     var: &ProjectVarStmt,
     scope: &mut ScopeStack<String>,
     working_dir: Option<&Path>,
-    source_name: &str,
-    source_text: &str,
+    sources: &HashMap<String, String>,
 ) -> Result<(), CompileError> {
     resolve_var_stmt_inner(
         &var.var_type,
@@ -240,33 +255,30 @@ pub(crate) fn resolve_project_var(
         var.len,
         scope,
         working_dir,
-        source_name,
-        source_text,
+        sources,
     )
 }
 
 /// Build a spanned error from a `Redeclaration`.
 pub(crate) fn redeclaration_err(
     r: Redeclaration,
-    source_name: &str,
-    source_text: &str,
+    source: &SourceFile<'_>,
     offset: usize,
     len: usize,
 ) -> CompileError {
     let msg = format!("${} is already defined at {}", r.name, r.existing_kind);
-    spanned_err(msg, source_name, source_text, offset, len)
+    spanned_err(msg, source, offset, len)
 }
 
 /// Resolve an optional `Expr` field to a concrete string.
 pub(crate) fn resolve_optional_expr(
     expr: &Option<Expr>,
     scope: &ScopeStack<String>,
-    source_name: &str,
-    source_text: &str,
+    sources: &HashMap<String, String>,
 ) -> Result<Option<String>, CompileError> {
     match expr {
         Some(e) => {
-            let resolved = resolve_expr(e, scope, source_name, source_text)?;
+            let resolved = resolve_expr(e, scope, sources)?;
             if resolved.is_empty() {
                 Ok(None)
             } else {
@@ -282,16 +294,16 @@ pub(crate) fn resolve_optional_expr(
 fn resolve_dir_field(
     unresolved: &UnresolvedProject,
     scope: &ScopeStack<String>,
+    sources: &HashMap<String, String>,
 ) -> Result<String, CompileError> {
-    let raw = resolve_optional_expr(&unresolved.dir, scope, "", "")?.unwrap_or_default();
+    let raw = resolve_optional_expr(&unresolved.dir, scope, sources)?.unwrap_or_default();
     if raw.is_empty() || Path::new(&raw).is_absolute() {
         return Ok(raw);
     }
     let base_dir = Path::new(&unresolved.source_file).parent().ok_or_else(|| {
         spanned_err(
             "cannot determine base directory for dir".to_string(),
-            "",
-            "",
+            &SourceFile::from_registry(sources, &unresolved.source_file),
             0,
             0,
         )
@@ -304,23 +316,35 @@ fn resolve_dir_field(
 pub(crate) fn resolve_project_fields(
     unresolved: &UnresolvedProject,
     scope: &ScopeStack<String>,
+    sources: &HashMap<String, String>,
 ) -> Result<(String, String, SyncMode, Option<String>), CompileError> {
     let sync_offset_len = unresolved
         .sync
         .as_ref()
         .map(|e| e.offset_len())
         .unwrap_or((0, 1));
-    let url = resolve_optional_expr(&unresolved.url, scope, "", "")?.unwrap_or_default();
-    let dir = resolve_dir_field(unresolved, scope)?;
-    let sync = match resolve_optional_expr(&unresolved.sync, scope, "", "")? {
+    let url = resolve_optional_expr(&unresolved.url, scope, sources)?.unwrap_or_default();
+    let dir = resolve_dir_field(unresolved, scope, sources)?;
+    let sync = match resolve_optional_expr(&unresolved.sync, scope, sources)? {
         Some(mode) => {
             let (sync_offset, sync_len) = sync_offset_len;
-            parse_sync_mode_value(&mode)
-                .map_err(|msg| spanned_err(msg, "", "", sync_offset, sync_len))?
+            let sync_source = unresolved
+                .sync
+                .as_ref()
+                .map(|e| e.source_name())
+                .unwrap_or(unresolved.source_file.as_str());
+            parse_sync_mode_value(&mode).map_err(|msg| {
+                spanned_err(
+                    msg,
+                    &SourceFile::from_registry(sources, sync_source),
+                    sync_offset,
+                    sync_len,
+                )
+            })?
         }
         None => SyncMode::Clone,
     };
-    let branch = resolve_optional_expr(&unresolved.branch, scope, "", "")?;
+    let branch = resolve_optional_expr(&unresolved.branch, scope, sources)?;
     Ok((url, dir, sync, branch))
 }
 
@@ -328,6 +352,7 @@ pub(crate) fn resolve_project_fields(
 pub(crate) fn resolve_with_scopes(
     unresolved: UnresolvedConfig,
     global: ScopeStack<String>,
+    sources: &HashMap<String, String>,
 ) -> Result<Config, CompileError> {
     let mut projects = HashMap::new();
     let mut seen_dirs: HashSet<String> = HashSet::new();
@@ -338,7 +363,8 @@ pub(crate) fn resolve_with_scopes(
         project_scope.push_frame(ScopeKind::Project);
         project_scope.seed_top(unresolved_project.vars.clone());
 
-        let (url, dir, sync, branch) = resolve_project_fields(&unresolved_project, &project_scope)?;
+        let (url, dir, sync, branch) =
+            resolve_project_fields(&unresolved_project, &project_scope, sources)?;
 
         if !dir.is_empty() && !seen_dirs.insert(dir.clone()) {
             return Err(CompileError::ValidationReport(miette!(
@@ -378,25 +404,12 @@ pub(crate) fn resolve_with_scopes(
                     .get(&var_stmt.name)
                     .cloned()
                     .unwrap_or_default();
+                let source = SourceFile::from_registry(sources, &var_stmt.source_name);
                 project_scope
                     .declare(var_stmt.name.clone(), val)
-                    .map_err(|r| {
-                        redeclaration_err(
-                            r,
-                            &unresolved_project.source_file,
-                            &unresolved_project.source_text,
-                            var_stmt.offset,
-                            var_stmt.len,
-                        )
-                    })?;
+                    .map_err(|r| redeclaration_err(r, &source, var_stmt.offset, var_stmt.len))?;
             } else {
-                resolve_project_var(
-                    var_stmt,
-                    &mut project_scope,
-                    working_dir,
-                    &unresolved_project.source_file,
-                    &unresolved_project.source_text,
-                )?;
+                resolve_project_var(var_stmt, &mut project_scope, working_dir, sources)?;
             }
         }
 
@@ -406,7 +419,7 @@ pub(crate) fn resolve_with_scopes(
             // Push a Function frame via RAII guard — no clone needed.
             let guard = project_scope.enter(ScopeKind::Function);
             let resolved_body =
-                resolve_fn_body_inner(body, &mut *guard.stack, working_dir, "", "")?;
+                resolve_fn_body_inner(body, &mut *guard.stack, working_dir, sources)?;
             functions.insert(fn_name.clone(), resolved_body);
             // guard drops here, popping the Function frame
         }
@@ -434,18 +447,17 @@ fn resolve_env_block_stmt(
     body: &[FnStmt],
     scope: &mut ScopeStack<String>,
     working_dir: Option<&Path>,
-    source_name: &str,
-    source_text: &str,
+    sources: &HashMap<String, String>,
 ) -> Result<ResolvedFnStmt, CompileError> {
     let mut resolved_pairs = Vec::new();
     for pair in pairs {
-        let resolved_value = resolve_expr(&pair.value, scope, source_name, source_text)?;
+        let resolved_value = resolve_expr(&pair.value, scope, sources)?;
         resolved_pairs.push(ResolvedEnvPair {
             key: pair.key.clone(),
             value: resolved_value,
         });
     }
-    let resolved_body = resolve_fn_body_inner(body, scope, working_dir, source_name, source_text)?;
+    let resolved_body = resolve_fn_body_inner(body, scope, working_dir, sources)?;
     Ok(ResolvedFnStmt::EnvBlock {
         pairs: resolved_pairs,
         body: resolved_body,
@@ -459,21 +471,14 @@ fn resolve_case_stmt(
     scopes: &[CaseArm],
     scope: &mut ScopeStack<String>,
     working_dir: Option<&Path>,
-    source_name: &str,
-    source_text: &str,
+    sources: &HashMap<String, String>,
 ) -> Result<ResolvedFnStmt, CompileError> {
-    let resolved_condition = resolve_expr(condition, scope, source_name, source_text)?;
+    let resolved_condition = resolve_expr(condition, scope, sources)?;
     let mut resolved_scopes = Vec::new();
     for arm in scopes {
-        let pattern = resolve_case_pattern(&arm.pattern, scope, source_name, source_text)?;
+        let pattern = resolve_case_pattern(&arm.pattern, scope, sources)?;
         let guard = scope.enter(ScopeKind::Case);
-        let body = resolve_fn_body_inner(
-            &arm.body,
-            guard.stack,
-            working_dir,
-            source_name,
-            source_text,
-        )?;
+        let body = resolve_fn_body_inner(&arm.body, guard.stack, working_dir, sources)?;
         resolved_scopes.push(ResolvedCaseArm { pattern, body });
     }
     Ok(ResolvedFnStmt::Case {
@@ -488,8 +493,7 @@ fn resolve_fn_body_inner(
     body: &[FnStmt],
     scope: &mut ScopeStack<String>,
     working_dir: Option<&Path>,
-    source_name: &str,
-    source_text: &str,
+    sources: &HashMap<String, String>,
 ) -> Result<Vec<ResolvedFnStmt>, CompileError> {
     let mut resolved = Vec::new();
     for stmt in body {
@@ -500,14 +504,14 @@ fn resolve_fn_body_inner(
                 value,
             } => {
                 let (offset, len) = value.offset_len();
-                let resolved_value = resolve_expr(value, scope, source_name, source_text)?;
+                let source = SourceFile::from_registry(sources, value.source_name());
+                let resolved_value = resolve_expr(value, scope, sources)?;
                 let final_value = if *var_type == crate::dsl::VarType::Shell {
                     shell::execute_shell_variable(
                         name,
                         &resolved_value,
                         working_dir,
-                        source_name,
-                        source_text,
+                        &source,
                         offset,
                         len,
                     )?
@@ -516,18 +520,18 @@ fn resolve_fn_body_inner(
                 };
                 scope
                     .declare(name.to_string(), final_value)
-                    .map_err(|r| redeclaration_err(r, source_name, source_text, offset, len))?;
+                    .map_err(|r| redeclaration_err(r, &source, offset, len))?;
             }
             FnStmt::Log { value } => {
-                let v = resolve_expr(value, scope, source_name, source_text)?;
+                let v = resolve_expr(value, scope, sources)?;
                 resolved.push(ResolvedFnStmt::Log { value: v });
             }
             FnStmt::Exec { value } => {
-                let v = resolve_expr(value, scope, source_name, source_text)?;
+                let v = resolve_expr(value, scope, sources)?;
                 resolved.push(ResolvedFnStmt::Exec { value: v });
             }
             FnStmt::Cd { value } => {
-                let v = resolve_expr(value, scope, source_name, source_text)?;
+                let v = resolve_expr(value, scope, sources)?;
                 resolved.push(ResolvedFnStmt::Cd { value: v });
             }
             FnStmt::EnvBlock { pairs, body } => {
@@ -536,8 +540,7 @@ fn resolve_fn_body_inner(
                     body,
                     scope,
                     working_dir,
-                    source_name,
-                    source_text,
+                    sources,
                 )?);
             }
             FnStmt::Case { condition, scopes } => {
@@ -546,8 +549,7 @@ fn resolve_fn_body_inner(
                     scopes,
                     scope,
                     working_dir,
-                    source_name,
-                    source_text,
+                    sources,
                 )?);
             }
         }
@@ -557,8 +559,10 @@ fn resolve_fn_body_inner(
 
 #[cfg(test)]
 mod tests {
+    use crate::compiler::error::CompileError;
     use crate::compiler::test_support::*;
     use crate::compiler::types::ResolvedFnStmt;
+    use miette::Report;
 
     #[test]
     fn test_variable_chain_resolution() {
@@ -877,6 +881,50 @@ mod tests {
             }
             other => panic!("expected Log, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_fn_body_redeclaration_reports_span_without_out_of_bounds() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+            pr test [ url = `u` dir = `d` ] {
+                var string docker_bin = `x`;
+                fn check {
+                    var string docker_bin = `y`;
+                }
+            }
+            ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        let report: &Report = match &err {
+            CompileError::ValidationReport(report) => report,
+            other => panic!("expected ValidationReport, got {}", other),
+        };
+        // Render through the graphical handler — this is exactly where the
+        // `[Failed to read contents for label <none> ... OutOfBounds]` artifact
+        // used to leak when function-body spans pointed at an empty source.
+        let _ = miette::set_hook(Box::new(|_| {
+            Box::new(miette::MietteHandlerOpts::new().build())
+        }));
+        let rendered = format!("{:?}", report);
+        assert!(
+            rendered.contains("already defined at project"),
+            "got: {}",
+            rendered
+        );
+        assert!(
+            !rendered.contains("OutOfBounds"),
+            "diagnostic leaked an out-of-bounds artifact: {}",
+            rendered
+        );
+        assert!(
+            !rendered.contains("<none>"),
+            "diagnostic used a default <none> source name: {}",
+            rendered
+        );
     }
 
     #[test]

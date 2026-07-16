@@ -1,5 +1,6 @@
 use crate::compiler::error::CompileError;
-use crate::compiler::error::SpannedValidationError;
+use crate::compiler::error::SourceFile;
+use crate::compiler::error::spanned_report;
 use crate::compiler::resolve;
 use crate::compiler::scope::{ScopeKind, ScopeStack};
 use crate::dsl::{Expr, FnStmt};
@@ -22,8 +23,7 @@ pub fn validate_configuration(
             global,
             &project.declared_var_names,
             proj_name,
-            &project.source_file,
-            &project.source_text,
+            &cfg.source_texts,
             &mut errors,
         );
     }
@@ -82,8 +82,7 @@ fn validate_project_bodies(
     global: &ScopeStack<String>,
     declared_var_names: &HashSet<String>,
     proj_name: &str,
-    source_name: &str,
-    source_text: &str,
+    sources: &HashMap<String, String>,
     errors: &mut Vec<miette::Report>,
 ) {
     for (fn_name, body) in functions {
@@ -93,34 +92,34 @@ fn validate_project_bodies(
         scope.seed_top(declared_var_names.iter().map(|k| (k.clone(), ())));
 
         let guard = scope.enter(ScopeKind::Function);
-        validate_fn_body(
-            fn_name,
-            body,
-            &mut *guard.stack,
-            errors,
-            proj_name,
-            source_name,
-            source_text,
-        );
+        validate_fn_body(fn_name, body, &mut *guard.stack, errors, proj_name, sources);
     }
 }
 
 /// Check that all variable references in an `Expr` are defined in the
-/// current scope hierarchy.
+/// current scope hierarchy. Undefined references become a spanned diagnostic
+/// pointing at the exact expression, so the error reports the location like
+/// every other syntax/validation error.
 fn validate_expr(
     expr: &Expr,
     fn_name: &str,
     scope: &ScopeStack<()>,
     errors: &mut Vec<miette::Report>,
     proj_name: &str,
+    sources: &HashMap<String, String>,
 ) {
+    let (offset, len) = expr.offset_len();
+    let source = SourceFile::from_registry(sources, expr.source_name());
     resolve::visit_expr_vars(expr, |name| {
         if !scope.is_declared(name) {
-            errors.push(miette!(
-                "project {:?}: fn {:?}: undefined variable ${}",
-                proj_name,
-                fn_name,
-                name
+            errors.push(spanned_report(
+                format!(
+                    "project {:?}: fn {:?}: undefined variable ${}",
+                    proj_name, fn_name, name
+                ),
+                &source,
+                offset,
+                len,
             ));
         }
     });
@@ -135,57 +134,56 @@ fn validate_fn_body(
     scope: &mut ScopeStack<()>,
     errors: &mut Vec<miette::Report>,
     proj_name: &str,
-    source_name: &str,
-    source_text: &str,
+    sources: &HashMap<String, String>,
 ) {
     for stmt in body {
         match stmt {
             FnStmt::VarDecl { name, value, .. } => {
-                validate_expr(value, fn_name, scope, errors, proj_name);
+                validate_expr(value, fn_name, scope, errors, proj_name, sources);
                 if scope.is_declared(name) {
                     let (offset, len) = value.offset_len();
                     let kind = scope.declaring_kind(name).unwrap_or(ScopeKind::Global);
-                    errors.push(miette::Report::new(SpannedValidationError {
-                        message: format!("${} is already defined at {}", name, kind),
-                        span: miette::SourceSpan::new(offset.into(), len.max(1)),
-                        source_code: miette::NamedSource::new(source_name, source_text.to_owned()),
-                    }));
+                    let source = SourceFile::from_registry(sources, value.source_name());
+                    errors.push(spanned_report(
+                        format!("${} is already defined at {}", name, kind),
+                        &source,
+                        offset,
+                        len,
+                    ));
                 }
                 let _ = scope.declare(name.clone(), ());
             }
             FnStmt::Log { value, .. } => {
-                validate_expr(value, fn_name, scope, errors, proj_name);
+                validate_expr(value, fn_name, scope, errors, proj_name, sources);
             }
             FnStmt::Exec { value, .. } => {
-                validate_expr(value, fn_name, scope, errors, proj_name);
+                validate_expr(value, fn_name, scope, errors, proj_name, sources);
             }
             FnStmt::Cd { value, .. } => {
-                validate_expr(value, fn_name, scope, errors, proj_name);
+                validate_expr(value, fn_name, scope, errors, proj_name, sources);
             }
             FnStmt::EnvBlock { pairs, body, .. } => {
                 for pair in pairs {
-                    validate_expr(&pair.value, fn_name, scope, errors, proj_name);
+                    validate_expr(&pair.value, fn_name, scope, errors, proj_name, sources);
                 }
-                validate_fn_body(
-                    fn_name,
-                    body,
-                    scope,
-                    errors,
-                    proj_name,
-                    source_name,
-                    source_text,
-                );
+                validate_fn_body(fn_name, body, scope, errors, proj_name, sources);
             }
             FnStmt::Case { condition, scopes } => {
-                validate_expr(condition, fn_name, scope, errors, proj_name);
+                validate_expr(condition, fn_name, scope, errors, proj_name, sources);
                 for arm in scopes {
+                    let pattern_span = arm.pattern.offset_len();
+                    let pattern_source =
+                        SourceFile::from_registry(sources, arm.pattern.source_name());
                     resolve::visit_case_pattern_vars(&arm.pattern, |name| {
                         if !scope.is_declared(name) {
-                            errors.push(miette!(
-                                "project {:?}: fn {:?}: undefined variable ${}",
-                                proj_name,
-                                fn_name,
-                                name
+                            errors.push(spanned_report(
+                                format!(
+                                    "project {:?}: fn {:?}: undefined variable ${}",
+                                    proj_name, fn_name, name
+                                ),
+                                &pattern_source,
+                                pattern_span.0,
+                                pattern_span.1,
                             ));
                         }
                     });
@@ -196,8 +194,7 @@ fn validate_fn_body(
                         &mut *guard.stack,
                         errors,
                         proj_name,
-                        source_name,
-                        source_text,
+                        sources,
                     );
                 }
             }

@@ -1,6 +1,6 @@
 use crate::compiler::Config;
 use crate::runner::error::RuntimeError;
-use crate::runner::{self, Runner, TaskStatus, TuiEvent};
+use crate::runner::{self, Runner, TaskOutcome, TaskStatus, TuiEvent, report_task_outcome};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::mpsc;
@@ -33,18 +33,12 @@ fn execute_single_chain(
         current_task.store(task_idx, Ordering::Relaxed);
         runner::send_tui_event(&tx, TuiEvent::UpdateStatus(task_idx, TaskStatus::Running));
 
-        match exec_fn(&mut runner, function_name) {
-            Ok(()) => {
-                runner::send_tui_event(&tx, TuiEvent::UpdateStatus(task_idx, TaskStatus::Success));
-            }
-            Err(e) => {
-                runner::send_tui_event(
-                    &tx,
-                    TuiEvent::AppendOutput(task_idx, format!("Error: {}", e)),
-                );
-                runner::send_tui_event(&tx, TuiEvent::UpdateStatus(task_idx, TaskStatus::Error));
-                return Err(());
-            }
+        let outcome = match exec_fn(&mut runner, function_name) {
+            Ok(()) => TaskOutcome::Success,
+            Err(e) => TaskOutcome::Error(e),
+        };
+        if report_task_outcome(&tx, task_idx, outcome) {
+            return Err(());
         }
     }
 

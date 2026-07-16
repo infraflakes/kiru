@@ -76,6 +76,11 @@ pub struct ProjectVarStmt {
     pub value: Expr,
     pub offset: usize,
     pub len: usize,
+    /// Canonical path of the `.kiru` file this declaration was parsed from.
+    /// Carried so redeclaration diagnostics resolve against the file that
+    /// actually declared the variable when a project body is merged from
+    /// several files.
+    pub source_name: String,
 }
 
 /// A project block with unresolved AST (Expr) fields.
@@ -87,7 +92,6 @@ pub struct ProjectVarStmt {
 pub struct UnresolvedProject {
     pub name: String,
     pub source_file: String,
-    pub source_text: String,
     pub url: Option<Expr>,
     pub dir: Option<Expr>,
     pub sync: Option<Expr>,
@@ -124,6 +128,12 @@ pub struct UnresolvedProject {
 #[derive(Debug, Clone)]
 pub struct UnresolvedConfig {
     pub projects: HashMap<String, UnresolvedProject>,
+    /// Full text of every source file parsed during the linear phase, keyed by
+    /// canonical path. Let every diagnostic resolve the correct file for its
+    /// span: a project's body is merged from several `.kiru` files, so a node's
+    /// offset must be interpreted against the file that defined it, not the
+    /// first file to declare `pr <name>`.
+    pub source_texts: HashMap<String, String>,
 }
 
 /// A fully compiled project block with all function bodies resolved to concrete strings.

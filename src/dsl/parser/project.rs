@@ -6,25 +6,7 @@ impl Parser {
         let len = self.current_token().len;
         self.advance(); // skip 'pr'
 
-        let name = match &self.current_token().ty {
-            TokenType::Ident(name_str) => name_str.clone(),
-            ty if is_keyword_token(ty) => {
-                return Err(ParseError::new(
-                    self.eof_aware_span(),
-                    format!(
-                        "expected project name, found {} (reserved keyword)",
-                        format_token(self.current_token())
-                    ),
-                ));
-            }
-            _ => {
-                return Err(ParseError::new(
-                    self.eof_aware_span(),
-                    "expected project name".to_string(),
-                ));
-            }
-        };
-        self.advance();
+        let name = self.parse_ident_name("project", "expected project name")?;
 
         // `pr name [ field = value, ... ] { fn/run/var ... }`
         if self.current_token().ty == TokenType::LBracket {
@@ -61,25 +43,8 @@ impl Parser {
             std::collections::HashSet::new();
         while self.current_token().ty != TokenType::RBracket {
             let type_offset = self.current_token().offset;
-            let key_str = match &self.current_token().ty {
-                TokenType::Ident(ident) => ident.clone(),
-                ty if is_keyword_token(ty) => {
-                    return Err(ParseError::new(
-                        self.eof_aware_span(),
-                        format!(
-                            "expected field name, found {} (reserved keyword)",
-                            format_token(self.current_token())
-                        ),
-                    ));
-                }
-                _ => {
-                    return Err(ParseError::new(
-                        self.eof_aware_span(),
-                        "expected field name in project field list".to_string(),
-                    ));
-                }
-            };
-            self.advance();
+            let key_str =
+                self.parse_ident_name("field", "expected field name in project field list")?;
 
             let key = match key_str.as_str() {
                 "url" => ProjectField::Url,

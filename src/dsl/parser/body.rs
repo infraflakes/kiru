@@ -127,31 +127,16 @@ impl Parser {
             }
             TokenType::Dollar => {
                 let start_offset = self.current_token().offset;
-                self.advance();
-                let name = match &self.current_token().ty {
-                    TokenType::Ident(name_str) => name_str.clone(),
-                    ty if is_keyword_token(ty) => {
-                        return Err(ParseError::new(
-                            self.eof_aware_span(),
-                            format!(
-                                "expected identifier after `$` in case pattern, found {} (reserved keyword)",
-                                format_token(self.current_token())
-                            ),
-                        ));
-                    }
-                    _ => {
-                        return Err(ParseError::new(
-                            self.eof_aware_span(),
-                            "expected identifier after `$` in case pattern".to_string(),
-                        ));
-                    }
-                };
-                let end_offset = self.current_token().offset + self.current_token().len;
-                self.advance();
+                let (name, end_offset) = self.parse_dollar_var_name(
+                    start_offset,
+                    "expected identifier after `$` in case pattern",
+                    "expected identifier after `$` in case pattern",
+                )?;
                 Ok(CasePattern::VarRef {
                     name,
                     offset: start_offset,
                     len: end_offset - start_offset,
+                    source_name: self.source_name.clone(),
                 })
             }
             TokenType::Backtick(content) => {
@@ -159,7 +144,12 @@ impl Parser {
                 let len = tok.len;
                 self.advance();
                 let parts = parse_interpolation_parts(content, offset)?;
-                Ok(CasePattern::Literal { parts, offset, len })
+                Ok(CasePattern::Literal {
+                    parts,
+                    offset,
+                    len,
+                    source_name: self.source_name.clone(),
+                })
             }
             _ => {
                 let token_str = format_token(&tok);

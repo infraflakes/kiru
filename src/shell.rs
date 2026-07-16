@@ -1,4 +1,4 @@
-use crate::compiler::error::{CompileError, spanned_err};
+use crate::compiler::error::{CompileError, SourceFile, spanned_err};
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -215,8 +215,7 @@ pub(crate) fn execute_shell_variable(
     name: &str,
     resolved_command: &str,
     working_dir: Option<&Path>,
-    source_name: &str,
-    source_text: &str,
+    source: &SourceFile<'_>,
     offset: usize,
     len: usize,
 ) -> Result<String, CompileError> {
@@ -227,8 +226,7 @@ pub(crate) fn execute_shell_variable(
         Err(Error::Exit { .. }) => Ok(String::new()),
         Err(e) => Err(spanned_err(
             format!("shell var ${} failed: {}", name, e),
-            source_name,
-            source_text,
+            source,
             offset,
             len,
         )),

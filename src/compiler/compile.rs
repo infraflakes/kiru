@@ -1,4 +1,6 @@
 use crate::compiler::error::CompileError;
+use crate::compiler::error::SourceFile;
+use crate::compiler::error::io_err;
 use crate::compiler::error::spanned_err;
 
 use crate::compiler::resolve;
@@ -20,9 +22,14 @@ use std::path::{Path, PathBuf};
 /// 3. Fully resolve function bodies against the flat var scope.
 pub fn compile_and_resolve(entry_path: &Path) -> Result<Config, CompileError> {
     let abs_entry = canonicalize_entry(entry_path)?;
-    let linear_result = resolve_linear(&abs_entry)?;
+    let linear_result = resolve_linear(&abs_entry, ImportPolicy::Strict)?;
+    let source_texts = linear_result.unresolved.source_texts.clone();
     validation::validate_configuration(&linear_result.unresolved, &linear_result.var_scope)?;
-    resolve::resolve_with_scopes(linear_result.unresolved, linear_result.var_scope)
+    resolve::resolve_with_scopes(
+        linear_result.unresolved,
+        linear_result.var_scope,
+        &source_texts,
+    )
 }
 
 // Linear-processing pipeline
@@ -33,15 +40,19 @@ struct LinearState {
     projects: HashMap<String, UnresolvedProject>,
     loaded_files: HashSet<PathBuf>,
     recursion_stack: HashSet<PathBuf>,
+    import_policy: ImportPolicy,
+    source_texts: HashMap<String, String>,
 }
 
 impl LinearState {
-    fn new() -> Self {
+    fn new(import_policy: ImportPolicy) -> Self {
         Self {
             var_scope: ScopeStack::new(),
             projects: HashMap::new(),
             loaded_files: HashSet::new(),
             recursion_stack: HashSet::new(),
+            import_policy,
+            source_texts: HashMap::new(),
         }
     }
 }
@@ -62,17 +73,7 @@ pub(crate) fn canonicalize_entry(path: &Path) -> Result<PathBuf, CompileError> {
             .map_err(CompileError::Io)?
             .join(path)
     };
-    std::fs::canonicalize(&abs_path).map_err(|e| {
-        CompileError::Io(std::io::Error::new(
-            e.kind(),
-            format!(
-                "Failed to resolve {} (from {}): {}",
-                abs_path.display(),
-                path.display(),
-                e
-            ),
-        ))
-    })
+    std::fs::canonicalize(&abs_path).map_err(|e| io_err("Failed to resolve", &abs_path, &e))
 }
 
 /// Parse a single file into a [`Program`]. `canon_path` MUST be the canonical
@@ -86,16 +87,12 @@ fn parse_file(
         return Ok(Program::new());
     }
 
-    let data = std::fs::read_to_string(canon_path).map_err(|e| {
-        CompileError::Io(std::io::Error::new(
-            e.kind(),
-            format!("Failed to read {}: {}", canon_path.display(), e),
-        ))
-    })?;
+    let data = std::fs::read_to_string(canon_path)
+        .map_err(|e| io_err("Failed to read", canon_path, &e))?;
 
     let source_name = canon_path.display().to_string();
     let source_text = data.clone();
-    let mut parser = Parser::from_source(data);
+    let mut parser = Parser::from_source(data).with_source_name(source_name.clone());
     let mut program = Program::new();
     program.set_source(source_name, source_text);
 
@@ -114,12 +111,8 @@ fn parse_file(
 /// Walk items in lexical order, resolving vars into scopes, loading imports
 /// when their paths become resolvable, and accumulating projects.
 fn linear_process_file(file_path: &Path, state: &mut LinearState) -> Result<(), CompileError> {
-    let canon_path = std::fs::canonicalize(file_path).map_err(|e| {
-        CompileError::Io(std::io::Error::new(
-            e.kind(),
-            format!("Failed to resolve {}: {}", file_path.display(), e),
-        ))
-    })?;
+    let canon_path =
+        std::fs::canonicalize(file_path).map_err(|e| io_err("Failed to resolve", file_path, &e))?;
 
     if state.recursion_stack.contains(&canon_path) {
         return Err(CompileError::ValidationReport(miette!(
@@ -143,15 +136,31 @@ fn linear_process_file(file_path: &Path, state: &mut LinearState) -> Result<(), 
 
 use crate::dsl::ProjectField;
 
+/// Policy for handling `import` statements whose target file does not exist.
+/// Used by [`resolve_linear`] to control whether a missing import is a hard
+/// error (`Strict`) or silently skipped with a warning (`SkipMissing`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ImportPolicy {
+    /// Missing import files are hard errors.
+    Strict,
+    /// Missing import files are skipped with a warning; the walk continues.
+    SkipMissing,
+}
+
 /// Merge a single statement into a project body during AST collection.
 pub(crate) fn merge_project_body_stmt(
     project: &mut UnresolvedProject,
     stmt: &Stmt,
+    sources: &HashMap<String, String>,
     source_name: &str,
-    source_text: &str,
 ) -> Result<(), CompileError> {
     let make_err = |msg: String, offset: usize, len: usize| -> CompileError {
-        spanned_err(msg, source_name, source_text, offset, len)
+        spanned_err(
+            msg,
+            &SourceFile::from_registry(sources, source_name),
+            offset,
+            len,
+        )
     };
     match stmt {
         Stmt::Var { .. } => {}
@@ -223,8 +232,7 @@ pub(crate) fn merge_project_body_stmt(
                     "unexpected statement in project '{}' (only var, fn, and run are valid)",
                     project.name
                 ),
-                source_name,
-                source_text,
+                &SourceFile::from_registry(sources, source_name),
                 *offset,
                 *len,
             ));
@@ -249,7 +257,6 @@ fn process_project_block(
             .or_insert_with(|| UnresolvedProject {
                 name: name.to_owned(),
                 source_file: program.source_name.clone(),
-                source_text: program.source_text.clone(),
                 url: None,
                 dir: None,
                 sync: None,
@@ -266,8 +273,8 @@ fn process_project_block(
         merge_project_body_stmt(
             project_entry,
             field_stmt,
+            &state.source_texts,
             &program.source_name,
-            &program.source_text,
         )?;
     }
 
@@ -302,6 +309,7 @@ fn process_project_block(
                 value: value.clone(),
                 offset: *offset,
                 len: *len,
+                source_name: program.source_name.clone(),
             };
 
             let is_field_refd = project_entry.field_refd_vars.contains(name);
@@ -314,8 +322,7 @@ fn process_project_block(
                     &pv_stmt,
                     &mut state.var_scope,
                     None,
-                    &program.source_name,
-                    &program.source_text,
+                    &state.source_texts,
                 )?;
             } else {
                 // Reserve the name in the Project frame so the duplicate-
@@ -330,8 +337,7 @@ fn process_project_block(
                     .map_err(|r| {
                         redeclaration_err(
                             r,
-                            &program.source_name,
-                            &program.source_text,
+                            &SourceFile::from_registry(&state.source_texts, &pv_stmt.source_name),
                             pv_stmt.offset,
                             pv_stmt.len,
                         )
@@ -345,8 +351,8 @@ fn process_project_block(
         merge_project_body_stmt(
             project_entry,
             body_stmt,
+            &state.source_texts,
             &program.source_name,
-            &program.source_text,
         )?;
     }
     let (entries, reserved) = state.var_scope.pop_frame_entries();
@@ -373,18 +379,12 @@ fn process_import(
     state: &mut LinearState,
     program: &Program,
 ) -> Result<(), CompileError> {
-    let path_str = resolve::resolve_expr(
-        expr,
-        &state.var_scope,
-        &program.source_name,
-        &program.source_text,
-    )?;
+    let path_str = resolve::resolve_expr(expr, &state.var_scope, &state.source_texts)?;
     if path_str.is_empty() {
         let (offset, len) = expr.offset_len();
         return Err(spanned_err(
             "import path cannot be empty".to_string(),
-            &program.source_name,
-            &program.source_text,
+            &SourceFile::from_registry(&state.source_texts, &program.source_name),
             offset,
             len,
         ));
@@ -395,11 +395,28 @@ fn process_import(
             program.source_name
         ))
     })?;
-    linear_process_file(&base_dir.join(&path_str), state)
+    let target = base_dir.join(&path_str);
+
+    if state.import_policy == ImportPolicy::SkipMissing && !target.exists() {
+        eprintln!(
+            "{:?}",
+            miette::miette!(
+                "import target '{}' does not exist yet (from {}), skipping",
+                path_str,
+                program.source_name
+            )
+        );
+        return Ok(());
+    }
+
+    linear_process_file(&target, state)
 }
 
 /// Process a program's items in lexical order.
 fn linear_process_program(program: &Program, state: &mut LinearState) -> Result<(), CompileError> {
+    state
+        .source_texts
+        .insert(program.source_name.clone(), program.source_text.clone());
     for item in &program.items {
         match item {
             TopLevel::Stmt(stmt) => match stmt {
@@ -408,8 +425,7 @@ fn linear_process_program(program: &Program, state: &mut LinearState) -> Result<
                         stmt,
                         &mut state.var_scope,
                         None,
-                        &program.source_name,
-                        &program.source_text,
+                        &state.source_texts,
                     )?;
                 }
                 Stmt::Project {
@@ -420,8 +436,7 @@ fn linear_process_program(program: &Program, state: &mut LinearState) -> Result<
                 Stmt::Fn { offset, len, .. } | Stmt::Run { offset, len, .. } => {
                     return Err(spanned_err(
                         format!("unexpected statement in '{}'", program.source_name),
-                        &program.source_name,
-                        &program.source_text,
+                        &SourceFile::from_registry(&state.source_texts, &program.source_name),
                         *offset,
                         *len,
                     ));
@@ -434,8 +449,7 @@ fn linear_process_program(program: &Program, state: &mut LinearState) -> Result<
                             "field '{:?}' is not inside a project block in '{}'",
                             key, program.source_name
                         ),
-                        &program.source_name,
-                        &program.source_text,
+                        &SourceFile::from_registry(&state.source_texts, &program.source_name),
                         *offset,
                         *len,
                     ));
@@ -448,12 +462,16 @@ fn linear_process_program(program: &Program, state: &mut LinearState) -> Result<
 }
 
 /// The core linear processing phase: entry point.
-fn resolve_linear(entry_path: &Path) -> Result<LinearResult, CompileError> {
-    let mut state = LinearState::new();
+fn resolve_linear(
+    entry_path: &Path,
+    import_policy: ImportPolicy,
+) -> Result<LinearResult, CompileError> {
+    let mut state = LinearState::new(import_policy);
     linear_process_file(entry_path, &mut state)?;
 
     let unresolved = super::types::UnresolvedConfig {
         projects: state.projects,
+        source_texts: state.source_texts,
     };
 
     Ok(LinearResult {
@@ -474,9 +492,10 @@ fn resolve_linear(entry_path: &Path) -> Result<LinearResult, CompileError> {
 /// blocks are collected during linear processing but never resolved.
 pub fn parse_projects_metadata(entry_path: &Path) -> Result<Config, CompileError> {
     let abs_entry = canonicalize_entry(entry_path)?;
-    let linear = resolve_linear(&abs_entry)?;
+    let linear = resolve_linear(&abs_entry, ImportPolicy::SkipMissing)?;
 
     let mut projects = HashMap::new();
+    let source_texts = &linear.unresolved.source_texts;
     for (name, unresolved_project) in linear.unresolved.projects {
         // Build a combined scope (global + project vars) for field resolution.
         let mut scope = ScopeStack::new();
@@ -490,7 +509,7 @@ pub fn parse_projects_metadata(entry_path: &Path) -> Result<Config, CompileError
         scope.seed_top(unresolved_project.vars.clone());
 
         let (url, dir, sync, branch) =
-            resolve::resolve_project_fields(&unresolved_project, &scope)?;
+            resolve::resolve_project_fields(&unresolved_project, &scope, source_texts)?;
 
         projects.insert(
             name,
@@ -511,6 +530,69 @@ pub fn parse_projects_metadata(entry_path: &Path) -> Result<Config, CompileError
 #[cfg(test)]
 mod tests {
     use crate::compiler::test_support::*;
+    use crate::compiler::{CompileError, parse_projects_metadata};
+
+    /// Regression test for the cross-file wrong-location bug: when a project
+    /// body is merged from several `.kiru` files (all declaring `pr kiru`), a
+    /// redeclaration diagnostic must point at the file that actually declared
+    /// the conflicting node — not the first file that happened to declare
+    /// `pr kiru`. Previously the span resolved against `run.kiru` (the first
+    /// `pr kiru`) even though the duplicate `docker_bin` lives in `build.kiru`.
+    #[test]
+    fn test_cross_file_redeclaration_points_at_defining_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        // main.kiru imports two sibling files; both declare `pr kiru`.
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+            import `.kiru/run.kiru`;\n\
+            import `.kiru/build.kiru`;\n\
+            pr kiru [url = `u` dir = `d`] { }\n\
+            ",
+        );
+        std::fs::create_dir_all(dir.path().join(".kiru")).unwrap();
+        write_config(
+            &dir.path().join(".kiru"),
+            "run.kiru",
+            "pr kiru { fn all { log `hi`; } }\n",
+        );
+        write_config(
+            &dir.path().join(".kiru"),
+            "build.kiru",
+            "\
+            pr kiru {\n\
+                var string docker_bin = `docker`;\n\
+                fn build_with_container {\n\
+                    var string docker_bin = `docker`;\n\
+                }\n\
+            }\n\
+            ",
+        );
+
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        let rendered = match &err {
+            CompileError::ValidationReport(report) => format!("{:?}", report),
+            other => other.to_string(),
+        };
+        assert!(
+            rendered.contains("docker_bin"),
+            "expected redeclaration diagnostic, got: {}",
+            rendered
+        );
+        // The conflicting declaration is in build.kiru, so the span must
+        // reference that file — never run.kiru (the first `pr kiru`).
+        assert!(
+            rendered.contains("build.kiru"),
+            "diagnostic should point at build.kiru, got: {}",
+            rendered
+        );
+        assert!(
+            !rendered.contains("run.kiru"),
+            "diagnostic must not point at run.kiru, got: {}",
+            rendered
+        );
+    }
 
     #[test]
     fn test_load_basic() {
@@ -789,5 +871,67 @@ mod tests {
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("duplicate run"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_parse_metadata_skips_missing_import() {
+        let dir = tempfile::TempDir::new().unwrap();
+        // main.kiru imports ./missing.kiru which does not exist.
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        import `./missing.kiru`;\n\
+        pr myproj [url = `http://example.com` dir = `d`] { }\
+        ",
+        );
+        let cfg = parse_projects_metadata(&dir.path().join("main.kiru")).unwrap();
+        let proj = &cfg.projects["myproj"];
+        assert_eq!(proj.url, "http://example.com");
+    }
+
+    #[test]
+    fn test_compile_and_resolve_strict_missing_import_errors() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        import `./missing.kiru`;\n\
+        pr myproj [url = `u` dir = `d`] { }\
+        ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        let err_str = err.to_string();
+        assert!(err_str.contains("Failed to resolve"), "got: {}", err_str);
+    }
+
+    #[test]
+    fn test_parse_metadata_still_errors_on_malformed_import() {
+        let dir = tempfile::TempDir::new().unwrap();
+        // The imported file exists and is parseable, so SkipMissing still
+        // processes it normally — syntax errors inside must surface.
+        write_config(
+            dir.path(),
+            "bad.kiru",
+            "\
+        var string x = ;\
+        ",
+        );
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        import `./bad.kiru`;\n\
+        pr p [url = `u` dir = `d`] { }\
+        ",
+        );
+        let err = parse_projects_metadata(&dir.path().join("main.kiru")).unwrap_err();
+        // Parse errors are wrapped in ParseReports, not silently swallowed.
+        assert!(
+            matches!(err, CompileError::ParseReports(_)),
+            "expected a parse error, got: {}",
+            err
+        );
     }
 }

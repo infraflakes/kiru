@@ -1,6 +1,6 @@
 use crate::compiler::{Project, SyncMode};
 use crate::runner::error::RuntimeError;
-use crate::runner::{self, TaskStatus, TuiEvent};
+use crate::runner::{self, TaskOutcome, TaskStatus, TuiEvent, report_task_outcome};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
@@ -194,23 +194,13 @@ pub fn run_sync_for_projects(
         }
 
         for (i, handle) in join_handles {
-            match handle.await {
-                Ok(Ok(())) => {
-                    runner::send_tui_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Success));
-                }
-                Ok(Err(e)) => {
-                    had_errors = true;
-                    runner::send_tui_event(&tx, TuiEvent::AppendOutput(i, format!("Error: {}", e)));
-                    runner::send_tui_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Error));
-                }
-                Err(e) => {
-                    had_errors = true;
-                    runner::send_tui_event(
-                        &tx,
-                        TuiEvent::AppendOutput(i, format!("Task panicked: {}", e)),
-                    );
-                    runner::send_tui_event(&tx, TuiEvent::UpdateStatus(i, TaskStatus::Error));
-                }
+            let outcome = match handle.await {
+                Ok(Ok(())) => TaskOutcome::Success,
+                Ok(Err(e)) => TaskOutcome::Error(e),
+                Err(e) => TaskOutcome::Panic(e),
+            };
+            if report_task_outcome(&tx, i, outcome) {
+                had_errors = true;
             }
         }
 

@@ -19,25 +19,7 @@ impl Parser {
         let len = self.current_token().len;
         self.advance();
 
-        let name = match &self.current_token().ty {
-            TokenType::Ident(name_str) => name_str.clone(),
-            ty if is_keyword_token(ty) => {
-                return Err(ParseError::new(
-                    self.eof_aware_span(),
-                    format!(
-                        "expected function name, found {} (reserved keyword)",
-                        format_token(self.current_token())
-                    ),
-                ));
-            }
-            _ => {
-                return Err(ParseError::new(
-                    self.eof_aware_span(),
-                    "expected function name".to_string(),
-                ));
-            }
-        };
-        self.advance();
+        let name = self.parse_ident_name("function", "expected function name")?;
 
         self.expect_with_context(TokenType::LBrace, "after function name")?;
 
@@ -61,25 +43,7 @@ impl Parser {
         let len = self.current_token().len;
         self.advance();
 
-        let name = match &self.current_token().ty {
-            TokenType::Ident(name_str) => name_str.clone(),
-            ty if is_keyword_token(ty) => {
-                return Err(ParseError::new(
-                    self.eof_aware_span(),
-                    format!(
-                        "expected run block name, found {} (reserved keyword)",
-                        format_token(self.current_token())
-                    ),
-                ));
-            }
-            _ => {
-                return Err(ParseError::new(
-                    self.eof_aware_span(),
-                    "expected run block name".to_string(),
-                ));
-            }
-        };
-        self.advance();
+        let name = self.parse_ident_name("run block", "expected run block name")?;
 
         self.expect_with_context(TokenType::LBrace, "after run block name")?;
 

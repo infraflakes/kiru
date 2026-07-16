@@ -22,9 +22,23 @@ fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Config> {
 fn print_parse_errors(reports: Vec<miette::Report>) -> miette::Report {
     let count = reports.len();
     for report in &reports {
-        eprintln!("{:?}", report);
+        print_diagnostic(report);
     }
     miette::miette!("{} parse error(s) found", count)
+}
+
+/// Render a miette diagnostic to stderr using the installed handler.
+///
+/// Centralizes diagnostic printing so callers do not reach for ad-hoc
+/// `eprintln!("{:?}", report)`, which drops the handler's source snippets and
+/// styling. The handler is installed once in `main` via `miette::set_hook`.
+pub(crate) fn print_diagnostic(report: &miette::Report) {
+    use std::io::Write;
+
+    let mut stderr = std::io::stderr();
+    if writeln!(stderr, "{:?}", report).is_err() {
+        std::eprintln!("{:?}", report);
+    }
 }
 
 pub fn run_cli() -> miette::Result<()> {

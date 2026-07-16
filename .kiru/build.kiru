@@ -1,0 +1,28 @@
+pr kiru {
+
+  fn init {
+    exec `cargo vendor`;
+  }
+
+  fn build {
+    log `Building kiru cli!`;
+    exec `cargo build --release`;
+  }
+
+  fn build_with_container {
+    var shell docker_bin = `command -v docker >/dev/null 2>&1 && echo "docker" || { command -v podman >/dev/null 2>&1 && echo "podman"; }`;
+    case $docker_bin {
+      `` {
+        log `no container runtime found`;
+        exec `exit 1`; 
+     };
+      _  {
+        log `building kiru with ${docker_bin}`;
+        exec `rm -rf bin`;
+        exec `rm -rf result`;
+        exec `${docker_bin} build --output type=local,dest=bin .`;
+      };
+    };
+  }
+
+}

@@ -1,0 +1,22 @@
+pr kiru {
+
+  fn clean {
+    log `Cleaning up artifacts...`;
+    exec `rm -rf bin`;
+    exec `rm -rf result`;
+  }
+
+  fn fmt {
+    log `Formatting the codebase...`;
+    exec `cargo clippy --fix --allow-dirty`;
+    exec `cargo fmt`;
+  }
+
+  fn test {
+    log `Testing the codebase!`;
+    exec `cargo test`;
+    exec `cargo clippy -- -D warnings`;
+    exec `cargo fmt --check`;
+  }
+
+}
