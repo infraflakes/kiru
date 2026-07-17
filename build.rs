@@ -14,7 +14,7 @@ fn main() -> Result<(), Error> {
     let mut cmd = Command::new("kiru")
         .about("kiru is a local project orchestrator CLI")
         .subcommand_required(true)
-        .subcommand(Command::new("validate").about("Validate kiru configuration"))
+        .subcommand(Command::new("status").about("Show the resolved configuration"))
         .subcommand(Command::new("sync").about("Clone or update project repositories"))
         .subcommand(
             Command::new("run")

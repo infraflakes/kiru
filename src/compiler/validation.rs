@@ -1,6 +1,4 @@
-use crate::compiler::error::CompileError;
-use crate::compiler::error::SourceFile;
-use crate::compiler::error::spanned_report;
+use crate::compiler::error::{CompileError, spanned_report_on};
 use crate::compiler::resolve;
 use crate::compiler::scope::{ScopeKind, ScopeStack};
 use crate::dsl::{Expr, FnStmt};
@@ -28,26 +26,15 @@ pub fn validate_configuration(
         );
     }
 
-    if errors.len() == 1 {
-        return Err(CompileError::ValidationReport(
-            errors.into_iter().next().unwrap(),
-        ));
-    } else if !errors.is_empty() {
-        let mut combined = String::new();
-        for (i, report) in errors.iter().enumerate() {
-            if i > 0 {
-                combined.push('\n');
-            }
-            combined.push_str(&format!("{}", report));
-        }
-        return Err(CompileError::ValidationReport(miette!(
-            "{}\n{} validation error(s) found",
-            combined,
-            errors.len()
-        )));
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        // Return the original child diagnostics intact so each keeps its own
+        // source name, labels, and spans when rendered.  Previously this
+        // branch stringified every report and wrapped them in a fresh
+        // `miette!` report, discarding their spans.
+        Err(CompileError::ValidationReport(errors))
     }
-
-    Ok(())
 }
 
 /// Check that all run chains reference functions that exist in the
@@ -108,18 +95,15 @@ fn validate_expr(
     proj_name: &str,
     sources: &HashMap<String, String>,
 ) {
-    let (offset, len) = expr.offset_len();
-    let source = SourceFile::from_registry(sources, expr.source_name());
     resolve::visit_expr_vars(expr, |name| {
         if !scope.is_declared(name) {
-            errors.push(spanned_report(
+            errors.push(spanned_report_on(
                 format!(
                     "project {:?}: fn {:?}: undefined variable ${}",
                     proj_name, fn_name, name
                 ),
-                &source,
-                offset,
-                len,
+                sources,
+                expr,
             ));
         }
     });
@@ -141,14 +125,11 @@ fn validate_fn_body(
             FnStmt::VarDecl { name, value, .. } => {
                 validate_expr(value, fn_name, scope, errors, proj_name, sources);
                 if scope.is_declared(name) {
-                    let (offset, len) = value.offset_len();
                     let kind = scope.declaring_kind(name).unwrap_or(ScopeKind::Global);
-                    let source = SourceFile::from_registry(sources, value.source_name());
-                    errors.push(spanned_report(
+                    errors.push(spanned_report_on(
                         format!("${} is already defined at {}", name, kind),
-                        &source,
-                        offset,
-                        len,
+                        sources,
+                        value,
                     ));
                 }
                 let _ = scope.declare(name.clone(), ());
@@ -171,19 +152,15 @@ fn validate_fn_body(
             FnStmt::Case { condition, scopes } => {
                 validate_expr(condition, fn_name, scope, errors, proj_name, sources);
                 for arm in scopes {
-                    let pattern_span = arm.pattern.offset_len();
-                    let pattern_source =
-                        SourceFile::from_registry(sources, arm.pattern.source_name());
                     resolve::visit_case_pattern_vars(&arm.pattern, |name| {
                         if !scope.is_declared(name) {
-                            errors.push(spanned_report(
+                            errors.push(spanned_report_on(
                                 format!(
                                     "project {:?}: fn {:?}: undefined variable ${}",
                                     proj_name, fn_name, name
                                 ),
-                                &pattern_source,
-                                pattern_span.0,
-                                pattern_span.1,
+                                sources,
+                                &arm.pattern,
                             ));
                         }
                     });
@@ -367,6 +344,48 @@ mod tests {
             err.to_string().contains("undefined variable"),
             "got: {}",
             err
+        );
+    }
+
+    #[test]
+    fn test_validation_errors_span_multiple_source_files() {
+        // Two undefined-variable validation errors that originate from DIFFERENT
+        // source files (main.kiru and an imported build.kiru). The aggregate
+        // must preserve each child report's own source/span, so both surface
+        // with their correct file instead of being collapsed into one
+        // stringified blob.
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+pr p [ url = `u` dir = `d` ] {\n\
+    fn f1 { log $missing_main; }\n\
+}\n\
+import `build.kiru`;\n\
+            ",
+        );
+        write_config(
+            dir.path(),
+            "build.kiru",
+            "\
+pr p {\n\
+    fn f2 { log $missing_build; }\n\
+}\n\
+            ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        let err_str = err.to_string();
+        assert!(
+            err_str.contains("undefined variable $missing_main")
+                && err_str.contains("undefined variable $missing_build"),
+            "both source-file errors should be preserved in the aggregate, got: {}",
+            err_str
+        );
+        assert!(
+            !err_str.contains("validation error(s) found"),
+            "aggregate must keep original diagnostics, not stringify-and-wrap, got: {}",
+            err_str
         );
     }
 }

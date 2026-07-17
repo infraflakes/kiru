@@ -1,4 +1,4 @@
-use crate::compiler::error::{CompileError, SourceFile, spanned_err};
+use crate::compiler::error::{CompileError, SourceFile, spanned_err_named, spanned_err_on_field};
 use crate::compiler::scope::{Redeclaration, ScopeKind, ScopeStack};
 use crate::compiler::types::{
     Config, Project, ProjectVarStmt, ResolvedCaseArm, ResolvedCasePattern, ResolvedEnvPair,
@@ -65,9 +65,10 @@ fn undefined_var_err(
     sources: &HashMap<String, String>,
     source_name: &str,
 ) -> CompileError {
-    spanned_err(
+    spanned_err_named(
         format!("undefined variable: ${}", name),
-        &SourceFile::from_registry(sources, source_name),
+        sources,
+        source_name,
         offset,
         len,
     )
@@ -195,6 +196,18 @@ fn resolve_var_stmt_inner(
     sources: &HashMap<String, String>,
 ) -> Result<(), CompileError> {
     let source = SourceFile::from_registry(sources, value.source_name());
+    if let Some(existing_kind) = scope.declaring_kind(name) {
+        return Err(redeclaration_err(
+            Redeclaration {
+                name: name.to_owned(),
+                existing_kind,
+            },
+            sources,
+            value.source_name(),
+            offset,
+            len,
+        ));
+    }
     let resolved = resolve_expr(value, scope, sources)?;
     let final_val = if *var_type == crate::dsl::VarType::Shell {
         shell::execute_shell_variable(name, &resolved, working_dir, &source, offset, len)?
@@ -203,7 +216,7 @@ fn resolve_var_stmt_inner(
     };
     scope
         .declare(name.to_owned(), final_val)
-        .map_err(|r| redeclaration_err(r, &source, offset, len))?;
+        .map_err(|r| redeclaration_err(r, sources, value.source_name(), offset, len))?;
     Ok(())
 }
 
@@ -259,15 +272,17 @@ pub(crate) fn resolve_project_var(
     )
 }
 
-/// Build a spanned error from a `Redeclaration`.
+/// Build a spanned error from a `Redeclaration`, located on the node that
+/// re-declares the name (resolved against the source-text registry by name).
 pub(crate) fn redeclaration_err(
     r: Redeclaration,
-    source: &SourceFile<'_>,
+    sources: &HashMap<String, String>,
+    name: &str,
     offset: usize,
     len: usize,
 ) -> CompileError {
     let msg = format!("${} is already defined at {}", r.name, r.existing_kind);
-    spanned_err(msg, source, offset, len)
+    spanned_err_named(msg, sources, name, offset, len)
 }
 
 /// Resolve an optional `Expr` field to a concrete string.
@@ -300,12 +315,17 @@ fn resolve_dir_field(
     if raw.is_empty() || Path::new(&raw).is_absolute() {
         return Ok(raw);
     }
-    let base_dir = Path::new(&unresolved.source_file).parent().ok_or_else(|| {
-        spanned_err(
+    let dir_source_name = unresolved
+        .dir
+        .as_ref()
+        .map(|e| e.source_name())
+        .unwrap_or(unresolved.source_file.as_str());
+    let base_dir = Path::new(dir_source_name).parent().ok_or_else(|| {
+        spanned_err_on_field(
             "cannot determine base directory for dir".to_string(),
-            &SourceFile::from_registry(sources, &unresolved.source_file),
-            0,
-            0,
+            sources,
+            &unresolved.dir,
+            &unresolved.source_file,
         )
     })?;
     Ok(base_dir.join(&raw).to_string_lossy().to_string())
@@ -318,30 +338,12 @@ pub(crate) fn resolve_project_fields(
     scope: &ScopeStack<String>,
     sources: &HashMap<String, String>,
 ) -> Result<(String, String, SyncMode, Option<String>), CompileError> {
-    let sync_offset_len = unresolved
-        .sync
-        .as_ref()
-        .map(|e| e.offset_len())
-        .unwrap_or((0, 1));
     let url = resolve_optional_expr(&unresolved.url, scope, sources)?.unwrap_or_default();
     let dir = resolve_dir_field(unresolved, scope, sources)?;
     let sync = match resolve_optional_expr(&unresolved.sync, scope, sources)? {
-        Some(mode) => {
-            let (sync_offset, sync_len) = sync_offset_len;
-            let sync_source = unresolved
-                .sync
-                .as_ref()
-                .map(|e| e.source_name())
-                .unwrap_or(unresolved.source_file.as_str());
-            parse_sync_mode_value(&mode).map_err(|msg| {
-                spanned_err(
-                    msg,
-                    &SourceFile::from_registry(sources, sync_source),
-                    sync_offset,
-                    sync_len,
-                )
-            })?
-        }
+        Some(mode) => parse_sync_mode_value(&mode).map_err(|msg| {
+            spanned_err_on_field(msg, sources, &unresolved.sync, &unresolved.source_file)
+        })?,
         None => SyncMode::Clone,
     };
     let branch = resolve_optional_expr(&unresolved.branch, scope, sources)?;
@@ -367,11 +369,11 @@ pub(crate) fn resolve_with_scopes(
             resolve_project_fields(&unresolved_project, &project_scope, sources)?;
 
         if !dir.is_empty() && !seen_dirs.insert(dir.clone()) {
-            return Err(CompileError::ValidationReport(miette!(
+            return Err(CompileError::ValidationReport(vec![miette!(
                 "project {:?}: duplicate directory {:?}",
                 name,
                 dir
-            )));
+            )]));
         }
 
         // ── Re-resolve project-scope var stmts with project dir ────────
@@ -404,10 +406,17 @@ pub(crate) fn resolve_with_scopes(
                     .get(&var_stmt.name)
                     .cloned()
                     .unwrap_or_default();
-                let source = SourceFile::from_registry(sources, &var_stmt.source_name);
                 project_scope
                     .declare(var_stmt.name.clone(), val)
-                    .map_err(|r| redeclaration_err(r, &source, var_stmt.offset, var_stmt.len))?;
+                    .map_err(|r| {
+                        redeclaration_err(
+                            r,
+                            sources,
+                            &var_stmt.source_name,
+                            var_stmt.offset,
+                            var_stmt.len,
+                        )
+                    })?;
             } else {
                 resolve_project_var(var_stmt, &mut project_scope, working_dir, sources)?;
             }
@@ -520,7 +529,7 @@ fn resolve_fn_body_inner(
                 };
                 scope
                     .declare(name.to_string(), final_value)
-                    .map_err(|r| redeclaration_err(r, &source, offset, len))?;
+                    .map_err(|r| redeclaration_err(r, sources, value.source_name(), offset, len))?;
             }
             FnStmt::Log { value } => {
                 let v = resolve_expr(value, scope, sources)?;
@@ -594,6 +603,34 @@ mod tests {
         );
         let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
         assert_eq!(cfg.projects["p"].url, "http://world.com");
+    }
+
+    #[test]
+    fn test_dir_field_resolves_relative_to_defining_file() {
+        let dir = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("sub")).unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "pr x [url = `u`] { }\n\
+             import `sub/build.kiru`;\n",
+        );
+        write_config(
+            &dir.path().join("sub"),
+            "build.kiru",
+            "pr x [dir = `./overridden`] { }",
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        // The `dir` value is defined in sub/build.kiru, so it must resolve
+        // relative to that file's directory (sub/), not the first-merged
+        // declaration's file (main.kiru at the project root).
+        let expected = dir
+            .path()
+            .join("sub")
+            .join("./overridden")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(cfg.projects["x"].dir, expected);
     }
 
     #[test]
@@ -900,7 +937,7 @@ mod tests {
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         let report: &Report = match &err {
-            CompileError::ValidationReport(report) => report,
+            CompileError::ValidationReport(reports) => &reports[0],
             other => panic!("expected ValidationReport, got {}", other),
         };
         // Render through the graphical handler — this is exactly where the

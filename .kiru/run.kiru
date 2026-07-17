@@ -1,17 +1,14 @@
 pr kiru {
   run all {
-    init => test => build;
+    test => build;
     fmt => test;
     fail => fmt;
-  }
-  run build {
-   init => build;
   }
   run test {
     test;
     build;
   }
   run ci {
-    init => test;
+    test => build;
   }
 }

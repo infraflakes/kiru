@@ -14,7 +14,12 @@ fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Config> {
     let config_path = get_config_path(config_arg);
     crate::compiler::compile_and_resolve(&config_path).map_err(|e| match e {
         CompileError::ParseReports(reports) => print_parse_errors(reports),
-        CompileError::ValidationReport(report) => report,
+        CompileError::ValidationReport(reports) => {
+            for report in &reports {
+                print_diagnostic(report);
+            }
+            miette::miette!("{} validation error(s) found", reports.len())
+        }
         _ => miette::miette!("{}", e),
     })
 }
@@ -58,6 +63,13 @@ pub fn run_cli() -> miette::Result<()> {
 fn get_config_path(config_arg: Option<PathBuf>) -> PathBuf {
     if let Some(path) = config_arg {
         return path;
+    }
+
+    // In CI/CD (or any invocation where `KIRU_CWD=1` is set) the caller is
+    // already inside the project, so resolve the config to `main.kiru` in the
+    // current directory rather than the global `~/.config/kiru/main.kiru`.
+    if std::env::var("KIRU_CWD").as_deref() == Ok("1") {
+        return PathBuf::from("main.kiru");
     }
 
     if let Some(config_dir) = dirs::config_dir() {

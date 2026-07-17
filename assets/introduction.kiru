@@ -4,7 +4,7 @@
 # Each section builds on the previous one.
 #
 # Usage:
-#   kiru validate              # check that this config is correct
+#   kiru status                # check that this config is correct
 #   kiru sync                  # clone the repository
 #   kiru fn <name> <project>   # run a single function
 #   kiru run <name> <project>  # run an orchestration plan (TUI)

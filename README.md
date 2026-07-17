@@ -32,7 +32,7 @@ Get the binary via [Releases](https://github.com/infraflakes/kiru/releases) or t
 curl -sSf https://raw.githubusercontent.com/infraflakes/kiru/main/install.sh | sh
 ```
 
-Config lives at `~/.config/kiru/main.kiru`. Override with `-c <path>`.
+Config lives at `~/.config/kiru/main.kiru`. Override with `-c <path>`. With `KIRU_CWD=1` set, the default instead resolves to `main.kiru` in the current directory.
 
 A `.kiru` file reads like the shell you already write:
 
@@ -104,7 +104,7 @@ kiru run ci todo
 
 ### Environment
 
-`KIRU_CWD=1` — run `fn` and `run` commands in the current working directory instead of depending on `dir` field in `pr`. Useful for CI/CD pipelines where you're already in the right directory.
+`KIRU_CWD=1` — run `fn` and `run` commands in the current working directory instead of depending on `dir` field in `pr`, and resolve the default config to `main.kiru` in the current directory instead of the global `~/.config/kiru/main.kiru`. Useful for CI/CD pipelines where you're already in the right directory.
 
 ---
 

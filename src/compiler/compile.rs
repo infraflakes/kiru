@@ -1,7 +1,4 @@
-use crate::compiler::error::CompileError;
-use crate::compiler::error::SourceFile;
-use crate::compiler::error::io_err;
-use crate::compiler::error::spanned_err;
+use crate::compiler::error::{CompileError, io_err, spanned_err_named};
 
 use crate::compiler::resolve;
 use crate::compiler::resolve::redeclaration_err;
@@ -115,10 +112,10 @@ fn linear_process_file(file_path: &Path, state: &mut LinearState) -> Result<(), 
         std::fs::canonicalize(file_path).map_err(|e| io_err("Failed to resolve", file_path, &e))?;
 
     if state.recursion_stack.contains(&canon_path) {
-        return Err(CompileError::ValidationReport(miette!(
+        return Err(CompileError::ValidationReport(vec![miette!(
             "circular import: {}",
             canon_path.display()
-        )));
+        )]));
     }
 
     if state.loaded_files.contains(&canon_path) {
@@ -155,12 +152,7 @@ pub(crate) fn merge_project_body_stmt(
     source_name: &str,
 ) -> Result<(), CompileError> {
     let make_err = |msg: String, offset: usize, len: usize| -> CompileError {
-        spanned_err(
-            msg,
-            &SourceFile::from_registry(sources, source_name),
-            offset,
-            len,
-        )
+        spanned_err_named(msg, sources, source_name, offset, len)
     };
     match stmt {
         Stmt::Var { .. } => {}
@@ -227,12 +219,13 @@ pub(crate) fn merge_project_body_stmt(
             project.runs.insert(name.clone(), chains.clone());
         }
         Stmt::Project { offset, len, .. } => {
-            return Err(spanned_err(
+            return Err(spanned_err_named(
                 format!(
                     "unexpected statement in project '{}' (only var, fn, and run are valid)",
                     project.name
                 ),
-                &SourceFile::from_registry(sources, source_name),
+                sources,
+                source_name,
                 *offset,
                 *len,
             ));
@@ -280,15 +273,16 @@ fn process_project_block(
 
     // Collect names of project vars referenced by field expressions.
     // These must run eagerly (current-dir) so field interpolation works.
-    let mut field_refd_vars: HashSet<String> = HashSet::new();
+    // Union across all merged `pr` fragments (not just the last one) so a
+    // var referenced by a field in ANY fragment is registered — the previous
+    // per-call reassignment only kept the last fragment's field references.
     for field_stmt in fields {
         if let Stmt::Field { value, .. } = field_stmt {
             resolve::visit_expr_vars(value, |name| {
-                field_refd_vars.insert(name.to_owned());
+                project_entry.field_refd_vars.insert(name.to_owned());
             });
         }
     }
-    project_entry.field_refd_vars = field_refd_vars;
 
     // Push a Project frame so project body vars go into it and duplicate
     // detection (via declare/declare_name) checks global + project chain.
@@ -337,7 +331,8 @@ fn process_project_block(
                     .map_err(|r| {
                         redeclaration_err(
                             r,
-                            &SourceFile::from_registry(&state.source_texts, &pv_stmt.source_name),
+                            &state.source_texts,
+                            &pv_stmt.source_name,
                             pv_stmt.offset,
                             pv_stmt.len,
                         )
@@ -356,17 +351,17 @@ fn process_project_block(
         )?;
     }
     let (entries, reserved) = state.var_scope.pop_frame_entries();
-    // Derive declared_var_names from both real entries and reserved names
-    // (reserved names are non-field-referenced vars that have no value yet).
-    project_entry.declared_var_names = entries
-        .iter()
-        .map(|(k, _)| k.clone())
-        .chain(reserved)
-        .collect();
+    // Union declared var names + values across ALL merged `pr` fragments
+    // (not just the last one) so validation seeding and the second pass see
+    // every project-level var — the previous per-call reassignment dropped
+    // vars declared in earlier fragments.
+    project_entry
+        .declared_var_names
+        .extend(entries.iter().map(|(k, _)| k.clone()).chain(reserved));
     // Only field-referenced vars carry meaningful values into the second pass;
     // non-field-referenced vars were reserved (no sentinel value stored) and
     // are resolved for the first time in resolve_with_scopes.
-    project_entry.vars = entries.into_iter().collect();
+    project_entry.vars.extend(entries);
     Ok(())
 }
 
@@ -382,18 +377,19 @@ fn process_import(
     let path_str = resolve::resolve_expr(expr, &state.var_scope, &state.source_texts)?;
     if path_str.is_empty() {
         let (offset, len) = expr.offset_len();
-        return Err(spanned_err(
+        return Err(spanned_err_named(
             "import path cannot be empty".to_string(),
-            &SourceFile::from_registry(&state.source_texts, &program.source_name),
+            &state.source_texts,
+            &program.source_name,
             offset,
             len,
         ));
     }
     let base_dir = Path::new(&program.source_name).parent().ok_or_else(|| {
-        CompileError::ValidationReport(miette!(
+        CompileError::ValidationReport(vec![miette!(
             "cannot determine base directory for import from '{}'",
             program.source_name
-        ))
+        )])
     })?;
     let target = base_dir.join(&path_str);
 
@@ -434,9 +430,10 @@ fn linear_process_program(program: &Program, state: &mut LinearState) -> Result<
                     process_project_block(name, fields, body, state, program)?;
                 }
                 Stmt::Fn { offset, len, .. } | Stmt::Run { offset, len, .. } => {
-                    return Err(spanned_err(
+                    return Err(spanned_err_named(
                         format!("unexpected statement in '{}'", program.source_name),
-                        &SourceFile::from_registry(&state.source_texts, &program.source_name),
+                        &state.source_texts,
+                        &program.source_name,
                         *offset,
                         *len,
                     ));
@@ -444,12 +441,13 @@ fn linear_process_program(program: &Program, state: &mut LinearState) -> Result<
                 Stmt::Field {
                     key, offset, len, ..
                 } => {
-                    return Err(spanned_err(
+                    return Err(spanned_err_named(
                         format!(
                             "field '{:?}' is not inside a project block in '{}'",
                             key, program.source_name
                         ),
-                        &SourceFile::from_registry(&state.source_texts, &program.source_name),
+                        &state.source_texts,
+                        &program.source_name,
                         *offset,
                         *len,
                     ));
@@ -572,7 +570,7 @@ mod tests {
 
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         let rendered = match &err {
-            CompileError::ValidationReport(report) => format!("{:?}", report),
+            CompileError::ValidationReport(reports) => format!("{:?}", reports[0]),
             other => other.to_string(),
         };
         assert!(
