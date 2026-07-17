@@ -1,14 +1,11 @@
-use crate::compiler::CompileError;
 use crate::runner;
 use std::path::PathBuf;
 
 /// Sync all projects via the TUI.
 pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
     let config_path = super::get_config_path(config_arg);
-    let config = crate::compiler::parse_projects_metadata(&config_path).map_err(|e| match e {
-        CompileError::ParseReports(reports) => super::print_parse_errors(reports),
-        _ => miette::miette!("{}", e),
-    })?;
+    let config = crate::compiler::parse_projects_metadata(&config_path)
+        .map_err(super::compile_error_to_report)?;
 
     let total_project_count = config.projects.len();
 

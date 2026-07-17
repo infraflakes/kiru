@@ -102,16 +102,6 @@ impl<V> ScopeStack<V> {
         });
     }
 
-    /// Pop the topmost pushed frame and return its entries and reserved names.
-    /// Returns an empty pair when there are no pushed frames (only the
-    /// Global frame remains).
-    pub fn pop_frame_entries(&mut self) -> (Vec<(String, V)>, HashSet<String>) {
-        self.frames
-            .pop()
-            .map(|f| (f.entries, f.reserved))
-            .unwrap_or_default()
-    }
-
     /// Seed the global frame with pre-validated entries.
     ///
     /// Unlike [`declare`](Self::declare), this does NOT run the duplicate
@@ -214,25 +204,6 @@ impl<V> ScopeStack<V> {
             });
         }
         self.top_mut().entries.push((name, value));
-        Ok(())
-    }
-
-    /// Reserve a name in the top frame without a value.  Runs the same
-    /// visibility-based duplicate check as [`declare`].
-    ///
-    /// The name is tracked so subsequent [`declare`] or [`declare_name`]
-    /// calls for the same name are rejected, but [`lookup`] will not find
-    /// it (there is no value to return).  This is useful when a name must
-    /// be registered for duplicate-detection purposes early but will be
-    /// given a real value in a later pass.
-    pub fn declare_name(&mut self, name: String) -> Result<(), Redeclaration> {
-        if let Some(kind) = self.name_exists(&name) {
-            return Err(Redeclaration {
-                name,
-                existing_kind: kind,
-            });
-        }
-        self.top_mut().reserved.insert(name);
         Ok(())
     }
 
@@ -348,17 +319,6 @@ mod tests {
     fn test_empty_lookup() {
         let stack: ScopeStack<String> = ScopeStack::new();
         assert_eq!(stack.lookup("nonexistent"), None);
-    }
-
-    #[test]
-    fn test_pop_frame_entries() {
-        let mut stack: ScopeStack<String> = ScopeStack::new();
-        stack.push_frame(ScopeKind::Project);
-        stack.declare("a".to_string(), "1".to_string()).unwrap();
-        stack.declare("b".to_string(), "2".to_string()).unwrap();
-        let (entries, _reserved) = stack.pop_frame_entries();
-        assert_eq!(entries.len(), 2);
-        assert!(!stack.is_declared("a"));
     }
 
     #[test]

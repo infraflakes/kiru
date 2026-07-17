@@ -1,4 +1,5 @@
 use super::*;
+use crate::dsl::fnstmt::FnStmt;
 use crate::dsl::lexer::Lexer;
 
 pub(crate) fn parse_program(input: &str) -> Result<Program, Vec<ParseError>> {
@@ -10,12 +11,12 @@ pub(crate) fn parse_program(input: &str) -> Result<Program, Vec<ParseError>> {
 pub(crate) fn count_fn_stmt_types(body: &[FnStmt]) -> Vec<&'static str> {
     body.iter()
         .map(|s| match s {
-            FnStmt::Log { .. } => "log",
-            FnStmt::Exec { .. } => "exec",
-            FnStmt::Cd { .. } => "cd",
-            FnStmt::VarDecl { .. } => "var",
-            FnStmt::EnvBlock { .. } => "env",
-            FnStmt::Case { .. } => "case",
+            FnStmt::Log(_) => "log",
+            FnStmt::Exec(_) => "exec",
+            FnStmt::Cd(_) => "cd",
+            FnStmt::VarDecl(_) => "var",
+            FnStmt::EnvBlock(_) => "env",
+            FnStmt::Case(_) => "case",
         })
         .collect()
 }

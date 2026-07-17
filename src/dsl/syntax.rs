@@ -39,6 +39,26 @@ impl Expr {
             Expr::VarRef { source_name, .. } => source_name,
         }
     }
+
+    /// Invoke `f` with the name of every variable this expression references,
+    /// whether as a bare `$name` or an interpolation `${name}` inside a backtick
+    /// literal.
+    ///
+    /// Defined once per node type so the var walk is centralized: adding an
+    /// `Expr` variant requires extending only this method (and that variant's
+    /// own resolve), not every call site that collects referenced variables.
+    pub fn visit_vars(&self, mut f: impl FnMut(&str)) {
+        match self {
+            Expr::VarRef { name, .. } => f(name),
+            Expr::BacktickLit { parts, .. } => {
+                for part in parts {
+                    if part.is_var {
+                        f(&part.value);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// A segment of a backtick-quoted expression.
@@ -56,33 +76,6 @@ pub enum VarType {
     String,
     /// `var shell` — value is executed as a shell command at compile time.
     Shell,
-}
-
-/// A statement that appears inside a function body.
-#[derive(Debug, Clone)]
-pub enum FnStmt {
-    /// `log <expr>` — prints the evaluated expression at runtime.
-    Log { value: Expr },
-    /// `exec <expr>` — executes the evaluated expression as a shell command.
-    Exec { value: Expr },
-    /// `cd <expr>` — changes the working directory for subsequent stmts.
-    Cd { value: Expr },
-    /// `var` or `var shell` inside a function body.
-    VarDecl {
-        var_type: VarType,
-        name: String,
-        value: Expr,
-    },
-    /// `env { ... }` — sets environment variables for the enclosed block.
-    EnvBlock {
-        pairs: Vec<EnvPair>,
-        body: Vec<FnStmt>,
-    },
-    /// `match <expr> { ... }` — conditional branching.
-    Case {
-        condition: Expr,
-        scopes: Vec<CaseArm>,
-    },
 }
 
 /// A pattern arm inside a `match` expression.
@@ -127,13 +120,31 @@ impl CasePattern {
             CasePattern::Default => "",
         }
     }
+
+    /// Invoke `f` with the name of every variable this pattern references,
+    /// including bare `$name`, backtick interpolation `${name}`, and default
+    /// (`_`) patterns (which reference no variables). Mirrors
+    /// [`Expr::visit_vars`] so the var-walk API is uniform across node kinds.
+    pub fn visit_vars(&self, mut f: impl FnMut(&str)) {
+        match self {
+            CasePattern::VarRef { name, .. } => f(name),
+            CasePattern::Literal { parts, .. } => {
+                for part in parts {
+                    if part.is_var {
+                        f(&part.value);
+                    }
+                }
+            }
+            CasePattern::Default => {}
+        }
+    }
 }
 
 /// A single arm of a `match` block: a pattern and its body statements.
 #[derive(Debug, Clone)]
 pub struct CaseArm {
     pub pattern: CasePattern,
-    pub body: Vec<FnStmt>,
+    pub body: Vec<crate::dsl::fnstmt::FnStmt>,
 }
 
 /// A key-value pair for `env` blocks.

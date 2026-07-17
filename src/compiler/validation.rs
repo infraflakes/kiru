@@ -1,7 +1,8 @@
-use crate::compiler::error::{CompileError, spanned_report_on};
-use crate::compiler::resolve;
+use crate::compiler::error::CompileError;
+use crate::compiler::fnstmt::{ValidateFnCtx, validate_fn_body_stmts};
 use crate::compiler::scope::{ScopeKind, ScopeStack};
 use crate::dsl::{Expr, FnStmt};
+use crate::error::spanned_report_on;
 use miette::miette;
 use std::collections::{HashMap, HashSet};
 
@@ -63,7 +64,8 @@ fn validate_run_refs(
 
 /// Validate all function bodies in a project's function map.  Builds a
 /// scope stack seeded with global + project vars and pushes a fresh
-/// Function frame per function.
+/// Function frame per function, then dispatches each statement to its own
+/// `validate` via the shared [`ValidateFnCtx`].
 fn validate_project_bodies(
     functions: &HashMap<String, Vec<FnStmt>>,
     global: &ScopeStack<String>,
@@ -79,7 +81,14 @@ fn validate_project_bodies(
         scope.seed_top(declared_var_names.iter().map(|k| (k.clone(), ())));
 
         let guard = scope.enter(ScopeKind::Function);
-        validate_fn_body(fn_name, body, &mut *guard.stack, errors, proj_name, sources);
+        let mut ctx = ValidateFnCtx {
+            fn_name,
+            proj_name,
+            scope: &mut *guard.stack,
+            errors: &mut *errors,
+            sources,
+        };
+        validate_fn_body_stmts(body, &mut ctx);
     }
 }
 
@@ -87,7 +96,7 @@ fn validate_project_bodies(
 /// current scope hierarchy. Undefined references become a spanned diagnostic
 /// pointing at the exact expression, so the error reports the location like
 /// every other syntax/validation error.
-fn validate_expr(
+pub(crate) fn validate_expr(
     expr: &Expr,
     fn_name: &str,
     scope: &ScopeStack<()>,
@@ -95,7 +104,7 @@ fn validate_expr(
     proj_name: &str,
     sources: &HashMap<String, String>,
 ) {
-    resolve::visit_expr_vars(expr, |name| {
+    expr.visit_vars(|name| {
         if !scope.is_declared(name) {
             errors.push(spanned_report_on(
                 format!(
@@ -107,76 +116,6 @@ fn validate_expr(
             ));
         }
     });
-}
-
-/// Validate variable references and duplicate declarations in a function
-/// body.  The caller owns the scope; this function does not push/pop
-/// frames at the top level but handles case-arm frames internally.
-fn validate_fn_body(
-    fn_name: &str,
-    body: &[FnStmt],
-    scope: &mut ScopeStack<()>,
-    errors: &mut Vec<miette::Report>,
-    proj_name: &str,
-    sources: &HashMap<String, String>,
-) {
-    for stmt in body {
-        match stmt {
-            FnStmt::VarDecl { name, value, .. } => {
-                validate_expr(value, fn_name, scope, errors, proj_name, sources);
-                if scope.is_declared(name) {
-                    let kind = scope.declaring_kind(name).unwrap_or(ScopeKind::Global);
-                    errors.push(spanned_report_on(
-                        format!("${} is already defined at {}", name, kind),
-                        sources,
-                        value,
-                    ));
-                }
-                let _ = scope.declare(name.clone(), ());
-            }
-            FnStmt::Log { value, .. } => {
-                validate_expr(value, fn_name, scope, errors, proj_name, sources);
-            }
-            FnStmt::Exec { value, .. } => {
-                validate_expr(value, fn_name, scope, errors, proj_name, sources);
-            }
-            FnStmt::Cd { value, .. } => {
-                validate_expr(value, fn_name, scope, errors, proj_name, sources);
-            }
-            FnStmt::EnvBlock { pairs, body, .. } => {
-                for pair in pairs {
-                    validate_expr(&pair.value, fn_name, scope, errors, proj_name, sources);
-                }
-                validate_fn_body(fn_name, body, scope, errors, proj_name, sources);
-            }
-            FnStmt::Case { condition, scopes } => {
-                validate_expr(condition, fn_name, scope, errors, proj_name, sources);
-                for arm in scopes {
-                    resolve::visit_case_pattern_vars(&arm.pattern, |name| {
-                        if !scope.is_declared(name) {
-                            errors.push(spanned_report_on(
-                                format!(
-                                    "project {:?}: fn {:?}: undefined variable ${}",
-                                    proj_name, fn_name, name
-                                ),
-                                sources,
-                                &arm.pattern,
-                            ));
-                        }
-                    });
-                    let guard = scope.enter(ScopeKind::Case);
-                    validate_fn_body(
-                        fn_name,
-                        &arm.body,
-                        &mut *guard.stack,
-                        errors,
-                        proj_name,
-                        sources,
-                    );
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]

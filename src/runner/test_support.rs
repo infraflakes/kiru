@@ -1,9 +1,11 @@
 use crate::compiler::{Config, Project, SyncMode};
-use crate::runner::execution_context::OutputTarget;
+use crate::runner::execution_context::OutputCallback;
 use std::collections::HashMap;
+use std::sync::Arc;
 
-/// Create a minimal `(Config, Project, OutputTarget)` triple for runner tests.
-pub(crate) fn test_context() -> (Config, Project, OutputTarget) {
+/// Create a minimal `(Config, Project, OutputCallback)` triple for runner tests.
+/// The callback is a no-op: these tests assert control flow, not output text.
+pub(crate) fn test_context() -> (Config, Project, OutputCallback) {
     let project = Project {
         url: "http://example.com".to_string(),
         dir: "test".to_string(),
@@ -15,5 +17,5 @@ pub(crate) fn test_context() -> (Config, Project, OutputTarget) {
     let cfg = Config {
         projects: HashMap::new(),
     };
-    (cfg, project, OutputTarget::Direct(Box::new(Vec::new())))
+    (cfg, project, Arc::new(|_| {}))
 }

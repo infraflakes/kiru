@@ -93,18 +93,31 @@ fn drain_and_check_git_output(
     Ok(())
 }
 
-/// Clone (or skip) a single project's git repo into `proj.dir`.
-/// Reports progress through the `output` callback.
+/// Dispatch sync for a single project into `proj.dir` by its `SyncMode`.
+/// The `match` is the only place that enumerates every strategy, so the
+/// compiler forces a new variant to be handled here. Per-strategy
+/// behavior lives in the co-located `run_sync_*` functions below.
 fn sync_project_inner(
     proj_name: &str,
     proj: &Project,
     output: &mut dyn FnMut(&str),
 ) -> Result<(), RuntimeError> {
-    if proj.sync == SyncMode::Ignore {
-        output(&format!("skip  {} (sync=ignore)", proj_name));
-        return Ok(());
+    match proj.sync {
+        SyncMode::Ignore => {
+            output(&format!("skip  {} (sync=ignore)", proj_name));
+            Ok(())
+        }
+        SyncMode::Clone => run_sync_clone(proj_name, proj, output),
     }
+}
 
+/// Git-clone (or skip if already present) a single project's repo into
+/// `proj.dir`. Progress is reported through the `output` callback.
+fn run_sync_clone(
+    proj_name: &str,
+    proj: &Project,
+    output: &mut dyn FnMut(&str),
+) -> Result<(), RuntimeError> {
     let target_dir = PathBuf::from(&proj.dir);
     let git_dir = target_dir.join(".git");
 

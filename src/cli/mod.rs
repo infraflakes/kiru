@@ -12,7 +12,15 @@ use std::path::PathBuf;
 
 fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Config> {
     let config_path = get_config_path(config_arg);
-    crate::compiler::compile_and_resolve(&config_path).map_err(|e| match e {
+    let force_cwd = std::env::var("KIRU_CWD").as_deref() == Ok("1");
+    crate::compiler::compile_and_resolve(&config_path, force_cwd).map_err(compile_error_to_report)
+}
+
+/// Map a compiler error to a miette report for the CLI. Single owner of the
+/// `CompileError` → diagnostic mapping so adding a variant updates every
+/// command path (status, sync, run, fn) at once instead of drifting.
+pub(crate) fn compile_error_to_report(e: CompileError) -> miette::Report {
+    match e {
         CompileError::ParseReports(reports) => print_parse_errors(reports),
         CompileError::ValidationReport(reports) => {
             for report in &reports {
@@ -21,7 +29,7 @@ fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Config> {
             miette::miette!("{} validation error(s) found", reports.len())
         }
         _ => miette::miette!("{}", e),
-    })
+    }
 }
 
 fn print_parse_errors(reports: Vec<miette::Report>) -> miette::Report {

@@ -1,6 +1,7 @@
 mod cli;
 mod compiler;
 mod dsl;
+mod error;
 mod runner;
 mod shell;
 

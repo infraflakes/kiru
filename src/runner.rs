@@ -10,7 +10,7 @@ pub(crate) mod tui;
 mod test_support;
 
 pub(crate) use execution_context::OutputCallback;
-pub(crate) use runner_impl::Runner;
+pub(crate) use runner_impl::{Runner, resolve_project_fn};
 pub(crate) use tui::{TaskStatus, TuiEvent, run_tui_with_run, run_tui_with_sync, send_tui_event};
 
 use tokio::sync::mpsc;

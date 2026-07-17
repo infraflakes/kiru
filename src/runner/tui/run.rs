@@ -66,7 +66,7 @@ pub fn render_run_output(frame: &mut Frame, model: &Model, spinner_idx: usize) {
 
 /// Append a single task's final output (status marker, name, and output lines)
 /// to the buffer.
-fn format_task_output(buf: &mut String, task: &Task, _chain_label: &str) {
+fn format_task_output(buf: &mut String, task: &Task) {
     let color = match task.status {
         TaskStatus::Success => colors::OK_ANSI,
         TaskStatus::Running => colors::RUNNING_ANSI,
@@ -113,16 +113,7 @@ fn format_task_output(buf: &mut String, task: &Task, _chain_label: &str) {
 
 /// Append the run summary (pass/fail counts) to the buffer.
 fn format_summary(buf: &mut String, model: &Model) {
-    let ok_count = model
-        .tasks
-        .iter()
-        .filter(|t| t.status == TaskStatus::Success)
-        .count();
-    let err_count = model
-        .tasks
-        .iter()
-        .filter(|t| t.status == TaskStatus::Error)
-        .count();
+    let (ok_count, err_count) = model.success_and_error_counts();
     if err_count > 0 {
         buf.push_str(&format!("{} done, {} failed\n", ok_count, err_count));
     } else {
@@ -142,7 +133,7 @@ pub fn format_final_output(model: &Model) -> String {
 
         for task_offset in 0..chain.task_count {
             if let Some(task) = model.tasks.get(chain.task_start + task_offset) {
-                format_task_output(&mut buf, task, &chain.label);
+                format_task_output(&mut buf, task);
             }
         }
     }

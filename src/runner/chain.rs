@@ -26,7 +26,7 @@ fn execute_single_chain(
             runner::send_tui_event(&tx, TuiEvent::AppendOutput(task_index, line))
         }
     };
-    let mut runner = Runner::new(config).with_output_callback(Arc::new(output_callback));
+    let mut runner = Runner::new(config, Arc::new(output_callback));
 
     for (fn_idx, function_name) in chain.iter().enumerate() {
         let task_idx = start_index + fn_idx;

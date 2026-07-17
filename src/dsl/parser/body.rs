@@ -1,5 +1,6 @@
 use super::expr::parse_interpolation_parts;
 use super::*;
+use crate::dsl::fnstmt::{CaseStmt, CdStmt, EnvBlockStmt, ExecStmt, FnStmt, LogStmt, VarDeclStmt};
 
 impl Parser {
     pub(crate) fn parse_log_stmt(&mut self) -> Result<FnStmt, ParseError> {
@@ -8,7 +9,7 @@ impl Parser {
         let value = self.parse_expr()?;
         self.expect_with_context(TokenType::Semicolon, "after `log`")?;
 
-        Ok(FnStmt::Log { value })
+        Ok(FnStmt::Log(LogStmt { value }))
     }
 
     pub(crate) fn parse_exec_stmt(&mut self) -> Result<FnStmt, ParseError> {
@@ -17,7 +18,7 @@ impl Parser {
         let value = self.parse_expr()?;
         self.expect_with_context(TokenType::Semicolon, "after `exec`")?;
 
-        Ok(FnStmt::Exec { value })
+        Ok(FnStmt::Exec(ExecStmt { value }))
     }
 
     pub(crate) fn parse_cd_stmt(&mut self) -> Result<FnStmt, ParseError> {
@@ -26,16 +27,16 @@ impl Parser {
         let arg = self.parse_expr()?;
         self.expect_with_context(TokenType::Semicolon, "after `cd`")?;
 
-        Ok(FnStmt::Cd { value: arg })
+        Ok(FnStmt::Cd(CdStmt { value: arg }))
     }
 
     pub(crate) fn parse_fn_var_decl(&mut self) -> Result<FnStmt, ParseError> {
         let (var_type, name, value) = self.parse_var_decl_common()?;
-        Ok(FnStmt::VarDecl {
+        Ok(FnStmt::VarDecl(VarDeclStmt {
             var_type,
             name,
             value,
-        })
+        }))
     }
 
     pub(crate) fn parse_env_block(&mut self) -> Result<FnStmt, ParseError> {
@@ -86,7 +87,7 @@ impl Parser {
 
         self.expect_with_context(TokenType::Semicolon, "after env block")?;
 
-        Ok(FnStmt::EnvBlock { pairs, body })
+        Ok(FnStmt::EnvBlock(EnvBlockStmt { pairs, body }))
     }
 
     pub(crate) fn parse_case_stmt(&mut self) -> Result<FnStmt, ParseError> {
@@ -115,7 +116,7 @@ impl Parser {
 
         self.expect_with_context(TokenType::Semicolon, "after case block")?;
 
-        Ok(FnStmt::Case { condition, scopes })
+        Ok(FnStmt::Case(CaseStmt { condition, scopes }))
     }
 
     fn parse_case_pattern(&mut self) -> Result<CasePattern, ParseError> {
@@ -167,8 +168,9 @@ impl Parser {
 
 #[cfg(test)]
 mod tests {
+    use crate::dsl::fnstmt::FnStmt;
     use crate::dsl::parser::test_support::*;
-    use crate::dsl::{FnStmt, Stmt, TopLevel};
+    use crate::dsl::{Stmt, TopLevel};
 
     #[test]
     fn test_fn_body_with_log_exec() {
@@ -216,14 +218,13 @@ mod tests {
         match &prog.items[0] {
             TopLevel::Stmt(Stmt::Fn { body, .. }) => {
                 assert_eq!(body.len(), 1);
-                match &body[0] {
-                    FnStmt::EnvBlock { body: env_body, .. } => {
-                        assert_eq!(env_body.len(), 2);
-                        assert!(matches!(env_body[0], FnStmt::Exec { .. }));
-                        assert!(matches!(env_body[1], FnStmt::Log { .. }));
-                    }
-                    _ => panic!("expected EnvBlock"),
-                }
+                let env = match &body[0] {
+                    FnStmt::EnvBlock(s) => s,
+                    other => panic!("expected EnvBlock, got {:?}", other),
+                };
+                assert_eq!(env.body.len(), 2);
+                assert!(matches!(&env.body[0], FnStmt::Exec(_)));
+                assert!(matches!(&env.body[1], FnStmt::Log(_)));
             }
             _ => panic!("expected FnDecl"),
         }
@@ -240,12 +241,11 @@ mod tests {
         match &prog.items[0] {
             TopLevel::Stmt(Stmt::Fn { body, .. }) => {
                 assert_eq!(body.len(), 1);
-                match &body[0] {
-                    FnStmt::Case { scopes, .. } => {
-                        assert_eq!(scopes.len(), 1);
-                    }
-                    _ => panic!("expected Case"),
-                }
+                let case = match &body[0] {
+                    FnStmt::Case(s) => s,
+                    other => panic!("expected Case, got {:?}", other),
+                };
+                assert_eq!(case.scopes.len(), 1);
             }
             _ => panic!("expected FnDecl"),
         }
@@ -262,20 +262,21 @@ mod tests {
                       }";
         let prog = parse_program(input).unwrap();
         match &prog.items[0] {
-            TopLevel::Stmt(Stmt::Fn { body, .. }) => match &body[0] {
-                FnStmt::Case { scopes, .. } => {
-                    assert_eq!(scopes.len(), 3);
-                    assert!(matches!(
-                        &scopes[0].pattern,
-                        crate::dsl::syntax::CasePattern::Literal { .. }
-                    ));
-                    assert!(matches!(
-                        &scopes[2].pattern,
-                        crate::dsl::syntax::CasePattern::Default
-                    ));
-                }
-                _ => panic!("expected Case"),
-            },
+            TopLevel::Stmt(Stmt::Fn { body, .. }) => {
+                let case = match &body[0] {
+                    FnStmt::Case(s) => s,
+                    other => panic!("expected Case, got {:?}", other),
+                };
+                assert_eq!(case.scopes.len(), 3);
+                assert!(matches!(
+                    &case.scopes[0].pattern,
+                    crate::dsl::syntax::CasePattern::Literal { .. }
+                ));
+                assert!(matches!(
+                    &case.scopes[2].pattern,
+                    crate::dsl::syntax::CasePattern::Default
+                ));
+            }
             _ => panic!("expected FnDecl"),
         }
     }
@@ -294,18 +295,18 @@ mod tests {
                       }";
         let prog = parse_program(input).unwrap();
         match &prog.items[0] {
-            TopLevel::Stmt(Stmt::Fn { body, .. }) => match &body[0] {
-                FnStmt::Case { scopes, .. } => {
-                    assert_eq!(scopes.len(), 1);
-                    match &scopes[0].body[0] {
-                        FnStmt::Case { scopes: inner, .. } => {
-                            assert_eq!(inner.len(), 2);
-                        }
-                        _ => panic!("expected nested Case"),
-                    }
-                }
-                _ => panic!("expected Case"),
-            },
+            TopLevel::Stmt(Stmt::Fn { body, .. }) => {
+                let case = match &body[0] {
+                    FnStmt::Case(s) => s,
+                    other => panic!("expected Case, got {:?}", other),
+                };
+                assert_eq!(case.scopes.len(), 1);
+                let inner = match &case.scopes[0].body[0] {
+                    FnStmt::Case(s) => s,
+                    other => panic!("expected nested Case, got {:?}", other),
+                };
+                assert_eq!(inner.scopes.len(), 2);
+            }
             _ => panic!("expected FnDecl"),
         }
     }
@@ -319,7 +320,7 @@ mod tests {
         match &prog.items[0] {
             TopLevel::Stmt(Stmt::Fn { body, .. }) => {
                 assert_eq!(body.len(), 1);
-                assert!(matches!(body[0], FnStmt::Cd { .. }));
+                assert!(matches!(body[0], FnStmt::Cd(_)));
             }
             _ => panic!("expected FnDecl"),
         }

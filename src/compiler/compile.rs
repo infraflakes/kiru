@@ -1,12 +1,11 @@
 use crate::compiler::error::{CompileError, io_err, spanned_err_named};
 
 use crate::compiler::resolve;
-use crate::compiler::resolve::redeclaration_err;
-use crate::compiler::scope::{ScopeKind, ScopeStack};
+use crate::compiler::scope::ScopeStack;
 use crate::compiler::types::{Config, Project, ProjectVarStmt, UnresolvedProject};
 use crate::compiler::validation;
 use crate::dsl::Parser;
-use crate::dsl::{Expr, Program, Stmt, TopLevel};
+use crate::dsl::{Expr, Program, ProjectField, Stmt, TopLevel};
 use miette::miette;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -17,7 +16,7 @@ use std::path::{Path, PathBuf};
 ///    load imports with variable interpolation, accumulate projects.
 /// 2. Validate using the resolved state.
 /// 3. Fully resolve function bodies against the flat var scope.
-pub fn compile_and_resolve(entry_path: &Path) -> Result<Config, CompileError> {
+pub fn compile_and_resolve(entry_path: &Path, force_cwd: bool) -> Result<Config, CompileError> {
     let abs_entry = canonicalize_entry(entry_path)?;
     let linear_result = resolve_linear(&abs_entry, ImportPolicy::Strict)?;
     let source_texts = linear_result.unresolved.source_texts.clone();
@@ -26,6 +25,7 @@ pub fn compile_and_resolve(entry_path: &Path) -> Result<Config, CompileError> {
         linear_result.unresolved,
         linear_result.var_scope,
         &source_texts,
+        force_cwd,
     )
 }
 
@@ -131,8 +131,6 @@ fn linear_process_file(file_path: &Path, state: &mut LinearState) -> Result<(), 
     result
 }
 
-use crate::dsl::ProjectField;
-
 /// Policy for handling `import` statements whose target file does not exist.
 /// Used by [`resolve_linear`] to control whether a missing import is a hard
 /// error (`Strict`) or silently skipped with a warning (`SkipMissing`).
@@ -163,25 +161,23 @@ pub(crate) fn merge_project_body_stmt(
             len,
             ..
         } => {
-            let already_set = match key {
-                ProjectField::Url => project.url.is_some(),
-                ProjectField::Dir => project.dir.is_some(),
-                ProjectField::Sync => project.sync.is_some(),
-                ProjectField::Branch => project.branch.is_some(),
+            // One arm per project field: detect duplicates and store the
+            // parsed `Expr`. Compiler-enforced exhaustiveness keeps this in
+            // sync with `ProjectField`.
+            let slot: &mut Option<Expr> = match &key {
+                ProjectField::Url => &mut project.url,
+                ProjectField::Dir => &mut project.dir,
+                ProjectField::Sync => &mut project.sync,
+                ProjectField::Branch => &mut project.branch,
             };
-            if already_set {
+            if slot.is_some() {
                 return Err(make_err(
                     format!("duplicate field '{:?}' in project '{}'", key, project.name),
                     *offset,
                     *len,
                 ));
             }
-            match key {
-                ProjectField::Url => project.url = Some(value.clone()),
-                ProjectField::Dir => project.dir = Some(value.clone()),
-                ProjectField::Sync => project.sync = Some(value.clone()),
-                ProjectField::Branch => project.branch = Some(value.clone()),
-            }
+            *slot = Some(value.clone());
         }
         Stmt::Fn {
             name,
@@ -254,8 +250,6 @@ fn process_project_block(
                 dir: None,
                 sync: None,
                 branch: None,
-                vars: HashMap::new(),
-                field_refd_vars: HashSet::new(),
                 declared_var_names: HashSet::new(),
                 var_stmts: Vec::new(),
                 functions: HashMap::new(),
@@ -271,22 +265,6 @@ fn process_project_block(
         )?;
     }
 
-    // Collect names of project vars referenced by field expressions.
-    // These must run eagerly (current-dir) so field interpolation works.
-    // Union across all merged `pr` fragments (not just the last one) so a
-    // var referenced by a field in ANY fragment is registered — the previous
-    // per-call reassignment only kept the last fragment's field references.
-    for field_stmt in fields {
-        if let Stmt::Field { value, .. } = field_stmt {
-            resolve::visit_expr_vars(value, |name| {
-                project_entry.field_refd_vars.insert(name.to_owned());
-            });
-        }
-    }
-
-    // Push a Project frame so project body vars go into it and duplicate
-    // detection (via declare/declare_name) checks global + project chain.
-    state.var_scope.push_frame(ScopeKind::Project);
     for body_stmt in body {
         if let Stmt::Var {
             var_type,
@@ -297,51 +275,18 @@ fn process_project_block(
             ..
         } = body_stmt
         {
-            let pv_stmt = ProjectVarStmt {
+            // Record the declared body-var name so validation can seed it and
+            // function bodies may reference it. Duplicate detection itself is
+            // performed during resolution (resolve_with_scopes), where the
+            // var is declared into the project frame.
+            project_entry.declared_var_names.insert(name.clone());
+            project_entry.var_stmts.push(ProjectVarStmt {
                 var_type: var_type.clone(),
                 name: name.clone(),
                 value: value.clone(),
                 offset: *offset,
                 len: *len,
-                source_name: program.source_name.clone(),
-            };
-
-            let is_field_refd = project_entry.field_refd_vars.contains(name);
-            if is_field_refd {
-                // Resolve eagerly with current-dir for shell vars so fields
-                // that interpolate project vars work (see ordering rule).
-                // `resolve_project_var` calls `declare` internally, which
-                // runs the shared name_exists duplicate check.
-                resolve::resolve_project_var(
-                    &pv_stmt,
-                    &mut state.var_scope,
-                    None,
-                    &state.source_texts,
-                )?;
-            } else {
-                // Reserve the name in the Project frame so the duplicate-
-                // detection logic in `declare_name` (the same visibility
-                // walk as `declare`) prevents shadowing global/outer vars
-                // or duplicate names within the same project body.
-                // The real resolution happens in `resolve_with_scopes`
-                // with the correct project working directory.
-                state
-                    .var_scope
-                    .declare_name(pv_stmt.name.clone())
-                    .map_err(|r| {
-                        redeclaration_err(
-                            r,
-                            &state.source_texts,
-                            &pv_stmt.source_name,
-                            pv_stmt.offset,
-                            pv_stmt.len,
-                        )
-                    })?;
-            }
-            // Store minimal var data for the second pass
-            // (field-refd: seed with pre-resolved value + real span;
-            //  non-field-refd: first real resolution with project dir).
-            project_entry.var_stmts.push(pv_stmt);
+            });
         }
         merge_project_body_stmt(
             project_entry,
@@ -350,18 +295,6 @@ fn process_project_block(
             &program.source_name,
         )?;
     }
-    let (entries, reserved) = state.var_scope.pop_frame_entries();
-    // Union declared var names + values across ALL merged `pr` fragments
-    // (not just the last one) so validation seeding and the second pass see
-    // every project-level var — the previous per-call reassignment dropped
-    // vars declared in earlier fragments.
-    project_entry
-        .declared_var_names
-        .extend(entries.iter().map(|(k, _)| k.clone()).chain(reserved));
-    // Only field-referenced vars carry meaningful values into the second pass;
-    // non-field-referenced vars were reserved (no sentinel value stored) and
-    // are resolved for the first time in resolve_with_scopes.
-    project_entry.vars.extend(entries);
     Ok(())
 }
 
@@ -495,7 +428,8 @@ pub fn parse_projects_metadata(entry_path: &Path) -> Result<Config, CompileError
     let mut projects = HashMap::new();
     let source_texts = &linear.unresolved.source_texts;
     for (name, unresolved_project) in linear.unresolved.projects {
-        // Build a combined scope (global + project vars) for field resolution.
+        // Fields reference global vars only; project body vars are not visible
+        // to fields, so no project frame is needed here.
         let mut scope = ScopeStack::new();
         scope.seed_global(
             linear
@@ -503,8 +437,6 @@ pub fn parse_projects_metadata(entry_path: &Path) -> Result<Config, CompileError
                 .iter_global()
                 .map(|(k, v)| (k.clone(), v.clone())),
         );
-        scope.push_frame(ScopeKind::Project);
-        scope.seed_top(unresolved_project.vars.clone());
 
         let (url, dir, sync, branch) =
             resolve::resolve_project_fields(&unresolved_project, &scope, source_texts)?;

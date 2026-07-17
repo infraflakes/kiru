@@ -1,4 +1,5 @@
-use crate::compiler::error::{CompileError, SourceFile, spanned_err};
+use crate::compiler::error::CompileError;
+use crate::error::{SourceFile, spanned_report};
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -224,12 +225,12 @@ pub(crate) fn execute_shell_variable(
         // Non-zero exit is not an error — empty string is a valid value
         // in Kiru's type system.
         Err(Error::Exit { .. }) => Ok(String::new()),
-        Err(e) => Err(spanned_err(
+        Err(e) => Err(CompileError::ValidationReport(vec![spanned_report(
             format!("shell var ${} failed: {}", name, e),
             source,
             offset,
             len,
-        )),
+        )])),
     }
 }
 

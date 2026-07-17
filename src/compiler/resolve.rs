@@ -1,58 +1,16 @@
-use crate::compiler::error::{CompileError, SourceFile, spanned_err_named, spanned_err_on_field};
+use crate::compiler::error::{CompileError, spanned_err_named, spanned_err_on_field};
+use crate::compiler::fnstmt::{ResolveFnCtx, resolve_fn_body_stmts};
 use crate::compiler::scope::{Redeclaration, ScopeKind, ScopeStack};
 use crate::compiler::types::{
-    Config, Project, ProjectVarStmt, ResolvedCaseArm, ResolvedCasePattern, ResolvedEnvPair,
-    ResolvedFnStmt, SyncMode, UnresolvedConfig, UnresolvedProject,
+    Config, Project, ProjectVarStmt, ResolvedCasePattern, SyncMode, UnresolvedConfig,
+    UnresolvedProject, parse_sync_mode,
 };
-use crate::dsl::{CaseArm, CasePattern, EnvPair, Expr, FnStmt, InterpolationPart, Stmt};
+use crate::dsl::{CasePattern, Expr, InterpolationPart, Stmt};
+use crate::error::SourceFile;
 use crate::shell;
 use miette::miette;
-use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
-
-// Thread-local override for `KIRU_CWD` env var, used by tests so they
-// don't race writing to process-global `std::env::set_var`.
-thread_local! {
-    static KIRU_CWD_OVERRIDE: Cell<Option<bool>> = const { Cell::new(None) };
-}
-
-#[doc(hidden)]
-pub fn __test_set_kiru_cwd(val: Option<bool>) -> Option<bool> {
-    KIRU_CWD_OVERRIDE.replace(val)
-}
-
-/// Invoke a callback with the name of every variable referenced in `expr`,
-/// whether as a bare `$name` or an interpolation `${name}` in a backtick literal.
-pub(crate) fn visit_expr_vars(expr: &Expr, mut f: impl FnMut(&str)) {
-    match expr {
-        Expr::VarRef { name, .. } => f(name),
-        Expr::BacktickLit { parts, .. } => {
-            for part in parts {
-                if part.is_var {
-                    f(&part.value);
-                }
-            }
-        }
-    }
-}
-
-/// Invoke a callback with the name of every variable referenced in a case
-/// pattern, including bare `$name`, backtick interpolation `${name}`, and
-/// default (`_`) patterns (which reference no variables).
-pub(crate) fn visit_case_pattern_vars(pattern: &CasePattern, mut f: impl FnMut(&str)) {
-    match pattern {
-        CasePattern::VarRef { name, .. } => f(name),
-        CasePattern::Literal { parts, .. } => {
-            for part in parts {
-                if part.is_var {
-                    f(&part.value);
-                }
-            }
-        }
-        CasePattern::Default => {}
-    }
-}
+use std::path::{Path, PathBuf};
 
 /// Builds the "undefined variable" error for a `$name` reference absent
 /// from `scope`. Centralizes the repeated `format!("undefined variable:
@@ -136,7 +94,7 @@ pub(crate) fn resolve_expr(
 }
 
 /// Resolve a case pattern against a scope stack.
-fn resolve_case_pattern(
+pub(crate) fn resolve_case_pattern(
     pattern: &CasePattern,
     scope: &ScopeStack<String>,
     sources: &HashMap<String, String>,
@@ -162,18 +120,6 @@ fn resolve_case_pattern(
             None => Err(undefined_var_err(name, *offset, *len, sources, source_name)),
         },
         CasePattern::Default => Ok(ResolvedCasePattern::Default),
-    }
-}
-
-/// Parse the sync mode string from a resolved value.
-pub(crate) fn parse_sync_mode_value(value: &str) -> Result<SyncMode, String> {
-    match value {
-        "clone" => Ok(SyncMode::Clone),
-        "ignore" => Ok(SyncMode::Ignore),
-        _ => Err(format!(
-            "invalid sync value {:?} (expected 'clone' or 'ignore')",
-            value
-        )),
     }
 }
 
@@ -331,8 +277,9 @@ fn resolve_dir_field(
     Ok(base_dir.join(&raw).to_string_lossy().to_string())
 }
 
-/// Resolve an unresolved project's field expressions against a combined scope
-/// that includes both global and project-level vars.
+/// Resolve an unresolved project's field expressions against a combined
+/// scope that includes both global and project-level vars. Returns the
+/// four resolved field values as a tuple `(url, dir, sync, branch)`.
 pub(crate) fn resolve_project_fields(
     unresolved: &UnresolvedProject,
     scope: &ScopeStack<String>,
@@ -341,7 +288,7 @@ pub(crate) fn resolve_project_fields(
     let url = resolve_optional_expr(&unresolved.url, scope, sources)?.unwrap_or_default();
     let dir = resolve_dir_field(unresolved, scope, sources)?;
     let sync = match resolve_optional_expr(&unresolved.sync, scope, sources)? {
-        Some(mode) => parse_sync_mode_value(&mode).map_err(|msg| {
+        Some(mode) => parse_sync_mode(&mode).map_err(|msg| {
             spanned_err_on_field(msg, sources, &unresolved.sync, &unresolved.source_file)
         })?,
         None => SyncMode::Clone,
@@ -351,22 +298,27 @@ pub(crate) fn resolve_project_fields(
 }
 
 /// Resolve using pre-computed scopes.
+///
+/// `force_cwd` mirrors the `KIRU_CWD` env var: when set, project-body
+/// `var shell` commands run in the current directory instead of the
+/// resolved project directory.
 pub(crate) fn resolve_with_scopes(
     unresolved: UnresolvedConfig,
     global: ScopeStack<String>,
     sources: &HashMap<String, String>,
+    force_cwd: bool,
 ) -> Result<Config, CompileError> {
     let mut projects = HashMap::new();
     let mut seen_dirs: HashSet<String> = HashSet::new();
     for (name, unresolved_project) in unresolved.projects {
-        // Build a combined scope (global + project vars) once per project
-        // and reuse it for both field resolution and function-body resolution.
-        let mut project_scope = global.clone();
-        project_scope.push_frame(ScopeKind::Project);
-        project_scope.seed_top(unresolved_project.vars.clone());
-
+        // 1. Project fields are resolved against the GLOBAL scope only.
+        //    They may reference global vars (and earlier fields), never the
+        //    project's own body vars — those are encapsulated by the project
+        //    and resolved below. This also means a `var shell` interpolation
+        //    inside a field always runs in the current directory, since the
+        //    project directory is not yet known.
         let (url, dir, sync, branch) =
-            resolve_project_fields(&unresolved_project, &project_scope, sources)?;
+            resolve_project_fields(&unresolved_project, &global, sources)?;
 
         if !dir.is_empty() && !seen_dirs.insert(dir.clone()) {
             return Err(CompileError::ValidationReport(vec![miette!(
@@ -376,59 +328,37 @@ pub(crate) fn resolve_with_scopes(
             )]));
         }
 
-        // ── Re-resolve project-scope var stmts with project dir ────────
-        // After `resolve_project_fields` we know the final `dir`.  Pop the
-        // Project frame that was seeded with linear-phase values, re-push
-        // one, and resolve the raw var stmts in order with the correct
-        // working directory so `var shell` commands inside project body
-        // execute in the project dir.  Fields that interpolated a project
-        // shell var already used the linear-phase (current-dir) value —
-        // that is correct per the ordering rule (item 4 in todo.md).
-        let use_cwd = KIRU_CWD_OVERRIDE
-            .with(|cell| cell.get())
-            .unwrap_or_else(|| std::env::var("KIRU_CWD").as_deref() == Ok("1"));
-        let working_dir: Option<&Path> = if use_cwd || dir.is_empty() {
+        // 2. The project body runs in the resolved project directory (or the
+        //    current directory when force_cwd is set / dir is empty).
+        let effective_dir: Option<PathBuf> = if force_cwd || dir.is_empty() {
             None
         } else {
-            Some(Path::new(&dir))
+            Some(PathBuf::from(&dir))
         };
+        let working_dir: Option<&Path> = effective_dir.as_deref();
 
-        // Rebuild the project frame with fresh values.
-        let (_prev_entries, _prev_reserved) = project_scope.pop_frame_entries();
+        // 3. One project frame for the whole body — no re-push, no two-phase
+        //    re-resolution. Body vars and function bodies all resolve once,
+        //    against this single frame, in the project directory.
+        let mut project_scope = global.clone();
         project_scope.push_frame(ScopeKind::Project);
+
+        // 4. Resolve body var statements once, in the project directory.
         for var_stmt in &unresolved_project.var_stmts {
-            if unresolved_project.field_refd_vars.contains(&var_stmt.name) {
-                // Seed the pre-resolved (linear-phase) value — these
-                // ran with current-dir so fields that reference them
-                // are consistent.  Do NOT re-execute.
-                let val = unresolved_project
-                    .vars
-                    .get(&var_stmt.name)
-                    .cloned()
-                    .unwrap_or_default();
-                project_scope
-                    .declare(var_stmt.name.clone(), val)
-                    .map_err(|r| {
-                        redeclaration_err(
-                            r,
-                            sources,
-                            &var_stmt.source_name,
-                            var_stmt.offset,
-                            var_stmt.len,
-                        )
-                    })?;
-            } else {
-                resolve_project_var(var_stmt, &mut project_scope, working_dir, sources)?;
-            }
+            resolve_project_var(var_stmt, &mut project_scope, working_dir, sources)?;
         }
 
+        // 5. Resolve each function body against the project frame.
         let mut functions = HashMap::new();
-
         for (fn_name, body) in &unresolved_project.functions {
             // Push a Function frame via RAII guard — no clone needed.
             let guard = project_scope.enter(ScopeKind::Function);
-            let resolved_body =
-                resolve_fn_body_inner(body, &mut *guard.stack, working_dir, sources)?;
+            let mut resolve_ctx = ResolveFnCtx {
+                scope: &mut *guard.stack,
+                working_dir,
+                sources,
+            };
+            let resolved_body = resolve_fn_body_stmts(body, &mut resolve_ctx)?;
             functions.insert(fn_name.clone(), resolved_body);
             // guard drops here, popping the Function frame
         }
@@ -449,128 +379,11 @@ pub(crate) fn resolve_with_scopes(
     Ok(Config { projects })
 }
 
-/// Resolve an env block: resolve each pair's value, then resolve the body
-/// in the same scope (no isolated var scope for env blocks).
-fn resolve_env_block_stmt(
-    pairs: &[EnvPair],
-    body: &[FnStmt],
-    scope: &mut ScopeStack<String>,
-    working_dir: Option<&Path>,
-    sources: &HashMap<String, String>,
-) -> Result<ResolvedFnStmt, CompileError> {
-    let mut resolved_pairs = Vec::new();
-    for pair in pairs {
-        let resolved_value = resolve_expr(&pair.value, scope, sources)?;
-        resolved_pairs.push(ResolvedEnvPair {
-            key: pair.key.clone(),
-            value: resolved_value,
-        });
-    }
-    let resolved_body = resolve_fn_body_inner(body, scope, working_dir, sources)?;
-    Ok(ResolvedFnStmt::EnvBlock {
-        pairs: resolved_pairs,
-        body: resolved_body,
-    })
-}
-
-/// Resolve a case statement: resolve the condition, then resolve each
-/// arm's pattern and body with a new scope frame per arm.
-fn resolve_case_stmt(
-    condition: &Expr,
-    scopes: &[CaseArm],
-    scope: &mut ScopeStack<String>,
-    working_dir: Option<&Path>,
-    sources: &HashMap<String, String>,
-) -> Result<ResolvedFnStmt, CompileError> {
-    let resolved_condition = resolve_expr(condition, scope, sources)?;
-    let mut resolved_scopes = Vec::new();
-    for arm in scopes {
-        let pattern = resolve_case_pattern(&arm.pattern, scope, sources)?;
-        let guard = scope.enter(ScopeKind::Case);
-        let body = resolve_fn_body_inner(&arm.body, guard.stack, working_dir, sources)?;
-        resolved_scopes.push(ResolvedCaseArm { pattern, body });
-    }
-    Ok(ResolvedFnStmt::Case {
-        condition: resolved_condition,
-        scopes: resolved_scopes,
-    })
-}
-
-/// Recursively resolve a function body by dispatching each statement to
-/// the appropriate resolver.
-fn resolve_fn_body_inner(
-    body: &[FnStmt],
-    scope: &mut ScopeStack<String>,
-    working_dir: Option<&Path>,
-    sources: &HashMap<String, String>,
-) -> Result<Vec<ResolvedFnStmt>, CompileError> {
-    let mut resolved = Vec::new();
-    for stmt in body {
-        match stmt {
-            FnStmt::VarDecl {
-                var_type,
-                name,
-                value,
-            } => {
-                let (offset, len) = value.offset_len();
-                let source = SourceFile::from_registry(sources, value.source_name());
-                let resolved_value = resolve_expr(value, scope, sources)?;
-                let final_value = if *var_type == crate::dsl::VarType::Shell {
-                    shell::execute_shell_variable(
-                        name,
-                        &resolved_value,
-                        working_dir,
-                        &source,
-                        offset,
-                        len,
-                    )?
-                } else {
-                    resolved_value
-                };
-                scope
-                    .declare(name.to_string(), final_value)
-                    .map_err(|r| redeclaration_err(r, sources, value.source_name(), offset, len))?;
-            }
-            FnStmt::Log { value } => {
-                let v = resolve_expr(value, scope, sources)?;
-                resolved.push(ResolvedFnStmt::Log { value: v });
-            }
-            FnStmt::Exec { value } => {
-                let v = resolve_expr(value, scope, sources)?;
-                resolved.push(ResolvedFnStmt::Exec { value: v });
-            }
-            FnStmt::Cd { value } => {
-                let v = resolve_expr(value, scope, sources)?;
-                resolved.push(ResolvedFnStmt::Cd { value: v });
-            }
-            FnStmt::EnvBlock { pairs, body } => {
-                resolved.push(resolve_env_block_stmt(
-                    pairs,
-                    body,
-                    scope,
-                    working_dir,
-                    sources,
-                )?);
-            }
-            FnStmt::Case { condition, scopes } => {
-                resolved.push(resolve_case_stmt(
-                    condition,
-                    scopes,
-                    scope,
-                    working_dir,
-                    sources,
-                )?);
-            }
-        }
-    }
-    Ok(resolved)
-}
-
 #[cfg(test)]
 mod tests {
     use crate::compiler::error::CompileError;
+    use crate::compiler::fnstmt::ResolvedFnStmt;
     use crate::compiler::test_support::*;
-    use crate::compiler::types::ResolvedFnStmt;
     use miette::Report;
 
     #[test]
@@ -707,7 +520,7 @@ mod tests {
     }
 
     #[test]
-    fn test_project_field_references_project_var() {
+    fn test_project_field_interpolation_cannot_reference_body_var() {
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
@@ -721,10 +534,8 @@ mod tests {
         }\
         ",
         );
-        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
-        let proj = &cfg.projects["test"];
-        assert_eq!(proj.url, "http://example.com/myproject");
-        assert_eq!(proj.dir, dir.path().join("myproject").to_string_lossy());
+        let result = compile_full(&dir.path().join("main.kiru"));
+        assert!(result.is_err());
     }
 
     #[test]
@@ -753,25 +564,21 @@ mod tests {
             ),
         );
 
-        let _guard = KiruCwdGuard::with_kiru_cwd();
-        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        let cfg = compile_full_with_cwd(&dir.path().join("main.kiru"), true).unwrap();
 
         let proj = &cfg.projects["test"];
         let fn_body = &proj.functions["check"];
         assert_eq!(fn_body.len(), 1);
-        match &fn_body[0] {
-            ResolvedFnStmt::Log { value } => {
-                let expected = current_dir.to_string_lossy().to_string();
-                assert_eq!(*value, expected);
-            }
-            other => panic!("expected Log, got {:?}", other),
-        }
+        let stmt = match &fn_body[0] {
+            ResolvedFnStmt::Log(s) => s,
+            other => panic!("expected Log statement, got {:?}", other),
+        };
+        let expected = current_dir.to_string_lossy().to_string();
+        assert_eq!(*stmt.value, expected);
     }
 
     #[test]
     fn test_project_scope_var_shell_uses_project_dir() {
-        let _guard = KiruCwdGuard::with_project_dir();
-
         let dir = tempfile::TempDir::new().unwrap();
         let subdir = dir.path().join("myproject");
         std::fs::create_dir(&subdir).unwrap();
@@ -798,21 +605,19 @@ mod tests {
         let proj = &cfg.projects["test"];
         let fn_body = &proj.functions["check"];
         assert_eq!(fn_body.len(), 1);
-        match &fn_body[0] {
-            ResolvedFnStmt::Log { value } => {
-                let expected = std::fs::canonicalize(&subdir)
-                    .unwrap()
-                    .to_string_lossy()
-                    .to_string();
-                assert_eq!(*value, expected);
-            }
-            other => panic!("expected Log, got {:?}", other),
-        }
+        let stmt = match &fn_body[0] {
+            ResolvedFnStmt::Log(s) => s,
+            other => panic!("expected Log statement, got {:?}", other),
+        };
+        let expected = std::fs::canonicalize(&subdir)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(*stmt.value, expected);
     }
 
     #[test]
     fn test_fn_scope_var_shell_uses_project_dir() {
-        let _guard = KiruCwdGuard::with_project_dir();
         let dir = tempfile::TempDir::new().unwrap();
         let subdir = dir.path().join("myproject");
         std::fs::create_dir(&subdir).unwrap();
@@ -839,16 +644,15 @@ mod tests {
         let proj = &cfg.projects["test"];
         let fn_body = &proj.functions["check"];
         assert_eq!(fn_body.len(), 1); // VarDecl consumed, only log emitted
-        match &fn_body[0] {
-            ResolvedFnStmt::Log { value } => {
-                let expected = std::fs::canonicalize(&subdir)
-                    .unwrap()
-                    .to_string_lossy()
-                    .to_string();
-                assert_eq!(*value, expected);
-            }
-            other => panic!("expected Log, got {:?}", other),
-        }
+        let stmt = match &fn_body[0] {
+            ResolvedFnStmt::Log(s) => s,
+            other => panic!("expected Log statement, got {:?}", other),
+        };
+        let expected = std::fs::canonicalize(&subdir)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(*stmt.value, expected);
     }
 
     #[test]
@@ -871,24 +675,16 @@ mod tests {
         let proj = &cfg.projects["test"];
         assert_eq!(proj.url, "hello-from-global");
         let fn_body = &proj.functions["check"];
-        match &fn_body[0] {
-            ResolvedFnStmt::Log { value } => {
-                assert_eq!(value, "hello-from-global");
-            }
-            other => panic!("expected Log, got {:?}", other),
-        }
+        let stmt = match &fn_body[0] {
+            ResolvedFnStmt::Log(s) => s,
+            other => panic!("expected Log statement, got {:?}", other),
+        };
+        assert_eq!(stmt.value, "hello-from-global");
     }
 
     #[test]
-    fn test_var_shell_used_in_dir_field_no_deadlock() {
-        let _guard = KiruCwdGuard::with_project_dir();
+    fn test_field_cannot_reference_project_body_var() {
         let dir = tempfile::TempDir::new().unwrap();
-        // The `dir` field resolves to `$x` (linear-phase value "workspace"),
-        // which gets joined with the source directory.  Create that directory
-        // so the re-resolved shell can spawn there.
-        let resolved_dir = dir.path().join("workspace");
-        std::fs::create_dir(&resolved_dir).unwrap();
-
         write_config(
             dir.path(),
             "main.kiru",
@@ -902,22 +698,16 @@ mod tests {
         }\
         ",
         );
-        // Must not deadlock/cycle.  The dir field uses the linear-phase value
-        // of $x (current-dir shell execution), so dir resolves to a relative
-        // path that is joined with the source file's directory.
-        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
-        let proj = &cfg.projects["test"];
-        assert!(proj.url.contains("workspace"));
-        assert!(proj.dir.contains("workspace"));
-        // The re-resolved x (in project dir) is also "workspace" because
-        // `echo` doesn't depend on working directory.
-        let fn_body = &proj.functions["check"];
-        match &fn_body[0] {
-            ResolvedFnStmt::Log { value } => {
-                assert_eq!(value, "workspace");
-            }
-            other => panic!("expected Log, got {:?}", other),
-        }
+        // Fields are resolved against the global scope only and may not reach
+        // into the project body, so a field referencing a body var is an
+        // undefined-variable error.  There is no cycle to deadlock on because
+        // the project directory is computed before the body is ever resolved.
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(
+            err.to_string().contains("undefined variable"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]
@@ -966,7 +756,6 @@ mod tests {
 
     #[test]
     fn test_project_var_shell_runs_once() {
-        let _guard = KiruCwdGuard::with_project_dir();
         let dir = tempfile::TempDir::new().unwrap();
         let subdir = dir.path().join("myproject");
         std::fs::create_dir(&subdir).unwrap();
@@ -995,12 +784,11 @@ mod tests {
         let proj = &cfg.projects["test"];
         let fn_body = &proj.functions["check"];
         assert_eq!(fn_body.len(), 1);
-        match &fn_body[0] {
-            ResolvedFnStmt::Log { value } => {
-                assert_eq!(value, "done");
-            }
-            other => panic!("expected Log, got {:?}", other),
-        }
+        let stmt = match &fn_body[0] {
+            ResolvedFnStmt::Log(s) => s,
+            other => panic!("expected Log statement, got {:?}", other),
+        };
+        assert_eq!(stmt.value, "done");
         let count = std::fs::read_to_string(&marker).unwrap();
         assert_eq!(
             count.lines().count(),
