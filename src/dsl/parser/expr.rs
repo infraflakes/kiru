@@ -2,66 +2,24 @@ use super::*;
 
 impl Parser {
     pub(crate) fn parse_expr(&mut self) -> Result<Expr, ParseError> {
-        if let TokenType::Illegal(msg) = &self.current_token().ty {
-            let token = self.current_token().clone();
-            return Err(ParseError::new(
-                SourceSpan::new(token.offset.into(), token.len),
-                msg.clone(),
-            ));
-        }
+        self.err_on_illegal_token()?;
         match &self.current_token().ty {
             TokenType::Backtick(_) => self.parse_backtick_expr(),
             TokenType::Dollar => {
                 let start_offset = self.current_token().offset;
-                self.advance();
-
-                let name = match &self.current_token().ty {
-                    TokenType::Ident(name_str) => name_str.clone(),
-                    ty if is_keyword_token(ty) => {
-                        return Err(ParseError::new(
-                            self.eof_aware_span(),
-                            format!(
-                                "expected identifier after `$`, found {} (reserved keyword)",
-                                format_token(self.current_token())
-                            ),
-                        ));
-                    }
-                    _ => {
-                        return Err(ParseError::new(
-                            self.eof_aware_span(),
-                            "expected identifier after `$`".to_string(),
-                        ));
-                    }
-                };
-                let name_end = self.current_token().offset + self.current_token().len;
-                self.advance();
-
+                let (name, name_end) = self.parse_dollar_var_name(
+                    start_offset,
+                    "expected identifier after `$`",
+                    "expected identifier after `$`",
+                )?;
                 Ok(Expr::VarRef {
                     name,
                     offset: start_offset,
                     len: name_end - start_offset,
+                    source_name: self.source_name.clone(),
                 })
             }
-            _ => {
-                let is_underscore = matches!(
-                    &self.current_token().ty,
-                    TokenType::Ident(ident) if ident == "_"
-                );
-                if is_underscore {
-                    Err(ParseError::new(
-                        self.eof_aware_span(),
-                        "`_` is only valid as a case pattern".to_string(),
-                    ))
-                } else {
-                    Err(ParseError::new(
-                        self.eof_aware_span(),
-                        format!(
-                            "expected backtick string or variable reference, found {}",
-                            format_token(self.current_token())
-                        ),
-                    ))
-                }
-            }
+            _ => Err(self.unexpected_stmt_start_error("backtick string or variable reference")),
         }
     }
 
@@ -77,7 +35,12 @@ impl Parser {
         let len = token.len;
         self.advance();
         let parts = parse_interpolation_parts(content, token.offset)?;
-        Ok(Expr::BacktickLit { parts, offset, len })
+        Ok(Expr::BacktickLit {
+            parts,
+            offset,
+            len,
+            source_name: self.source_name.clone(),
+        })
     }
 }
 
@@ -139,4 +102,41 @@ pub(crate) fn parse_interpolation_parts(
     }
 
     Ok(parts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_interpolation_parts;
+
+    #[test]
+    fn test_basic_template_part() {
+        let parts = parse_interpolation_parts("hello", 0).unwrap();
+        assert_eq!(parts.len(), 1);
+        assert!(!parts[0].is_var);
+        assert_eq!(parts[0].value, "hello");
+    }
+
+    #[test]
+    fn test_template_with_var() {
+        let parts = parse_interpolation_parts("hello ${name} world", 0).unwrap();
+        assert_eq!(parts.len(), 3);
+        assert!(!parts[0].is_var);
+        assert_eq!(parts[0].value, "hello ");
+        assert!(parts[1].is_var);
+        assert_eq!(parts[1].value, "name");
+        assert!(!parts[2].is_var);
+        assert_eq!(parts[2].value, " world");
+    }
+
+    #[test]
+    fn test_template_empty_var_name() {
+        let result = parse_interpolation_parts("hello ${}", 0);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("empty variable name")
+        );
+    }
 }

@@ -31,3 +31,75 @@ impl Parser {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::dsl::parser::test_support::*;
+    use crate::dsl::{Stmt, TopLevel};
+
+    #[test]
+    fn test_run_single_ref() {
+        let input = "run b { build; }";
+        let prog = parse_program(input).unwrap();
+        match &prog.items[0] {
+            TopLevel::Stmt(Stmt::Run { chains, .. }) => {
+                assert_eq!(chains.len(), 1);
+                assert_eq!(chains[0], vec!["build"]);
+            }
+            _ => panic!("expected RunDecl"),
+        }
+    }
+
+    #[test]
+    fn test_run_chained_refs() {
+        let input = "run d { build => deploy => notify; }";
+        let prog = parse_program(input).unwrap();
+        match &prog.items[0] {
+            TopLevel::Stmt(Stmt::Run { chains, .. }) => {
+                assert_eq!(chains.len(), 1);
+                assert_eq!(chains[0], vec!["build", "deploy", "notify"]);
+            }
+            _ => panic!("expected RunDecl"),
+        }
+    }
+
+    #[test]
+    fn test_run_multiple_chains() {
+        let input = "run all { build; test; deploy; }";
+        let prog = parse_program(input).unwrap();
+        match &prog.items[0] {
+            TopLevel::Stmt(Stmt::Run { name, chains, .. }) => {
+                assert_eq!(name, "all");
+                assert_eq!(chains.len(), 3);
+                assert_eq!(chains[0], vec!["build"]);
+                assert_eq!(chains[1], vec!["test"]);
+                assert_eq!(chains[2], vec!["deploy"]);
+            }
+            _ => panic!("expected RunDecl"),
+        }
+    }
+
+    #[test]
+    fn test_run_chain_in_project() {
+        let input = "pr p [url = `u`] { run local { build; } fn build { exec `make`; } }";
+        let prog = parse_program(input).unwrap();
+        match &prog.items[0] {
+            TopLevel::Stmt(Stmt::Project { body, .. }) => {
+                assert_eq!(count_body_stmt_types(body), vec!["run", "fn"]);
+            }
+            _ => panic!("expected Project"),
+        }
+    }
+
+    #[test]
+    fn test_run_with_chain_and_recovery() {
+        let result = parse_program("run r { a -> ; }");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_run_body_must_end_with_semicolon() {
+        let result = parse_program("run r { a }");
+        assert!(result.is_err());
+    }
+}

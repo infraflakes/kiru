@@ -1,5 +1,6 @@
 use super::expr::parse_interpolation_parts;
 use super::*;
+use crate::dsl::fnstmt::{CaseStmt, CdStmt, EnvBlockStmt, ExecStmt, FnStmt, LogStmt, VarDeclStmt};
 
 impl Parser {
     pub(crate) fn parse_log_stmt(&mut self) -> Result<FnStmt, ParseError> {
@@ -8,7 +9,7 @@ impl Parser {
         let value = self.parse_expr()?;
         self.expect_with_context(TokenType::Semicolon, "after `log`")?;
 
-        Ok(FnStmt::Log { value })
+        Ok(FnStmt::Log(LogStmt { value }))
     }
 
     pub(crate) fn parse_exec_stmt(&mut self) -> Result<FnStmt, ParseError> {
@@ -17,7 +18,7 @@ impl Parser {
         let value = self.parse_expr()?;
         self.expect_with_context(TokenType::Semicolon, "after `exec`")?;
 
-        Ok(FnStmt::Exec { value })
+        Ok(FnStmt::Exec(ExecStmt { value }))
     }
 
     pub(crate) fn parse_cd_stmt(&mut self) -> Result<FnStmt, ParseError> {
@@ -26,16 +27,16 @@ impl Parser {
         let arg = self.parse_expr()?;
         self.expect_with_context(TokenType::Semicolon, "after `cd`")?;
 
-        Ok(FnStmt::Cd { value: arg })
+        Ok(FnStmt::Cd(CdStmt { value: arg }))
     }
 
     pub(crate) fn parse_fn_var_decl(&mut self) -> Result<FnStmt, ParseError> {
         let (var_type, name, value) = self.parse_var_decl_common()?;
-        Ok(FnStmt::VarDecl {
+        Ok(FnStmt::VarDecl(VarDeclStmt {
             var_type,
             name,
             value,
-        })
+        }))
     }
 
     pub(crate) fn parse_env_block(&mut self) -> Result<FnStmt, ParseError> {
@@ -86,7 +87,7 @@ impl Parser {
 
         self.expect_with_context(TokenType::Semicolon, "after env block")?;
 
-        Ok(FnStmt::EnvBlock { pairs, body })
+        Ok(FnStmt::EnvBlock(EnvBlockStmt { pairs, body }))
     }
 
     pub(crate) fn parse_case_stmt(&mut self) -> Result<FnStmt, ParseError> {
@@ -115,7 +116,7 @@ impl Parser {
 
         self.expect_with_context(TokenType::Semicolon, "after case block")?;
 
-        Ok(FnStmt::Case { condition, scopes })
+        Ok(FnStmt::Case(CaseStmt { condition, scopes }))
     }
 
     fn parse_case_pattern(&mut self) -> Result<CasePattern, ParseError> {
@@ -127,31 +128,16 @@ impl Parser {
             }
             TokenType::Dollar => {
                 let start_offset = self.current_token().offset;
-                self.advance();
-                let name = match &self.current_token().ty {
-                    TokenType::Ident(name_str) => name_str.clone(),
-                    ty if is_keyword_token(ty) => {
-                        return Err(ParseError::new(
-                            self.eof_aware_span(),
-                            format!(
-                                "expected identifier after `$` in case pattern, found {} (reserved keyword)",
-                                format_token(self.current_token())
-                            ),
-                        ));
-                    }
-                    _ => {
-                        return Err(ParseError::new(
-                            self.eof_aware_span(),
-                            "expected identifier after `$` in case pattern".to_string(),
-                        ));
-                    }
-                };
-                let end_offset = self.current_token().offset + self.current_token().len;
-                self.advance();
+                let (name, end_offset) = self.parse_dollar_var_name(
+                    start_offset,
+                    "expected identifier after `$` in case pattern",
+                    "expected identifier after `$` in case pattern",
+                )?;
                 Ok(CasePattern::VarRef {
                     name,
                     offset: start_offset,
                     len: end_offset - start_offset,
+                    source_name: self.source_name.clone(),
                 })
             }
             TokenType::Backtick(content) => {
@@ -159,7 +145,12 @@ impl Parser {
                 let len = tok.len;
                 self.advance();
                 let parts = parse_interpolation_parts(content, offset)?;
-                Ok(CasePattern::Literal { parts, offset, len })
+                Ok(CasePattern::Literal {
+                    parts,
+                    offset,
+                    len,
+                    source_name: self.source_name.clone(),
+                })
             }
             _ => {
                 let token_str = format_token(&tok);
@@ -172,5 +163,225 @@ impl Parser {
                 ))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::dsl::fnstmt::FnStmt;
+    use crate::dsl::parser::test_support::*;
+    use crate::dsl::{Stmt, TopLevel};
+
+    #[test]
+    fn test_fn_body_with_log_exec() {
+        let input = "fn build {\n\
+                      log `compiling`;\n\
+                      exec `cargo build`;\n\
+                      }";
+        let prog = parse_program(input).unwrap();
+        match &prog.items[0] {
+            TopLevel::Stmt(Stmt::Fn { name, body, .. }) => {
+                assert_eq!(name, "build");
+                assert_eq!(count_fn_stmt_types(body), vec!["log", "exec"]);
+            }
+            _ => panic!("expected FnDecl"),
+        }
+    }
+
+    #[test]
+    fn test_fn_body_orders() {
+        let input = "fn deploy {\n\
+                      env [] { exec `deploy`; };\n\
+                      cd `./dist`;\n\
+                      exec `npm publish`;\n\
+                      log `done`;\n\
+                      }";
+        let prog = parse_program(input).unwrap();
+        match &prog.items[0] {
+            TopLevel::Stmt(Stmt::Fn { name, body, .. }) => {
+                assert_eq!(name, "deploy");
+                assert_eq!(count_fn_stmt_types(body), vec!["env", "cd", "exec", "log"]);
+            }
+            _ => panic!("expected FnDecl"),
+        }
+    }
+
+    #[test]
+    fn test_env_block_contents() {
+        let input = "fn test {\n\
+                      env [] {\n\
+                      exec `run tests`;\n\
+                      log `testing`;\n\
+                      };\n\
+                      }";
+        let prog = parse_program(input).unwrap();
+        match &prog.items[0] {
+            TopLevel::Stmt(Stmt::Fn { body, .. }) => {
+                assert_eq!(body.len(), 1);
+                let env = match &body[0] {
+                    FnStmt::EnvBlock(s) => s,
+                    other => panic!("expected EnvBlock, got {:?}", other),
+                };
+                assert_eq!(env.body.len(), 2);
+                assert!(matches!(&env.body[0], FnStmt::Exec(_)));
+                assert!(matches!(&env.body[1], FnStmt::Log(_)));
+            }
+            _ => panic!("expected FnDecl"),
+        }
+    }
+
+    #[test]
+    fn test_case_single_branch() {
+        let input = "fn test {\n\
+                      case $os {\n\
+                      `Linux` { exec `linux-deploy`; };\n\
+                      };\n\
+                      }";
+        let prog = parse_program(input).unwrap();
+        match &prog.items[0] {
+            TopLevel::Stmt(Stmt::Fn { body, .. }) => {
+                assert_eq!(body.len(), 1);
+                let case = match &body[0] {
+                    FnStmt::Case(s) => s,
+                    other => panic!("expected Case, got {:?}", other),
+                };
+                assert_eq!(case.scopes.len(), 1);
+            }
+            _ => panic!("expected FnDecl"),
+        }
+    }
+
+    #[test]
+    fn test_case_multiple_branches_with_default() {
+        let input = "fn deploy {\n\
+                      case $target {\n\
+                      `production` { exec `deploy-prod`; };\n\
+                      `staging` { exec `deploy-staging`; };\n\
+                      _ { log `unknown target`; };\n\
+                      };\n\
+                      }";
+        let prog = parse_program(input).unwrap();
+        match &prog.items[0] {
+            TopLevel::Stmt(Stmt::Fn { body, .. }) => {
+                let case = match &body[0] {
+                    FnStmt::Case(s) => s,
+                    other => panic!("expected Case, got {:?}", other),
+                };
+                assert_eq!(case.scopes.len(), 3);
+                assert!(matches!(
+                    &case.scopes[0].pattern,
+                    crate::dsl::syntax::CasePattern::Literal { .. }
+                ));
+                assert!(matches!(
+                    &case.scopes[2].pattern,
+                    crate::dsl::syntax::CasePattern::Default
+                ));
+            }
+            _ => panic!("expected FnDecl"),
+        }
+    }
+
+    #[test]
+    fn test_case_nested() {
+        let input = "fn test {\n\
+                      case $os {\n\
+                      `Linux` {\n\
+                      case $arch {\n\
+                      `x86_64` { exec `linux-amd64`; };\n\
+                      `aarch64` { exec `linux-arm64`; };\n\
+                      };\n\
+                      };\n\
+                      };\n\
+                      }";
+        let prog = parse_program(input).unwrap();
+        match &prog.items[0] {
+            TopLevel::Stmt(Stmt::Fn { body, .. }) => {
+                let case = match &body[0] {
+                    FnStmt::Case(s) => s,
+                    other => panic!("expected Case, got {:?}", other),
+                };
+                assert_eq!(case.scopes.len(), 1);
+                let inner = match &case.scopes[0].body[0] {
+                    FnStmt::Case(s) => s,
+                    other => panic!("expected nested Case, got {:?}", other),
+                };
+                assert_eq!(inner.scopes.len(), 2);
+            }
+            _ => panic!("expected FnDecl"),
+        }
+    }
+
+    #[test]
+    fn test_cd_statement() {
+        let input = "fn build {\n\
+                      cd `./src`;\n\
+                      }";
+        let prog = parse_program(input).unwrap();
+        match &prog.items[0] {
+            TopLevel::Stmt(Stmt::Fn { body, .. }) => {
+                assert_eq!(body.len(), 1);
+                assert!(matches!(body[0], FnStmt::Cd(_)));
+            }
+            _ => panic!("expected FnDecl"),
+        }
+    }
+
+    #[test]
+    fn test_empty_fn_body() {
+        let input = "fn empty {\n\
+                      }";
+        let prog = parse_program(input).unwrap();
+        match &prog.items[0] {
+            TopLevel::Stmt(Stmt::Fn { name, body, .. }) => {
+                assert_eq!(name, "empty");
+                assert!(body.is_empty());
+            }
+            _ => panic!("expected FnDecl"),
+        }
+    }
+
+    #[test]
+    fn test_trailing_semicolon_in_fn_body() {
+        let input = "fn test {\n\
+                      log `hi`;\n\
+                      log `bye`;\n\
+                      }";
+        let prog = parse_program(input).unwrap();
+        match &prog.items[0] {
+            TopLevel::Stmt(Stmt::Fn { body, .. }) => {
+                assert_eq!(body.len(), 2);
+            }
+            _ => panic!("expected FnDecl"),
+        }
+    }
+
+    #[test]
+    fn test_env_block_must_end_with_semicolon() {
+        let input = "fn test {\n\
+                      env [] { exec `x`; }\n\
+                      }";
+        let result = parse_program(input);
+        match result {
+            Ok(_) => panic!("expected error for missing semicolon after env block"),
+            Err(errs) => {
+                assert!(
+                    errs.iter().any(|e| e.to_string().contains("expected")),
+                    "got: {:?}",
+                    errs
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_log_must_end_with_semicolon() {
+        let result = parse_program("fn x { log `hi` }");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_exec_must_end_with_semicolon() {
+        let result = parse_program("fn x { exec `hi` }");
+        assert!(result.is_err());
     }
 }

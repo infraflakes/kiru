@@ -1,21 +1,10 @@
-var shell kiru_dir = `echo $HOME/kiru`;
+var shell workdir = `echo $HOME/Projects`;
 
+var string kiru_dir = `${workdir}/kiru`;
 pr kiru [
   url = `https://github.com/infraflakes/kiru.git`
   dir = $kiru_dir
   sync = `clone`
   branch = `dev`
 ] {}
-
-import `main.kiru`;
-
-pr todo [
-  url = `https://github.com/null/err.git`
-  dir = `whatever`
-] {
-  fn build {}
-  fn test {}
-  run ci {
-    build => test;
-  }
-}
+import `${kiru_dir}/main.kiru`;

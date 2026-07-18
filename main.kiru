@@ -1,0 +1,4 @@
+import `.kiru/run.kiru`;
+import `.kiru/clean.kiru`;
+import `.kiru/build.kiru`;
+import `.kiru/test.kiru`;

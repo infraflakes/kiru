@@ -1,4 +1,5 @@
-use crate::compiler::error::{CompileError, spanned_err};
+use crate::compiler::error::CompileError;
+use crate::error::{SourceFile, spanned_report};
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -208,26 +209,28 @@ pub(crate) fn exec_and_get_stdout(
 /// Execute a shell command for a `var shell` statement.
 /// Non-zero exit codes produce an empty string (callers use this to
 /// gracefully handle failed shell commands during variable resolution).
+///
+/// `working_dir` — when `Some`, runs the command in that directory;
+/// when `None`, runs in the current process directory.
 pub(crate) fn execute_shell_variable(
     name: &str,
     resolved_command: &str,
-    source_name: &str,
-    source_text: &str,
+    working_dir: Option<&Path>,
+    source: &SourceFile<'_>,
     offset: usize,
     len: usize,
 ) -> Result<String, CompileError> {
-    match exec_and_get_stdout(resolved_command, None, None) {
+    match exec_and_get_stdout(resolved_command, working_dir, None) {
         Ok(stdout) => Ok(stdout),
         // Non-zero exit is not an error — empty string is a valid value
         // in Kiru's type system.
         Err(Error::Exit { .. }) => Ok(String::new()),
-        Err(e) => Err(spanned_err(
+        Err(e) => Err(CompileError::ValidationReport(vec![spanned_report(
             format!("shell var ${} failed: {}", name, e),
-            source_name,
-            source_text,
+            source,
             offset,
             len,
-        )),
+        )])),
     }
 }
 

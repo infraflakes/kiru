@@ -1,61 +1,48 @@
 use crate::compiler::error::CompileError;
-use crate::compiler::resolve;
+use crate::compiler::fnstmt::{ValidateFnCtx, validate_fn_body_stmts};
+use crate::compiler::scope::{ScopeKind, ScopeStack};
 use crate::dsl::{Expr, FnStmt};
+use crate::error::spanned_report_on;
 use miette::miette;
 use std::collections::{HashMap, HashSet};
 
-/// Check whether a variable name is defined: local frames (innermost first),
-/// then the flat var scope.
-fn var_is_declared(name: &str, vars: &HashMap<String, String>, local: &[HashSet<String>]) -> bool {
-    for frame in local.iter().rev() {
-        if frame.contains(name) {
-            return true;
-        }
-    }
-    vars.contains_key(name)
-}
-
-/// Validate an `UnresolvedConfig` against the flat var scope,
+/// Validate an `UnresolvedConfig` against the global var scope,
 /// collecting all errors before returning.
 pub fn validate_configuration(
     cfg: &super::types::UnresolvedConfig,
-    var_scope: &HashMap<String, String>,
+    global: &ScopeStack<String>,
 ) -> Result<(), CompileError> {
     let mut errors = Vec::new();
 
     for (proj_name, project) in &cfg.projects {
         validate_run_refs(&project.runs, &project.functions, proj_name, &mut errors);
 
-        validate_fn_bodies(&project.functions, var_scope, proj_name, &mut errors);
+        validate_project_bodies(
+            &project.functions,
+            global,
+            &project.declared_var_names,
+            proj_name,
+            &cfg.source_texts,
+            &mut errors,
+        );
     }
 
-    if errors.len() == 1 {
-        return Err(CompileError::ValidationReport(
-            errors.into_iter().next().unwrap(),
-        ));
-    } else if !errors.is_empty() {
-        let mut combined = String::new();
-        for (i, report) in errors.iter().enumerate() {
-            if i > 0 {
-                combined.push('\n');
-            }
-            combined.push_str(&format!("{}", report));
-        }
-        return Err(CompileError::ValidationReport(miette!(
-            "{}\n{} validation error(s) found",
-            combined,
-            errors.len()
-        )));
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        // Return the original child diagnostics intact so each keeps its own
+        // source name, labels, and spans when rendered.  Previously this
+        // branch stringified every report and wrapped them in a fresh
+        // `miette!` report, discarding their spans.
+        Err(CompileError::ValidationReport(errors))
     }
-
-    Ok(())
 }
 
 /// Check that all run chains reference functions that exist in the
 /// project's function map.
 fn validate_run_refs(
-    runs: &std::collections::HashMap<String, Vec<Vec<String>>>,
-    functions: &std::collections::HashMap<String, Vec<FnStmt>>,
+    runs: &HashMap<String, Vec<Vec<String>>>,
+    functions: &HashMap<String, Vec<FnStmt>>,
     prefix: &str,
     errors: &mut Vec<miette::Report>,
 ) {
@@ -75,95 +62,269 @@ fn validate_run_refs(
     }
 }
 
-/// Validate all function bodies in a project's function map, using a
-/// fresh scope stack for each function.
-fn validate_fn_bodies(
-    functions: &std::collections::HashMap<String, Vec<FnStmt>>,
-    vars: &HashMap<String, String>,
+/// Validate all function bodies in a project's function map.  Builds a
+/// scope stack seeded with global + project vars and pushes a fresh
+/// Function frame per function, then dispatches each statement to its own
+/// `validate` via the shared [`ValidateFnCtx`].
+fn validate_project_bodies(
+    functions: &HashMap<String, Vec<FnStmt>>,
+    global: &ScopeStack<String>,
+    declared_var_names: &HashSet<String>,
     proj_name: &str,
+    sources: &HashMap<String, String>,
     errors: &mut Vec<miette::Report>,
 ) {
     for (fn_name, body) in functions {
-        // Initial empty frame so VarDecl tracking and references resolve
-        // against the flat scope.
-        let mut local: Vec<HashSet<String>> = vec![HashSet::new()];
-        validate_fn_body(fn_name, body, vars, &mut local, errors, proj_name);
+        let mut scope = ScopeStack::<()>::new();
+        scope.seed_global(global.iter_global().map(|(k, _)| (k.clone(), ())));
+        scope.push_frame(ScopeKind::Project);
+        scope.seed_top(declared_var_names.iter().map(|k| (k.clone(), ())));
+
+        let guard = scope.enter(ScopeKind::Function);
+        let mut ctx = ValidateFnCtx {
+            fn_name,
+            proj_name,
+            scope: &mut *guard.stack,
+            errors: &mut *errors,
+            sources,
+        };
+        validate_fn_body_stmts(body, &mut ctx);
     }
 }
 
 /// Check that all variable references in an `Expr` are defined in the
-/// current scope hierarchy.
-fn validate_expr(
+/// current scope hierarchy. Undefined references become a spanned diagnostic
+/// pointing at the exact expression, so the error reports the location like
+/// every other syntax/validation error.
+pub(crate) fn validate_expr(
     expr: &Expr,
     fn_name: &str,
-    vars: &HashMap<String, String>,
-    local: &[HashSet<String>],
+    scope: &ScopeStack<()>,
     errors: &mut Vec<miette::Report>,
     proj_name: &str,
+    sources: &HashMap<String, String>,
 ) {
-    resolve::visit_expr_vars(expr, |name| {
-        if !var_is_declared(name, vars, local) {
-            errors.push(miette!(
-                "project {:?}: fn {:?}: undefined variable ${}",
-                proj_name,
-                fn_name,
-                name
+    expr.visit_vars(|name| {
+        if !scope.is_declared(name) {
+            errors.push(spanned_report_on(
+                format!(
+                    "project {:?}: fn {:?}: undefined variable ${}",
+                    proj_name, fn_name, name
+                ),
+                sources,
+                expr,
             ));
         }
     });
 }
 
-/// Validate variable references in a function body, tracking local
-/// declarations in a scope stack.
-fn validate_fn_body(
-    fn_name: &str,
-    body: &[FnStmt],
-    vars: &HashMap<String, String>,
-    local: &mut Vec<HashSet<String>>,
-    errors: &mut Vec<miette::Report>,
-    proj_name: &str,
-) {
-    for stmt in body {
-        match stmt {
-            FnStmt::VarDecl { name, value, .. } => {
-                validate_expr(value, fn_name, vars, local, errors, proj_name);
-                if let Some(top) = local.last_mut() {
-                    top.insert(name.clone());
-                }
-            }
-            FnStmt::Log { value, .. } => {
-                validate_expr(value, fn_name, vars, local, errors, proj_name);
-            }
-            FnStmt::Exec { value, .. } => {
-                validate_expr(value, fn_name, vars, local, errors, proj_name);
-            }
-            FnStmt::Cd { value, .. } => {
-                validate_expr(value, fn_name, vars, local, errors, proj_name);
-            }
-            FnStmt::EnvBlock { pairs, body, .. } => {
-                for pair in pairs {
-                    validate_expr(&pair.value, fn_name, vars, local, errors, proj_name);
-                }
-                validate_fn_body(fn_name, body, vars, local, errors, proj_name);
-            }
-            FnStmt::Case { condition, scopes } => {
-                validate_expr(condition, fn_name, vars, local, errors, proj_name);
-                for arm in scopes {
-                    resolve::visit_case_pattern_vars(&arm.pattern, |name| {
-                        if !var_is_declared(name, vars, local) {
-                            errors.push(miette!(
-                                "project {:?}: fn {:?}: undefined variable ${}",
-                                proj_name,
-                                fn_name,
-                                name
-                            ));
-                        }
-                    });
-                    local.push(HashSet::new());
-                    validate_fn_body(fn_name, &arm.body, vars, local, errors, proj_name);
-                    local.pop();
-                }
-            }
-        }
+#[cfg(test)]
+mod tests {
+    use crate::compiler::test_support::*;
+
+    #[test]
+    fn test_undefined_variable() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        var string x = $missing;\
+        ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(
+            err.to_string().contains("undefined variable"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_undefined_var_in_fn_body() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr test [\n\
+            url = `u`\n\
+            dir = `d`\n\
+        ] {\n\
+            fn badfn { log $undefined; }\n\
+        }\
+        ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(
+            err.to_string().contains("undefined variable"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_run_reference_validation() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr test [\n\
+            url = `u`\n\
+            dir = `d`\n\
+        ] {\n\
+            fn real { log `hi`; }\n\
+            run s { unknown; }\n\
+        }\
+        ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        let err_str = err.to_string();
+        assert!(err_str.contains("unknown function"), "got: {}", err_str);
+    }
+
+    #[test]
+    fn test_valid_run_references() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr test [\n\
+            url = `u`\n\
+            dir = `d`\n\
+        ] {\n\
+            fn real { log `hi`; }\n\
+            run s { real; }\n\
+        }\
+        ",
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        assert!(cfg.projects["test"].runs.contains_key("s"));
+    }
+
+    #[test]
+    fn test_undefined_var_in_case_condition() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr test [\n\
+            url = `u`\n\
+            dir = `d`\n\
+        ] {\n\
+            fn badfn { case $undefined { _ { }; }; }\n\
+        }\
+        ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(
+            err.to_string().contains("undefined variable"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_undefined_var_in_case_varref_pattern() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr test [\n\
+            url = `u`\n\
+            dir = `d`\n\
+        ] {\n\
+            fn badfn { var string x = `ok`; case $x { $undefined { }; _ { }; }; }\n\
+        }\
+        ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(
+            err.to_string().contains("undefined variable"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_run_validates_function_refs() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr p [ url = `http://x` dir = `x` ] {\n\
+            run bad { nonexistent; }\n\
+        }\
+        ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(err.to_string().contains("unknown function"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_fn_var_validation() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+        pr p [ url = `http://x` dir = `x` ] {\n\
+            fn bad { log $undefined; }\n\
+        }\
+        ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(
+            err.to_string().contains("undefined variable"),
+            "got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_validation_errors_span_multiple_source_files() {
+        // Two undefined-variable validation errors that originate from DIFFERENT
+        // source files (main.kiru and an imported build.kiru). The aggregate
+        // must preserve each child report's own source/span, so both surface
+        // with their correct file instead of being collapsed into one
+        // stringified blob.
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+pr p [ url = `u` dir = `d` ] {\n\
+    fn f1 { log $missing_main; }\n\
+}\n\
+import `build.kiru`;\n\
+            ",
+        );
+        write_config(
+            dir.path(),
+            "build.kiru",
+            "\
+pr p {\n\
+    fn f2 { log $missing_build; }\n\
+}\n\
+            ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        let err_str = err.to_string();
+        assert!(
+            err_str.contains("undefined variable $missing_main")
+                && err_str.contains("undefined variable $missing_build"),
+            "both source-file errors should be preserved in the aggregate, got: {}",
+            err_str
+        );
+        assert!(
+            !err_str.contains("validation error(s) found"),
+            "aggregate must keep original diagnostics, not stringify-and-wrap, got: {}",
+            err_str
+        );
     }
 }

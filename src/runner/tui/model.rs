@@ -94,6 +94,22 @@ impl Model {
             .all(|t| matches!(t.status, TaskStatus::Success | TaskStatus::Error))
     }
 
+    /// Count finalized tasks by outcome. Centralizes the success/error tally
+    /// shared by the run and sync renderers so a new terminal status would
+    /// propagate to both summaries from one place.
+    pub fn success_and_error_counts(&self) -> (usize, usize) {
+        let mut ok = 0;
+        let mut err = 0;
+        for task in &self.tasks {
+            match task.status {
+                TaskStatus::Success => ok += 1,
+                TaskStatus::Error => err += 1,
+                _ => {}
+            }
+        }
+        (ok, err)
+    }
+
     /// Aggregate status for an entire chain: Error if any task failed,
     /// Running if any task is still active, Pending if nothing has started,
     /// Success otherwise.

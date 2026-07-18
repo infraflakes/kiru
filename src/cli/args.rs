@@ -15,8 +15,8 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Parse and validate the configuration file
-    Validate,
+    /// Show the resolved configuration (parse, resolve, and validate)
+    Status,
     /// Clone/sync project repositories
     Sync,
     /// Run a run block

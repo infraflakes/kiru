@@ -1,5 +1,5 @@
 use super::render;
-use super::{Model, SPINNER_FRAMES, TaskStatus};
+use super::{Model, SPINNER_FRAMES};
 use crate::runner::colors;
 use ratatui::{
     Frame,
@@ -51,16 +51,7 @@ pub fn render_sync_output(frame: &mut Frame, model: &Model, spinner_idx: usize) 
 
     let mut y_pos = area.y;
     let all_done = model.all_done();
-    let ok_count = model
-        .tasks
-        .iter()
-        .filter(|t| t.status == TaskStatus::Success)
-        .count();
-    let err_count = model
-        .tasks
-        .iter()
-        .filter(|t| t.status == TaskStatus::Error)
-        .count();
+    let (ok_count, err_count) = model.success_and_error_counts();
     let total = model.tasks.len();
 
     let header = if !all_done {

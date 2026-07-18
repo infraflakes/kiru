@@ -1,43 +1,17 @@
-use super::colors;
 use crate::compiler::{Project, ResolvedEnvPair, ResolvedFnStmt};
+use crate::runner::colors;
 use crate::runner::error::RuntimeError;
 use crate::shell;
 use std::collections::HashMap;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
-/// Callback invoked for each line of output (used by the TUI).
+/// Callback invoked for each emitted output line. This is the only output
+/// sink: every execution path (the `run`/`sync` TUI, the direct `fn` command)
+/// supplies one, so there is no separate "write straight to stdout" mode.
 pub type OutputCallback = Arc<dyn Fn(String) + Send + Sync>;
-
-/// Where function output is directed: a direct writer or a callback.
-pub(crate) enum OutputTarget {
-    Direct(Box<dyn Write + Send>),
-    Callback(OutputCallback),
-}
-
-impl OutputTarget {
-    pub(super) fn writeln(&mut self, content: &str) -> io::Result<()> {
-        match self {
-            OutputTarget::Direct(w) => writeln!(w, "{content}"),
-            OutputTarget::Callback(cb) => {
-                cb(content.to_string());
-                Ok(())
-            }
-        }
-    }
-
-    pub(super) fn writeln_colored(&mut self, content: &str, color: &str) -> io::Result<()> {
-        match self {
-            OutputTarget::Direct(w) => writeln!(w, "{color}{content}{}", colors::RESET),
-            OutputTarget::Callback(cb) => {
-                cb(content.to_string());
-                Ok(())
-            }
-        }
-    }
-}
 
 /// Runtime execution context for a resolved function body.
 ///
@@ -45,7 +19,7 @@ impl OutputTarget {
 /// context has no variable lookup or scope-tracking logic — it only manages
 /// the working directory, environment variable layers, and output.
 pub(crate) struct ExecContext<'a> {
-    pub(super) output: &'a mut OutputTarget,
+    pub(super) output: &'a mut OutputCallback,
     pub(super) env_stack: Vec<HashMap<String, String>>,
     pub(super) work_dir: PathBuf,
     pub(super) env_vars: Vec<(String, String)>,
@@ -56,7 +30,7 @@ impl<'a> ExecContext<'a> {
     /// `project.dir` if a project is provided, falling back to the current
     /// directory otherwise.  When `KIRU_CWD=1` is set, the current working
     /// directory is always used (useful for CI/CD workflows).
-    pub(crate) fn new(project: Option<&'a Project>, output: &'a mut OutputTarget) -> Self {
+    pub(crate) fn new(project: Option<&'a Project>, output: &'a mut OutputCallback) -> Self {
         let use_cwd = std::env::var("KIRU_CWD").as_deref() == Ok("1");
         let work_dir = if use_cwd {
             std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
@@ -107,18 +81,14 @@ impl<'a> ExecContext<'a> {
     pub(crate) fn exec_stmts(&mut self, body: &[ResolvedFnStmt]) -> Result<(), RuntimeError> {
         for stmt in body {
             match stmt {
-                ResolvedFnStmt::Log { value } => self.exec_log(value)?,
-                ResolvedFnStmt::Exec { value } => self.exec_command(value)?,
-                ResolvedFnStmt::Cd { value } => self.exec_cd(value)?,
-                ResolvedFnStmt::EnvBlock { pairs, body } => {
-                    self.exec_resolved_env_block(pairs, body)?;
-                }
-                ResolvedFnStmt::Case { condition, scopes } => {
-                    for arm in scopes {
-                        if match_case_pattern(&arm.pattern, condition) {
-                            let result = self.exec_stmts(&arm.body);
-                            result?;
-                            break;
+                ResolvedFnStmt::Log(s) => self.exec_log(&s.value)?,
+                ResolvedFnStmt::Exec(s) => self.exec_command(&s.value)?,
+                ResolvedFnStmt::Cd(s) => self.exec_cd(&s.value)?,
+                ResolvedFnStmt::EnvBlock(s) => self.exec_resolved_env_block(&s.pairs, &s.body)?,
+                ResolvedFnStmt::Case(s) => {
+                    for arm in &s.scopes {
+                        if match_case_pattern(&arm.pattern, &s.condition) {
+                            self.exec_stmts(&arm.body)?;
                         }
                     }
                 }
@@ -127,16 +97,14 @@ impl<'a> ExecContext<'a> {
         Ok(())
     }
 
-    fn exec_log(&mut self, msg: &str) -> Result<(), RuntimeError> {
+    pub(crate) fn exec_log(&mut self, msg: &str) -> Result<(), RuntimeError> {
         let indent = self.compute_indent_string(0);
-        let line = format!("{}log  {}", indent, msg);
-        self.output
-            .writeln_colored(&line, colors::LOG_ANSI)
-            .map_err(RuntimeError::Io)?;
+        let line = format!("{}{}{}", indent, colors::LOG_PREFIX, msg);
+        self.emit(line);
         Ok(())
     }
 
-    fn exec_cd(&mut self, resolved: &str) -> Result<(), RuntimeError> {
+    pub(crate) fn exec_cd(&mut self, resolved: &str) -> Result<(), RuntimeError> {
         if Path::new(resolved).is_absolute() {
             return Err(RuntimeError::Lookup(format!(
                 "cd {}: absolute path not allowed",
@@ -159,14 +127,12 @@ impl<'a> ExecContext<'a> {
         self.work_dir = candidate;
 
         let indent = self.compute_indent_string(0);
-        let line = format!("{}cd   {}", indent, resolved);
-        self.output
-            .writeln_colored(&line, colors::CD_ANSI)
-            .map_err(RuntimeError::Io)?;
+        let line = format!("{}{}{}", indent, colors::CD_PREFIX, resolved);
+        self.emit(line);
         Ok(())
     }
 
-    fn exec_resolved_env_block(
+    pub(crate) fn exec_resolved_env_block(
         &mut self,
         pairs: &[ResolvedEnvPair],
         body: &[ResolvedFnStmt],
@@ -178,11 +144,8 @@ impl<'a> ExecContext<'a> {
 
         let keys: Vec<&str> = pairs.iter().map(|p| p.key.as_str()).collect();
         let indent = self.compute_indent_string(0);
-        let line = format!("{}env  {}", indent, keys.join(", "));
-
-        self.output
-            .writeln_colored(&line, colors::ENV_ANSI)
-            .map_err(RuntimeError::Io)?;
+        let line = format!("{}{}{}", indent, colors::ENV_PREFIX, keys.join(", "));
+        self.emit(line);
 
         self.env_stack.push(layer);
         let result = self.exec_stmts(body);
@@ -190,43 +153,42 @@ impl<'a> ExecContext<'a> {
         result
     }
 
-    /// Write each line of `data` as indented output lines.
-    fn process_output_lines(&mut self, data: &[u8], indent_str: &str) -> Result<(), RuntimeError> {
-        for line_result in io::BufReader::new(data).lines() {
-            let line_text = line_result.map_err(RuntimeError::Io)?;
-            self.output
-                .writeln(&[indent_str, &line_text].concat())
-                .map_err(RuntimeError::Io)?;
-        }
-        Ok(())
+    /// Forward a single output line to the configured sink.
+    fn emit(&self, line: String) {
+        (self.output)(line);
     }
 
-    pub(super) fn exec_command(&mut self, cmd_str: &str) -> Result<(), RuntimeError> {
+    pub(crate) fn exec_command(&mut self, cmd_str: &str) -> Result<(), RuntimeError> {
         let indent = self.compute_indent_string(0);
-        let line = format!("{}exec {}", indent, cmd_str);
-        self.output
-            .writeln_colored(&line, colors::EXEC_ANSI)
-            .map_err(RuntimeError::Io)?;
+        let line = format!("{}{}{}", indent, colors::EXEC_PREFIX, cmd_str);
+        self.emit(line);
 
         let shell = shell::get_current_shell_path();
-        let output = Command::new(&shell)
+        let mut child = Command::new(&shell)
             .arg("-c")
-            .arg(cmd_str)
+            .arg(format!("{} 2>&1", cmd_str))
             .current_dir(&self.work_dir)
             .envs(self.build_env_iter())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| RuntimeError::exec_io_error(cmd_str, e))?
-            .wait_with_output()
             .map_err(|e| RuntimeError::exec_io_error(cmd_str, e))?;
 
         let indent_str = self.compute_indent_string(1);
-        self.process_output_lines(&output.stdout, &indent_str)?;
-        self.process_output_lines(&output.stderr, &indent_str)?;
+        if let Some(stdout) = child.stdout.take() {
+            for line_result in io::BufReader::new(stdout).lines() {
+                match line_result {
+                    Ok(text) => self.emit(format!("{}{}", indent_str, text)),
+                    Err(_) => break,
+                }
+            }
+        }
 
-        if !output.status.success() {
-            return Err(RuntimeError::exec_exit_code(cmd_str, output.status.code()));
+        let status = child
+            .wait()
+            .map_err(|e| RuntimeError::exec_io_error(cmd_str, e))?;
+
+        if !status.success() {
+            return Err(RuntimeError::exec_exit_code(cmd_str, status.code()));
         }
 
         Ok(())
@@ -241,5 +203,74 @@ pub(crate) fn match_case_pattern(
     match pattern {
         crate::compiler::ResolvedCasePattern::Literal(lit) => condition == lit,
         crate::compiler::ResolvedCasePattern::Default => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compiler::fnstmt::{ResolvedCaseStmt, ResolvedLogStmt};
+    use crate::compiler::types::ResolvedCaseArm;
+    use crate::compiler::{ResolvedCasePattern, ResolvedFnStmt};
+
+    #[test]
+    fn test_match_literal_pattern() {
+        let pattern = ResolvedCasePattern::Literal("Linux".to_string());
+        assert!(match_case_pattern(&pattern, "Linux"));
+        assert!(!match_case_pattern(&pattern, "Darwin"));
+    }
+
+    #[test]
+    fn test_match_default_pattern() {
+        let pattern = ResolvedCasePattern::Default;
+        assert!(match_case_pattern(&pattern, "anything"));
+        assert!(match_case_pattern(&pattern, ""));
+    }
+
+    #[test]
+    fn test_match_empty_string() {
+        let pattern = ResolvedCasePattern::Literal(String::new());
+        assert!(match_case_pattern(&pattern, ""));
+        assert!(!match_case_pattern(&pattern, "x"));
+    }
+
+    #[test]
+    fn test_case_first_match_wins() {
+        let (_cfg, project, mut output) = crate::runner::test_support::test_context();
+        let mut ctx = ExecContext::new(Some(&project), &mut output);
+        let body: [ResolvedFnStmt; 1] = [ResolvedFnStmt::Case(ResolvedCaseStmt {
+            condition: "a".to_string(),
+            scopes: vec![
+                ResolvedCaseArm {
+                    pattern: ResolvedCasePattern::Literal("a".to_string()),
+                    body: vec![ResolvedFnStmt::Log(ResolvedLogStmt {
+                        value: "first".to_string(),
+                    })],
+                },
+                ResolvedCaseArm {
+                    pattern: ResolvedCasePattern::Default,
+                    body: vec![ResolvedFnStmt::Log(ResolvedLogStmt {
+                        value: "second".to_string(),
+                    })],
+                },
+            ],
+        })];
+        ctx.exec_stmts(&body).unwrap();
+    }
+
+    #[test]
+    fn test_case_no_match_does_nothing() {
+        let (_cfg, project, mut output) = crate::runner::test_support::test_context();
+        let mut ctx = ExecContext::new(Some(&project), &mut output);
+        let body: [ResolvedFnStmt; 1] = [ResolvedFnStmt::Case(ResolvedCaseStmt {
+            condition: "no-match".to_string(),
+            scopes: vec![ResolvedCaseArm {
+                pattern: ResolvedCasePattern::Literal("a".to_string()),
+                body: vec![ResolvedFnStmt::Log(ResolvedLogStmt {
+                    value: "should-not-run".to_string(),
+                })],
+            }],
+        })];
+        ctx.exec_stmts(&body).unwrap();
     }
 }

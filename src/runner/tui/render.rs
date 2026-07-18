@@ -51,14 +51,7 @@ pub fn status_color(status: TaskStatus) -> Color {
 /// Append a single output line to `buf` with ANSI color codes derived from
 /// the line prefix (log, exec, cd, env, etc.).
 pub fn write_colored_line_buf(buf: &mut String, line: &str) {
-    let (indent, prefix, color, rest) = colors::colored_line_parts(line);
-    if indent > 0 {
-        buf.push_str(&line[..indent]);
-    }
-    buf.push_str(color);
-    buf.push_str(prefix);
-    buf.push_str(rest);
-    buf.push_str(colors::RESET);
+    buf.push_str(&colors::colored_line_string(line));
 }
 
 /// Write a horizontal separator line with a centered label into `buf`,

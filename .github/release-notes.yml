@@ -1,0 +1,7 @@
+changelog:
+  exclude:
+    labels:
+      - ignore-from-release
+  categories:
+    - title: 'Changes'
+      labels: []

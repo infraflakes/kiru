@@ -29,7 +29,9 @@
 
 pub(crate) mod compile;
 pub(crate) mod error;
+pub(crate) mod fnstmt;
 pub(crate) mod resolve;
+pub(crate) mod scope;
 pub(crate) mod types;
 pub(crate) mod validation;
 
@@ -39,7 +41,8 @@ pub use compile::compile_and_resolve;
 /// Skips validation and function body lowering.  Used by `kiru sync`.
 pub use compile::parse_projects_metadata;
 pub use error::CompileError;
-pub use types::{Config, Project, ResolvedCasePattern, ResolvedEnvPair, ResolvedFnStmt, SyncMode};
+pub use fnstmt::*;
+pub use types::{Config, Project, ResolvedCasePattern, ResolvedEnvPair, SyncMode};
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod test_support;
