@@ -153,15 +153,6 @@ impl<'a> ExecContext<'a> {
         result
     }
 
-    /// Write each line of `data` as indented output lines.
-    fn process_output_lines(&mut self, data: &[u8], indent_str: &str) -> Result<(), RuntimeError> {
-        for line_result in io::BufReader::new(data).lines() {
-            let line_text = line_result.map_err(RuntimeError::Io)?;
-            self.emit([indent_str, &line_text].concat());
-        }
-        Ok(())
-    }
-
     /// Forward a single output line to the configured sink.
     fn emit(&self, line: String) {
         (self.output)(line);
@@ -173,24 +164,31 @@ impl<'a> ExecContext<'a> {
         self.emit(line);
 
         let shell = shell::get_current_shell_path();
-        let output = Command::new(&shell)
+        let mut child = Command::new(&shell)
             .arg("-c")
-            .arg(cmd_str)
+            .arg(format!("{} 2>&1", cmd_str))
             .current_dir(&self.work_dir)
             .envs(self.build_env_iter())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| RuntimeError::exec_io_error(cmd_str, e))?
-            .wait_with_output()
             .map_err(|e| RuntimeError::exec_io_error(cmd_str, e))?;
 
         let indent_str = self.compute_indent_string(1);
-        self.process_output_lines(&output.stdout, &indent_str)?;
-        self.process_output_lines(&output.stderr, &indent_str)?;
+        if let Some(stdout) = child.stdout.take() {
+            for line_result in io::BufReader::new(stdout).lines() {
+                match line_result {
+                    Ok(text) => self.emit(format!("{}{}", indent_str, text)),
+                    Err(_) => break,
+                }
+            }
+        }
 
-        if !output.status.success() {
-            return Err(RuntimeError::exec_exit_code(cmd_str, output.status.code()));
+        let status = child
+            .wait()
+            .map_err(|e| RuntimeError::exec_io_error(cmd_str, e))?;
+
+        if !status.success() {
+            return Err(RuntimeError::exec_exit_code(cmd_str, status.code()));
         }
 
         Ok(())
