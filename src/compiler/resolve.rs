@@ -1,12 +1,10 @@
 use crate::compiler::error::{CompileError, spanned_err_named, spanned_err_on_field};
 use crate::compiler::fnstmt::{ResolveFnCtx, resolve_fn_body_stmts};
 use crate::compiler::scope::{Redeclaration, ScopeKind, ScopeStack};
-use crate::compiler::types::{
-    Config, Project, ProjectVarStmt, ResolvedCasePattern, SyncMode, UnresolvedConfig,
-    UnresolvedProject, parse_sync_mode,
-};
+use crate::compiler::types::{ProjectVarStmt, UnresolvedConfig, UnresolvedProject};
 use crate::dsl::{CasePattern, Expr, InterpolationPart, Stmt, VarType};
 use crate::error::SourceFile;
+use crate::plan::{Plan, PlanCasePattern, PlanProject, SyncMode, parse_sync_mode};
 use crate::shell;
 use miette::miette;
 use std::collections::{HashMap, HashSet};
@@ -211,7 +209,7 @@ pub(crate) fn resolve_case_pattern(
     pattern: &CasePattern,
     scope: &ScopeStack<String>,
     sources: &HashMap<String, String>,
-) -> Result<ResolvedCasePattern, CompileError> {
+) -> Result<PlanCasePattern, CompileError> {
     match pattern {
         CasePattern::Literal {
             parts,
@@ -221,7 +219,7 @@ pub(crate) fn resolve_case_pattern(
         } => {
             let resolved =
                 resolve_interpolation_to_string(parts, scope, *offset, *len, sources, source_name)?;
-            Ok(ResolvedCasePattern::Literal(resolved))
+            Ok(PlanCasePattern::Literal(resolved))
         }
         CasePattern::VarRef {
             name,
@@ -229,10 +227,10 @@ pub(crate) fn resolve_case_pattern(
             len,
             source_name,
         } => match scope.lookup(name) {
-            Some(val) => Ok(ResolvedCasePattern::Literal(val.clone())),
+            Some(val) => Ok(PlanCasePattern::Literal(val.clone())),
             None => Err(undefined_var_err(name, *offset, *len, sources, source_name)),
         },
-        CasePattern::Default => Ok(ResolvedCasePattern::Default),
+        CasePattern::Default => Ok(PlanCasePattern::Default),
     }
 }
 
@@ -392,7 +390,7 @@ pub(crate) fn resolve_with_scopes(
     sources: &HashMap<String, String>,
     force_cwd: bool,
     shell_cache: &mut ShellCache,
-) -> Result<Config, CompileError> {
+) -> Result<Plan, CompileError> {
     let mut projects = HashMap::new();
     let mut seen_dirs: HashSet<String> = HashSet::new();
     for (name, unresolved_project) in unresolved.projects {
@@ -457,7 +455,7 @@ pub(crate) fn resolve_with_scopes(
 
         projects.insert(
             name,
-            Project {
+            PlanProject {
                 url,
                 dir,
                 sync,
@@ -468,14 +466,14 @@ pub(crate) fn resolve_with_scopes(
         );
     }
 
-    Ok(Config { projects })
+    Ok(Plan { projects })
 }
 
 #[cfg(test)]
 mod tests {
     use crate::compiler::error::CompileError;
-    use crate::compiler::fnstmt::ResolvedFnStmt;
     use crate::compiler::test_support::*;
+    use crate::plan::PlanStmt;
     use miette::Report;
 
     #[test]
@@ -662,7 +660,7 @@ mod tests {
         let fn_body = &proj.functions["check"];
         assert_eq!(fn_body.len(), 1);
         let stmt = match &fn_body[0] {
-            ResolvedFnStmt::Log(s) => s,
+            PlanStmt::Log(s) => s,
             other => panic!("expected Log statement, got {:?}", other),
         };
         let expected = current_dir.to_string_lossy().to_string();
@@ -698,7 +696,7 @@ mod tests {
         let fn_body = &proj.functions["check"];
         assert_eq!(fn_body.len(), 1);
         let stmt = match &fn_body[0] {
-            ResolvedFnStmt::Log(s) => s,
+            PlanStmt::Log(s) => s,
             other => panic!("expected Log statement, got {:?}", other),
         };
         let expected = std::fs::canonicalize(&subdir)
@@ -737,7 +735,7 @@ mod tests {
         let fn_body = &proj.functions["check"];
         assert_eq!(fn_body.len(), 1); // VarDecl consumed, only log emitted
         let stmt = match &fn_body[0] {
-            ResolvedFnStmt::Log(s) => s,
+            PlanStmt::Log(s) => s,
             other => panic!("expected Log statement, got {:?}", other),
         };
         let expected = std::fs::canonicalize(&subdir)
@@ -768,7 +766,7 @@ mod tests {
         assert_eq!(proj.url, "hello-from-global");
         let fn_body = &proj.functions["check"];
         let stmt = match &fn_body[0] {
-            ResolvedFnStmt::Log(s) => s,
+            PlanStmt::Log(s) => s,
             other => panic!("expected Log statement, got {:?}", other),
         };
         assert_eq!(stmt.value, "hello-from-global");
@@ -877,7 +875,7 @@ mod tests {
         let fn_body = &proj.functions["check"];
         assert_eq!(fn_body.len(), 1);
         let stmt = match &fn_body[0] {
-            ResolvedFnStmt::Log(s) => s,
+            PlanStmt::Log(s) => s,
             other => panic!("expected Log statement, got {:?}", other),
         };
         assert_eq!(stmt.value, "done");

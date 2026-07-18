@@ -6,11 +6,12 @@ mod sync;
 
 pub use args::{Cli, Commands};
 
-use crate::compiler::{CompileError, Config};
+use crate::compiler::CompileError;
+use crate::plan::Plan;
 use clap::Parser;
 use std::path::PathBuf;
 
-fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Config> {
+fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Plan> {
     let config_path = get_config_path(config_arg);
     let force_cwd = std::env::var("KIRU_CWD").as_deref() == Ok("1");
     crate::compiler::compile_and_resolve(&config_path, force_cwd).map_err(compile_error_to_report)

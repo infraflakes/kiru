@@ -1,3 +1,4 @@
+use crate::plan::PlanProject;
 use crate::runner;
 use std::path::PathBuf;
 
@@ -9,7 +10,7 @@ pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
 
     let total_project_count = config.projects.len();
 
-    let projects: Vec<(String, crate::compiler::Project)> = config
+    let projects: Vec<(String, PlanProject)> = config
         .projects
         .into_iter()
         .filter(|(name, proj)| {
@@ -51,7 +52,6 @@ pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
         .iter()
         .map(|(name, _)| (name.clone(), vec![name.clone()]))
         .collect();
-    let projects: std::collections::HashMap<String, crate::compiler::Project> =
-        projects.into_iter().collect();
+    let projects: std::collections::HashMap<String, PlanProject> = projects.into_iter().collect();
     runner::sync::run_sync_for_projects(projects, chain_pairs)
 }

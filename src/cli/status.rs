@@ -1,6 +1,7 @@
 use super::load_config;
 use super::pager;
-use crate::compiler::Config;
+use crate::plan::Plan;
+use crate::plan::PlanProject;
 use crate::runner::colors::{BOLD, BOLD_CYAN, CYAN, GRAY, RESET, YELLOW};
 use std::path::PathBuf;
 
@@ -17,12 +18,11 @@ pub fn run_status_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
     Ok(())
 }
 
-fn format_config_as_tree(config: &Config) -> String {
+fn format_config_as_tree(config: &Plan) -> String {
     let mut formatted_output = String::new();
     formatted_output.push('\n');
 
-    let mut sorted_projects: Vec<(&String, &crate::compiler::Project)> =
-        config.projects.iter().collect();
+    let mut sorted_projects: Vec<(&String, &PlanProject)> = config.projects.iter().collect();
     sorted_projects.sort_by(|a, b| a.0.cmp(b.0));
 
     let has_projects = !sorted_projects.is_empty();
@@ -47,7 +47,7 @@ fn format_config_as_tree(config: &Config) -> String {
 }
 
 /// Render a single project node with its fields and functions/runs.
-fn draw_project(out: &mut String, name: &str, project: &crate::compiler::Project, last: bool) {
+fn draw_project(out: &mut String, name: &str, project: &PlanProject, last: bool) {
     let branch = if last { "└" } else { "├" };
     out.push_str(&format!(
         "  {}── {}\n",
@@ -117,7 +117,7 @@ fn draw_item_line(out: &mut String, indent: &str, connector: &str, label: &str, 
     }
 }
 
-fn footer_bar(out: &mut String, config: &Config) {
+fn footer_bar(out: &mut String, config: &Plan) {
     let fn_count: usize = config
         .projects
         .values()

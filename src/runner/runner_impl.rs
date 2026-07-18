@@ -1,12 +1,12 @@
-use crate::compiler::{Config, Project, ResolvedFnStmt};
+use crate::plan::{Plan, PlanProject, PlanStmt};
 use crate::runner::OutputCallback;
 use crate::runner::error::RuntimeError;
 use crate::runner::execution_context::ExecContext;
 use std::sync::Arc;
 
-/// Executes resolved function bodies against a compiled `Config`.
+/// Executes resolved function bodies against a compiled `Plan`.
 pub(crate) struct Runner {
-    cfg: Arc<Config>,
+    cfg: Arc<Plan>,
     output: OutputCallback,
 }
 
@@ -16,10 +16,10 @@ pub(crate) struct Runner {
 /// entry point and the runner never diverge on how a missing function is
 /// reported.
 pub(crate) fn resolve_project_fn<'a>(
-    project: &'a Project,
+    project: &'a PlanProject,
     project_name: &str,
     fn_name: &str,
-) -> Result<&'a [ResolvedFnStmt], RuntimeError> {
+) -> Result<&'a [PlanStmt], RuntimeError> {
     project
         .functions
         .get(fn_name)
@@ -34,7 +34,7 @@ pub(crate) fn resolve_project_fn<'a>(
 
 impl Runner {
     /// Create a runner that forwards every emitted output line to `output`.
-    pub(crate) fn new(cfg: Arc<Config>, output: OutputCallback) -> Self {
+    pub(crate) fn new(cfg: Arc<Plan>, output: OutputCallback) -> Self {
         Runner { cfg, output }
     }
 

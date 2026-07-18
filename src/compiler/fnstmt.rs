@@ -1,10 +1,10 @@
 //! Function-body statements as enums with co-located free functions.
 //!
-//! `FnStmt` (parsed) and `ResolvedFnStmt` (resolved) are enums. Adding a
-//! statement kind is: one enum variant + its payload struct + the per-variant
-//! `validate_*` / `resolve_*` free functions below (all co-located here) +
-//! one parser arm in `body.rs`. The dispatchers `validate_fn_body_stmts` and
-//! `resolve_fn_body_stmts` are a single `match`, so the compiler forces every
+//! `FnStmt` (parsed) and `PlanStmt` (resolved, in `crate::plan`) are enums.
+//! Adding a statement kind is: one enum variant + its payload struct + the
+//! per-variant `validate_*` / `resolve_*` free functions below (all co-located
+//! here) + one parser arm in `body.rs`. The dispatchers `validate_fn_body_stmts`
+//! and `resolve_fn_body_stmts` are a single `match`, so the compiler forces every
 //! variant to be handled — no central match scattered across files, and no
 //! trait-object / boxed-clone indirection for AI agents to diverge on.
 
@@ -15,10 +15,13 @@ use crate::compiler::resolve::redeclaration_err;
 use crate::compiler::resolve::resolve_case_pattern;
 use crate::compiler::resolve::resolve_expr;
 use crate::compiler::scope::{ScopeKind, ScopeStack};
-use crate::compiler::types::{ResolvedCaseArm, ResolvedEnvPair};
 use crate::compiler::validation::validate_expr;
 use crate::dsl::{CaseStmt, EnvBlockStmt, Expr, FnStmt, VarDeclStmt, VarType};
 use crate::error::{SourceFile, spanned_report_on};
+use crate::plan::{
+    PlanCaseArm, PlanCaseStmt, PlanCdStmt, PlanEnvBlockStmt, PlanEnvPair, PlanExecStmt,
+    PlanLogStmt, PlanStmt,
+};
 use miette::Report;
 use std::collections::HashMap;
 use std::path::Path;
@@ -51,43 +54,6 @@ pub(crate) struct ResolveFnCtx<'a> {
 // `crate::dsl::fnstmt` — this module is the semantic (resolution) layer and
 // therefore depends on the syntax layer, not the reverse.
 
-#[derive(Debug, Clone)]
-pub struct ResolvedLogStmt {
-    pub value: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct ResolvedExecStmt {
-    pub value: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct ResolvedCdStmt {
-    pub value: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct ResolvedEnvBlockStmt {
-    pub pairs: Vec<ResolvedEnvPair>,
-    pub body: Vec<ResolvedFnStmt>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ResolvedCaseStmt {
-    pub condition: String,
-    pub scopes: Vec<ResolvedCaseArm>,
-}
-
-/// A fully resolved function-body statement, ready to execute.
-#[derive(Debug, Clone)]
-pub enum ResolvedFnStmt {
-    Log(ResolvedLogStmt),
-    Exec(ResolvedExecStmt),
-    Cd(ResolvedCdStmt),
-    EnvBlock(ResolvedEnvBlockStmt),
-    Case(ResolvedCaseStmt),
-}
-
 // ── Recursive dispatch helpers ───────────────────────────────────────────────
 
 /// Validate every statement in `body` against `ctx`.
@@ -102,7 +68,7 @@ pub(crate) fn validate_fn_body_stmts(body: &[FnStmt], ctx: &mut ValidateFnCtx) {
 pub(crate) fn resolve_fn_body_stmts(
     body: &[FnStmt],
     ctx: &mut ResolveFnCtx,
-) -> Result<Vec<ResolvedFnStmt>, CompileError> {
+) -> Result<Vec<PlanStmt>, CompileError> {
     let mut resolved = Vec::new();
     for stmt in body {
         if let Some(resolved_stmt) = resolve_fn_stmt(stmt, ctx)? {
@@ -126,15 +92,15 @@ fn validate_fn_stmt(stmt: &FnStmt, ctx: &mut ValidateFnCtx) {
 fn resolve_fn_stmt(
     stmt: &FnStmt,
     ctx: &mut ResolveFnCtx,
-) -> Result<Option<ResolvedFnStmt>, CompileError> {
+) -> Result<Option<PlanStmt>, CompileError> {
     match stmt {
-        FnStmt::Log(s) => Ok(Some(ResolvedFnStmt::Log(ResolvedLogStmt {
+        FnStmt::Log(s) => Ok(Some(PlanStmt::Log(PlanLogStmt {
             value: resolve_string_expr(&s.value, ctx)?,
         }))),
-        FnStmt::Exec(s) => Ok(Some(ResolvedFnStmt::Exec(ResolvedExecStmt {
+        FnStmt::Exec(s) => Ok(Some(PlanStmt::Exec(PlanExecStmt {
             value: resolve_string_expr(&s.value, ctx)?,
         }))),
-        FnStmt::Cd(s) => Ok(Some(ResolvedFnStmt::Cd(ResolvedCdStmt {
+        FnStmt::Cd(s) => Ok(Some(PlanStmt::Cd(PlanCdStmt {
             value: resolve_string_expr(&s.value, ctx)?,
         }))),
         FnStmt::VarDecl(s) => resolve_var_decl(s, ctx),
@@ -236,7 +202,7 @@ fn validate_case(s: &CaseStmt, ctx: &mut ValidateFnCtx) {
 fn resolve_var_decl(
     s: &VarDeclStmt,
     ctx: &mut ResolveFnCtx,
-) -> Result<Option<ResolvedFnStmt>, CompileError> {
+) -> Result<Option<PlanStmt>, CompileError> {
     let (offset, len) = s.value.offset_len();
     let source = SourceFile::from_registry(ctx.sources, s.value.source_name());
     let resolved_value = resolve_expr(&s.value, ctx.scope, ctx.sources)?;
@@ -262,26 +228,23 @@ fn resolve_var_decl(
 fn resolve_env_block(
     s: &EnvBlockStmt,
     ctx: &mut ResolveFnCtx,
-) -> Result<Option<ResolvedFnStmt>, CompileError> {
+) -> Result<Option<PlanStmt>, CompileError> {
     let mut resolved_pairs = Vec::new();
     for pair in &s.pairs {
         let resolved_value = resolve_expr(&pair.value, ctx.scope, ctx.sources)?;
-        resolved_pairs.push(ResolvedEnvPair {
+        resolved_pairs.push(PlanEnvPair {
             key: pair.key.clone(),
             value: resolved_value,
         });
     }
     let body = resolve_fn_body_stmts(&s.body, ctx)?;
-    Ok(Some(ResolvedFnStmt::EnvBlock(ResolvedEnvBlockStmt {
+    Ok(Some(PlanStmt::EnvBlock(PlanEnvBlockStmt {
         pairs: resolved_pairs,
         body,
     })))
 }
 
-fn resolve_case(
-    s: &CaseStmt,
-    ctx: &mut ResolveFnCtx,
-) -> Result<Option<ResolvedFnStmt>, CompileError> {
+fn resolve_case(s: &CaseStmt, ctx: &mut ResolveFnCtx) -> Result<Option<PlanStmt>, CompileError> {
     let condition = resolve_expr(&s.condition, ctx.scope, ctx.sources)?;
     let mut resolved_scopes = Vec::new();
     for arm in &s.scopes {
@@ -296,9 +259,9 @@ fn resolve_case(
                 shell_cache: ctx.shell_cache,
             },
         )?;
-        resolved_scopes.push(ResolvedCaseArm { pattern, body });
+        resolved_scopes.push(PlanCaseArm { pattern, body });
     }
-    Ok(Some(ResolvedFnStmt::Case(ResolvedCaseStmt {
+    Ok(Some(PlanStmt::Case(PlanCaseStmt {
         condition,
         scopes: resolved_scopes,
     })))

@@ -1,4 +1,4 @@
-use crate::compiler::{Project, ResolvedEnvPair, ResolvedFnStmt};
+use crate::plan::{PlanEnvPair, PlanProject, PlanStmt};
 use crate::runner::colors;
 use crate::runner::error::RuntimeError;
 use crate::shell;
@@ -30,7 +30,7 @@ impl<'a> ExecContext<'a> {
     /// `project.dir` if a project is provided, falling back to the current
     /// directory otherwise.  When `KIRU_CWD=1` is set, the current working
     /// directory is always used (useful for CI/CD workflows).
-    pub(crate) fn new(project: Option<&'a Project>, output: &'a mut OutputCallback) -> Self {
+    pub(crate) fn new(project: Option<&'a PlanProject>, output: &'a mut OutputCallback) -> Self {
         let use_cwd = std::env::var("KIRU_CWD").as_deref() == Ok("1");
         let work_dir = if use_cwd {
             std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
@@ -78,14 +78,14 @@ impl<'a> ExecContext<'a> {
     /// This is the single execution entry point used both by direct function
     /// calls (`Runner::execute_fn_call`) and by internal constructs (`env`,
     /// `case`).
-    pub(crate) fn exec_stmts(&mut self, body: &[ResolvedFnStmt]) -> Result<(), RuntimeError> {
+    pub(crate) fn exec_stmts(&mut self, body: &[PlanStmt]) -> Result<(), RuntimeError> {
         for stmt in body {
             match stmt {
-                ResolvedFnStmt::Log(s) => self.exec_log(&s.value)?,
-                ResolvedFnStmt::Exec(s) => self.exec_command(&s.value)?,
-                ResolvedFnStmt::Cd(s) => self.exec_cd(&s.value)?,
-                ResolvedFnStmt::EnvBlock(s) => self.exec_resolved_env_block(&s.pairs, &s.body)?,
-                ResolvedFnStmt::Case(s) => {
+                PlanStmt::Log(s) => self.exec_log(&s.value)?,
+                PlanStmt::Exec(s) => self.exec_command(&s.value)?,
+                PlanStmt::Cd(s) => self.exec_cd(&s.value)?,
+                PlanStmt::EnvBlock(s) => self.exec_resolved_env_block(&s.pairs, &s.body)?,
+                PlanStmt::Case(s) => {
                     for arm in &s.scopes {
                         if match_case_pattern(&arm.pattern, &s.condition) {
                             self.exec_stmts(&arm.body)?;
@@ -134,8 +134,8 @@ impl<'a> ExecContext<'a> {
 
     pub(crate) fn exec_resolved_env_block(
         &mut self,
-        pairs: &[ResolvedEnvPair],
-        body: &[ResolvedFnStmt],
+        pairs: &[PlanEnvPair],
+        body: &[PlanStmt],
     ) -> Result<(), RuntimeError> {
         let mut layer = HashMap::new();
         for pair in pairs {
@@ -196,40 +196,35 @@ impl<'a> ExecContext<'a> {
 }
 
 /// Check whether a runtime condition matches a resolved case pattern.
-pub(crate) fn match_case_pattern(
-    pattern: &crate::compiler::ResolvedCasePattern,
-    condition: &str,
-) -> bool {
+pub(crate) fn match_case_pattern(pattern: &crate::plan::PlanCasePattern, condition: &str) -> bool {
     match pattern {
-        crate::compiler::ResolvedCasePattern::Literal(lit) => condition == lit,
-        crate::compiler::ResolvedCasePattern::Default => true,
+        crate::plan::PlanCasePattern::Literal(lit) => condition == lit,
+        crate::plan::PlanCasePattern::Default => true,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::fnstmt::{ResolvedCaseStmt, ResolvedLogStmt};
-    use crate::compiler::types::ResolvedCaseArm;
-    use crate::compiler::{ResolvedCasePattern, ResolvedFnStmt};
+    use crate::plan::{PlanCaseArm, PlanCasePattern, PlanCaseStmt, PlanLogStmt, PlanStmt};
 
     #[test]
     fn test_match_literal_pattern() {
-        let pattern = ResolvedCasePattern::Literal("Linux".to_string());
+        let pattern = PlanCasePattern::Literal("Linux".to_string());
         assert!(match_case_pattern(&pattern, "Linux"));
         assert!(!match_case_pattern(&pattern, "Darwin"));
     }
 
     #[test]
     fn test_match_default_pattern() {
-        let pattern = ResolvedCasePattern::Default;
+        let pattern = PlanCasePattern::Default;
         assert!(match_case_pattern(&pattern, "anything"));
         assert!(match_case_pattern(&pattern, ""));
     }
 
     #[test]
     fn test_match_empty_string() {
-        let pattern = ResolvedCasePattern::Literal(String::new());
+        let pattern = PlanCasePattern::Literal(String::new());
         assert!(match_case_pattern(&pattern, ""));
         assert!(!match_case_pattern(&pattern, "x"));
     }
@@ -238,18 +233,18 @@ mod tests {
     fn test_case_first_match_wins() {
         let (_cfg, project, mut output) = crate::runner::test_support::test_context();
         let mut ctx = ExecContext::new(Some(&project), &mut output);
-        let body: [ResolvedFnStmt; 1] = [ResolvedFnStmt::Case(ResolvedCaseStmt {
+        let body: [PlanStmt; 1] = [PlanStmt::Case(PlanCaseStmt {
             condition: "a".to_string(),
             scopes: vec![
-                ResolvedCaseArm {
-                    pattern: ResolvedCasePattern::Literal("a".to_string()),
-                    body: vec![ResolvedFnStmt::Log(ResolvedLogStmt {
+                PlanCaseArm {
+                    pattern: PlanCasePattern::Literal("a".to_string()),
+                    body: vec![PlanStmt::Log(PlanLogStmt {
                         value: "first".to_string(),
                     })],
                 },
-                ResolvedCaseArm {
-                    pattern: ResolvedCasePattern::Default,
-                    body: vec![ResolvedFnStmt::Log(ResolvedLogStmt {
+                PlanCaseArm {
+                    pattern: PlanCasePattern::Default,
+                    body: vec![PlanStmt::Log(PlanLogStmt {
                         value: "second".to_string(),
                     })],
                 },
@@ -262,11 +257,11 @@ mod tests {
     fn test_case_no_match_does_nothing() {
         let (_cfg, project, mut output) = crate::runner::test_support::test_context();
         let mut ctx = ExecContext::new(Some(&project), &mut output);
-        let body: [ResolvedFnStmt; 1] = [ResolvedFnStmt::Case(ResolvedCaseStmt {
+        let body: [PlanStmt; 1] = [PlanStmt::Case(PlanCaseStmt {
             condition: "no-match".to_string(),
-            scopes: vec![ResolvedCaseArm {
-                pattern: ResolvedCasePattern::Literal("a".to_string()),
-                body: vec![ResolvedFnStmt::Log(ResolvedLogStmt {
+            scopes: vec![PlanCaseArm {
+                pattern: PlanCasePattern::Literal("a".to_string()),
+                body: vec![PlanStmt::Log(PlanLogStmt {
                     value: "should-not-run".to_string(),
                 })],
             }],

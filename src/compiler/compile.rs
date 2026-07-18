@@ -2,10 +2,11 @@ use crate::compiler::error::{CompileError, io_err, spanned_err_named};
 
 use crate::compiler::resolve::{self, PendingShell, ShellCache, config_eval_top_level};
 use crate::compiler::scope::ScopeStack;
-use crate::compiler::types::{Config, Project, ProjectVarStmt, UnresolvedProject};
+use crate::compiler::types::{ProjectVarStmt, UnresolvedProject};
 use crate::compiler::validation;
 use crate::dsl::Parser;
 use crate::dsl::{Expr, Program, ProjectField, Stmt, TopLevel};
+use crate::plan::{Plan, PlanProject};
 use miette::miette;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -16,7 +17,7 @@ use std::path::{Path, PathBuf};
 ///    load imports with variable interpolation, accumulate projects.
 /// 2. Validate using the resolved state.
 /// 3. Fully resolve function bodies against the flat var scope.
-pub fn compile_and_resolve(entry_path: &Path, force_cwd: bool) -> Result<Config, CompileError> {
+pub fn compile_and_resolve(entry_path: &Path, force_cwd: bool) -> Result<Plan, CompileError> {
     let abs_entry = canonicalize_entry(entry_path)?;
     let linear_result = resolve_linear(&abs_entry, ImportPolicy::Strict)?;
     let source_texts = linear_result.unresolved.source_texts.clone();
@@ -443,9 +444,9 @@ fn resolve_linear(
 /// 2. Project field resolution — resolve each project's `url`, `dir`, `sync`,
 ///    and `branch` expressions against the flat scope.
 ///
-/// The returned [`Config`] has empty function maps — function and run
+/// The returned [`Plan`] has empty function maps — function and run
 /// blocks are collected during linear processing but never resolved.
-pub fn parse_projects_metadata(entry_path: &Path) -> Result<Config, CompileError> {
+pub fn parse_projects_metadata(entry_path: &Path) -> Result<Plan, CompileError> {
     let abs_entry = canonicalize_entry(entry_path)?;
     let linear = resolve_linear(&abs_entry, ImportPolicy::SkipMissing)?;
 
@@ -476,7 +477,7 @@ pub fn parse_projects_metadata(entry_path: &Path) -> Result<Config, CompileError
 
         projects.insert(
             name,
-            Project {
+            PlanProject {
                 url,
                 dir,
                 sync,
@@ -487,7 +488,7 @@ pub fn parse_projects_metadata(entry_path: &Path) -> Result<Config, CompileError
         );
     }
 
-    Ok(Config { projects })
+    Ok(Plan { projects })
 }
 
 #[cfg(test)]

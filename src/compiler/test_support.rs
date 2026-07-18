@@ -1,12 +1,12 @@
 use crate::compiler::CompileError;
 use crate::compiler::compile::compile_and_resolve;
-use crate::compiler::types::Config;
+use crate::plan::Plan;
 use std::path::Path;
 
 /// Compile a `.kiru` file and assert success, resolving project-body
 /// `var shell` commands in the project directory (the default behavior).
 /// Wraps the public [`compile_and_resolve`] API so tests focus on assertions.
-pub(crate) fn compile_full(entry_path: &Path) -> Result<Config, CompileError> {
+pub(crate) fn compile_full(entry_path: &Path) -> Result<Plan, CompileError> {
     compile_and_resolve(entry_path, false)
 }
 
@@ -15,7 +15,7 @@ pub(crate) fn compile_full(entry_path: &Path) -> Result<Config, CompileError> {
 pub(crate) fn compile_full_with_cwd(
     entry_path: &Path,
     force_cwd: bool,
-) -> Result<Config, CompileError> {
+) -> Result<Plan, CompileError> {
     compile_and_resolve(entry_path, force_cwd)
 }
 

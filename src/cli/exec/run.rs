@@ -1,11 +1,12 @@
 use super::super::load_config;
+use crate::plan::Plan;
 use crate::runner;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Executes function chains within the scope of a specific named project.
 fn run_project_chains(
-    config: Arc<crate::compiler::Config>,
+    config: Arc<Plan>,
     project: &str,
     chains: Vec<Vec<String>>,
 ) -> miette::Result<()> {

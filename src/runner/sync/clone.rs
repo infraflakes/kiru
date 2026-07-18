@@ -1,4 +1,4 @@
-use crate::compiler::{Project, SyncMode};
+use crate::plan::{PlanProject, SyncMode};
 use crate::runner::error::RuntimeError;
 use crate::runner::{self, TaskOutcome, TaskStatus, TuiEvent, report_task_outcome};
 use std::collections::HashMap;
@@ -99,7 +99,7 @@ fn drain_and_check_git_output(
 /// behavior lives in the co-located `run_sync_*` functions below.
 fn sync_project_inner(
     proj_name: &str,
-    proj: &Project,
+    proj: &PlanProject,
     output: &mut dyn FnMut(&str),
 ) -> Result<(), RuntimeError> {
     match proj.sync {
@@ -115,7 +115,7 @@ fn sync_project_inner(
 /// `proj.dir`. Progress is reported through the `output` callback.
 fn run_sync_clone(
     proj_name: &str,
-    proj: &Project,
+    proj: &PlanProject,
     output: &mut dyn FnMut(&str),
 ) -> Result<(), RuntimeError> {
     let target_dir = PathBuf::from(&proj.dir);
@@ -158,7 +158,7 @@ fn run_sync_clone(
 /// Accepts an output callback that receives progress lines for display or forwarding.
 pub fn sync_project_with_callback(
     proj_name: &str,
-    proj: &Project,
+    proj: &PlanProject,
     mut output_cb: impl FnMut(&str),
 ) -> Result<(), RuntimeError> {
     sync_project_inner(proj_name, proj, &mut output_cb)
@@ -166,7 +166,7 @@ pub fn sync_project_with_callback(
 
 /// Run sync for all projects through the TUI.
 pub fn run_sync_for_projects(
-    mut projects: HashMap<String, Project>,
+    mut projects: HashMap<String, PlanProject>,
     chain_pairs: Vec<(String, Vec<String>)>,
 ) -> miette::Result<()> {
     let name_indices: Vec<(String, usize)> = chain_pairs

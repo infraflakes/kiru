@@ -1,4 +1,4 @@
-use crate::compiler::Config;
+use crate::plan::Plan;
 use crate::runner::error::RuntimeError;
 use crate::runner::{self, Runner, TaskOutcome, TaskStatus, TuiEvent, report_task_outcome};
 use std::sync::Arc;
@@ -13,7 +13,7 @@ type ExecFn = Arc<dyn Fn(&mut Runner, &str) -> Result<(), RuntimeError> + Send +
 fn execute_single_chain(
     chain: Vec<String>,
     start_index: usize,
-    config: Arc<Config>,
+    config: Arc<Plan>,
     tx: mpsc::UnboundedSender<TuiEvent>,
     exec_fn: ExecFn,
 ) -> Result<(), ()> {
@@ -65,7 +65,7 @@ async fn collect_chain_results(
 
 /// Execute a list of function chains through the TUI.
 pub fn execute_task_chains(
-    config: Arc<Config>,
+    config: Arc<Plan>,
     chains: Vec<Vec<String>>,
     task_name_fn: impl Fn(&str) -> String + Send + 'static,
     exec_fn: impl Fn(&mut Runner, &str) -> Result<(), RuntimeError> + Send + Sync + 'static,
