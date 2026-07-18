@@ -5,7 +5,7 @@ use crate::compiler::types::{
     Config, Project, ProjectVarStmt, ResolvedCasePattern, SyncMode, UnresolvedConfig,
     UnresolvedProject, parse_sync_mode,
 };
-use crate::dsl::{CasePattern, Expr, InterpolationPart, Stmt};
+use crate::dsl::{CasePattern, Expr, InterpolationPart, Stmt, VarType};
 use crate::error::SourceFile;
 use crate::shell;
 use miette::miette;
@@ -93,6 +93,119 @@ pub(crate) fn resolve_expr(
     }
 }
 
+// ── Config-eval phase (quarantined `var shell` evaluation) ──────────────────
+//
+// All `var shell` execution is funnelled through `evaluate_config_shell` and
+// runs in exactly one phase after validation. `compile_and_resolve` and
+// `parse_projects_metadata` both drive this phase via `config_eval_top_level`.
+// Results are memoized per (command, working_dir) so an identical command
+// evaluates at most once per compile invocation.
+
+/// Memo key for config-time shell evaluation: the resolved command text and
+/// the working directory it ran in.
+pub(crate) type ShellCache = std::collections::HashMap<(String, Option<String>), String>;
+
+/// A top-level `var shell` deferred to the config-eval phase. We keep the
+/// original `Expr` (not its pre-interpolated command) so nested shell vars
+/// resolve against real outputs at eval time.
+pub(crate) struct PendingShell {
+    pub name: String,
+    pub value: Expr,
+    pub source_name: String,
+    pub offset: usize,
+    pub len: usize,
+}
+
+/// The single funnel for every `var shell` command. Memoizes by
+/// (command, working_dir) and delegates to `shell::execute_shell_variable`,
+/// which now propagates failures as compile errors.
+pub(crate) fn evaluate_config_shell(
+    name: &str,
+    command: &str,
+    working_dir: Option<&Path>,
+    source: &SourceFile<'_>,
+    offset: usize,
+    len: usize,
+    cache: &mut ShellCache,
+) -> Result<String, CompileError> {
+    let key = (
+        command.to_string(),
+        working_dir.map(|p| p.to_string_lossy().to_string()),
+    );
+    if let Some(cached) = cache.get(&key) {
+        return Ok(cached.clone());
+    }
+    let result = shell::execute_shell_variable(name, command, working_dir, source, offset, len)?;
+    cache.insert(key, result.clone());
+    Ok(result)
+}
+
+/// Resolve a top-level `var` declaration during linear processing WITHOUT
+/// running shell. `var string` is resolved and declared immediately;
+/// `var shell` is resolved (its command interpolated against the in-progress
+/// scope) and declared as a placeholder, and also returned as a `PendingShell`
+/// for the post-validation config-eval phase to fill in with the real output.
+pub(crate) fn collect_top_level_var(
+    stmt: &Stmt,
+    scope: &mut ScopeStack<String>,
+    sources: &HashMap<String, String>,
+) -> Result<Option<PendingShell>, CompileError> {
+    if let Stmt::Var {
+        var_type,
+        name,
+        value,
+        offset,
+        len,
+        ..
+    } = stmt
+    {
+        let source_name = value.source_name().to_string();
+        let resolved = resolve_expr(value, scope, sources)?;
+        scope
+            .declare(name.clone(), resolved)
+            .map_err(|r| redeclaration_err(r, sources, &source_name, *offset, *len))?;
+        if *var_type == VarType::Shell {
+            Ok(Some(PendingShell {
+                name: name.clone(),
+                value: value.clone(),
+                source_name,
+                offset: *offset,
+                len: *len,
+            }))
+        } else {
+            Ok(None)
+        }
+    } else {
+        Ok(None)
+    }
+}
+
+/// Evaluate all deferred top-level `var shell` declarations after validation.
+/// Re-resolves each command (so nested shell vars see real outputs) then swaps
+/// the placeholder for the real shell output via `ScopeStack::update`.
+pub(crate) fn config_eval_top_level(
+    pending: Vec<PendingShell>,
+    scope: &mut ScopeStack<String>,
+    cache: &mut ShellCache,
+    sources: &HashMap<String, String>,
+) -> Result<(), CompileError> {
+    for pending_var in pending {
+        let source = SourceFile::from_registry(sources, &pending_var.source_name);
+        let command = resolve_expr(&pending_var.value, scope, sources)?;
+        let output = evaluate_config_shell(
+            &pending_var.name,
+            &command,
+            None,
+            &source,
+            pending_var.offset,
+            pending_var.len,
+            cache,
+        )?;
+        scope.update(&pending_var.name, output);
+    }
+    Ok(())
+}
+
 /// Resolve a case pattern against a scope stack.
 pub(crate) fn resolve_case_pattern(
     pattern: &CasePattern,
@@ -140,6 +253,7 @@ fn resolve_var_stmt_inner(
     scope: &mut ScopeStack<String>,
     working_dir: Option<&Path>,
     sources: &HashMap<String, String>,
+    cache: &mut ShellCache,
 ) -> Result<(), CompileError> {
     let source = SourceFile::from_registry(sources, value.source_name());
     if let Some(existing_kind) = scope.declaring_kind(name) {
@@ -156,46 +270,14 @@ fn resolve_var_stmt_inner(
     }
     let resolved = resolve_expr(value, scope, sources)?;
     let final_val = if *var_type == crate::dsl::VarType::Shell {
-        shell::execute_shell_variable(name, &resolved, working_dir, &source, offset, len)?
+        evaluate_config_shell(name, &resolved, working_dir, &source, offset, len, cache)?
     } else {
         resolved
     };
     scope
-        .declare(name.to_owned(), final_val)
+        .declare(name.to_string(), final_val)
         .map_err(|r| redeclaration_err(r, sources, value.source_name(), offset, len))?;
     Ok(())
-}
-
-/// Resolve a `var` / `var shell` from a full `Stmt::Var` AST node (linear
-/// phase for top-level vars outside project blocks).
-pub(crate) fn resolve_var_stmt(
-    stmt: &Stmt,
-    scope: &mut ScopeStack<String>,
-    working_dir: Option<&Path>,
-    sources: &HashMap<String, String>,
-) -> Result<(), CompileError> {
-    if let Stmt::Var {
-        var_type,
-        name,
-        value,
-        offset,
-        len,
-        ..
-    } = stmt
-    {
-        resolve_var_stmt_inner(
-            var_type,
-            name,
-            value,
-            *offset,
-            *len,
-            scope,
-            working_dir,
-            sources,
-        )
-    } else {
-        Ok(())
-    }
 }
 
 /// Resolve a `var` / `var shell` from a `ProjectVarStmt` (second pass in
@@ -205,6 +287,7 @@ pub(crate) fn resolve_project_var(
     scope: &mut ScopeStack<String>,
     working_dir: Option<&Path>,
     sources: &HashMap<String, String>,
+    cache: &mut ShellCache,
 ) -> Result<(), CompileError> {
     resolve_var_stmt_inner(
         &var.var_type,
@@ -215,6 +298,7 @@ pub(crate) fn resolve_project_var(
         scope,
         working_dir,
         sources,
+        cache,
     )
 }
 
@@ -307,6 +391,7 @@ pub(crate) fn resolve_with_scopes(
     global: ScopeStack<String>,
     sources: &HashMap<String, String>,
     force_cwd: bool,
+    shell_cache: &mut ShellCache,
 ) -> Result<Config, CompileError> {
     let mut projects = HashMap::new();
     let mut seen_dirs: HashSet<String> = HashSet::new();
@@ -345,7 +430,13 @@ pub(crate) fn resolve_with_scopes(
 
         // 4. Resolve body var statements once, in the project directory.
         for var_stmt in &unresolved_project.var_stmts {
-            resolve_project_var(var_stmt, &mut project_scope, working_dir, sources)?;
+            resolve_project_var(
+                var_stmt,
+                &mut project_scope,
+                working_dir,
+                sources,
+                shell_cache,
+            )?;
         }
 
         // 5. Resolve each function body against the project frame.
@@ -357,6 +448,7 @@ pub(crate) fn resolve_with_scopes(
                 scope: &mut *guard.stack,
                 working_dir,
                 sources,
+                shell_cache,
             };
             let resolved_body = resolve_fn_body_stmts(body, &mut resolve_ctx)?;
             functions.insert(fn_name.clone(), resolved_body);

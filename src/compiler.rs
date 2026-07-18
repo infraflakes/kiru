@@ -11,14 +11,17 @@
 //!
 //! 1. **Linear processing** (`compile::resolve_linear`) — AST items are walked in
 //!    source order. Imported files are resolved recursively (with cycle detection).
-//!    `var` bindings (including compile-time shell arithmetic via
-//!    `shell::execute_shell_variable`) are evaluated and accumulated into scopes.
-//!    Project, function, and run declarations are collected into an intermediate
+//!    `var` bindings are collected: `var string` values are resolved and
+//!    accumulated into scopes immediately, while `var shell` declarations are
+//!    collected as placeholders and deferred to the config-eval phase. Project,
+//!    function, and run declarations are collected into an intermediate
 //!    representation.
 //!
 //! 2. **Validation** (`validation::validate_configuration`) — structural constraints
 //!    are checked against the pre-built variable scopes: run-to-function references
-//!    and undefined variable references within function bodies.
+//!    and undefined variable references within function bodies. Validation runs
+//!    *before* any `var shell` command executes; those commands are evaluated in a
+//!    dedicated config-eval phase immediately afterwards.
 //!
 //! 3. **Resolution** (`resolve::resolve_with_scopes`) — all remaining variable
 //!    references (standalone `$var` in expressions; `` `${var}` `` interpolation

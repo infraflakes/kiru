@@ -217,6 +217,22 @@ impl<V> ScopeStack<V> {
             &mut self.global
         }
     }
+
+    /// Replace the value of an already-declared variable, searching the frame
+    /// chain innermost-first (like [`lookup`]). Used by the config-eval phase
+    /// to swap a `var shell` placeholder for its real (shell-evaluated) output
+    /// without disturbing declaration order or re-triggering duplicate checks.
+    pub fn update(&mut self, name: &str, value: V) {
+        for frame in self.frames.iter_mut().rev() {
+            if let Some(entry) = frame.entries.iter_mut().find(|(k, _)| k == name) {
+                entry.1 = value;
+                return;
+            }
+        }
+        if let Some(entry) = self.global.entries.iter_mut().find(|(k, _)| k == name) {
+            entry.1 = value;
+        }
+    }
 }
 
 impl<V> Default for ScopeStack<V> {

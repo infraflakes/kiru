@@ -1,6 +1,6 @@
 use crate::compiler::error::{CompileError, io_err, spanned_err_named};
 
-use crate::compiler::resolve;
+use crate::compiler::resolve::{self, PendingShell, ShellCache, config_eval_top_level};
 use crate::compiler::scope::ScopeStack;
 use crate::compiler::types::{Config, Project, ProjectVarStmt, UnresolvedProject};
 use crate::compiler::validation;
@@ -20,12 +20,26 @@ pub fn compile_and_resolve(entry_path: &Path, force_cwd: bool) -> Result<Config,
     let abs_entry = canonicalize_entry(entry_path)?;
     let linear_result = resolve_linear(&abs_entry, ImportPolicy::Strict)?;
     let source_texts = linear_result.unresolved.source_texts.clone();
+    // Validation runs before any shell execution: top-level `var shell` vars
+    // are declared as placeholders during linear processing, so validation
+    // sees their names without running commands.
     validation::validate_configuration(&linear_result.unresolved, &linear_result.var_scope)?;
+    // Config-eval phase: the ONLY place `var shell` commands run. Memoized so
+    // identical commands evaluate at most once per invocation.
+    let mut shell_cache = ShellCache::new();
+    let mut var_scope = linear_result.var_scope;
+    config_eval_top_level(
+        linear_result.pending_shell,
+        &mut var_scope,
+        &mut shell_cache,
+        &source_texts,
+    )?;
     resolve::resolve_with_scopes(
         linear_result.unresolved,
-        linear_result.var_scope,
+        var_scope,
         &source_texts,
         force_cwd,
+        &mut shell_cache,
     )
 }
 
@@ -39,6 +53,9 @@ struct LinearState {
     recursion_stack: HashSet<PathBuf>,
     import_policy: ImportPolicy,
     source_texts: HashMap<String, String>,
+    /// Top-level `var shell` declarations deferred to the post-validation
+    /// config-eval phase (see `config_eval_top_level`).
+    pending_shell: Vec<PendingShell>,
 }
 
 impl LinearState {
@@ -50,6 +67,7 @@ impl LinearState {
             recursion_stack: HashSet::new(),
             import_policy,
             source_texts: HashMap::new(),
+            pending_shell: Vec::new(),
         }
     }
 }
@@ -58,6 +76,7 @@ impl LinearState {
 struct LinearResult {
     unresolved: super::types::UnresolvedConfig,
     var_scope: ScopeStack<String>,
+    pending_shell: Vec<PendingShell>,
 }
 
 /// Canonicalize the entry path, resolving relative paths against the current
@@ -350,12 +369,16 @@ fn linear_process_program(program: &Program, state: &mut LinearState) -> Result<
         match item {
             TopLevel::Stmt(stmt) => match stmt {
                 Stmt::Var { .. } => {
-                    resolve::resolve_var_stmt(
+                    // Collect (don't execute): `var string` is declared now;
+                    // `var shell` is declared as a placeholder and deferred to
+                    // the config-eval phase after validation.
+                    if let Some(pending) = resolve::collect_top_level_var(
                         stmt,
                         &mut state.var_scope,
-                        None,
                         &state.source_texts,
-                    )?;
+                    )? {
+                        state.pending_shell.push(pending);
+                    }
                 }
                 Stmt::Project {
                     name, fields, body, ..
@@ -408,6 +431,7 @@ fn resolve_linear(
     Ok(LinearResult {
         unresolved,
         var_scope: state.var_scope,
+        pending_shell: state.pending_shell,
     })
 }
 
@@ -427,13 +451,22 @@ pub fn parse_projects_metadata(entry_path: &Path) -> Result<Config, CompileError
 
     let mut projects = HashMap::new();
     let source_texts = &linear.unresolved.source_texts;
+    // Config-eval phase: evaluate top-level `var shell` so project fields can
+    // reference their outputs. Shares the same funnel as `compile_and_resolve`.
+    let mut shell_cache = ShellCache::new();
+    let mut global_scope = linear.var_scope;
+    config_eval_top_level(
+        linear.pending_shell,
+        &mut global_scope,
+        &mut shell_cache,
+        source_texts,
+    )?;
     for (name, unresolved_project) in linear.unresolved.projects {
         // Fields reference global vars only; project body vars are not visible
         // to fields, so no project frame is needed here.
         let mut scope = ScopeStack::new();
         scope.seed_global(
-            linear
-                .var_scope
+            global_scope
                 .iter_global()
                 .map(|(k, v)| (k.clone(), v.clone())),
         );

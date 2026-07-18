@@ -9,6 +9,8 @@
 //! trait-object / boxed-clone indirection for AI agents to diverge on.
 
 use crate::compiler::error::CompileError;
+use crate::compiler::resolve::ShellCache;
+use crate::compiler::resolve::evaluate_config_shell;
 use crate::compiler::resolve::redeclaration_err;
 use crate::compiler::resolve::resolve_case_pattern;
 use crate::compiler::resolve::resolve_expr;
@@ -17,7 +19,6 @@ use crate::compiler::types::{ResolvedCaseArm, ResolvedEnvPair};
 use crate::compiler::validation::validate_expr;
 use crate::dsl::{CaseStmt, EnvBlockStmt, Expr, FnStmt, VarDeclStmt, VarType};
 use crate::error::{SourceFile, spanned_report_on};
-use crate::shell;
 use miette::Report;
 use std::collections::HashMap;
 use std::path::Path;
@@ -41,6 +42,7 @@ pub(crate) struct ResolveFnCtx<'a> {
     pub scope: &'a mut ScopeStack<String>,
     pub working_dir: Option<&'a Path>,
     pub sources: &'a HashMap<String, String>,
+    pub shell_cache: &'a mut ShellCache,
 }
 
 // ── Resolved statement payloads ──────────────────────────────────────────────
@@ -239,13 +241,14 @@ fn resolve_var_decl(
     let source = SourceFile::from_registry(ctx.sources, s.value.source_name());
     let resolved_value = resolve_expr(&s.value, ctx.scope, ctx.sources)?;
     let final_value = if s.var_type == VarType::Shell {
-        shell::execute_shell_variable(
+        evaluate_config_shell(
             &s.name,
             &resolved_value,
             ctx.working_dir,
             &source,
             offset,
             len,
+            ctx.shell_cache,
         )?
     } else {
         resolved_value
@@ -290,6 +293,7 @@ fn resolve_case(
                 scope: &mut *guard.stack,
                 working_dir: ctx.working_dir,
                 sources: ctx.sources,
+                shell_cache: ctx.shell_cache,
             },
         )?;
         resolved_scopes.push(ResolvedCaseArm { pattern, body });
