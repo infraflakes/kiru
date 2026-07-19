@@ -23,8 +23,6 @@ pub enum Commands {
     Run {
         /// Name of the run block to execute
         name: String,
-        /// Project to run it in
-        project: Option<String>,
     },
     /// Run a function directly
     Fn {

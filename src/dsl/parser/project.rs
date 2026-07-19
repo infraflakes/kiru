@@ -87,13 +87,13 @@ impl Parser {
         let mut body = Vec::new();
         while self.current_token().ty != TokenType::RBrace {
             match &self.current_token().ty {
-                TokenType::Var | TokenType::Fn | TokenType::Run => {
+                TokenType::Var | TokenType::Fn => {
                     body.push(self.parse_project_body_stmt()?);
                 }
                 _ => {
                     return Err(ParseError::new(
                         self.eof_aware_span(),
-                        "expected fn, run, or var in project body".to_string(),
+                        "expected fn or var in project body".to_string(),
                     ));
                 }
             }

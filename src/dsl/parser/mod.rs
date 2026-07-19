@@ -352,9 +352,10 @@ mod tests {
     #[test]
     fn test_multiple_top_level_statements() {
         let input = "var string x = `hello`;\n\
-                      pr p [url = `u` dir = `d`] { fn f { log `hi`; } run s { p::f; } }";
+                      pr p [url = `u` dir = `d`] { fn f { log `hi`; } }\n\
+                      run s { p::f; }";
         let prog = parse_program(input).unwrap();
-        assert_eq!(count_stmt_types(&prog), vec!["var", "pr"]);
+        assert_eq!(count_stmt_types(&prog), vec!["var", "pr", "run"]);
     }
 
     #[test]

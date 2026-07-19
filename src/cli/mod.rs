@@ -61,9 +61,7 @@ pub fn run_cli() -> miette::Result<()> {
     match parsed_cli.command {
         Commands::Status => status::run_status_command(parsed_cli.config),
         Commands::Sync => sync::run_sync_command(parsed_cli.config),
-        Commands::Run { name, project } => {
-            exec::execute_run_block(parsed_cli.config, name, project)
-        }
+        Commands::Run { name } => exec::execute_run_block(parsed_cli.config, name),
         Commands::Fn { name, project } => exec::execute_function(parsed_cli.config, name, project),
         Commands::Version => run_version(),
     }

@@ -121,15 +121,13 @@ pub struct PlanProject {
     pub sync: SyncMode,
     pub branch: Option<String>,
     pub functions: HashMap<String, Vec<PlanStmt>>,
-    /// Named run blocks. Each inner `Vec<String>` is a sequential chain built
-    /// from `=>` separators; the outer `Vec` runs those chains in parallel
-    /// (one per `;` separator). This already encodes `;`/=>` semantics, so no
-    /// separate orchestration enum is needed.
-    pub runs: HashMap<String, Vec<Vec<QualifiedFnRef>>>,
 }
 
 /// The final, fully resolved plan. The runner works exclusively with this type.
 #[derive(Debug, Clone)]
 pub struct Plan {
     pub projects: HashMap<String, PlanProject>,
+    /// Top-level run blocks, keyed by run name. Each run is a set of chains of
+    /// `namespace::function` references executed by the runner.
+    pub runs: HashMap<String, Vec<Vec<QualifiedFnRef>>>,
 }

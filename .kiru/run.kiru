@@ -1,14 +1,12 @@
-pr kiru {
-  run all {
+run all {
     kiru::test => kiru::build;
     kiru::fmt => kiru::test;
     kiru::fail => kiru::fmt;
   }
   run test {
-    kiru::test;
+    kiru::fmt => kiru::test;
     kiru::build;
   }
   run ci {
     kiru::test => kiru::build;
   }
-}

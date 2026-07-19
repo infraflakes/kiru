@@ -1,5 +1,6 @@
 use super::load_config;
 use super::pager;
+use crate::dsl::ast::QualifiedFnRef;
 use crate::plan::Plan;
 use crate::plan::PlanProject;
 use crate::runner::colors::{BOLD, BOLD_CYAN, CYAN, GRAY, RESET, YELLOW};
@@ -26,6 +27,7 @@ fn format_config_as_tree(config: &Plan) -> String {
     sorted_projects.sort_by(|a, b| a.0.cmp(b.0));
 
     let has_projects = !sorted_projects.is_empty();
+    let has_runs = !config.runs.is_empty();
 
     if has_projects {
         formatted_output.push_str(&format!(
@@ -40,9 +42,46 @@ fn format_config_as_tree(config: &Plan) -> String {
         }
     }
 
+    if has_runs {
+        let mut sorted_runs: Vec<(&String, &Vec<Vec<QualifiedFnRef>>)> =
+            config.runs.iter().collect();
+        sorted_runs.sort_by(|a, b| a.0.cmp(b.0));
+
+        formatted_output.push_str(&format!("\n  {}\n", style!(BOLD, "Runs")));
+
+        for (run_idx, (name, chains)) in sorted_runs.iter().enumerate() {
+            let is_last_run = run_idx == sorted_runs.len() - 1;
+            let run_connector = if is_last_run { "└" } else { "├" };
+            formatted_output.push_str(&format!(
+                "  {}── {}\n",
+                style!(BOLD, "{}", run_connector),
+                style!(BOLD, "{}", name)
+            ));
+
+            let run_indent = if is_last_run { "   " } else { "│  " };
+
+            for (chain_idx, chain) in chains.iter().enumerate() {
+                let is_last_chain = chain_idx == chains.len() - 1;
+                let chain_connector = if is_last_chain { "└" } else { "├" };
+
+                let chain_str = chain
+                    .iter()
+                    .map(|q| format!("{}::{}", q.project, q.function))
+                    .collect::<Vec<_>>()
+                    .join(" => ");
+
+                formatted_output.push_str(&format!(
+                    "  {}  {}── {}\n",
+                    run_indent,
+                    style!(BOLD, "{}", chain_connector),
+                    chain_str
+                ));
+            }
+        }
+    }
+
     formatted_output.push('\n');
     footer_bar(&mut formatted_output, config);
-    formatted_output.push('\n');
     formatted_output
 }
 
@@ -68,11 +107,8 @@ fn draw_project(out: &mut String, name: &str, project: &PlanProject, last: bool)
 
     let mut project_function_names: Vec<&String> = project.functions.keys().collect();
     project_function_names.sort_unstable();
-    let mut project_run_names: Vec<&String> = project.runs.keys().collect();
-    project_run_names.sort_unstable();
 
-    let items: &[(&str, &Vec<&String>)] =
-        &[("fn", &project_function_names), ("run", &project_run_names)];
+    let items: &[(&str, &Vec<&String>)] = &[("fn", &project_function_names)];
 
     for (i, (label, names)) in items.iter().enumerate() {
         let last_item = i == items.len() - 1;
@@ -123,11 +159,7 @@ fn footer_bar(out: &mut String, config: &Plan) {
         .values()
         .map(|project| project.functions.len())
         .sum();
-    let run_count: usize = config
-        .projects
-        .values()
-        .map(|project| project.runs.len())
-        .sum();
+    let run_count = config.runs.len();
 
     out.push_str(&style!(
         GRAY,

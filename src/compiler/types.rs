@@ -37,7 +37,6 @@ pub struct UnresolvedProject {
     /// function's project-global variables). `HashMap` iteration alone is not
     /// ordered.
     pub fn_order: Vec<String>,
-    pub runs: HashMap<String, Vec<Vec<QualifiedFnRef>>>,
 }
 
 /// The pre-resolution config with unresolved AST fields.
@@ -49,6 +48,11 @@ pub struct UnresolvedConfig {
     /// real values.
     pub global_vars: Vec<ProjectVarStmt>,
     pub projects: HashMap<String, UnresolvedProject>,
+    /// Top-level `run` blocks, keyed by run name. Each run is a set of chains of
+    /// `namespace::function` references executed by the runner. `run` is global
+    /// (namespacing already disambiguates the project a function belongs to),
+    /// so it is no longer nested inside a `pr` body.
+    pub runs: HashMap<String, Vec<Vec<QualifiedFnRef>>>,
     /// Full text of every source file parsed during the linear phase, keyed by
     /// canonical path. Let every diagnostic resolve the correct file for its
     /// span: a project's body is merged from several `.kiru` files, so a node's

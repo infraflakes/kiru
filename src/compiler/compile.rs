@@ -5,7 +5,7 @@ use crate::compiler::resolve::resolve_config;
 use crate::compiler::types::{ProjectVarStmt, UnresolvedProject};
 use crate::compiler::validation;
 use crate::dsl::Parser;
-use crate::dsl::{Expr, Program, ProjectField, Stmt, TopLevel, VarType};
+use crate::dsl::{Expr, Program, ProjectField, Stmt, TopLevel, VarType, ast::QualifiedFnRef};
 use crate::plan::Plan;
 use miette::miette;
 use std::collections::HashMap;
@@ -54,6 +54,8 @@ struct LinearState {
     /// Top-level `var` / `var shell` declarations, in source order.
     global_vars: Vec<ProjectVarStmt>,
     projects: HashMap<String, UnresolvedProject>,
+    /// Top-level `run` blocks, keyed by run name.
+    runs: HashMap<String, Vec<Vec<QualifiedFnRef>>>,
     loaded_files: HashSet<PathBuf>,
     recursion_stack: HashSet<PathBuf>,
     import_policy: ImportPolicy,
@@ -70,6 +72,7 @@ impl LinearState {
             recursion_stack: HashSet::new(),
             import_policy,
             source_texts: HashMap::new(),
+            runs: HashMap::new(),
         }
     }
 }
@@ -213,29 +216,19 @@ pub(crate) fn merge_project_body_stmt(
             project.functions.insert(name.clone(), body.clone());
             project.fn_order.push(name.clone());
         }
-        Stmt::Run {
-            name,
-            chains,
-            offset,
-            len,
-            ..
-        } => {
-            if project.runs.contains_key(name) {
-                return Err(make_err(
-                    format!(
-                        "duplicate run block in project '{}': {}",
-                        project.name, name
-                    ),
-                    *offset,
-                    *len,
-                ));
-            }
-            project.runs.insert(name.clone(), chains.clone());
+        Stmt::Run { offset, len, .. } => {
+            return Err(spanned_err_named(
+                "run blocks are not allowed inside a project body",
+                sources,
+                source_name,
+                *offset,
+                *len,
+            ));
         }
         Stmt::Project { offset, len, .. } => {
             return Err(spanned_err_named(
                 format!(
-                    "unexpected statement in project '{}' (only var, fn, and run are valid)",
+                    "unexpected statement in project '{}' (only var and fn are valid)",
                     project.name
                 ),
                 sources,
@@ -286,7 +279,6 @@ fn process_project_block(
                 var_stmts: Vec::new(),
                 functions: HashMap::new(),
                 fn_order: Vec::new(),
-                runs: HashMap::new(),
             });
 
     for field_stmt in fields {
@@ -473,7 +465,7 @@ fn linear_process_program(program: &Program, state: &mut LinearState) -> Result<
                 } => {
                     process_project_block(name, fields, body, *offset, *len, state, program)?;
                 }
-                Stmt::Fn { offset, len, .. } | Stmt::Run { offset, len, .. } => {
+                Stmt::Fn { offset, len, .. } => {
                     return Err(spanned_err_named(
                         format!("unexpected statement in '{}'", program.source_name),
                         &state.source_texts,
@@ -481,6 +473,24 @@ fn linear_process_program(program: &Program, state: &mut LinearState) -> Result<
                         *offset,
                         *len,
                     ));
+                }
+                Stmt::Run {
+                    name,
+                    chains,
+                    offset,
+                    len,
+                    ..
+                } => {
+                    if state.runs.contains_key(name) {
+                        return Err(spanned_err_named(
+                            format!("duplicate run block: {}", name),
+                            &state.source_texts,
+                            &program.source_name,
+                            *offset,
+                            *len,
+                        ));
+                    }
+                    state.runs.insert(name.clone(), chains.clone());
                 }
                 Stmt::Field {
                     key, offset, len, ..
@@ -531,6 +541,7 @@ fn resolve_linear(
     let unresolved = super::types::UnresolvedConfig {
         global_vars: std::mem::take(&mut state.global_vars),
         projects: state.projects,
+        runs: std::mem::take(&mut state.runs),
         source_texts: state.source_texts,
     };
 
@@ -657,25 +668,26 @@ mod tests {
          ] {\n\
              var string app = `todo`;\n\
              fn build { log `hi`; }\n\
-             run release { test::build; }\n\
-             run ci { test::build; }\n\
-         }\
+         }\n\
+         run release { test::build; }\n\
+         run ci { test::build; }\n\
          ",
         );
         let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
         let proj = &cfg.projects["test"];
         assert!(proj.functions.contains_key("build"));
-        assert!(proj.runs.contains_key("release"));
-        assert!(proj.runs.contains_key("ci"));
+        assert!(cfg.runs.contains_key("release"));
+        assert!(cfg.runs.contains_key("ci"));
+        assert_eq!(cfg.runs.len(), 2);
         assert_eq!(
-            proj.runs["release"],
+            cfg.runs["release"],
             vec![vec![QualifiedFnRef {
                 project: "test".to_string(),
                 function: "build".to_string()
             }]]
         );
         assert_eq!(
-            proj.runs["ci"],
+            cfg.runs["ci"],
             vec![vec![QualifiedFnRef {
                 project: "test".to_string(),
                 function: "build".to_string()
@@ -818,18 +830,17 @@ mod tests {
          pr p [ url = `http://x` dir = `x` ] {\n\
              fn build { log `x`; }\n\
              fn test { log `y`; }\n\
-             run all { p::build => p::test; }\n\
-             run ci { p::build; }\n\
-         }\
+         }\n\
+         run all { p::build => p::test; }\n\
+         run ci { p::build; }\n\
          ",
         );
         let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
-        let proj = &cfg.projects["p"];
-        assert!(proj.runs.contains_key("all"));
-        assert!(proj.runs.contains_key("ci"));
-        assert_eq!(proj.runs.len(), 2);
+        assert!(cfg.runs.contains_key("all"));
+        assert!(cfg.runs.contains_key("ci"));
+        assert_eq!(cfg.runs.len(), 2);
         assert_eq!(
-            proj.runs["all"],
+            cfg.runs["all"],
             vec![vec![
                 QualifiedFnRef {
                     project: "p".to_string(),
@@ -879,9 +890,9 @@ mod tests {
              dir = `d`\n\
          ] {\n\
              fn check { log `x`; }\n\
-             run dup { test::check; }\n\
-             run dup { test::check; }\n\
-         }\
+         }\n\
+         run dup { test::check; }\n\
+         run dup { test::check; }\n\
          ",
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
@@ -922,13 +933,17 @@ mod tests {
             "\
          pr p [ url = `http://x` dir = `x` ] {\n\
              fn x { log `a`; }\n\
-             run dup { p::x; }\n\
-             run dup { p::x; }\n\
-         }\
+         }\n\
+         run dup { p::x; }\n\
+         run dup { p::x; }\n\
          ",
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(err.to_string().contains("duplicate run"), "got: {}", err);
+        assert!(
+            err.to_string().contains("duplicate run block"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]

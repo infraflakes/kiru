@@ -179,12 +179,14 @@ pub(crate) fn resolve_config(
                 sync: sync_mode,
                 branch,
                 functions,
-                runs: unresolved_project.runs.clone(),
             },
         );
     }
 
-    Ok(Plan { projects })
+    Ok(Plan {
+        projects,
+        runs: unresolved.runs,
+    })
 }
 
 /// Resolve a `var` / `var shell` from a `ProjectVarStmt` into the enclosing
@@ -579,7 +581,8 @@ mod tests {
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(
-            err.to_string().contains("cannot reference function-body variable"),
+            err.to_string()
+                .contains("cannot reference function-body variable"),
             "got: {}",
             err
         );

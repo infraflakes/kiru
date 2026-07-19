@@ -143,13 +143,19 @@ mod tests {
     #[test]
     fn test_run_chain_in_project() {
         let input = "pr p [url = `u`] { run local { p::build; } fn build { exec `make`; } }";
-        let prog = parse_program(input).unwrap();
-        match &prog.items[0] {
-            TopLevel::Stmt(Stmt::Project { body, .. }) => {
-                assert_eq!(count_body_stmt_types(body), vec!["run", "fn"]);
-            }
-            _ => panic!("expected Project"),
-        }
+        let result = parse_program(input);
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        let err_msg = errors
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            err_msg.contains("expected fn or var in project body"),
+            "got: {}",
+            err_msg
+        );
     }
 
     #[test]

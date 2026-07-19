@@ -28,9 +28,8 @@ pub fn validate_configuration(
 ) -> Result<(), CompileError> {
     let mut errors = Vec::new();
 
+    // Validate project function bodies and any project-scoped data.
     for (proj_name, project) in &cfg.projects {
-        validate_run_refs(&project.runs, proj_name, &cfg.projects, &mut errors);
-
         validate_project_bodies(
             &project.functions,
             proj_name,
@@ -39,6 +38,9 @@ pub fn validate_configuration(
             &mut errors,
         );
     }
+
+    // Validate global run blocks.
+    validate_run_refs(&cfg.runs, "<global>", &cfg.projects, &mut errors);
 
     if errors.is_empty() {
         Ok(())
@@ -160,13 +162,13 @@ mod tests {
             "main.kiru",
             "\
          pr test [\n\
-             url = `u`\n\
-             dir = `d`\n\
-         ] {\n\
-             fn real { log `hi`; }\n\
-             run s { test::unknown; }\n\
-         }\
-         ",
+              url = `u`\n\
+              dir = `d`\n\
+          ] {\n\
+              fn real { log `hi`; }\n\
+          }\n\
+          run s { test::unknown; }\
+          ",
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         let err_str = err.to_string();
@@ -181,16 +183,16 @@ mod tests {
             "main.kiru",
             "\
          pr test [\n\
-             url = `u`\n\
-             dir = `d`\n\
-         ] {\n\
-             fn real { log `hi`; }\n\
-             run s { test::real; }\n\
-         }\
-         ",
+              url = `u`\n\
+              dir = `d`\n\
+          ] {\n\
+              fn real { log `hi`; }\n\
+          }\n\
+          run s { test::real; }\
+          ",
         );
         let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
-        assert!(cfg.projects["test"].runs.contains_key("s"));
+        assert!(cfg.runs.contains_key("s"));
     }
 
     #[test]
@@ -247,8 +249,8 @@ mod tests {
             "main.kiru",
             "\
          pr p [ url = `http://x` dir = `x` ] {\n\
-             run bad { p::nonexistent; }\n\
-         }\
+         }\n\
+         run bad { p::nonexistent; }\
          ",
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();

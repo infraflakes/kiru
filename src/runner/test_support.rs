@@ -12,10 +12,10 @@ pub(crate) fn test_context() -> (Plan, PlanProject, OutputCallback) {
         sync: SyncMode::Clone,
         branch: Some("main".to_string()),
         functions: HashMap::new(),
-        runs: HashMap::new(),
     };
     let cfg = Plan {
         projects: HashMap::new(),
+        runs: HashMap::new(),
     };
     (cfg, project, Arc::new(|_| {}))
 }

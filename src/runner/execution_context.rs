@@ -28,8 +28,9 @@ pub(crate) struct ExecContext<'a> {
 impl<'a> ExecContext<'a> {
     /// Create a new execution context. The working directory is set to
     /// `project.dir` if a project is provided, falling back to the current
-    /// directory otherwise.  When `KIRU_CWD=1` is set, the current working
-    /// directory is always used (useful for CI/CD workflows).
+    /// directory otherwise. When `KIRU_CWD=1` is set, the current working
+    /// directory is always used (useful for CI/CD workflows where the caller
+    /// has already positioned the process in the correct directory).
     pub(crate) fn new(project: Option<&'a PlanProject>, output: &'a mut OutputCallback) -> Self {
         let use_cwd = std::env::var("KIRU_CWD").as_deref() == Ok("1");
         let work_dir = if use_cwd {
