@@ -53,7 +53,7 @@ impl Expr {
     /// Defined once per node type so the var walk is centralized: adding an
     /// `Expr` variant requires extending only this method (and that variant's
     /// own resolve), not every call site that collects referenced variables.
-    pub fn visit_vars(&self, mut f: impl FnMut(&str, Option<&str>)) {
+    pub fn visit_vars(&self, f: &mut impl FnMut(&str, Option<&str>)) {
         match self {
             Expr::VarRef {
                 namespace, name, ..
@@ -139,7 +139,7 @@ impl CasePattern {
     /// including bare `$name`, backtick interpolation `${name}`, and default
     /// (`_`) patterns (which reference no variables). Mirrors
     /// [`Expr::visit_vars`] so the var-walk API is uniform across node kinds.
-    pub fn visit_vars(&self, mut f: impl FnMut(&str, Option<&str>)) {
+    pub fn visit_vars(&self, f: &mut impl FnMut(&str, Option<&str>)) {
         match self {
             CasePattern::VarRef {
                 namespace, name, ..

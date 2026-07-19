@@ -50,3 +50,36 @@ pub enum FnStmt {
     EnvBlock(EnvBlockStmt),
     Case(CaseStmt),
 }
+
+impl FnStmt {
+    /// Invoke `f` with every variable this statement references, including the
+    /// expressions inside `env` pairs and `case` conditions/patterns. A
+    /// qualified reference (`nix::url`) reports `Some(namespace)`; a bare
+    /// reference reports `None`. Mirrors [`Expr::visit_vars`] so the var walk is
+    /// defined in exactly one place per node kind.
+    pub fn visit_vars(&self, f: &mut impl FnMut(&str, Option<&str>)) {
+        match self {
+            FnStmt::Log(s) => s.value.visit_vars(f),
+            FnStmt::Exec(s) => s.value.visit_vars(f),
+            FnStmt::Cd(s) => s.value.visit_vars(f),
+            FnStmt::VarDecl(s) => s.value.visit_vars(f),
+            FnStmt::EnvBlock(s) => {
+                for pair in &s.pairs {
+                    pair.value.visit_vars(f);
+                }
+                for stmt in &s.body {
+                    stmt.visit_vars(f);
+                }
+            }
+            FnStmt::Case(s) => {
+                s.condition.visit_vars(f);
+                for arm in &s.scopes {
+                    arm.pattern.visit_vars(f);
+                    for stmt in &arm.body {
+                        stmt.visit_vars(f);
+                    }
+                }
+            }
+        }
+    }
+}

@@ -128,7 +128,7 @@ pub(crate) fn validate_expr(
     proj_name: &str,
     sources: &HashMap<String, String>,
 ) {
-    expr.visit_vars(|name, namespace| {
+    expr.visit_vars(&mut |name: &str, namespace: Option<&str>| {
         // TODO(phase-d): cross-project undefined-variable checks once the
         // bucket registry resolves qualified references.
         if namespace.is_some() {

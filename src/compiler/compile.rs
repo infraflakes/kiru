@@ -327,7 +327,8 @@ fn process_import(
     state: &mut LinearState,
     program: &Program,
 ) -> Result<(), CompileError> {
-    let path_str = resolve::resolve_expr(expr, &state.var_scope, &state.source_texts)?;
+    let path_str =
+        resolve::resolve_expr(expr, &state.var_scope, &state.source_texts, &HashMap::new())?;
     if path_str.is_empty() {
         let (offset, len) = expr.offset_len();
         return Err(spanned_err_named(
@@ -472,8 +473,12 @@ pub fn parse_projects_metadata(entry_path: &Path) -> Result<Plan, CompileError> 
                 .map(|(k, v)| (k.clone(), v.clone())),
         );
 
-        let (url, dir, sync, branch) =
-            resolve::resolve_project_fields(&unresolved_project, &scope, source_texts)?;
+        let (url, dir, sync, branch) = resolve::resolve_project_fields(
+            &unresolved_project,
+            &scope,
+            source_texts,
+            &HashMap::new(),
+        )?;
 
         projects.insert(
             name,

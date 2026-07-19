@@ -13,7 +13,7 @@ use crate::compiler::resolve::ShellCache;
 use crate::compiler::resolve::evaluate_config_shell;
 use crate::compiler::resolve::redeclaration_err;
 use crate::compiler::resolve::resolve_case_pattern;
-use crate::compiler::resolve::resolve_expr;
+use crate::compiler::resolve::{ResolvedProjectData, resolve_expr};
 use crate::compiler::scope::BucketRegistry;
 use crate::compiler::validation::validate_expr;
 use crate::dsl::{CaseStmt, EnvBlockStmt, Expr, FnStmt, VarDeclStmt, VarType};
@@ -46,6 +46,9 @@ pub(crate) struct ResolveFnCtx<'a> {
     pub working_dir: Option<&'a Path>,
     pub sources: &'a HashMap<String, String>,
     pub shell_cache: &'a mut ShellCache,
+    /// Cross-project variable view for resolving qualified `$proj::name`
+    /// reads against already-resolved donor projects.
+    pub view: &'a HashMap<String, ResolvedProjectData>,
 }
 
 // ── Resolved statement payloads ──────────────────────────────────────────────
@@ -110,7 +113,7 @@ fn resolve_fn_stmt(
 }
 
 fn resolve_string_expr(value: &Expr, ctx: &mut ResolveFnCtx) -> Result<String, CompileError> {
-    resolve_expr(value, ctx.scope, ctx.sources)
+    resolve_expr(value, ctx.scope, ctx.sources, ctx.view)
 }
 
 // ── Per-variant validate ─────────────────────────────────────────────────────
@@ -168,23 +171,24 @@ fn validate_case(s: &CaseStmt, ctx: &mut ValidateFnCtx) {
         ctx.sources,
     );
     for arm in &s.scopes {
-        arm.pattern.visit_vars(|name, namespace| {
-            // TODO(phase-d): cross-project undefined-variable checks once the
-            // bucket registry resolves qualified references.
-            if namespace.is_some() {
-                return;
-            }
-            if !ctx.scope.is_declared(name) {
-                ctx.errors.push(spanned_report_on(
-                    format!(
-                        "project {:?}: fn {:?}: undefined variable ${}",
-                        ctx.proj_name, ctx.fn_name, name
-                    ),
-                    ctx.sources,
-                    &arm.pattern,
-                ));
-            }
-        });
+        arm.pattern
+            .visit_vars(&mut |name: &str, namespace: Option<&str>| {
+                // TODO(phase-d): cross-project undefined-variable checks once the
+                // bucket registry resolves qualified references.
+                if namespace.is_some() {
+                    return;
+                }
+                if !ctx.scope.is_declared(name) {
+                    ctx.errors.push(spanned_report_on(
+                        format!(
+                            "project {:?}: fn {:?}: undefined variable ${}",
+                            ctx.proj_name, ctx.fn_name, name
+                        ),
+                        ctx.sources,
+                        &arm.pattern,
+                    ));
+                }
+            });
         let mut guard = ctx.scope.enter_case();
         let mut arm_ctx = ValidateFnCtx {
             fn_name: ctx.fn_name,
@@ -205,7 +209,7 @@ fn resolve_var_decl(
 ) -> Result<Option<PlanStmt>, CompileError> {
     let (offset, len) = s.value.offset_len();
     let source = SourceFile::from_registry(ctx.sources, s.value.source_name());
-    let resolved_value = resolve_expr(&s.value, ctx.scope, ctx.sources)?;
+    let resolved_value = resolve_expr(&s.value, ctx.scope, ctx.sources, ctx.view)?;
     let final_value = if s.var_type == VarType::Shell {
         evaluate_config_shell(
             &s.name,
@@ -231,7 +235,7 @@ fn resolve_env_block(
 ) -> Result<Option<PlanStmt>, CompileError> {
     let mut resolved_pairs = Vec::new();
     for pair in &s.pairs {
-        let resolved_value = resolve_expr(&pair.value, ctx.scope, ctx.sources)?;
+        let resolved_value = resolve_expr(&pair.value, ctx.scope, ctx.sources, ctx.view)?;
         resolved_pairs.push(PlanEnvPair {
             key: pair.key.clone(),
             value: resolved_value,
@@ -245,18 +249,19 @@ fn resolve_env_block(
 }
 
 fn resolve_case(s: &CaseStmt, ctx: &mut ResolveFnCtx) -> Result<Option<PlanStmt>, CompileError> {
-    let condition = resolve_expr(&s.condition, ctx.scope, ctx.sources)?;
+    let condition = resolve_expr(&s.condition, ctx.scope, ctx.sources, ctx.view)?;
     let mut resolved_scopes = Vec::new();
     for arm in &s.scopes {
-        let pattern = resolve_case_pattern(&arm.pattern, ctx.scope, ctx.sources)?;
+        let pattern = resolve_case_pattern(&arm.pattern, ctx.scope, ctx.sources, ctx.view)?;
         let mut guard = ctx.scope.enter_case();
         let body = resolve_fn_body_stmts(
             &arm.body,
             &mut ResolveFnCtx {
-                scope: guard.scope(),
+                scope: &mut *guard.scope(),
                 working_dir: ctx.working_dir,
                 sources: ctx.sources,
                 shell_cache: ctx.shell_cache,
+                view: ctx.view,
             },
         )?;
         resolved_scopes.push(PlanCaseArm { pattern, body });

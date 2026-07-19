@@ -43,22 +43,35 @@ fn resolve_interpolation_to_string(
     literal_len: usize,
     sources: &HashMap<String, String>,
     source_name: &str,
+    view: &CrossProjectView,
 ) -> Result<String, CompileError> {
     let mut result = String::new();
     for part in parts {
         if part.is_var {
-            match scope.lookup(&part.value) {
-                Some(val) => result.push_str(val),
-                None => {
-                    return Err(undefined_var_err(
-                        &part.value,
-                        literal_offset,
-                        literal_len,
-                        sources,
-                        source_name,
-                    ));
-                }
-            }
+            let val = match &part.namespace {
+                Some(donor) => resolve_qualified(
+                    donor,
+                    &part.value,
+                    view,
+                    sources,
+                    source_name,
+                    literal_offset,
+                    literal_len,
+                )?,
+                None => match scope.lookup(&part.value) {
+                    Some(val) => val.clone(),
+                    None => {
+                        return Err(undefined_var_err(
+                            &part.value,
+                            literal_offset,
+                            literal_len,
+                            sources,
+                            source_name,
+                        ));
+                    }
+                },
+            };
+            result.push_str(&val);
         } else {
             result.push_str(&part.value);
         }
@@ -66,11 +79,13 @@ fn resolve_interpolation_to_string(
     Ok(result)
 }
 
-/// Resolve an `Expr` to a concrete string using the bucket registry.
+/// Resolve an `Expr` to a concrete string using the bucket registry and the
+/// cross-project variable view (for qualified `$proj::name` reads).
 pub(crate) fn resolve_expr(
     expr: &Expr,
     scope: &BucketRegistry<String>,
     sources: &HashMap<String, String>,
+    view: &CrossProjectView,
 ) -> Result<String, CompileError> {
     match expr {
         Expr::VarRef {
@@ -79,22 +94,23 @@ pub(crate) fn resolve_expr(
             offset,
             len,
             source_name,
-        } => {
-            // TODO(phase-d): cross-project variable resolution via the bucket
-            // registry. For now a qualified reference falls back to the current
-            // scope, so `$nix::url` behaves like `$url` until phase D lands.
-            let _ = namespace;
-            match scope.lookup(name) {
+        } => match namespace {
+            Some(donor) => {
+                resolve_qualified(donor, name, view, sources, source_name, *offset, *len)
+            }
+            None => match scope.lookup(name) {
                 Some(val) => Ok(val.clone()),
                 None => Err(undefined_var_err(name, *offset, *len, sources, source_name)),
-            }
-        }
+            },
+        },
         Expr::BacktickLit {
             parts,
             offset,
             len,
             source_name,
-        } => resolve_interpolation_to_string(parts, scope, *offset, *len, sources, source_name),
+        } => {
+            resolve_interpolation_to_string(parts, scope, *offset, *len, sources, source_name, view)
+        }
     }
 }
 
@@ -109,6 +125,179 @@ pub(crate) fn resolve_expr(
 /// Memo key for config-time shell evaluation: the resolved command text and
 /// the working directory it ran in.
 pub(crate) type ShellCache = std::collections::HashMap<(String, Option<String>), String>;
+
+/// Fully-resolved variable state for one project, captured so that other
+/// projects can inline its values via qualified `$proj::name` references at
+/// compile time (read-only).
+pub(crate) struct ResolvedProjectData {
+    url: String,
+    dir: String,
+    sync: SyncMode,
+    branch: Option<String>,
+    /// The project's bucket registry: the shared global bucket plus this
+    /// project's own project bucket. The case bucket is transient and is never
+    /// stored here.
+    registry: BucketRegistry<String>,
+}
+
+/// Map of every project that has been fully resolved so far, keyed by project
+/// name. Used while resolving a later project to answer qualified references.
+type CrossProjectView = HashMap<String, ResolvedProjectData>;
+
+/// Resolve a qualified `$donor::name` reference against the donor project's
+/// already-resolved fields and project bucket. Field names (`url`/`dir`/`sync`/
+/// `branch`) resolve to the donor's field value; any other name resolves
+/// against the donor's project bucket. An unknown donor or name is an
+/// undefined-variable error.
+fn resolve_qualified(
+    donor: &str,
+    name: &str,
+    view: &CrossProjectView,
+    sources: &HashMap<String, String>,
+    source_name: &str,
+    offset: usize,
+    len: usize,
+) -> Result<String, CompileError> {
+    let data = match view.get(donor) {
+        Some(d) => d,
+        None => {
+            return Err(undefined_var_err(
+                &format!("{}::{}", donor, name),
+                offset,
+                len,
+                sources,
+                source_name,
+            ));
+        }
+    };
+    let field = match name {
+        "url" => Some(data.url.clone()),
+        "dir" => Some(data.dir.clone()),
+        "branch" => data.branch.clone(),
+        "sync" => Some(data.sync.to_string()),
+        _ => None,
+    };
+    if let Some(value) = field {
+        return Ok(value);
+    }
+    match data.registry.lookup(name) {
+        Some(value) => Ok(value.clone()),
+        None => Err(undefined_var_err(
+            &format!("{}::{}", donor, name),
+            offset,
+            len,
+            sources,
+            source_name,
+        )),
+    }
+}
+
+/// Collect every donor project name referenced by qualified variable reads in
+/// `proj` (project-body vars, fields, and function bodies).
+fn collect_donor_projects(proj: &UnresolvedProject, donors: &mut Vec<String>) {
+    let mut visit = |expr: &Expr| {
+        expr.visit_vars(&mut |_: &str, ns: Option<&str>| {
+            if let Some(donor) = ns {
+                donors.push(donor.to_string());
+            }
+        });
+    };
+    for var_stmt in &proj.var_stmts {
+        visit(&var_stmt.value);
+    }
+    for field in [
+        proj.url.as_ref(),
+        proj.dir.as_ref(),
+        proj.sync.as_ref(),
+        proj.branch.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        visit(field);
+    }
+    for body in proj.functions.values() {
+        for stmt in body {
+            stmt.visit_vars(&mut |_, ns| {
+                if let Some(donor) = ns {
+                    donors.push(donor.to_string());
+                }
+            });
+        }
+    }
+}
+
+/// Order project names so every donor project is resolved before the projects
+/// that read from it. Errors on a reference to an unknown project or on a
+/// cyclic dependency (which could never be resolved).
+fn topo_order_projects(
+    projects: &HashMap<String, UnresolvedProject>,
+) -> Result<Vec<String>, CompileError> {
+    use std::collections::VecDeque;
+
+    let present: HashSet<&str> = projects.keys().map(String::as_str).collect();
+    let mut donors: HashMap<String, Vec<String>> = HashMap::new();
+    for (name, proj) in projects {
+        let mut ds = Vec::new();
+        collect_donor_projects(proj, &mut ds);
+        for donor in &ds {
+            if !present.contains(donor.as_str()) {
+                return Err(CompileError::ValidationReport(vec![miette!(
+                    "project {:?} references unknown project {:?}",
+                    name,
+                    donor
+                )]));
+            }
+        }
+        donors.insert(name.clone(), ds);
+    }
+
+    // Kahn's algorithm: an edge donor -> name means `name` depends on `donor`,
+    // so `donor` must be emitted first.
+    let mut indegree: HashMap<String, usize> = projects.keys().cloned().map(|k| (k, 0)).collect();
+    let mut dependents: HashMap<String, Vec<String>> = HashMap::new();
+    for (name, ds) in &donors {
+        for donor in ds {
+            *indegree.get_mut(name).unwrap() += 1;
+            dependents
+                .entry(donor.clone())
+                .or_default()
+                .push(name.clone());
+        }
+    }
+
+    let mut queue: VecDeque<String> = indegree
+        .iter()
+        .filter(|(_, deg)| **deg == 0)
+        .map(|(k, _)| k.clone())
+        .collect();
+    let mut order = Vec::with_capacity(projects.len());
+    while let Some(node) = queue.pop_front() {
+        order.push(node.clone());
+        if let Some(deps) = dependents.get(&node) {
+            for dependent in deps {
+                let deg = indegree.get_mut(dependent).unwrap();
+                *deg -= 1;
+                if *deg == 0 {
+                    queue.push_back(dependent.clone());
+                }
+            }
+        }
+    }
+
+    if order.len() != projects.len() {
+        let in_cycle: Vec<&str> = indegree
+            .iter()
+            .filter(|(_, deg)| **deg > 0)
+            .map(|(k, _)| k.as_str())
+            .collect();
+        return Err(CompileError::ValidationReport(vec![miette!(
+            "cyclic cross-project variable dependency involving: {:?}",
+            in_cycle
+        )]));
+    }
+    Ok(order)
+}
 
 /// A top-level `var shell` deferred to the config-eval phase. We keep the
 /// original `Expr` (not its pre-interpolated command) so nested shell vars
@@ -155,6 +344,10 @@ pub(crate) fn collect_top_level_var(
     scope: &mut BucketRegistry<String>,
     sources: &HashMap<String, String>,
 ) -> Result<Option<PendingShell>, CompileError> {
+    // Top-level vars resolve before any project, so no cross-project view is
+    // available yet (a top-level `var` referencing a project's bucket would be
+    // a layering violation and surfaces as an unknown-project error).
+    let empty_view: CrossProjectView = HashMap::new();
     if let Stmt::Var {
         var_type,
         name,
@@ -165,7 +358,7 @@ pub(crate) fn collect_top_level_var(
     } = stmt
     {
         let source_name = value.source_name().to_string();
-        let resolved = resolve_expr(value, scope, sources)?;
+        let resolved = resolve_expr(value, scope, sources, &empty_view)?;
         scope
             .declare_global(name.clone(), resolved)
             .map_err(|r| redeclaration_err(r, sources, &source_name, *offset, *len))?;
@@ -196,7 +389,8 @@ pub(crate) fn config_eval_top_level(
 ) -> Result<(), CompileError> {
     for pending_var in pending {
         let source = SourceFile::from_registry(sources, &pending_var.source_name);
-        let command = resolve_expr(&pending_var.value, scope, sources)?;
+        let empty_view: CrossProjectView = HashMap::new();
+        let command = resolve_expr(&pending_var.value, scope, sources, &empty_view)?;
         let output = evaluate_config_shell(
             &pending_var.name,
             &command,
@@ -216,6 +410,7 @@ pub(crate) fn resolve_case_pattern(
     pattern: &CasePattern,
     scope: &BucketRegistry<String>,
     sources: &HashMap<String, String>,
+    view: &CrossProjectView,
 ) -> Result<PlanCasePattern, CompileError> {
     match pattern {
         CasePattern::Literal {
@@ -224,8 +419,15 @@ pub(crate) fn resolve_case_pattern(
             len,
             source_name,
         } => {
-            let resolved =
-                resolve_interpolation_to_string(parts, scope, *offset, *len, sources, source_name)?;
+            let resolved = resolve_interpolation_to_string(
+                parts,
+                scope,
+                *offset,
+                *len,
+                sources,
+                source_name,
+                view,
+            )?;
             Ok(PlanCasePattern::Literal(resolved))
         }
         CasePattern::VarRef {
@@ -234,16 +436,21 @@ pub(crate) fn resolve_case_pattern(
             offset,
             len,
             source_name,
-        } => {
-            // TODO(phase-d): cross-project variable resolution via the bucket
-            // registry. For now a qualified reference falls back to the current
-            // scope, so `$nix::url` behaves like `$url` until phase D lands.
-            let _ = namespace;
-            match scope.lookup(name) {
+        } => match namespace {
+            Some(donor) => Ok(PlanCasePattern::Literal(resolve_qualified(
+                donor,
+                name,
+                view,
+                sources,
+                source_name,
+                *offset,
+                *len,
+            )?)),
+            None => match scope.lookup(name) {
                 Some(val) => Ok(PlanCasePattern::Literal(val.clone())),
                 None => Err(undefined_var_err(name, *offset, *len, sources, source_name)),
-            }
-        }
+            },
+        },
         CasePattern::Default => Ok(PlanCasePattern::Default),
     }
 }
@@ -267,9 +474,10 @@ fn resolve_var_stmt_inner(
     working_dir: Option<&Path>,
     sources: &HashMap<String, String>,
     cache: &mut ShellCache,
+    view: &CrossProjectView,
 ) -> Result<(), CompileError> {
     let source = SourceFile::from_registry(sources, value.source_name());
-    let resolved = resolve_expr(value, scope, sources)?;
+    let resolved = resolve_expr(value, scope, sources, view)?;
     let final_val = if *var_type == crate::dsl::VarType::Shell {
         evaluate_config_shell(name, &resolved, working_dir, &source, offset, len, cache)?
     } else {
@@ -289,6 +497,7 @@ pub(crate) fn resolve_project_var(
     working_dir: Option<&Path>,
     sources: &HashMap<String, String>,
     cache: &mut ShellCache,
+    view: &CrossProjectView,
 ) -> Result<(), CompileError> {
     resolve_var_stmt_inner(
         &var.var_type,
@@ -300,6 +509,7 @@ pub(crate) fn resolve_project_var(
         working_dir,
         sources,
         cache,
+        view,
     )
 }
 
@@ -321,10 +531,11 @@ pub(crate) fn resolve_optional_expr(
     expr: &Option<Expr>,
     scope: &BucketRegistry<String>,
     sources: &HashMap<String, String>,
+    view: &CrossProjectView,
 ) -> Result<Option<String>, CompileError> {
     match expr {
         Some(e) => {
-            let resolved = resolve_expr(e, scope, sources)?;
+            let resolved = resolve_expr(e, scope, sources, view)?;
             if resolved.is_empty() {
                 Ok(None)
             } else {
@@ -341,8 +552,9 @@ fn resolve_dir_field(
     unresolved: &UnresolvedProject,
     scope: &BucketRegistry<String>,
     sources: &HashMap<String, String>,
+    view: &CrossProjectView,
 ) -> Result<String, CompileError> {
-    let raw = resolve_optional_expr(&unresolved.dir, scope, sources)?.unwrap_or_default();
+    let raw = resolve_optional_expr(&unresolved.dir, scope, sources, view)?.unwrap_or_default();
     if raw.is_empty() || Path::new(&raw).is_absolute() {
         return Ok(raw);
     }
@@ -369,24 +581,28 @@ pub(crate) fn resolve_project_fields(
     unresolved: &UnresolvedProject,
     scope: &BucketRegistry<String>,
     sources: &HashMap<String, String>,
+    view: &CrossProjectView,
 ) -> Result<(String, String, SyncMode, Option<String>), CompileError> {
-    let url = resolve_optional_expr(&unresolved.url, scope, sources)?.unwrap_or_default();
-    let dir = resolve_dir_field(unresolved, scope, sources)?;
-    let sync = match resolve_optional_expr(&unresolved.sync, scope, sources)? {
+    let url = resolve_optional_expr(&unresolved.url, scope, sources, view)?.unwrap_or_default();
+    let dir = resolve_dir_field(unresolved, scope, sources, view)?;
+    let sync = match resolve_optional_expr(&unresolved.sync, scope, sources, view)? {
         Some(mode) => parse_sync_mode(&mode).map_err(|msg| {
             spanned_err_on_field(msg, sources, &unresolved.sync, &unresolved.source_file)
         })?,
         None => SyncMode::Clone,
     };
-    let branch = resolve_optional_expr(&unresolved.branch, scope, sources)?;
+    let branch = resolve_optional_expr(&unresolved.branch, scope, sources, view)?;
     Ok((url, dir, sync, branch))
 }
 
 /// Resolve using pre-computed scopes.
 ///
-/// `force_cwd` mirrors the `KIRU_CWD` env var: when set, project-body
-/// `var shell` commands run in the current directory instead of the
-/// resolved project directory.
+/// Projects are resolved in dependency order (a project reading
+/// `$donor::name` requires `donor` to be fully resolved first), so qualified
+/// cross-project variable reads are inlined from the donor's already-resolved
+/// buckets/fields. `force_cwd` mirrors the `KIRU_CWD` env var: when set,
+/// project-body `var shell` commands run in the current directory instead of
+/// the resolved project directory.
 pub(crate) fn resolve_with_scopes(
     unresolved: UnresolvedConfig,
     global: BucketRegistry<String>,
@@ -394,17 +610,23 @@ pub(crate) fn resolve_with_scopes(
     force_cwd: bool,
     shell_cache: &mut ShellCache,
 ) -> Result<Plan, CompileError> {
-    let mut projects = HashMap::new();
+    let order = topo_order_projects(&unresolved.projects)?;
+
+    let mut projects: HashMap<String, PlanProject> = HashMap::new();
+    // Every project resolved so far, keyed by name, for cross-project reads.
+    let mut resolved: CrossProjectView = HashMap::new();
     let mut seen_dirs: HashSet<String> = HashSet::new();
-    for (name, unresolved_project) in unresolved.projects {
-        // 1. Project fields are resolved against the GLOBAL bucket only.
+
+    for name in order {
+        let unresolved_project = &unresolved.projects[&name];
+
+        // 1. Project fields are resolved against the GLOBAL bucket only (plus
+        //    any already-resolved donor project via the cross-project view).
         //    They may reference global vars (and earlier fields), never the
         //    project's own body vars — those are encapsulated by the project
-        //    and resolved below. This also means a `var shell` interpolation
-        //    inside a field always runs in the current directory, since the
-        //    project directory is not yet known.
+        //    and resolved below.
         let (url, dir, sync, branch) =
-            resolve_project_fields(&unresolved_project, &global, sources)?;
+            resolve_project_fields(unresolved_project, &global, sources, &resolved)?;
 
         if !dir.is_empty() && !seen_dirs.insert(dir.clone()) {
             return Err(CompileError::ValidationReport(vec![miette!(
@@ -429,7 +651,9 @@ pub(crate) fn resolve_with_scopes(
         //    case arms open a transient per-arm bucket that shadows it.
         let mut project_reg = global.clone();
 
-        // 4. Resolve body var statements once, in the project directory.
+        // 4. Resolve body var statements once, in the project directory. Any
+        //    qualified reference to a donor project reads its already-resolved
+        //    bucket via `resolved`.
         for var_stmt in &unresolved_project.var_stmts {
             resolve_project_var(
                 var_stmt,
@@ -437,10 +661,25 @@ pub(crate) fn resolve_with_scopes(
                 working_dir,
                 sources,
                 shell_cache,
+                &resolved,
             )?;
         }
 
-        // 5. Resolve each function body against the project bucket.
+        // Record this project before resolving its function bodies so a
+        // function may reference `$self::name` if needed.
+        resolved.insert(
+            name.clone(),
+            ResolvedProjectData {
+                url: url.clone(),
+                dir: dir.clone(),
+                sync: sync.clone(),
+                branch: branch.clone(),
+                registry: project_reg.clone(),
+            },
+        );
+
+        // 5. Resolve each function body against the project bucket, with the
+        //    full cross-project view available for qualified reads.
         let mut functions = HashMap::new();
         for (fn_name, body) in &unresolved_project.functions {
             let mut resolve_ctx = ResolveFnCtx {
@@ -448,6 +687,7 @@ pub(crate) fn resolve_with_scopes(
                 working_dir,
                 sources,
                 shell_cache,
+                view: &resolved,
             };
             let resolved_body = resolve_fn_body_stmts(body, &mut resolve_ctx)?;
             functions.insert(fn_name.clone(), resolved_body);
@@ -461,7 +701,7 @@ pub(crate) fn resolve_with_scopes(
                 sync,
                 branch,
                 functions,
-                runs: unresolved_project.runs,
+                runs: unresolved_project.runs.clone(),
             },
         );
     }
@@ -886,5 +1126,71 @@ mod tests {
             "var shell should execute exactly once, got {} lines",
             count.lines().count()
         );
+    }
+
+    #[test]
+    fn test_cross_project_field_read_resolves_donor_first() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+            var string base = `http://base`;\n\
+            pr a [url = $base dir = `da`] { }\n\
+            pr b [url = $a::url dir = `db`] { }\
+            ",
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        // `b` reads `a`'s `url` field, which is itself a global var reference.
+        // Resolution must order `a` before `b` so the donor is available.
+        assert_eq!(cfg.projects["b"].url, "http://base");
+        assert_eq!(cfg.projects["a"].url, "http://base");
+    }
+
+    #[test]
+    fn test_cross_project_var_read_from_donor_body() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+            pr a [url = `ua` dir = `da`] {\n\
+                var string shared = `VALUE`;\n\
+            }\n\
+            pr b [url = $a::shared dir = `db`] { }\
+            ",
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        // `b` reads `shared` from `a`'s project bucket (not a field).
+        assert_eq!(cfg.projects["b"].url, "VALUE");
+    }
+
+    #[test]
+    fn test_unknown_cross_project_reference_errors() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+            pr b [url = $nope::url dir = `db`] { }\
+            ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(err.to_string().contains("unknown project"), "got: {}", err);
+    }
+
+    #[test]
+    fn test_cyclic_cross_project_dependency_errors() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+            pr a [url = $b::url dir = `da`] { }\n\
+            pr b [url = $a::url dir = `db`] { }\
+            ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(err.to_string().contains("cyclic"), "got: {}", err);
     }
 }

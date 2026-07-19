@@ -98,15 +98,11 @@ impl<V> BucketRegistry<V> {
 
     /// Look up a name using precedence case, then project, then global.
     pub fn lookup(&self, name: &str) -> Option<&V> {
-        if let Some(case) = &self.case {
-            if let Some(v) = case.get(name) {
-                return Some(v);
-            }
-        }
-        if let Some(v) = self.project.get(name) {
-            return Some(v);
-        }
-        self.global.get(name)
+        self.case
+            .as_ref()
+            .and_then(|case| case.get(name))
+            .or_else(|| self.project.get(name))
+            .or_else(|| self.global.get(name))
     }
 
     /// Whether a name is visible in any bucket (case, then project, then
@@ -170,11 +166,9 @@ impl<V> BucketRegistry<V> {
     /// placeholder for its real (shell-evaluated) output. If the name is
     /// absent, it is inserted into the global bucket.
     pub fn update(&mut self, name: &str, value: V) {
-        if let Some(case) = &mut self.case {
-            if case.contains_key(name) {
-                case.insert(name.to_string(), value);
-                return;
-            }
+        if self.case.as_ref().is_some_and(|c| c.contains_key(name)) {
+            self.case.as_mut().unwrap().insert(name.to_string(), value);
+            return;
         }
         if self.project.contains_key(name) {
             self.project.insert(name.to_string(), value);
