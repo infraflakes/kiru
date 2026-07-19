@@ -9,6 +9,28 @@ pub enum ProjectField {
     Branch,
 }
 
+/// A function reference that may be qualified by a project namespace.
+///
+/// `QualifiedFnRef { project: None, function: "build" }` is an unqualified
+/// reference resolved within the current project; `project: Some("nix")` is a
+/// cross-project reference like `nix::build`, executed under `nix`'s `cwd`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct QualifiedFnRef {
+    pub project: Option<String>,
+    pub function: String,
+}
+
+impl QualifiedFnRef {
+    /// Convenience constructor for an unqualified (current-project) reference.
+    #[allow(dead_code)]
+    pub fn unqualified(function: impl Into<String>) -> Self {
+        QualifiedFnRef {
+            project: None,
+            function: function.into(),
+        }
+    }
+}
+
 /// A parsed statement node in the kiru DSL.
 #[derive(Debug, Clone)]
 pub enum Stmt {
@@ -47,7 +69,7 @@ pub enum Stmt {
     /// A run block definition (`run ... { ... }`).
     Run {
         name: String,
-        chains: Vec<Vec<String>>,
+        chains: Vec<Vec<QualifiedFnRef>>,
         offset: usize,
         len: usize,
     },

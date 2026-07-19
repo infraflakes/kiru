@@ -1,7 +1,7 @@
 use super::*;
 
 impl Parser {
-    pub(crate) fn parse_chain(&mut self) -> Result<Vec<String>, ParseError> {
+    pub(crate) fn parse_chain(&mut self) -> Result<Vec<QualifiedFnRef>, ParseError> {
         let mut fn_names = Vec::new();
         fn_names.push(self.parse_fn_name_in_run()?);
 
@@ -14,26 +14,51 @@ impl Parser {
         Ok(fn_names)
     }
 
-    fn parse_fn_name_in_run(&mut self) -> Result<String, ParseError> {
-        match &self.current_token().ty {
-            TokenType::Ident(ident) => {
-                let name = ident.clone();
-                self.advance();
-                Ok(name)
+    fn parse_fn_name_in_run(&mut self) -> Result<QualifiedFnRef, ParseError> {
+        let first = match &self.current_token().ty {
+            TokenType::Ident(ident) => ident.clone(),
+            _ => {
+                return Err(ParseError::new(
+                    self.eof_aware_span(),
+                    format!(
+                        "expected function name in run block, found {}",
+                        format_token(self.current_token())
+                    ),
+                ));
             }
-            _ => Err(ParseError::new(
-                self.eof_aware_span(),
-                format!(
-                    "expected function name in run block, found {}",
-                    format_token(self.current_token())
-                ),
-            )),
+        };
+        self.advance();
+        if self.current_token().ty == TokenType::NamespaceSep {
+            self.advance();
+            let function = match &self.current_token().ty {
+                TokenType::Ident(ident) => ident.clone(),
+                _ => {
+                    return Err(ParseError::new(
+                        self.eof_aware_span(),
+                        format!(
+                            "expected function name after `::` in run block, found {}",
+                            format_token(self.current_token())
+                        ),
+                    ));
+                }
+            };
+            self.advance();
+            Ok(QualifiedFnRef {
+                project: Some(first),
+                function,
+            })
+        } else {
+            Ok(QualifiedFnRef {
+                project: None,
+                function: first,
+            })
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::dsl::ast::QualifiedFnRef;
     use crate::dsl::parser::test_support::*;
     use crate::dsl::{Stmt, TopLevel};
 
@@ -44,7 +69,7 @@ mod tests {
         match &prog.items[0] {
             TopLevel::Stmt(Stmt::Run { chains, .. }) => {
                 assert_eq!(chains.len(), 1);
-                assert_eq!(chains[0], vec!["build"]);
+                assert_eq!(chains[0], vec![QualifiedFnRef::unqualified("build")]);
             }
             _ => panic!("expected RunDecl"),
         }
@@ -57,7 +82,14 @@ mod tests {
         match &prog.items[0] {
             TopLevel::Stmt(Stmt::Run { chains, .. }) => {
                 assert_eq!(chains.len(), 1);
-                assert_eq!(chains[0], vec!["build", "deploy", "notify"]);
+                assert_eq!(
+                    chains[0],
+                    vec![
+                        QualifiedFnRef::unqualified("build"),
+                        QualifiedFnRef::unqualified("deploy"),
+                        QualifiedFnRef::unqualified("notify")
+                    ]
+                );
             }
             _ => panic!("expected RunDecl"),
         }
@@ -71,9 +103,9 @@ mod tests {
             TopLevel::Stmt(Stmt::Run { name, chains, .. }) => {
                 assert_eq!(name, "all");
                 assert_eq!(chains.len(), 3);
-                assert_eq!(chains[0], vec!["build"]);
-                assert_eq!(chains[1], vec!["test"]);
-                assert_eq!(chains[2], vec!["deploy"]);
+                assert_eq!(chains[0], vec![QualifiedFnRef::unqualified("build")]);
+                assert_eq!(chains[1], vec![QualifiedFnRef::unqualified("test")]);
+                assert_eq!(chains[2], vec![QualifiedFnRef::unqualified("deploy")]);
             }
             _ => panic!("expected RunDecl"),
         }

@@ -14,7 +14,7 @@ use crate::compiler::resolve::evaluate_config_shell;
 use crate::compiler::resolve::redeclaration_err;
 use crate::compiler::resolve::resolve_case_pattern;
 use crate::compiler::resolve::resolve_expr;
-use crate::compiler::scope::{ScopeKind, ScopeStack};
+use crate::compiler::scope::BucketRegistry;
 use crate::compiler::validation::validate_expr;
 use crate::dsl::{CaseStmt, EnvBlockStmt, Expr, FnStmt, VarDeclStmt, VarType};
 use crate::error::{SourceFile, spanned_report_on};
@@ -35,14 +35,14 @@ use std::path::Path;
 pub(crate) struct ValidateFnCtx<'a> {
     pub fn_name: &'a str,
     pub proj_name: &'a str,
-    pub scope: &'a mut ScopeStack<()>,
+    pub scope: &'a mut BucketRegistry<()>,
     pub errors: &'a mut Vec<Report>,
     pub sources: &'a HashMap<String, String>,
 }
 
 /// Per-body state for lowering one function body.
 pub(crate) struct ResolveFnCtx<'a> {
-    pub scope: &'a mut ScopeStack<String>,
+    pub scope: &'a mut BucketRegistry<String>,
     pub working_dir: Option<&'a Path>,
     pub sources: &'a HashMap<String, String>,
     pub shell_cache: &'a mut ShellCache,
@@ -135,18 +135,13 @@ fn validate_var_decl(s: &VarDeclStmt, ctx: &mut ValidateFnCtx) {
         ctx.proj_name,
         ctx.sources,
     );
-    if ctx.scope.is_declared(&s.name) {
-        let kind = ctx
-            .scope
-            .declaring_kind(&s.name)
-            .unwrap_or(ScopeKind::Global);
+    if let Err(r) = ctx.scope.declare_scoped(s.name.clone(), ()) {
         ctx.errors.push(spanned_report_on(
-            format!("${} is already defined at {}", s.name, kind),
+            format!("${} is already defined at {}", r.name, r.existing),
             ctx.sources,
             &s.value,
         ));
     }
-    let _ = ctx.scope.declare(s.name.clone(), ());
 }
 
 fn validate_env_block(s: &EnvBlockStmt, ctx: &mut ValidateFnCtx) {
@@ -173,7 +168,12 @@ fn validate_case(s: &CaseStmt, ctx: &mut ValidateFnCtx) {
         ctx.sources,
     );
     for arm in &s.scopes {
-        arm.pattern.visit_vars(|name| {
+        arm.pattern.visit_vars(|name, namespace| {
+            // TODO(phase-d): cross-project undefined-variable checks once the
+            // bucket registry resolves qualified references.
+            if namespace.is_some() {
+                return;
+            }
             if !ctx.scope.is_declared(name) {
                 ctx.errors.push(spanned_report_on(
                     format!(
@@ -185,11 +185,11 @@ fn validate_case(s: &CaseStmt, ctx: &mut ValidateFnCtx) {
                 ));
             }
         });
-        let guard = ctx.scope.enter(ScopeKind::Case);
+        let mut guard = ctx.scope.enter_case();
         let mut arm_ctx = ValidateFnCtx {
             fn_name: ctx.fn_name,
             proj_name: ctx.proj_name,
-            scope: &mut *guard.stack,
+            scope: guard.scope(),
             errors: ctx.errors,
             sources: ctx.sources,
         };
@@ -220,7 +220,7 @@ fn resolve_var_decl(
         resolved_value
     };
     ctx.scope
-        .declare(s.name.to_string(), final_value)
+        .declare_scoped(s.name.to_string(), final_value)
         .map_err(|r| redeclaration_err(r, ctx.sources, s.value.source_name(), offset, len))?;
     Ok(None)
 }
@@ -249,11 +249,11 @@ fn resolve_case(s: &CaseStmt, ctx: &mut ResolveFnCtx) -> Result<Option<PlanStmt>
     let mut resolved_scopes = Vec::new();
     for arm in &s.scopes {
         let pattern = resolve_case_pattern(&arm.pattern, ctx.scope, ctx.sources)?;
-        let guard = ctx.scope.enter(ScopeKind::Case);
+        let mut guard = ctx.scope.enter_case();
         let body = resolve_fn_body_stmts(
             &arm.body,
             &mut ResolveFnCtx {
-                scope: &mut *guard.stack,
+                scope: guard.scope(),
                 working_dir: ctx.working_dir,
                 sources: ctx.sources,
                 shell_cache: ctx.shell_cache,

@@ -1,6 +1,6 @@
 use crate::compiler::error::{CompileError, spanned_err_named, spanned_err_on_field};
 use crate::compiler::fnstmt::{ResolveFnCtx, resolve_fn_body_stmts};
-use crate::compiler::scope::{Redeclaration, ScopeKind, ScopeStack};
+use crate::compiler::scope::{BucketRegistry, Redeclaration};
 use crate::compiler::types::{ProjectVarStmt, UnresolvedConfig, UnresolvedProject};
 use crate::dsl::{CasePattern, Expr, InterpolationPart, Stmt, VarType};
 use crate::error::SourceFile;
@@ -38,7 +38,7 @@ fn undefined_var_err(
 /// (`literal_offset`/`literal_len`), matching prior behavior.
 fn resolve_interpolation_to_string(
     parts: &[InterpolationPart],
-    scope: &ScopeStack<String>,
+    scope: &BucketRegistry<String>,
     literal_offset: usize,
     literal_len: usize,
     sources: &HashMap<String, String>,
@@ -66,22 +66,29 @@ fn resolve_interpolation_to_string(
     Ok(result)
 }
 
-/// Resolve an `Expr` to a concrete string using a scope stack.
+/// Resolve an `Expr` to a concrete string using the bucket registry.
 pub(crate) fn resolve_expr(
     expr: &Expr,
-    scope: &ScopeStack<String>,
+    scope: &BucketRegistry<String>,
     sources: &HashMap<String, String>,
 ) -> Result<String, CompileError> {
     match expr {
         Expr::VarRef {
+            namespace,
             name,
             offset,
             len,
             source_name,
-        } => match scope.lookup(name) {
-            Some(val) => Ok(val.clone()),
-            None => Err(undefined_var_err(name, *offset, *len, sources, source_name)),
-        },
+        } => {
+            // TODO(phase-d): cross-project variable resolution via the bucket
+            // registry. For now a qualified reference falls back to the current
+            // scope, so `$nix::url` behaves like `$url` until phase D lands.
+            let _ = namespace;
+            match scope.lookup(name) {
+                Some(val) => Ok(val.clone()),
+                None => Err(undefined_var_err(name, *offset, *len, sources, source_name)),
+            }
+        }
         Expr::BacktickLit {
             parts,
             offset,
@@ -145,7 +152,7 @@ pub(crate) fn evaluate_config_shell(
 /// for the post-validation config-eval phase to fill in with the real output.
 pub(crate) fn collect_top_level_var(
     stmt: &Stmt,
-    scope: &mut ScopeStack<String>,
+    scope: &mut BucketRegistry<String>,
     sources: &HashMap<String, String>,
 ) -> Result<Option<PendingShell>, CompileError> {
     if let Stmt::Var {
@@ -160,7 +167,7 @@ pub(crate) fn collect_top_level_var(
         let source_name = value.source_name().to_string();
         let resolved = resolve_expr(value, scope, sources)?;
         scope
-            .declare(name.clone(), resolved)
+            .declare_global(name.clone(), resolved)
             .map_err(|r| redeclaration_err(r, sources, &source_name, *offset, *len))?;
         if *var_type == VarType::Shell {
             Ok(Some(PendingShell {
@@ -180,10 +187,10 @@ pub(crate) fn collect_top_level_var(
 
 /// Evaluate all deferred top-level `var shell` declarations after validation.
 /// Re-resolves each command (so nested shell vars see real outputs) then swaps
-/// the placeholder for the real shell output via `ScopeStack::update`.
+/// the placeholder for the real shell output via `BucketRegistry::update`.
 pub(crate) fn config_eval_top_level(
     pending: Vec<PendingShell>,
-    scope: &mut ScopeStack<String>,
+    scope: &mut BucketRegistry<String>,
     cache: &mut ShellCache,
     sources: &HashMap<String, String>,
 ) -> Result<(), CompileError> {
@@ -204,10 +211,10 @@ pub(crate) fn config_eval_top_level(
     Ok(())
 }
 
-/// Resolve a case pattern against a scope stack.
+/// Resolve a case pattern against the bucket registry.
 pub(crate) fn resolve_case_pattern(
     pattern: &CasePattern,
-    scope: &ScopeStack<String>,
+    scope: &BucketRegistry<String>,
     sources: &HashMap<String, String>,
 ) -> Result<PlanCasePattern, CompileError> {
     match pattern {
@@ -222,20 +229,28 @@ pub(crate) fn resolve_case_pattern(
             Ok(PlanCasePattern::Literal(resolved))
         }
         CasePattern::VarRef {
+            namespace,
             name,
             offset,
             len,
             source_name,
-        } => match scope.lookup(name) {
-            Some(val) => Ok(PlanCasePattern::Literal(val.clone())),
-            None => Err(undefined_var_err(name, *offset, *len, sources, source_name)),
-        },
+        } => {
+            // TODO(phase-d): cross-project variable resolution via the bucket
+            // registry. For now a qualified reference falls back to the current
+            // scope, so `$nix::url` behaves like `$url` until phase D lands.
+            let _ = namespace;
+            match scope.lookup(name) {
+                Some(val) => Ok(PlanCasePattern::Literal(val.clone())),
+                None => Err(undefined_var_err(name, *offset, *len, sources, source_name)),
+            }
+        }
         CasePattern::Default => Ok(PlanCasePattern::Default),
     }
 }
 
 /// Resolve and bind a `var` or `var shell` into a scope stack.
-/// All duplicate detection flows through `ScopeStack::declare`.
+/// All duplicate detection flows through the bucket registry's `declare_*`
+/// methods, which error only within a single bucket (no ancestor-chain shadow).
 ///
 /// `working_dir` — the directory in which to execute `var shell` commands;
 /// `None` means the current process directory.
@@ -248,24 +263,12 @@ fn resolve_var_stmt_inner(
     value: &Expr,
     offset: usize,
     len: usize,
-    scope: &mut ScopeStack<String>,
+    scope: &mut BucketRegistry<String>,
     working_dir: Option<&Path>,
     sources: &HashMap<String, String>,
     cache: &mut ShellCache,
 ) -> Result<(), CompileError> {
     let source = SourceFile::from_registry(sources, value.source_name());
-    if let Some(existing_kind) = scope.declaring_kind(name) {
-        return Err(redeclaration_err(
-            Redeclaration {
-                name: name.to_owned(),
-                existing_kind,
-            },
-            sources,
-            value.source_name(),
-            offset,
-            len,
-        ));
-    }
     let resolved = resolve_expr(value, scope, sources)?;
     let final_val = if *var_type == crate::dsl::VarType::Shell {
         evaluate_config_shell(name, &resolved, working_dir, &source, offset, len, cache)?
@@ -273,7 +276,7 @@ fn resolve_var_stmt_inner(
         resolved
     };
     scope
-        .declare(name.to_string(), final_val)
+        .declare_project(name.to_string(), final_val)
         .map_err(|r| redeclaration_err(r, sources, value.source_name(), offset, len))?;
     Ok(())
 }
@@ -282,7 +285,7 @@ fn resolve_var_stmt_inner(
 /// `resolve_with_scopes`).
 pub(crate) fn resolve_project_var(
     var: &ProjectVarStmt,
-    scope: &mut ScopeStack<String>,
+    scope: &mut BucketRegistry<String>,
     working_dir: Option<&Path>,
     sources: &HashMap<String, String>,
     cache: &mut ShellCache,
@@ -309,14 +312,14 @@ pub(crate) fn redeclaration_err(
     offset: usize,
     len: usize,
 ) -> CompileError {
-    let msg = format!("${} is already defined at {}", r.name, r.existing_kind);
+    let msg = format!("${} is already defined at {}", r.name, r.existing);
     spanned_err_named(msg, sources, name, offset, len)
 }
 
 /// Resolve an optional `Expr` field to a concrete string.
 pub(crate) fn resolve_optional_expr(
     expr: &Option<Expr>,
-    scope: &ScopeStack<String>,
+    scope: &BucketRegistry<String>,
     sources: &HashMap<String, String>,
 ) -> Result<Option<String>, CompileError> {
     match expr {
@@ -336,7 +339,7 @@ pub(crate) fn resolve_optional_expr(
 /// directory so that `dir = \`./foo\`` resolves relative to the `.kiru` file.
 fn resolve_dir_field(
     unresolved: &UnresolvedProject,
-    scope: &ScopeStack<String>,
+    scope: &BucketRegistry<String>,
     sources: &HashMap<String, String>,
 ) -> Result<String, CompileError> {
     let raw = resolve_optional_expr(&unresolved.dir, scope, sources)?.unwrap_or_default();
@@ -364,7 +367,7 @@ fn resolve_dir_field(
 /// four resolved field values as a tuple `(url, dir, sync, branch)`.
 pub(crate) fn resolve_project_fields(
     unresolved: &UnresolvedProject,
-    scope: &ScopeStack<String>,
+    scope: &BucketRegistry<String>,
     sources: &HashMap<String, String>,
 ) -> Result<(String, String, SyncMode, Option<String>), CompileError> {
     let url = resolve_optional_expr(&unresolved.url, scope, sources)?.unwrap_or_default();
@@ -386,7 +389,7 @@ pub(crate) fn resolve_project_fields(
 /// resolved project directory.
 pub(crate) fn resolve_with_scopes(
     unresolved: UnresolvedConfig,
-    global: ScopeStack<String>,
+    global: BucketRegistry<String>,
     sources: &HashMap<String, String>,
     force_cwd: bool,
     shell_cache: &mut ShellCache,
@@ -394,7 +397,7 @@ pub(crate) fn resolve_with_scopes(
     let mut projects = HashMap::new();
     let mut seen_dirs: HashSet<String> = HashSet::new();
     for (name, unresolved_project) in unresolved.projects {
-        // 1. Project fields are resolved against the GLOBAL scope only.
+        // 1. Project fields are resolved against the GLOBAL bucket only.
         //    They may reference global vars (and earlier fields), never the
         //    project's own body vars — those are encapsulated by the project
         //    and resolved below. This also means a `var shell` interpolation
@@ -420,37 +423,34 @@ pub(crate) fn resolve_with_scopes(
         };
         let working_dir: Option<&Path> = effective_dir.as_deref();
 
-        // 3. One project frame for the whole body — no re-push, no two-phase
-        //    re-resolution. Body vars and function bodies all resolve once,
-        //    against this single frame, in the project directory.
-        let mut project_scope = global.clone();
-        project_scope.push_frame(ScopeKind::Project);
+        // 3. The project body and every function body resolve against the same
+        //    project bucket. pr-body, fn-body, and env `var` declarations all
+        //    land in this one bucket (fn-body `var` is project-global), and
+        //    case arms open a transient per-arm bucket that shadows it.
+        let mut project_reg = global.clone();
 
         // 4. Resolve body var statements once, in the project directory.
         for var_stmt in &unresolved_project.var_stmts {
             resolve_project_var(
                 var_stmt,
-                &mut project_scope,
+                &mut project_reg,
                 working_dir,
                 sources,
                 shell_cache,
             )?;
         }
 
-        // 5. Resolve each function body against the project frame.
+        // 5. Resolve each function body against the project bucket.
         let mut functions = HashMap::new();
         for (fn_name, body) in &unresolved_project.functions {
-            // Push a Function frame via RAII guard — no clone needed.
-            let guard = project_scope.enter(ScopeKind::Function);
             let mut resolve_ctx = ResolveFnCtx {
-                scope: &mut *guard.stack,
+                scope: &mut project_reg,
                 working_dir,
                 sources,
                 shell_cache,
             };
             let resolved_body = resolve_fn_body_stmts(body, &mut resolve_ctx)?;
             functions.insert(fn_name.clone(), resolved_body);
-            // guard drops here, popping the Function frame
         }
 
         projects.insert(

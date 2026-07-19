@@ -1,7 +1,7 @@
 use crate::compiler::error::{CompileError, io_err, spanned_err_named};
 
 use crate::compiler::resolve::{self, PendingShell, ShellCache, config_eval_top_level};
-use crate::compiler::scope::ScopeStack;
+use crate::compiler::scope::BucketRegistry;
 use crate::compiler::types::{ProjectVarStmt, UnresolvedProject};
 use crate::compiler::validation;
 use crate::dsl::Parser;
@@ -48,7 +48,7 @@ pub fn compile_and_resolve(entry_path: &Path, force_cwd: bool) -> Result<Plan, C
 
 /// Mutable state threaded through the linear processing phase.
 struct LinearState {
-    var_scope: ScopeStack<String>,
+    var_scope: BucketRegistry<String>,
     projects: HashMap<String, UnresolvedProject>,
     loaded_files: HashSet<PathBuf>,
     recursion_stack: HashSet<PathBuf>,
@@ -62,7 +62,7 @@ struct LinearState {
 impl LinearState {
     fn new(import_policy: ImportPolicy) -> Self {
         Self {
-            var_scope: ScopeStack::new(),
+            var_scope: BucketRegistry::new(),
             projects: HashMap::new(),
             loaded_files: HashSet::new(),
             recursion_stack: HashSet::new(),
@@ -76,7 +76,7 @@ impl LinearState {
 /// Intermediate result from the linear processing phase.
 struct LinearResult {
     unresolved: super::types::UnresolvedConfig,
-    var_scope: ScopeStack<String>,
+    var_scope: BucketRegistry<String>,
     pending_shell: Vec<PendingShell>,
 }
 
@@ -465,7 +465,7 @@ pub fn parse_projects_metadata(entry_path: &Path) -> Result<Plan, CompileError> 
     for (name, unresolved_project) in linear.unresolved.projects {
         // Fields reference global vars only; project body vars are not visible
         // to fields, so no project frame is needed here.
-        let mut scope = ScopeStack::new();
+        let mut scope = BucketRegistry::new();
         scope.seed_global(
             global_scope
                 .iter_global()
@@ -495,6 +495,7 @@ pub fn parse_projects_metadata(entry_path: &Path) -> Result<Plan, CompileError> 
 mod tests {
     use crate::compiler::test_support::*;
     use crate::compiler::{CompileError, parse_projects_metadata};
+    use crate::dsl::ast::QualifiedFnRef;
 
     /// Regression test for the cross-file wrong-location bug: when a project
     /// body is merged from several `.kiru` files (all declaring `pr kiru`), a
@@ -597,8 +598,14 @@ mod tests {
         assert!(proj.functions.contains_key("build"));
         assert!(proj.runs.contains_key("release"));
         assert!(proj.runs.contains_key("ci"));
-        assert_eq!(proj.runs["release"], vec![vec!["build"]]);
-        assert_eq!(proj.runs["ci"], vec![vec!["build"]]);
+        assert_eq!(
+            proj.runs["release"],
+            vec![vec![QualifiedFnRef::unqualified("build")]]
+        );
+        assert_eq!(
+            proj.runs["ci"],
+            vec![vec![QualifiedFnRef::unqualified("build")]]
+        );
     }
 
     #[test]
@@ -746,7 +753,13 @@ mod tests {
         assert!(proj.runs.contains_key("all"));
         assert!(proj.runs.contains_key("ci"));
         assert_eq!(proj.runs.len(), 2);
-        assert_eq!(proj.runs["all"], vec![vec!["build", "test"]]);
+        assert_eq!(
+            proj.runs["all"],
+            vec![vec![
+                QualifiedFnRef::unqualified("build"),
+                QualifiedFnRef::unqualified("test")
+            ]]
+        );
     }
 
     #[test]

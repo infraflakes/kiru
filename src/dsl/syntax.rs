@@ -13,9 +13,15 @@ pub enum Expr {
     },
     VarRef {
         name: String,
+        /// Optional project namespace qualifier from a `ns::name` reference
+        /// (e.g. `nix::url`). `None` means the reference resolves in the current
+        /// project. Populated by the parser; resolution handles it later.
+        namespace: Option<String>,
         offset: usize,
         len: usize,
         /// Canonical path of the `.kiru` file this expression was parsed from.
+        /// Carried on every node so diagnostics resolve against the correct
+        /// source when a project body is merged across several files.
         source_name: String,
     },
 }
@@ -47,13 +53,15 @@ impl Expr {
     /// Defined once per node type so the var walk is centralized: adding an
     /// `Expr` variant requires extending only this method (and that variant's
     /// own resolve), not every call site that collects referenced variables.
-    pub fn visit_vars(&self, mut f: impl FnMut(&str)) {
+    pub fn visit_vars(&self, mut f: impl FnMut(&str, Option<&str>)) {
         match self {
-            Expr::VarRef { name, .. } => f(name),
+            Expr::VarRef {
+                namespace, name, ..
+            } => f(name, namespace.as_deref()),
             Expr::BacktickLit { parts, .. } => {
                 for part in parts {
                     if part.is_var {
-                        f(&part.value);
+                        f(&part.value, part.namespace.as_deref());
                     }
                 }
             }
@@ -66,6 +74,9 @@ impl Expr {
 #[derive(Debug, Clone)]
 pub struct InterpolationPart {
     pub is_var: bool,
+    /// Optional project namespace qualifier for `is_var` parts (e.g. the
+    /// `nix` in `${nix::url}`). `None` resolves in the current project.
+    pub namespace: Option<String>,
     pub value: String,
 }
 
@@ -90,6 +101,9 @@ pub enum CasePattern {
     },
     VarRef {
         name: String,
+        /// Optional project namespace qualifier from a `ns::name` pattern
+        /// (e.g. `nix::url`). `None` resolves in the current project.
+        namespace: Option<String>,
         offset: usize,
         len: usize,
         /// Canonical path of the `.kiru` file this pattern was parsed from.
@@ -125,13 +139,15 @@ impl CasePattern {
     /// including bare `$name`, backtick interpolation `${name}`, and default
     /// (`_`) patterns (which reference no variables). Mirrors
     /// [`Expr::visit_vars`] so the var-walk API is uniform across node kinds.
-    pub fn visit_vars(&self, mut f: impl FnMut(&str)) {
+    pub fn visit_vars(&self, mut f: impl FnMut(&str, Option<&str>)) {
         match self {
-            CasePattern::VarRef { name, .. } => f(name),
+            CasePattern::VarRef {
+                namespace, name, ..
+            } => f(name, namespace.as_deref()),
             CasePattern::Literal { parts, .. } => {
                 for part in parts {
                     if part.is_var {
-                        f(&part.value);
+                        f(&part.value, part.namespace.as_deref());
                     }
                 }
             }

@@ -1,4 +1,4 @@
-use crate::dsl::{Expr, FnStmt, VarType};
+use crate::dsl::{Expr, FnStmt, VarType, ast::QualifiedFnRef};
 use std::collections::{HashMap, HashSet};
 
 /// Minimal representation of a `var` / `var shell` statement inside a project
@@ -36,7 +36,7 @@ pub struct UnresolvedProject {
     /// declared into the project frame (which performs duplicate detection).
     pub var_stmts: Vec<ProjectVarStmt>,
     pub functions: HashMap<String, Vec<FnStmt>>,
-    pub runs: HashMap<String, Vec<Vec<String>>>,
+    pub runs: HashMap<String, Vec<Vec<QualifiedFnRef>>>,
 }
 
 /// The pre-resolution config with unresolved AST fields.

@@ -1,14 +1,17 @@
 use super::super::load_config;
+use crate::dsl::ast::QualifiedFnRef;
 use crate::plan::Plan;
 use crate::runner;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Executes function chains within the scope of a specific named project.
+/// A qualified reference (`nix::build`) targets the named project, re-using
+/// its configured working directory without altering the current project.
 fn run_project_chains(
     config: Arc<Plan>,
     project: &str,
-    chains: Vec<Vec<String>>,
+    chains: Vec<Vec<QualifiedFnRef>>,
 ) -> miette::Result<()> {
     let project_string = project.to_string();
     runner::chain::execute_task_chains(
@@ -16,9 +19,17 @@ fn run_project_chains(
         chains,
         {
             let project_clone = project_string.clone();
-            move |function_name| format!("{}({})", function_name, project_clone)
+            move |q: &QualifiedFnRef| {
+                format!(
+                    "{}({})",
+                    q.function,
+                    q.project.as_deref().unwrap_or(&project_clone)
+                )
+            }
         },
-        move |runner, function_name| runner.execute_fn_call(function_name, &project_string),
+        move |runner, q: &QualifiedFnRef| {
+            runner.execute_fn_call(&q.function, q.project.as_deref().unwrap_or(&project_string))
+        },
     )
 }
 
@@ -38,7 +49,7 @@ pub fn execute_run_block(
             }
 
             let project_entry = &config.projects[project_name];
-            let chains: Vec<Vec<String>> = match project_entry.runs.get(&name) {
+            let chains: Vec<Vec<QualifiedFnRef>> = match project_entry.runs.get(&name) {
                 Some(chain_list) => chain_list.clone(),
                 None => {
                     return Err(miette::miette!(

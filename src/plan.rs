@@ -9,6 +9,7 @@
 //! Everything is a resolved `String`. There is no type or operator system — the
 //! DSL is an IaC task runner, not a general-purpose language.
 
+use crate::dsl::ast::QualifiedFnRef;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -124,7 +125,7 @@ pub struct PlanProject {
     /// from `=>` separators; the outer `Vec` runs those chains in parallel
     /// (one per `;` separator). This already encodes `;`/=>` semantics, so no
     /// separate orchestration enum is needed.
-    pub runs: HashMap<String, Vec<Vec<String>>>,
+    pub runs: HashMap<String, Vec<Vec<QualifiedFnRef>>>,
 }
 
 /// The final, fully resolved plan. The runner works exclusively with this type.

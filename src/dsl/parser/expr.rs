@@ -7,12 +7,13 @@ impl Parser {
             TokenType::Backtick(_) => self.parse_backtick_expr(),
             TokenType::Dollar => {
                 let start_offset = self.current_token().offset;
-                let (name, name_end) = self.parse_dollar_var_name(
+                let (namespace, name, name_end) = self.parse_dollar_var_name(
                     start_offset,
                     "expected identifier after `$`",
                     "expected identifier after `$`",
                 )?;
                 Ok(Expr::VarRef {
+                    namespace,
                     name,
                     offset: start_offset,
                     len: name_end - start_offset,
@@ -59,6 +60,7 @@ pub(crate) fn parse_interpolation_parts(
             if !current.is_empty() {
                 parts.push(InterpolationPart {
                     is_var: false,
+                    namespace: None,
                     value: current.clone(),
                 });
                 current.clear();
@@ -85,9 +87,24 @@ pub(crate) fn parse_interpolation_parts(
                 ));
             }
 
+            let (namespace, value) = match var_name.split_once("::") {
+                Some((ns, name)) => {
+                    if ns.is_empty() || name.is_empty() || ns.contains("::") || name.contains("::")
+                    {
+                        return Err(ParseError::new(
+                            SourceSpan::new((offset + 1 + idx).into(), 3),
+                            "invalid namespace qualifier in variable interpolation".to_string(),
+                        ));
+                    }
+                    (Some(ns.to_string()), name.to_string())
+                }
+                None => (None, var_name),
+            };
+
             parts.push(InterpolationPart {
                 is_var: true,
-                value: var_name,
+                namespace,
+                value,
             });
         } else {
             current.push(ch);
@@ -97,6 +114,7 @@ pub(crate) fn parse_interpolation_parts(
     if !current.is_empty() {
         parts.push(InterpolationPart {
             is_var: false,
+            namespace: None,
             value: current,
         });
     }

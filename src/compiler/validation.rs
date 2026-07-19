@@ -1,6 +1,8 @@
 use crate::compiler::error::CompileError;
 use crate::compiler::fnstmt::{ValidateFnCtx, validate_fn_body_stmts};
-use crate::compiler::scope::{ScopeKind, ScopeStack};
+use crate::compiler::scope::BucketRegistry;
+use crate::compiler::types::UnresolvedProject;
+use crate::dsl::ast::QualifiedFnRef;
 use crate::dsl::{Expr, FnStmt};
 use crate::error::spanned_report_on;
 use miette::miette;
@@ -10,12 +12,18 @@ use std::collections::{HashMap, HashSet};
 /// collecting all errors before returning.
 pub fn validate_configuration(
     cfg: &super::types::UnresolvedConfig,
-    global: &ScopeStack<String>,
+    global: &BucketRegistry<String>,
 ) -> Result<(), CompileError> {
     let mut errors = Vec::new();
 
     for (proj_name, project) in &cfg.projects {
-        validate_run_refs(&project.runs, &project.functions, proj_name, &mut errors);
+        validate_run_refs(
+            &project.runs,
+            &project.functions,
+            proj_name,
+            &cfg.projects,
+            &mut errors,
+        );
 
         validate_project_bodies(
             &project.functions,
@@ -38,23 +46,41 @@ pub fn validate_configuration(
     }
 }
 
-/// Check that all run chains reference functions that exist in the
-/// project's function map.
+/// Check that all run chains reference functions that exist. An unqualified
+/// reference (`build`) must resolve within the same project; a qualified
+/// reference (`nix::build`) resolves within the named project (which must
+/// itself exist).
 fn validate_run_refs(
-    runs: &HashMap<String, Vec<Vec<String>>>,
+    runs: &HashMap<String, Vec<Vec<QualifiedFnRef>>>,
     functions: &HashMap<String, Vec<FnStmt>>,
-    prefix: &str,
+    proj_name: &str,
+    projects: &HashMap<String, UnresolvedProject>,
     errors: &mut Vec<miette::Report>,
 ) {
     for (run_name, chains) in runs {
         for chain in chains {
-            for fn_name in chain {
-                if !functions.contains_key(fn_name) {
+            for q in chain {
+                let target_functions = match &q.project {
+                    Some(p) => match projects.get(p) {
+                        Some(proj) => &proj.functions,
+                        None => {
+                            errors.push(miette!(
+                                "{}: run {:?} references unknown project {:?}",
+                                proj_name,
+                                run_name,
+                                p
+                            ));
+                            continue;
+                        }
+                    },
+                    None => functions,
+                };
+                if !target_functions.contains_key(&q.function) {
                     errors.push(miette!(
                         "{}: run {:?} references unknown function {:?}",
-                        prefix,
+                        proj_name,
                         run_name,
-                        fn_name
+                        q.function
                     ));
                 }
             }
@@ -68,23 +94,21 @@ fn validate_run_refs(
 /// `validate` via the shared [`ValidateFnCtx`].
 fn validate_project_bodies(
     functions: &HashMap<String, Vec<FnStmt>>,
-    global: &ScopeStack<String>,
+    global: &BucketRegistry<String>,
     declared_var_names: &HashSet<String>,
     proj_name: &str,
     sources: &HashMap<String, String>,
     errors: &mut Vec<miette::Report>,
 ) {
     for (fn_name, body) in functions {
-        let mut scope = ScopeStack::<()>::new();
+        let mut scope = BucketRegistry::<()>::new();
         scope.seed_global(global.iter_global().map(|(k, _)| (k.clone(), ())));
-        scope.push_frame(ScopeKind::Project);
-        scope.seed_top(declared_var_names.iter().map(|k| (k.clone(), ())));
+        scope.seed_project(declared_var_names.iter().map(|k| (k.clone(), ())));
 
-        let guard = scope.enter(ScopeKind::Function);
         let mut ctx = ValidateFnCtx {
             fn_name,
             proj_name,
-            scope: &mut *guard.stack,
+            scope: &mut scope,
             errors: &mut *errors,
             sources,
         };
@@ -99,12 +123,17 @@ fn validate_project_bodies(
 pub(crate) fn validate_expr(
     expr: &Expr,
     fn_name: &str,
-    scope: &ScopeStack<()>,
+    scope: &BucketRegistry<()>,
     errors: &mut Vec<miette::Report>,
     proj_name: &str,
     sources: &HashMap<String, String>,
 ) {
-    expr.visit_vars(|name| {
+    expr.visit_vars(|name, namespace| {
+        // TODO(phase-d): cross-project undefined-variable checks once the
+        // bucket registry resolves qualified references.
+        if namespace.is_some() {
+            return;
+        }
         if !scope.is_declared(name) {
             errors.push(spanned_report_on(
                 format!(

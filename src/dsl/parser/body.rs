@@ -128,12 +128,13 @@ impl Parser {
             }
             TokenType::Dollar => {
                 let start_offset = self.current_token().offset;
-                let (name, end_offset) = self.parse_dollar_var_name(
+                let (namespace, name, end_offset) = self.parse_dollar_var_name(
                     start_offset,
                     "expected identifier after `$` in case pattern",
                     "expected identifier after `$` in case pattern",
                 )?;
                 Ok(CasePattern::VarRef {
+                    namespace,
                     name,
                     offset: start_offset,
                     len: end_offset - start_offset,
