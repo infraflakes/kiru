@@ -22,7 +22,7 @@
 use crate::compiler::error::{CompileError, spanned_err_named};
 use crate::dsl::Expr;
 use crate::error::SourceFile;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 /// The fully resolved state of one project: its four metadata fields plus the
@@ -38,6 +38,12 @@ pub struct ProjectNamespace {
 pub struct Namespaces {
     pub global: HashMap<String, String>,
     pub projects: HashMap<String, ProjectNamespace>,
+    /// Names of variables declared inside function bodies, per project. A
+    /// project's metadata fields (`url`/`dir`/`sync`/`branch`) may reference
+    /// config variables (globals and project-body / donor variables) but never
+    /// a function-body variable, so those names are tracked separately to
+    /// reject such references.
+    fn_body_var_names: HashMap<String, HashSet<String>>,
 }
 
 impl Namespaces {
@@ -45,6 +51,7 @@ impl Namespaces {
         Namespaces {
             global: HashMap::new(),
             projects: HashMap::new(),
+            fn_body_var_names: HashMap::new(),
         }
     }
 
@@ -134,6 +141,24 @@ impl Namespaces {
         }
         entry.vars.insert(name.to_string(), value);
         Ok(())
+    }
+
+    /// Record that `name` is a function-body variable of project `ns`. Function
+    /// bodies are the only place these names may be referenced; a project's
+    /// metadata fields must never read them.
+    pub fn declare_fn_body_var(&mut self, ns: &str, name: &str) {
+        self.fn_body_var_names
+            .entry(ns.to_string())
+            .or_default()
+            .insert(name.to_string());
+    }
+
+    /// Whether `name` is a function-body variable of project `ns` (and thus
+    /// forbidden from being referenced by a metadata field expression).
+    pub fn is_fn_body_var(&self, ns: &str, name: &str) -> bool {
+        self.fn_body_var_names
+            .get(ns)
+            .is_some_and(|names| names.contains(name))
     }
 
     /// Set (overwrite) a global variable. Used by the resolve pass after the

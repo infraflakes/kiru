@@ -361,6 +361,7 @@ fn declare_fn_body_vars(
                     len,
                     source_texts,
                 )?;
+                namespaces.declare_fn_body_var(project_name, &s.name);
             }
             crate::dsl::FnStmt::EnvBlock(s) => {
                 declare_fn_body_vars(namespaces, project_name, &s.body, source_texts)?;

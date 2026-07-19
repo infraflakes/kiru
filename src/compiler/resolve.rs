@@ -5,20 +5,51 @@ use crate::compiler::namespaces::{
     resolve_optional_expr, topo_order_projects,
 };
 use crate::compiler::types::{ProjectVarStmt, UnresolvedConfig};
+use crate::dsl::Expr;
 use crate::dsl::VarType;
 use crate::error::SourceFile;
 use crate::plan::{Plan, PlanProject, parse_sync_mode};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+/// A project's metadata field (`url`/`dir`/`sync`/`branch`) may reference
+/// config variables (globals and project-body / donor variables) but never a
+/// function-body variable. Reject such a reference before resolution.
+fn reject_field_fn_body_var_refs(
+    field: &Option<Expr>,
+    field_kind: &str,
+    project: &str,
+    namespaces: &Namespaces,
+) -> Result<(), CompileError> {
+    let Some(expr) = field else {
+        return Ok(());
+    };
+    let mut bad: Option<(String, String)> = None;
+    expr.visit_vars(&mut |name: &str, ns: &str| {
+        if namespaces.is_fn_body_var(ns, name) {
+            bad = Some((ns.to_string(), name.to_string()));
+        }
+    });
+    if let Some((ns, name)) = bad {
+        return Err(CompileError::ValidationReport(vec![miette::miette!(
+            "project {}: field {} cannot reference function-body variable {}::{}",
+            project,
+            field_kind,
+            ns,
+            name
+        )]));
+    }
+    Ok(())
+}
+
 /// Resolve using the single namespaces map, in dependency order.
 ///
 /// Projects are resolved in topological order (a project reading
 /// `donor::name` requires `donor` to be fully resolved first), so qualified
-/// cross-project reads are inlined from the donor's already-resolved fields
-/// and variables. `lower_functions` controls whether function bodies are
-/// lowered into `PlanStmt`s; `kiru sync` sets it to `false` (it only needs the
-/// project metadata). `force_cwd` mirrors the `KIRU_CWD` env var: when set,
+/// cross-project reads are inlined from the donor's already-resolved variables.
+/// `lower_functions` controls whether function bodies are lowered into
+/// `PlanStmt`s; `kiru sync` sets it to `false` (it only needs the project
+/// metadata). `force_cwd` mirrors the `KIRU_CWD` env var: when set,
 /// project-body `var shell` commands run in the current directory instead of
 /// the resolved project directory.
 pub(crate) fn resolve_config(
@@ -64,7 +95,9 @@ pub(crate) fn resolve_config(
         // to detect duplicate directories. It may reference globals and donor
         // projects' variables (this project's own body variables are not yet
         // resolved). A project's metadata fields are internal runner data and
-        // are never themselves referenceable.
+        // are never themselves referenceable, and may never read a
+        // function-body variable.
+        reject_field_fn_body_var_refs(&unresolved_project.dir, "dir", &name, &namespaces)?;
         let dir = resolve_dir_field(unresolved_project, &namespaces, sources)?;
 
         if !dir.is_empty() && !seen_dirs.insert(dir.clone()) {
@@ -99,12 +132,15 @@ pub(crate) fn resolve_config(
             )?;
         }
 
+        reject_field_fn_body_var_refs(&unresolved_project.url, "url", &name, &namespaces)?;
         let url = resolve_optional_expr(&unresolved_project.url, &namespaces, sources)?
             .unwrap_or_default();
+        reject_field_fn_body_var_refs(&unresolved_project.sync, "sync", &name, &namespaces)?;
         let sync = match resolve_optional_expr(&unresolved_project.sync, &namespaces, sources)? {
             Some(mode) => mode,
             None => "clone".to_string(),
         };
+        reject_field_fn_body_var_refs(&unresolved_project.branch, "branch", &name, &namespaces)?;
         let branch = resolve_optional_expr(&unresolved_project.branch, &namespaces, sources)?;
 
         // Function bodies, in source order so a later function can read an
@@ -524,6 +560,29 @@ mod tests {
             other => panic!("expected Log statement, got {:?}", other),
         };
         assert_eq!(stmt.value, "VALUE");
+    }
+
+    #[test]
+    fn test_field_cannot_reference_fn_body_var() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+         pr test [\n\
+             url = $test::x\n\
+             dir = $test::x\n\
+         ] {\n\
+             fn check { var shell x = `echo workspace`; }\n\
+         }\
+         ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        assert!(
+            err.to_string().contains("cannot reference function-body variable"),
+            "got: {}",
+            err
+        );
     }
 
     #[test]
