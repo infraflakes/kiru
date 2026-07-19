@@ -1,36 +1,41 @@
 use crate::compiler::error::CompileError;
 use crate::compiler::fnstmt::{ValidateFnCtx, validate_fn_body_stmts};
-use crate::compiler::scope::BucketRegistry;
-use crate::compiler::types::UnresolvedProject;
+use crate::compiler::namespaces::Namespaces;
+use crate::compiler::types::{UnresolvedConfig, UnresolvedProject};
+use crate::dsl::FnStmt;
 use crate::dsl::ast::QualifiedFnRef;
-use crate::dsl::{Expr, FnStmt};
-use crate::error::spanned_report_on;
-use miette::miette;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-/// Validate an `UnresolvedConfig` against the global var scope,
-/// collecting all errors before returning.
+/// Whether `ns::name` resolves to a variable in the namespaces map: a global
+/// variable or a project variable. A project's `url`/`dir`/`sync`/`branch`
+/// metadata fields are never referenceable, so they are not considered here.
+pub(crate) fn is_var_defined(namespaces: &Namespaces, ns: &str, name: &str) -> bool {
+    if ns == "global" {
+        return namespaces.global.contains_key(name);
+    }
+    match namespaces.projects.get(ns) {
+        Some(p) => p.vars.contains_key(name),
+        None => false,
+    }
+}
+
+/// Validate an [`UnresolvedConfig`] against the namespaces map built by the
+/// declare pass, collecting all errors before returning.
 pub fn validate_configuration(
-    cfg: &super::types::UnresolvedConfig,
-    global: &BucketRegistry<String>,
+    cfg: &UnresolvedConfig,
+    namespaces: &Namespaces,
+    sources: &HashMap<String, String>,
 ) -> Result<(), CompileError> {
     let mut errors = Vec::new();
 
     for (proj_name, project) in &cfg.projects {
-        validate_run_refs(
-            &project.runs,
-            &project.functions,
-            proj_name,
-            &cfg.projects,
-            &mut errors,
-        );
+        validate_run_refs(&project.runs, proj_name, &cfg.projects, &mut errors);
 
         validate_project_bodies(
             &project.functions,
-            global,
-            &project.declared_var_names,
             proj_name,
-            &cfg.source_texts,
+            namespaces,
+            sources,
             &mut errors,
         );
     }
@@ -39,20 +44,16 @@ pub fn validate_configuration(
         Ok(())
     } else {
         // Return the original child diagnostics intact so each keeps its own
-        // source name, labels, and spans when rendered.  Previously this
-        // branch stringified every report and wrapped them in a fresh
-        // `miette!` report, discarding their spans.
+        // source name, labels, and spans when rendered.
         Err(CompileError::ValidationReport(errors))
     }
 }
 
-/// Check that all run chains reference functions that exist. An unqualified
-/// reference (`build`) must resolve within the same project; a qualified
-/// reference (`nix::build`) resolves within the named project (which must
-/// itself exist).
+/// Check that all run chains reference functions that exist. A reference is
+/// always `project::function`; the named project must exist and declare the
+/// function.
 fn validate_run_refs(
     runs: &HashMap<String, Vec<Vec<QualifiedFnRef>>>,
-    functions: &HashMap<String, Vec<FnStmt>>,
     proj_name: &str,
     projects: &HashMap<String, UnresolvedProject>,
     errors: &mut Vec<miette::Report>,
@@ -60,91 +61,50 @@ fn validate_run_refs(
     for (run_name, chains) in runs {
         for chain in chains {
             for q in chain {
-                let target_functions = match &q.project {
-                    Some(p) => match projects.get(p) {
-                        Some(proj) => &proj.functions,
-                        None => {
-                            errors.push(miette!(
-                                "{}: run {:?} references unknown project {:?}",
+                match projects.get(&q.project) {
+                    Some(proj) => {
+                        if !proj.functions.contains_key(&q.function) {
+                            errors.push(miette::miette!(
+                                "{}: run {:?} references unknown function {:?} in project {:?}",
                                 proj_name,
                                 run_name,
-                                p
+                                q.function,
+                                q.project
                             ));
-                            continue;
                         }
-                    },
-                    None => functions,
-                };
-                if !target_functions.contains_key(&q.function) {
-                    errors.push(miette!(
-                        "{}: run {:?} references unknown function {:?}",
+                    }
+                    None => errors.push(miette::miette!(
+                        "{}: run {:?} references unknown project {:?}",
                         proj_name,
                         run_name,
-                        q.function
-                    ));
+                        q.project
+                    )),
                 }
             }
         }
     }
 }
 
-/// Validate all function bodies in a project's function map.  Builds a
-/// scope stack seeded with global + project vars and pushes a fresh
-/// Function frame per function, then dispatches each statement to its own
-/// `validate` via the shared [`ValidateFnCtx`].
+/// Validate all function bodies in a project's function map. Every declared
+/// variable already lives in `namespaces` (populated by the declare pass), so
+/// reference checks are a single lookup; per-fn bodies are validated in turn.
 fn validate_project_bodies(
     functions: &HashMap<String, Vec<FnStmt>>,
-    global: &BucketRegistry<String>,
-    declared_var_names: &HashSet<String>,
     proj_name: &str,
+    namespaces: &Namespaces,
     sources: &HashMap<String, String>,
     errors: &mut Vec<miette::Report>,
 ) {
     for (fn_name, body) in functions {
-        let mut scope = BucketRegistry::<()>::new();
-        scope.seed_global(global.iter_global().map(|(k, _)| (k.clone(), ())));
-        scope.seed_project(declared_var_names.iter().map(|k| (k.clone(), ())));
-
         let mut ctx = ValidateFnCtx {
             fn_name,
             proj_name,
-            scope: &mut scope,
+            namespaces,
             errors: &mut *errors,
             sources,
         };
         validate_fn_body_stmts(body, &mut ctx);
     }
-}
-
-/// Check that all variable references in an `Expr` are defined in the
-/// current scope hierarchy. Undefined references become a spanned diagnostic
-/// pointing at the exact expression, so the error reports the location like
-/// every other syntax/validation error.
-pub(crate) fn validate_expr(
-    expr: &Expr,
-    fn_name: &str,
-    scope: &BucketRegistry<()>,
-    errors: &mut Vec<miette::Report>,
-    proj_name: &str,
-    sources: &HashMap<String, String>,
-) {
-    expr.visit_vars(&mut |name: &str, namespace: Option<&str>| {
-        // TODO(phase-d): cross-project undefined-variable checks once the
-        // bucket registry resolves qualified references.
-        if namespace.is_some() {
-            return;
-        }
-        if !scope.is_declared(name) {
-            errors.push(spanned_report_on(
-                format!(
-                    "project {:?}: fn {:?}: undefined variable ${}",
-                    proj_name, fn_name, name
-                ),
-                sources,
-                expr,
-            ));
-        }
-    });
 }
 
 #[cfg(test)]
@@ -158,8 +118,8 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        var string x = $missing;\
-        ",
+         var string x = $global::missing;\
+         ",
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(
@@ -176,13 +136,13 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        pr test [\n\
-            url = `u`\n\
-            dir = `d`\n\
-        ] {\n\
-            fn badfn { log $undefined; }\n\
-        }\
-        ",
+         pr test [\n\
+             url = `u`\n\
+             dir = `d`\n\
+         ] {\n\
+             fn badfn { log $test::undefined; }\n\
+         }\
+         ",
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(
@@ -199,14 +159,14 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        pr test [\n\
-            url = `u`\n\
-            dir = `d`\n\
-        ] {\n\
-            fn real { log `hi`; }\n\
-            run s { unknown; }\n\
-        }\
-        ",
+         pr test [\n\
+             url = `u`\n\
+             dir = `d`\n\
+         ] {\n\
+             fn real { log `hi`; }\n\
+             run s { test::unknown; }\n\
+         }\
+         ",
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         let err_str = err.to_string();
@@ -220,14 +180,14 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        pr test [\n\
-            url = `u`\n\
-            dir = `d`\n\
-        ] {\n\
-            fn real { log `hi`; }\n\
-            run s { real; }\n\
-        }\
-        ",
+         pr test [\n\
+             url = `u`\n\
+             dir = `d`\n\
+         ] {\n\
+             fn real { log `hi`; }\n\
+             run s { test::real; }\n\
+         }\
+         ",
         );
         let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
         assert!(cfg.projects["test"].runs.contains_key("s"));
@@ -240,13 +200,13 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        pr test [\n\
-            url = `u`\n\
-            dir = `d`\n\
-        ] {\n\
-            fn badfn { case $undefined { _ { }; }; }\n\
-        }\
-        ",
+         pr test [\n\
+             url = `u`\n\
+             dir = `d`\n\
+         ] {\n\
+             fn badfn { case $test::undefined { _ { }; }; }\n\
+         }\
+         ",
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(
@@ -263,13 +223,13 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        pr test [\n\
-            url = `u`\n\
-            dir = `d`\n\
-        ] {\n\
-            fn badfn { var string x = `ok`; case $x { $undefined { }; _ { }; }; }\n\
-        }\
-        ",
+         pr test [\n\
+             url = `u`\n\
+             dir = `d`\n\
+         ] {\n\
+             fn badfn { var string x = `ok`; case $test::x { $test::undefined { }; _ { }; }; }\n\
+         }\
+         ",
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(
@@ -286,10 +246,10 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        pr p [ url = `http://x` dir = `x` ] {\n\
-            run bad { nonexistent; }\n\
-        }\
-        ",
+         pr p [ url = `http://x` dir = `x` ] {\n\
+             run bad { p::nonexistent; }\n\
+         }\
+         ",
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("unknown function"), "got: {}", err);
@@ -302,10 +262,10 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        pr p [ url = `http://x` dir = `x` ] {\n\
-            fn bad { log $undefined; }\n\
-        }\
-        ",
+         pr p [ url = `http://x` dir = `x` ] {\n\
+             fn bad { log $p::undefined; }\n\
+         }\
+         ",
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(
@@ -327,26 +287,27 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-pr p [ url = `u` dir = `d` ] {\n\
-    fn f1 { log $missing_main; }\n\
-}\n\
-import `build.kiru`;\n\
+ pr p [ url = `u` dir = `d` ] {
+     fn f1 { log $p::missing_main; }
+ }
+ import `build.kiru`;
             ",
         );
         write_config(
             dir.path(),
             "build.kiru",
             "\
-pr p {\n\
-    fn f2 { log $missing_build; }\n\
-}\n\
+ pr p {
+     fn f2 { log $p::missing_build; }
+ }
             ",
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         let err_str = err.to_string();
         assert!(
-            err_str.contains("undefined variable $missing_main")
-                && err_str.contains("undefined variable $missing_build"),
+            err_str.contains("undefined variable")
+                && err_str.contains("p::missing_main")
+                && err_str.contains("p::missing_build"),
             "both source-file errors should be preserved in the aggregate, got: {}",
             err_str
         );

@@ -76,10 +76,10 @@ pub fn execute_task_chains(
         .map(|chain| {
             let label = chain
                 .iter()
-                .map(|q| task_name_fn(q))
+                .map(&task_name_fn)
                 .collect::<Vec<_>>()
                 .join(" → ");
-            let task_names: Vec<String> = chain.iter().map(|q| task_name_fn(q)).collect();
+            let task_names: Vec<String> = chain.iter().map(&task_name_fn).collect();
             ((label, task_names), chain.clone())
         })
         .unzip();

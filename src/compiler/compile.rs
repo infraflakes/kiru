@@ -1,12 +1,12 @@
 use crate::compiler::error::{CompileError, io_err, spanned_err_named};
 
-use crate::compiler::resolve::{self, PendingShell, ShellCache, config_eval_top_level};
-use crate::compiler::scope::BucketRegistry;
+use crate::compiler::namespaces::{Namespaces, ShellCache, resolve_expr};
+use crate::compiler::resolve::resolve_config;
 use crate::compiler::types::{ProjectVarStmt, UnresolvedProject};
 use crate::compiler::validation;
 use crate::dsl::Parser;
-use crate::dsl::{Expr, Program, ProjectField, Stmt, TopLevel};
-use crate::plan::{Plan, PlanProject};
+use crate::dsl::{Expr, Program, ProjectField, Stmt, TopLevel, VarType};
+use crate::plan::Plan;
 use miette::miette;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -14,33 +14,32 @@ use std::path::{Path, PathBuf};
 
 /// Run the full compilation pipeline:
 /// 1. Linear processing: walk items in source order, resolve vars and fields,
-///    load imports with variable interpolation, accumulate projects.
-/// 2. Validate using the resolved state.
-/// 3. Fully resolve function bodies against the flat var scope.
+///    load imports (with variable interpolation), accumulate projects, and
+///    build the single `Namespaces` map (variable names declared, `var shell`
+///    globals left as placeholders to be evaluated later).
+/// 2. Validate references against the namespaces map (no shell runs yet).
+/// 3. Resolve in dependency order: run `var shell` commands and inline every
+///    value into the plan.
 pub fn compile_and_resolve(entry_path: &Path, force_cwd: bool) -> Result<Plan, CompileError> {
     let abs_entry = canonicalize_entry(entry_path)?;
     let linear_result = resolve_linear(&abs_entry, ImportPolicy::Strict)?;
-    let source_texts = linear_result.unresolved.source_texts.clone();
-    // Validation runs before any shell execution: top-level `var shell` vars
-    // are declared as placeholders during linear processing, so validation
-    // sees their names without running commands.
-    validation::validate_configuration(&linear_result.unresolved, &linear_result.var_scope)?;
-    // Config-eval phase: the ONLY place `var shell` commands run. Memoized so
-    // identical commands evaluate at most once per invocation.
-    let mut shell_cache = ShellCache::new();
-    let mut var_scope = linear_result.var_scope;
-    config_eval_top_level(
-        linear_result.pending_shell,
-        &mut var_scope,
-        &mut shell_cache,
-        &source_texts,
+    // Validation runs before any shell execution: the namespaces map already
+    // carries every declared variable name, so reference checks need no
+    // command output.
+    let sources = linear_result.unresolved.source_texts.clone();
+    validation::validate_configuration(
+        &linear_result.unresolved,
+        &linear_result.namespaces,
+        &sources,
     )?;
-    resolve::resolve_with_scopes(
+    let mut shell_cache = ShellCache::new();
+    resolve_config(
+        linear_result.namespaces,
         linear_result.unresolved,
-        var_scope,
-        &source_texts,
+        &sources,
         force_cwd,
         &mut shell_cache,
+        true,
     )
 }
 
@@ -48,27 +47,29 @@ pub fn compile_and_resolve(entry_path: &Path, force_cwd: bool) -> Result<Plan, C
 
 /// Mutable state threaded through the linear processing phase.
 struct LinearState {
-    var_scope: BucketRegistry<String>,
+    /// The single compile-time resolution map, built incrementally so that
+    /// `import` paths (and later reference validation) can resolve variable
+    /// references as soon as their names are declared.
+    namespaces: Namespaces,
+    /// Top-level `var` / `var shell` declarations, in source order.
+    global_vars: Vec<ProjectVarStmt>,
     projects: HashMap<String, UnresolvedProject>,
     loaded_files: HashSet<PathBuf>,
     recursion_stack: HashSet<PathBuf>,
     import_policy: ImportPolicy,
     source_texts: HashMap<String, String>,
-    /// Top-level `var shell` declarations deferred to the post-validation
-    /// config-eval phase (see `config_eval_top_level`).
-    pending_shell: Vec<PendingShell>,
 }
 
 impl LinearState {
     fn new(import_policy: ImportPolicy) -> Self {
         Self {
-            var_scope: BucketRegistry::new(),
+            namespaces: Namespaces::new(),
+            global_vars: Vec::new(),
             projects: HashMap::new(),
             loaded_files: HashSet::new(),
             recursion_stack: HashSet::new(),
             import_policy,
             source_texts: HashMap::new(),
-            pending_shell: Vec::new(),
         }
     }
 }
@@ -76,8 +77,7 @@ impl LinearState {
 /// Intermediate result from the linear processing phase.
 struct LinearResult {
     unresolved: super::types::UnresolvedConfig,
-    var_scope: BucketRegistry<String>,
-    pending_shell: Vec<PendingShell>,
+    namespaces: Namespaces,
 }
 
 /// Canonicalize the entry path, resolving relative paths against the current
@@ -125,8 +125,8 @@ fn parse_file(
     Ok(program)
 }
 
-/// Walk items in lexical order, resolving vars into scopes, loading imports
-/// when their paths become resolvable, and accumulating projects.
+/// Walk items in lexical order, resolving vars into the namespaces map, loading
+/// imports when their paths become resolvable, and accumulating projects.
 fn linear_process_file(file_path: &Path, state: &mut LinearState) -> Result<(), CompileError> {
     let canon_path =
         std::fs::canonicalize(file_path).map_err(|e| io_err("Failed to resolve", file_path, &e))?;
@@ -181,9 +181,6 @@ pub(crate) fn merge_project_body_stmt(
             len,
             ..
         } => {
-            // One arm per project field: detect duplicates and store the
-            // parsed `Expr`. Compiler-enforced exhaustiveness keeps this in
-            // sync with `ProjectField`.
             let slot: &mut Option<Expr> = match &key {
                 ProjectField::Url => &mut project.url,
                 ProjectField::Dir => &mut project.dir,
@@ -214,6 +211,7 @@ pub(crate) fn merge_project_body_stmt(
                 ));
             }
             project.functions.insert(name.clone(), body.clone());
+            project.fn_order.push(name.clone());
         }
         Stmt::Run {
             name,
@@ -251,14 +249,29 @@ pub(crate) fn merge_project_body_stmt(
 }
 
 /// Process a `pr <name> { ... }` block: set up the project entry, populate
-/// fields, resolve var stmts into a Project frame, and collect fn/run blocks.
+/// fields, collect fn/run/var blocks, and declare the project's variable names
+/// into the namespaces map (detecting exact `project::name` duplicates).
 fn process_project_block(
     name: &str,
     fields: &[Stmt],
     body: &[Stmt],
+    offset: usize,
+    len: usize,
     state: &mut LinearState,
     program: &Program,
 ) -> Result<(), CompileError> {
+    // Register the project namespace immediately so references like
+    // `name::var` resolve during the validation pass. Real values are filled
+    // in by the resolve pass. A project's metadata fields (`url`/`dir`/
+    // `sync`/`branch`) are never referenceable, so they are not registered.
+    state.namespaces.declare_project(
+        name,
+        &program.source_name,
+        offset,
+        len,
+        &state.source_texts,
+    )?;
+
     let project_entry =
         state
             .projects
@@ -270,9 +283,9 @@ fn process_project_block(
                 dir: None,
                 sync: None,
                 branch: None,
-                declared_var_names: HashSet::new(),
                 var_stmts: Vec::new(),
                 functions: HashMap::new(),
+                fn_order: Vec::new(),
                 runs: HashMap::new(),
             });
 
@@ -288,21 +301,28 @@ fn process_project_block(
     for body_stmt in body {
         if let Stmt::Var {
             var_type,
-            name,
+            name: var_name,
             value,
             offset,
             len,
             ..
         } = body_stmt
         {
-            // Record the declared body-var name so validation can seed it and
-            // function bodies may reference it. Duplicate detection itself is
-            // performed during resolution (resolve_with_scopes), where the
-            // var is declared into the project frame.
-            project_entry.declared_var_names.insert(name.clone());
+            // Declare the body-var name into the project namespace now so a
+            // later reference (or a sibling fn) resolves it; the real value is
+            // filled in during the resolve pass.
+            state.namespaces.declare_project_var(
+                name,
+                var_name,
+                String::new(),
+                &program.source_name,
+                *offset,
+                *len,
+                &state.source_texts,
+            )?;
             project_entry.var_stmts.push(ProjectVarStmt {
                 var_type: var_type.clone(),
-                name: name.clone(),
+                name: var_name.clone(),
                 value: value.clone(),
                 offset: *offset,
                 len: *len,
@@ -314,6 +334,44 @@ fn process_project_block(
             &state.source_texts,
             &program.source_name,
         )?;
+    }
+
+    Ok(())
+}
+
+/// Walk a function body (including `env` and `case` nesting) and declare every
+/// `var` into the project namespace, erroring on an exact duplicate
+/// `project::name`. Mirrors the redeclaration rule applied to project-body vars.
+fn declare_fn_body_vars(
+    namespaces: &mut Namespaces,
+    project_name: &str,
+    stmts: &[crate::dsl::FnStmt],
+    source_texts: &HashMap<String, String>,
+) -> Result<(), CompileError> {
+    for stmt in stmts {
+        match stmt {
+            crate::dsl::FnStmt::VarDecl(s) => {
+                let (offset, len) = s.value.offset_len();
+                namespaces.declare_project_var(
+                    project_name,
+                    &s.name,
+                    String::new(),
+                    s.value.source_name(),
+                    offset,
+                    len,
+                    source_texts,
+                )?;
+            }
+            crate::dsl::FnStmt::EnvBlock(s) => {
+                declare_fn_body_vars(namespaces, project_name, &s.body, source_texts)?;
+            }
+            crate::dsl::FnStmt::Case(s) => {
+                for arm in &s.scopes {
+                    declare_fn_body_vars(namespaces, project_name, &arm.body, source_texts)?;
+                }
+            }
+            _ => {}
+        }
     }
     Ok(())
 }
@@ -327,8 +385,7 @@ fn process_import(
     state: &mut LinearState,
     program: &Program,
 ) -> Result<(), CompileError> {
-    let path_str =
-        resolve::resolve_expr(expr, &state.var_scope, &state.source_texts, &HashMap::new())?;
+    let path_str = resolve_expr(expr, &state.namespaces, &state.source_texts)?;
     if path_str.is_empty() {
         let (offset, len) = expr.offset_len();
         return Err(spanned_err_named(
@@ -370,22 +427,50 @@ fn linear_process_program(program: &Program, state: &mut LinearState) -> Result<
     for item in &program.items {
         match item {
             TopLevel::Stmt(stmt) => match stmt {
-                Stmt::Var { .. } => {
-                    // Collect (don't execute): `var string` is declared now;
-                    // `var shell` is declared as a placeholder and deferred to
-                    // the config-eval phase after validation.
-                    if let Some(pending) = resolve::collect_top_level_var(
-                        stmt,
-                        &mut state.var_scope,
+                Stmt::Var {
+                    var_type,
+                    name,
+                    value,
+                    offset,
+                    len,
+                    ..
+                } => {
+                    // Collect the global declaration for the resolve pass and
+                    // declare its name into the namespaces map immediately so
+                    // later globals / imports can reference it. `var shell`
+                    // globals are left as a placeholder; their command output is
+                    // evaluated in the resolve pass.
+                    let resolved = resolve_expr(value, &state.namespaces, &state.source_texts)?;
+                    let placeholder = if *var_type == VarType::Shell {
+                        String::new()
+                    } else {
+                        resolved
+                    };
+                    state.namespaces.declare_global(
+                        name,
+                        placeholder,
+                        &program.source_name,
+                        *offset,
+                        *len,
                         &state.source_texts,
-                    )? {
-                        state.pending_shell.push(pending);
-                    }
+                    )?;
+                    state.global_vars.push(ProjectVarStmt {
+                        var_type: var_type.clone(),
+                        name: name.clone(),
+                        value: value.clone(),
+                        offset: *offset,
+                        len: *len,
+                    });
                 }
                 Stmt::Project {
-                    name, fields, body, ..
+                    name,
+                    fields,
+                    body,
+                    offset,
+                    len,
+                    ..
                 } => {
-                    process_project_block(name, fields, body, state, program)?;
+                    process_project_block(name, fields, body, *offset, *len, state, program)?;
                 }
                 Stmt::Fn { offset, len, .. } | Stmt::Run { offset, len, .. } => {
                     return Err(spanned_err_named(
@@ -425,75 +510,53 @@ fn resolve_linear(
     let mut state = LinearState::new(import_policy);
     linear_process_file(entry_path, &mut state)?;
 
+    // Declare function-body variables into their project namespaces now that
+    // every file has been merged. Walking the merged project map exactly once
+    // (rather than per-file) avoids double-counting vars that live inside
+    // functions merged from several `.kiru` files. This makes cross-references
+    // and exact-duplicate redeclarations visible before the resolve pass.
+    for (project_name, project) in &state.projects {
+        for fn_name in &project.fn_order {
+            let fn_body = &project.functions[fn_name];
+            declare_fn_body_vars(
+                &mut state.namespaces,
+                project_name,
+                fn_body,
+                &state.source_texts,
+            )?;
+        }
+    }
+
     let unresolved = super::types::UnresolvedConfig {
+        global_vars: std::mem::take(&mut state.global_vars),
         projects: state.projects,
         source_texts: state.source_texts,
     };
 
     Ok(LinearResult {
         unresolved,
-        var_scope: state.var_scope,
-        pending_shell: state.pending_shell,
+        namespaces: state.namespaces,
     })
 }
 
 /// Lightweight compilation that resolves project metadata without validating
-/// or lowering function bodies.
-///
-/// 1. Linear processing — parse the entry file, resolve `var` and `var shell`
-///    declarations, build the flat var scope, follow imports.
-/// 2. Project field resolution — resolve each project's `url`, `dir`, `sync`,
-///    and `branch` expressions against the flat scope.
-///
-/// The returned [`Plan`] has empty function maps — function and run
-/// blocks are collected during linear processing but never resolved.
+/// or lowering function bodies. Used by `kiru sync`, which only needs each
+/// project's `url`/`dir`/`sync`/`branch`. Reuses the same resolve pass with
+/// function lowering disabled and import resolution tolerant of not-yet-cloned
+/// repositories (`SkipMissing`).
 pub fn parse_projects_metadata(entry_path: &Path) -> Result<Plan, CompileError> {
     let abs_entry = canonicalize_entry(entry_path)?;
     let linear = resolve_linear(&abs_entry, ImportPolicy::SkipMissing)?;
-
-    let mut projects = HashMap::new();
-    let source_texts = &linear.unresolved.source_texts;
-    // Config-eval phase: evaluate top-level `var shell` so project fields can
-    // reference their outputs. Shares the same funnel as `compile_and_resolve`.
+    let sources = linear.unresolved.source_texts.clone();
     let mut shell_cache = ShellCache::new();
-    let mut global_scope = linear.var_scope;
-    config_eval_top_level(
-        linear.pending_shell,
-        &mut global_scope,
+    resolve_config(
+        linear.namespaces,
+        linear.unresolved,
+        &sources,
+        false,
         &mut shell_cache,
-        source_texts,
-    )?;
-    for (name, unresolved_project) in linear.unresolved.projects {
-        // Fields reference global vars only; project body vars are not visible
-        // to fields, so no project frame is needed here.
-        let mut scope = BucketRegistry::new();
-        scope.seed_global(
-            global_scope
-                .iter_global()
-                .map(|(k, v)| (k.clone(), v.clone())),
-        );
-
-        let (url, dir, sync, branch) = resolve::resolve_project_fields(
-            &unresolved_project,
-            &scope,
-            source_texts,
-            &HashMap::new(),
-        )?;
-
-        projects.insert(
-            name,
-            PlanProject {
-                url,
-                dir,
-                sync,
-                branch,
-                functions: HashMap::new(),
-                runs: unresolved_project.runs,
-            },
-        );
-    }
-
-    Ok(Plan { projects })
+        false,
+    )
 }
 
 #[cfg(test)]
@@ -571,9 +634,9 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        var string a = `hello`;\n\
-        pr test [url = `http://example.com` dir = `test`] { }\
-        ",
+         var string a = `hello`;\n\
+         pr test [url = `http://example.com` dir = `test`] { }\
+         ",
         );
         let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
         assert!(cfg.projects.contains_key("test"));
@@ -587,16 +650,16 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        pr test [\n\
-            url = `http://example.com`\n\
-            dir = `test`\n\
-        ] {\n\
-            var string app = `todo`;\n\
-            fn build { log `hi`; }\n\
-            run release { build; }\n\
-            run ci { build; }\n\
-        }\
-        ",
+         pr test [\n\
+             url = `http://example.com`\n\
+             dir = `test`\n\
+         ] {\n\
+             var string app = `todo`;\n\
+             fn build { log `hi`; }\n\
+             run release { test::build; }\n\
+             run ci { test::build; }\n\
+         }\
+         ",
         );
         let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
         let proj = &cfg.projects["test"];
@@ -605,11 +668,17 @@ mod tests {
         assert!(proj.runs.contains_key("ci"));
         assert_eq!(
             proj.runs["release"],
-            vec![vec![QualifiedFnRef::unqualified("build")]]
+            vec![vec![QualifiedFnRef {
+                project: "test".to_string(),
+                function: "build".to_string()
+            }]]
         );
         assert_eq!(
             proj.runs["ci"],
-            vec![vec![QualifiedFnRef::unqualified("build")]]
+            vec![vec![QualifiedFnRef {
+                project: "test".to_string(),
+                function: "build".to_string()
+            }]]
         );
     }
 
@@ -621,9 +690,9 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        import `./other.kiru`;\n\
-        pr p [url = $extra dir = `d`] { }
-        ",
+         import `./other.kiru`;\n\
+         pr p [url = $global::extra dir = `d`] { }
+         ",
         );
         let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
         assert_eq!(cfg.projects["p"].url, "from-other");
@@ -650,9 +719,9 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        pr p1 [url = `u` dir = `d1`] { }\n\
-        pr p1 { fn build { log `x`; } }\
-        ",
+         pr p1 [url = `u` dir = `d1`] { }\n\
+         pr p1 { fn build { log `x`; } }\
+         ",
         );
         let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
         assert!(cfg.projects.contains_key("p1"));
@@ -669,8 +738,8 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        pr p [dir = `d`] { }\
-        ",
+         pr p [dir = `d`] { }\
+         ",
         );
         compile_full(&dir.path().join("main.kiru")).unwrap();
     }
@@ -682,8 +751,8 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        pr p [url = `u`] { }\
-        ",
+         pr p [url = `u`] { }\
+         ",
         );
         compile_full(&dir.path().join("main.kiru")).unwrap();
     }
@@ -696,9 +765,9 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        import `./a.kiru`;\n\
-        pr p [url = $a dir = `d`] { }\
-        ",
+         import `./a.kiru`;\n\
+         pr p [url = $global::a dir = `d`] { }\
+         ",
         );
         let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
         assert_eq!(cfg.projects["p"].url, "from-a");
@@ -711,8 +780,8 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        pr p [url = `u` dir = `d` dir = `e`] { }\
-        ",
+         pr p [url = `u` dir = `d` dir = `e`] { }\
+         ",
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("duplicate"), "got: {}", err);
@@ -725,11 +794,11 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        pr p [ url = `http://x` dir = `x` ] {\n\
-            fn build { log `building`; }\n\
-            fn test { exec `check`; }\n\
-        }\
-        ",
+         pr p [ url = `http://x` dir = `x` ] {\n\
+             fn build { log `building`; }\n\
+             fn test { exec `check`; }\n\
+         }\
+         ",
         );
         let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
         let proj = &cfg.projects["p"];
@@ -745,13 +814,13 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        pr p [ url = `http://x` dir = `x` ] {\n\
-            fn build { log `x`; }\n\
-            fn test { log `y`; }\n\
-            run all { build => test; }\n\
-            run ci { build; }\n\
-        }\
-        ",
+         pr p [ url = `http://x` dir = `x` ] {\n\
+             fn build { log `x`; }\n\
+             fn test { log `y`; }\n\
+             run all { p::build => p::test; }\n\
+             run ci { p::build; }\n\
+         }\
+         ",
         );
         let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
         let proj = &cfg.projects["p"];
@@ -761,8 +830,14 @@ mod tests {
         assert_eq!(
             proj.runs["all"],
             vec![vec![
-                QualifiedFnRef::unqualified("build"),
-                QualifiedFnRef::unqualified("test")
+                QualifiedFnRef {
+                    project: "p".to_string(),
+                    function: "build".to_string()
+                },
+                QualifiedFnRef {
+                    project: "p".to_string(),
+                    function: "test".to_string()
+                }
             ]]
         );
     }
@@ -774,14 +849,14 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        pr test [\n\
-            url = `u`\n\
-            dir = `d`\n\
-        ] {\n\
-            fn dup { log `a`; }\n\
-            fn dup { log `b`; }\n\
-        }\
-        ",
+         pr test [\n\
+             url = `u`\n\
+             dir = `d`\n\
+         ] {\n\
+             fn dup { log `a`; }\n\
+             fn dup { log `b`; }\n\
+         }\
+         ",
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(
@@ -798,15 +873,15 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        pr test [\n\
-            url = `u`\n\
-            dir = `d`\n\
-        ] {\n\
-            fn check { log `x`; }\n\
-            run dup { check; }\n\
-            run dup { check; }\n\
-        }\
-        ",
+         pr test [\n\
+             url = `u`\n\
+             dir = `d`\n\
+         ] {\n\
+             fn check { log `x`; }\n\
+             run dup { test::check; }\n\
+             run dup { test::check; }\n\
+         }\
+         ",
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(
@@ -823,11 +898,11 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        pr p [ url = `http://x` dir = `x` ] {\n\
-            fn dup { log `a`; }\n\
-            fn dup { log `b`; }\n\
-        }\
-        ",
+         pr p [ url = `http://x` dir = `x` ] {\n\
+             fn dup { log `a`; }\n\
+             fn dup { log `b`; }\n\
+         }\
+         ",
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(
@@ -844,12 +919,12 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        pr p [ url = `http://x` dir = `x` ] {\n\
-            fn x { log `a`; }\n\
-            run dup { x; }\n\
-            run dup { x; }\n\
-        }\
-        ",
+         pr p [ url = `http://x` dir = `x` ] {\n\
+             fn x { log `a`; }\n\
+             run dup { p::x; }\n\
+             run dup { p::x; }\n\
+         }\
+         ",
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         assert!(err.to_string().contains("duplicate run"), "got: {}", err);
@@ -863,9 +938,9 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        import `./missing.kiru`;\n\
-        pr myproj [url = `http://example.com` dir = `d`] { }\
-        ",
+         import `./missing.kiru`;\n\
+         pr myproj [url = `http://example.com` dir = `d`] { }\
+         ",
         );
         let cfg = parse_projects_metadata(&dir.path().join("main.kiru")).unwrap();
         let proj = &cfg.projects["myproj"];
@@ -879,9 +954,9 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
-        import `./missing.kiru`;\n\
-        pr myproj [url = `u` dir = `d`] { }\
-        ",
+         import `./missing.kiru`;\n\
+         pr myproj [url = `u` dir = `d`] { }\
+         ",
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         let err_str = err.to_string();
@@ -897,16 +972,16 @@ mod tests {
             dir.path(),
             "bad.kiru",
             "\
-        var string x = ;\
-        ",
+         var string x = ;\
+         ",
         );
         write_config(
             dir.path(),
             "main.kiru",
             "\
-        import `./bad.kiru`;\n\
-        pr p [url = `u` dir = `d`] { }\
-        ",
+         import `./bad.kiru`;\n\
+         pr p [url = `u` dir = `d`] { }\
+         ",
         );
         let err = parse_projects_metadata(&dir.path().join("main.kiru")).unwrap_err();
         // Parse errors are wrapped in ParseReports, not silently swallowed.

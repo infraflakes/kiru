@@ -53,11 +53,11 @@ pub enum FnStmt {
 
 impl FnStmt {
     /// Invoke `f` with every variable this statement references, including the
-    /// expressions inside `env` pairs and `case` conditions/patterns. A
-    /// qualified reference (`nix::url`) reports `Some(namespace)`; a bare
-    /// reference reports `None`. Mirrors [`Expr::visit_vars`] so the var walk is
-    /// defined in exactly one place per node kind.
-    pub fn visit_vars(&self, f: &mut impl FnMut(&str, Option<&str>)) {
+    /// expressions inside `env` pairs and `case` conditions/patterns. The
+    /// callback receives `(name, namespace)` — both always present, since every
+    /// reference is written `namespace::name`. Mirrors [`Expr::visit_vars`] so
+    /// the var walk is defined in exactly one place per node kind.
+    pub fn visit_vars(&self, f: &mut impl FnMut(&str, &str)) {
         match self {
             FnStmt::Log(s) => s.value.visit_vars(f),
             FnStmt::Exec(s) => s.value.visit_vars(f),

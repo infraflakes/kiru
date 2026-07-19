@@ -8,28 +8,12 @@ use std::sync::Arc;
 /// Executes function chains within the scope of a specific named project.
 /// A qualified reference (`nix::build`) targets the named project, re-using
 /// its configured working directory without altering the current project.
-fn run_project_chains(
-    config: Arc<Plan>,
-    project: &str,
-    chains: Vec<Vec<QualifiedFnRef>>,
-) -> miette::Result<()> {
-    let project_string = project.to_string();
+fn run_project_chains(config: Arc<Plan>, chains: Vec<Vec<QualifiedFnRef>>) -> miette::Result<()> {
     runner::chain::execute_task_chains(
         config,
         chains,
-        {
-            let project_clone = project_string.clone();
-            move |q: &QualifiedFnRef| {
-                format!(
-                    "{}({})",
-                    q.function,
-                    q.project.as_deref().unwrap_or(&project_clone)
-                )
-            }
-        },
-        move |runner, q: &QualifiedFnRef| {
-            runner.execute_fn_call(&q.function, q.project.as_deref().unwrap_or(&project_string))
-        },
+        move |q: &QualifiedFnRef| format!("{}({})", q.function, q.project),
+        move |runner, q: &QualifiedFnRef| runner.execute_fn_call(&q.function, &q.project),
     )
 }
 
@@ -60,7 +44,7 @@ pub fn execute_run_block(
                 }
             };
 
-            run_project_chains(Arc::new(config), project_name, chains)
+            run_project_chains(Arc::new(config), chains)
         }
         None => Err(miette::miette!(
             "must specify a project to run '{}' in",

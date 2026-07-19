@@ -152,20 +152,19 @@ impl Parser {
         )
     }
 
-    /// Parses a `$name` (or `$ns::name`) variable reference after the caller has
-    /// recorded the starting offset: advances past `$`, reads the identifier
-    /// (rejecting keywords), and returns the optional namespace, the name, and
-    /// its end offset. A `::` following the first identifier introduces a
-    /// namespace qualifier; a second `::` is rejected. Shared by expression and
-    /// case-pattern parsing.
+    /// Parses a `$ns::name` variable reference after the caller has recorded the
+    /// starting offset: advances past `$`, reads the namespace identifier
+    /// (rejecting keywords), the `::` separator, and the name identifier
+    /// (rejecting keywords), returning the namespace, the name, and its end
+    /// offset. A `::` after the name (nested qualifier) is rejected. Shared by
+    /// expression and case-pattern parsing.
     fn parse_dollar_var_name(
         &mut self,
-        _start_offset: usize,
         expected: &'static str,
         fallback: &'static str,
-    ) -> Result<(Option<String>, String, usize), ParseError> {
+    ) -> Result<(String, String, usize), ParseError> {
         self.advance();
-        let first = match &self.current_token().ty {
+        let namespace = match &self.current_token().ty {
             TokenType::Ident(name_str) => name_str.clone(),
             ty if is_keyword_token(ty) => {
                 return Err(ParseError::new(
@@ -181,39 +180,39 @@ impl Parser {
                 return Err(ParseError::new(self.eof_aware_span(), fallback.to_string()));
             }
         };
-        let first_end = self.current_token().offset + self.current_token().len;
         self.advance();
-
-        if self.current_token().ty == TokenType::NamespaceSep {
-            self.advance();
-            let second = match &self.current_token().ty {
-                TokenType::Ident(name_str) => name_str.clone(),
-                ty if is_keyword_token(ty) => {
-                    return Err(ParseError::new(
-                        self.eof_aware_span(),
-                        format!(
-                            "{}, found {} (reserved keyword)",
-                            expected,
-                            format_token(self.current_token())
-                        ),
-                    ));
-                }
-                _ => {
-                    return Err(ParseError::new(self.eof_aware_span(), fallback.to_string()));
-                }
-            };
-            let second_end = self.current_token().offset + self.current_token().len;
-            self.advance();
-            if self.current_token().ty == TokenType::NamespaceSep {
+        if self.current_token().ty != TokenType::NamespaceSep {
+            return Err(ParseError::new(
+                self.eof_aware_span(),
+                "variable reference must be namespaced as `namespace::name`".to_string(),
+            ));
+        }
+        self.advance();
+        let name = match &self.current_token().ty {
+            TokenType::Ident(name_str) => name_str.clone(),
+            ty if is_keyword_token(ty) => {
                 return Err(ParseError::new(
                     self.eof_aware_span(),
-                    "nested namespace qualifier `::` is not allowed".to_string(),
+                    format!(
+                        "{}, found {} (reserved keyword)",
+                        expected,
+                        format_token(self.current_token())
+                    ),
                 ));
             }
-            Ok((Some(first), second, second_end))
-        } else {
-            Ok((None, first, first_end))
+            _ => {
+                return Err(ParseError::new(self.eof_aware_span(), fallback.to_string()));
+            }
+        };
+        let name_end = self.current_token().offset + self.current_token().len;
+        self.advance();
+        if self.current_token().ty == TokenType::NamespaceSep {
+            return Err(ParseError::new(
+                self.eof_aware_span(),
+                "nested namespace qualifier `::` is not allowed".to_string(),
+            ));
         }
+        Ok((namespace, name, name_end))
     }
 
     /// Parses one top-level item, returning None on EOF.
@@ -353,7 +352,7 @@ mod tests {
     #[test]
     fn test_multiple_top_level_statements() {
         let input = "var string x = `hello`;\n\
-                      pr p [url = `u` dir = `d`] { fn f { log `hi`; } run s { f; } }";
+                      pr p [url = `u` dir = `d`] { fn f { log `hi`; } run s { p::f; } }";
         let prog = parse_program(input).unwrap();
         assert_eq!(count_stmt_types(&prog), vec!["var", "pr"]);
     }

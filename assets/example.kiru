@@ -9,17 +9,17 @@ pr todo [
     var shell version = `git describe --tags --always --dirty 2>/dev/null || echo dev`;
 
     fn build {
-        log `Building ${app} at ${version}`;
-        case $os {
+        log `Building ${global::app} at ${todo::version}`;
+        case $global::os {
             `Linux` {
                 cd `cmd`;
-                exec `go build -ldflags='${version}' -o bin/${app} .`;
+                exec `go build -ldflags='${todo::version}' -o bin/${global::app} .`;
             };
             `Darwin` {
                 cd `cmd`;
-                exec `go build -ldflags='${version}' -o bin/${app} .`;
+                exec `go build -ldflags='${todo::version}' -o bin/${global::app} .`;
             };
-            _ { log `unsupported OS: ${os}`; };
+            _ { log `unsupported OS: ${global::os}`; };
         };
     }
 
@@ -31,6 +31,6 @@ pr todo [
     }
 
     run ci {
-        test => build;
+        todo::test => todo::build;
     }
 }

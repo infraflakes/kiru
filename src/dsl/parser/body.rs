@@ -129,7 +129,6 @@ impl Parser {
             TokenType::Dollar => {
                 let start_offset = self.current_token().offset;
                 let (namespace, name, end_offset) = self.parse_dollar_var_name(
-                    start_offset,
                     "expected identifier after `$` in case pattern",
                     "expected identifier after `$` in case pattern",
                 )?;
@@ -234,7 +233,7 @@ mod tests {
     #[test]
     fn test_case_single_branch() {
         let input = "fn test {\n\
-                      case $os {\n\
+                      case $global::os {\n\
                       `Linux` { exec `linux-deploy`; };\n\
                       };\n\
                       }";
@@ -255,7 +254,7 @@ mod tests {
     #[test]
     fn test_case_multiple_branches_with_default() {
         let input = "fn deploy {\n\
-                      case $target {\n\
+                      case $global::target {\n\
                       `production` { exec `deploy-prod`; };\n\
                       `staging` { exec `deploy-staging`; };\n\
                       _ { log `unknown target`; };\n\
@@ -285,9 +284,9 @@ mod tests {
     #[test]
     fn test_case_nested() {
         let input = "fn test {\n\
-                      case $os {\n\
+                      case $global::os {\n\
                       `Linux` {\n\
-                      case $arch {\n\
+                      case $global::arch {\n\
                       `x86_64` { exec `linux-amd64`; };\n\
                       `aarch64` { exec `linux-arm64`; };\n\
                       };\n\

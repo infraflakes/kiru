@@ -17,11 +17,11 @@
 #   shell  — executes the value as a shell command, captures stdout
 #
 # Variables are resolved in declaration order. A variable can reference
-# any previously declared variable with $name or ${name}.
+# any previously declared variable with $global::name or ${global::name}.
 
 var string app    = `myapp`;
 var string user   = `yourname`;
-var string repo   = `${user}/${app}`;
+var string repo   = `${global::user}/${global::app}`;
 var shell os      = `uname -s`;
 
 # 2. IMPORT
@@ -47,13 +47,13 @@ var shell os      = `uname -s`;
 #   run <name> { ... }             Run blocks with chain syntax
 
 pr myapp [
-  url  = `git@github.com:${user}/myapp.git`
-  dir  = `${app}`
+  url  = `git@github.com:${global::user}/myapp.git`
+  dir  = `${global::app}`
   sync = `clone`
   branch = `main`
 ] {
     # Project vars are accessible within this project's functions.
-    var string docker_registry = `ghcr.io/${user}`;
+    var string docker_registry = `ghcr.io/${global::user}`;
     var string port = `3000`;
 
     # 4. FUNCTIONS
@@ -68,49 +68,49 @@ pr myapp [
     #   case <expr> { ... };    Conditional branching
 
     fn check {
-        log `Running static checks for ${app}...`;
+        log `Running static checks for ${global::app}...`;
         cd `.`;
         exec `go fmt ./...`;
         exec `go vet ./...`;
     }
 
     fn build {
-        log `Building ${app} on ${os}...`;
+        log `Building ${global::app} on ${global::os}...`;
 
         # Conditional branching with case.
         # Patterns:
-        #   `literal`     — exact match (literal pattern)
-        #   $var_ref      — match against a variable's value
-        #   ``            — match empty string
-        #   _             — catch-all / default
+        #   `literal`          — exact match (literal pattern)
+        #   $namespace::name   — match against a variable's value
+        #   ``                 — match empty string
+        #   _                  — catch-all / default
         #
         # The first matching arm wins.
 
-        case $os {
+        case $global::os {
             `Linux` {
                 env [GOOS = `linux` GOARCH = `amd64`] {
-                    exec `go build -o bin/${app} .`;
+                    exec `go build -o bin/${global::app} .`;
                 };
             };
             `Darwin` {
                 cd `cmd`;
-                exec `go build -o ../bin/${app} .`;
+                exec `go build -o ../bin/${global::app} .`;
             };
             _ {
-                log `unsupported OS: ${os}, falling back to native build`;
-                exec `go build -o bin/${app} .`;
+                log `unsupported OS: ${global::os}, falling back to native build`;
+                exec `go build -o bin/${global::app} .`;
             };
         };
     }
 
     fn test {
-        log `Running tests for ${app}...`;
+        log `Running tests for ${global::app}...`;
         var shell gopath = `echo $HOME/.local/share/go`;
 
         # env block sets environment variables for its body.
         env [
           CGO_ENABLED = `0`
-          GOPATH = $gopath
+          GOPATH = $myapp::gopath
         ] {
             log `Testing go program`;
             exec `go test -race ./...`;
@@ -122,16 +122,16 @@ pr myapp [
     }
 
     fn release {
-        # Nested case with $var_ref pattern.
+        # Nested case with $namespace::name pattern.
         var shell tag = `git describe --tags --always 2>/dev/null`;
-        case $tag {
+        case $myapp::tag {
             `` {
                 log `no git tag found, skipping release`;
             };
             _ {
-                log `releasing ${tag}...`;
-                exec `docker build -t ${docker_registry}/${app}:${tag} .`;
-                exec `docker push ${docker_registry}/${app}:${tag}`;
+                log `releasing ${myapp::tag}...`;
+                exec `docker build -t ${myapp::docker_registry}/${global::app}:${myapp::tag} .`;
+                exec `docker push ${myapp::docker_registry}/${global::app}:${myapp::tag}`;
             };
         };
     }
@@ -143,18 +143,18 @@ pr myapp [
     #   ;   separates concurrent chains (run in parallel)
     #   =>  sequences functions within a chain (run sequentially)
     #
-    # Example: run all { lint => check => build; test; }
+    # Example: run all { myapp::lint => myapp::check => myapp::build; myapp::test; }
     #
     #   Chain 1: lint -> check -> build  (sequential)
     #   Chain 2: test                    (runs concurrently with chain 1)
 
     run all {
-        lint => check => build;
-        test;
+        myapp::lint => myapp::check => myapp::build;
+        myapp::test;
     }
 
     run ci {
-        lint => test;
+        myapp::lint => myapp::test;
     }
 }
 

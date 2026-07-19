@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn test_var_with_var_ref_value() {
-        let input = "var string x = `a`; var string y = `${x}`;";
+        let input = "var string x = `a`; var string y = `${global::x}`;";
         let prog = parse_program(input).unwrap();
         assert_eq!(count_stmt_types(&prog), vec!["var", "var"]);
     }

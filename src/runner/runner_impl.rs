@@ -74,7 +74,7 @@ mod tests {
         ] {\n\
             var string os = `Linux`;\n\
             fn deploy {\n\
-                case $os {\n\
+                case $test::os {\n\
                     `Linux` { log `matched`; };\n\
                     _ { log `default`; };\n\
                 };\n\
@@ -100,7 +100,7 @@ mod tests {
         ] {\n\
             var string os = `Darwin`;\n\
             fn deploy {\n\
-                case $os {\n\
+                case $test::os {\n\
                     `Linux` { log `only-linux`; };\n\
                 };\n\
             }\n\

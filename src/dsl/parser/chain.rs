@@ -15,44 +15,40 @@ impl Parser {
     }
 
     fn parse_fn_name_in_run(&mut self) -> Result<QualifiedFnRef, ParseError> {
-        let first = match &self.current_token().ty {
+        let project = match &self.current_token().ty {
             TokenType::Ident(ident) => ident.clone(),
             _ => {
                 return Err(ParseError::new(
                     self.eof_aware_span(),
                     format!(
-                        "expected function name in run block, found {}",
+                        "expected project namespace in run block, found {}",
                         format_token(self.current_token())
                     ),
                 ));
             }
         };
         self.advance();
-        if self.current_token().ty == TokenType::NamespaceSep {
-            self.advance();
-            let function = match &self.current_token().ty {
-                TokenType::Ident(ident) => ident.clone(),
-                _ => {
-                    return Err(ParseError::new(
-                        self.eof_aware_span(),
-                        format!(
-                            "expected function name after `::` in run block, found {}",
-                            format_token(self.current_token())
-                        ),
-                    ));
-                }
-            };
-            self.advance();
-            Ok(QualifiedFnRef {
-                project: Some(first),
-                function,
-            })
-        } else {
-            Ok(QualifiedFnRef {
-                project: None,
-                function: first,
-            })
+        if self.current_token().ty != TokenType::NamespaceSep {
+            return Err(ParseError::new(
+                self.eof_aware_span(),
+                "run block reference must be namespaced as `namespace::function`".to_string(),
+            ));
         }
+        self.advance();
+        let function = match &self.current_token().ty {
+            TokenType::Ident(ident) => ident.clone(),
+            _ => {
+                return Err(ParseError::new(
+                    self.eof_aware_span(),
+                    format!(
+                        "expected function name after `::` in run block, found {}",
+                        format_token(self.current_token())
+                    ),
+                ));
+            }
+        };
+        self.advance();
+        Ok(QualifiedFnRef { project, function })
     }
 }
 
@@ -64,12 +60,18 @@ mod tests {
 
     #[test]
     fn test_run_single_ref() {
-        let input = "run b { build; }";
+        let input = "run b { p::build; }";
         let prog = parse_program(input).unwrap();
         match &prog.items[0] {
             TopLevel::Stmt(Stmt::Run { chains, .. }) => {
                 assert_eq!(chains.len(), 1);
-                assert_eq!(chains[0], vec![QualifiedFnRef::unqualified("build")]);
+                assert_eq!(
+                    chains[0],
+                    vec![QualifiedFnRef {
+                        project: "p".to_string(),
+                        function: "build".to_string()
+                    }]
+                );
             }
             _ => panic!("expected RunDecl"),
         }
@@ -77,7 +79,7 @@ mod tests {
 
     #[test]
     fn test_run_chained_refs() {
-        let input = "run d { build => deploy => notify; }";
+        let input = "run d { p::build => p::deploy => p::notify; }";
         let prog = parse_program(input).unwrap();
         match &prog.items[0] {
             TopLevel::Stmt(Stmt::Run { chains, .. }) => {
@@ -85,9 +87,18 @@ mod tests {
                 assert_eq!(
                     chains[0],
                     vec![
-                        QualifiedFnRef::unqualified("build"),
-                        QualifiedFnRef::unqualified("deploy"),
-                        QualifiedFnRef::unqualified("notify")
+                        QualifiedFnRef {
+                            project: "p".to_string(),
+                            function: "build".to_string()
+                        },
+                        QualifiedFnRef {
+                            project: "p".to_string(),
+                            function: "deploy".to_string()
+                        },
+                        QualifiedFnRef {
+                            project: "p".to_string(),
+                            function: "notify".to_string()
+                        }
                     ]
                 );
             }
@@ -97,15 +108,33 @@ mod tests {
 
     #[test]
     fn test_run_multiple_chains() {
-        let input = "run all { build; test; deploy; }";
+        let input = "run all { p::build; p::test; p::deploy; }";
         let prog = parse_program(input).unwrap();
         match &prog.items[0] {
             TopLevel::Stmt(Stmt::Run { name, chains, .. }) => {
                 assert_eq!(name, "all");
                 assert_eq!(chains.len(), 3);
-                assert_eq!(chains[0], vec![QualifiedFnRef::unqualified("build")]);
-                assert_eq!(chains[1], vec![QualifiedFnRef::unqualified("test")]);
-                assert_eq!(chains[2], vec![QualifiedFnRef::unqualified("deploy")]);
+                assert_eq!(
+                    chains[0],
+                    vec![QualifiedFnRef {
+                        project: "p".to_string(),
+                        function: "build".to_string()
+                    }]
+                );
+                assert_eq!(
+                    chains[1],
+                    vec![QualifiedFnRef {
+                        project: "p".to_string(),
+                        function: "test".to_string()
+                    }]
+                );
+                assert_eq!(
+                    chains[2],
+                    vec![QualifiedFnRef {
+                        project: "p".to_string(),
+                        function: "deploy".to_string()
+                    }]
+                );
             }
             _ => panic!("expected RunDecl"),
         }
@@ -113,7 +142,7 @@ mod tests {
 
     #[test]
     fn test_run_chain_in_project() {
-        let input = "pr p [url = `u`] { run local { build; } fn build { exec `make`; } }";
+        let input = "pr p [url = `u`] { run local { p::build; } fn build { exec `make`; } }";
         let prog = parse_program(input).unwrap();
         match &prog.items[0] {
             TopLevel::Stmt(Stmt::Project { body, .. }) => {
@@ -125,13 +154,13 @@ mod tests {
 
     #[test]
     fn test_run_with_chain_and_recovery() {
-        let result = parse_program("run r { a -> ; }");
+        let result = parse_program("run r { p::a -> ; }");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_run_body_must_end_with_semicolon() {
-        let result = parse_program("run r { a }");
+        let result = parse_program("run r { p::a }");
         assert!(result.is_err());
     }
 }

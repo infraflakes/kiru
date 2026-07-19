@@ -35,8 +35,8 @@
 pub(crate) mod compile;
 pub(crate) mod error;
 pub(crate) mod fnstmt;
+pub(crate) mod namespaces;
 pub(crate) mod resolve;
-pub(crate) mod scope;
 pub(crate) mod types;
 pub(crate) mod validation;
 

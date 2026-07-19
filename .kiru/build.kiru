@@ -7,14 +7,14 @@ pr kiru {
 
   fn build_with_container {
     var shell docker_bin = `command -v docker >/dev/null 2>&1 && echo "docker" || { command -v podman >/dev/null 2>&1 && echo "podman"; }`;
-    case $docker_bin {
+    case $kiru::docker_bin {
       `` {
         log `no container runtime found`;
-        exec `exit 1`; 
+        exec `exit 1`;
      };
       _  {
-        log `building kiru with ${docker_bin}`;
-        exec `${docker_bin} build --output type=local,dest=bin .`;
+        log `building kiru with ${kiru::docker_bin}`;
+        exec `${kiru::docker_bin} build --output type=local,dest=bin .`;
       };
     };
   }

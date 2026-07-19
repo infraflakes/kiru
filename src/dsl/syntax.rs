@@ -13,10 +13,11 @@ pub enum Expr {
     },
     VarRef {
         name: String,
-        /// Optional project namespace qualifier from a `ns::name` reference
-        /// (e.g. `nix::url`). `None` means the reference resolves in the current
-        /// project. Populated by the parser; resolution handles it later.
-        namespace: Option<String>,
+        /// Project namespace qualifier of this reference (e.g. `global` or a
+        /// project name). Always present — references are always written
+        /// `namespace::name` and never bare. Populated by the parser;
+        /// resolution looks the name up in exactly this namespace.
+        namespace: String,
         offset: usize,
         len: usize,
         /// Canonical path of the `.kiru` file this expression was parsed from.
@@ -46,22 +47,23 @@ impl Expr {
         }
     }
 
-    /// Invoke `f` with the name of every variable this expression references,
-    /// whether as a bare `$name` or an interpolation `${name}` inside a backtick
-    /// literal.
+    /// Invoke `f` with every variable this expression references, whether as a
+    /// `$namespace::name` reference or an interpolation `${namespace::name}`
+    /// inside a backtick literal. Both arguments are always present: `name`
+    /// then `namespace` — there is no bare (unqualified) reference form.
     ///
     /// Defined once per node type so the var walk is centralized: adding an
     /// `Expr` variant requires extending only this method (and that variant's
     /// own resolve), not every call site that collects referenced variables.
-    pub fn visit_vars(&self, f: &mut impl FnMut(&str, Option<&str>)) {
+    pub fn visit_vars(&self, f: &mut impl FnMut(&str, &str)) {
         match self {
             Expr::VarRef {
                 namespace, name, ..
-            } => f(name, namespace.as_deref()),
+            } => f(name, namespace),
             Expr::BacktickLit { parts, .. } => {
                 for part in parts {
                     if part.is_var {
-                        f(&part.value, part.namespace.as_deref());
+                        f(&part.value, &part.namespace);
                     }
                 }
             }
@@ -74,9 +76,9 @@ impl Expr {
 #[derive(Debug, Clone)]
 pub struct InterpolationPart {
     pub is_var: bool,
-    /// Optional project namespace qualifier for `is_var` parts (e.g. the
-    /// `nix` in `${nix::url}`). `None` resolves in the current project.
-    pub namespace: Option<String>,
+    /// Project namespace qualifier for `is_var` parts (e.g. the `nix` in
+    /// `${nix::url}`). Always present — interpolation requires `namespace::name`.
+    pub namespace: String,
     pub value: String,
 }
 
@@ -101,9 +103,9 @@ pub enum CasePattern {
     },
     VarRef {
         name: String,
-        /// Optional project namespace qualifier from a `ns::name` pattern
-        /// (e.g. `nix::url`). `None` resolves in the current project.
-        namespace: Option<String>,
+        /// Project namespace qualifier from a `ns::name` pattern (e.g.
+        /// `nix::url`). Always present — references are always `namespace::name`.
+        namespace: String,
         offset: usize,
         len: usize,
         /// Canonical path of the `.kiru` file this pattern was parsed from.
@@ -136,18 +138,20 @@ impl CasePattern {
     }
 
     /// Invoke `f` with the name of every variable this pattern references,
-    /// including bare `$name`, backtick interpolation `${name}`, and default
-    /// (`_`) patterns (which reference no variables). Mirrors
-    /// [`Expr::visit_vars`] so the var-walk API is uniform across node kinds.
-    pub fn visit_vars(&self, f: &mut impl FnMut(&str, Option<&str>)) {
+    /// including `$namespace::name` and backtick interpolation
+    /// `${namespace::name}`, and default (`_`) patterns (which reference no
+    /// variables). Both arguments are always present (`name`, then
+    /// `namespace`). Mirrors [`Expr::visit_vars`] so the var-walk API is
+    /// uniform across node kinds.
+    pub fn visit_vars(&self, f: &mut impl FnMut(&str, &str)) {
         match self {
             CasePattern::VarRef {
                 namespace, name, ..
-            } => f(name, namespace.as_deref()),
+            } => f(name, namespace),
             CasePattern::Literal { parts, .. } => {
                 for part in parts {
                     if part.is_var {
-                        f(&part.value, part.namespace.as_deref());
+                        f(&part.value, &part.namespace);
                     }
                 }
             }
