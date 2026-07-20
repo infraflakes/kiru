@@ -43,10 +43,6 @@ pub struct UnresolvedProject {
 /// Validation operates on this type so errors surface before any shell execution.
 #[derive(Debug, Clone)]
 pub struct UnresolvedConfig {
-    /// Top-level `var` / `var shell` declarations, in source order. Resolved in
-    /// the resolve pass (shell-evaluated, inlined) so `global::name` reads see
-    /// real values.
-    pub global_vars: Vec<ProjectVarStmt>,
     pub projects: HashMap<String, UnresolvedProject>,
     /// Top-level `run` blocks, keyed by run name. Each run is a set of chains of
     /// `namespace::function` references executed by the runner. `run` is global

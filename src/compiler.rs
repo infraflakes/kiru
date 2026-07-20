@@ -13,24 +13,24 @@
 //!
 //! 1. **Linear processing** (`compile::resolve_linear`) — AST items are walked in
 //!    source order. Imported files are resolved recursively (with cycle detection).
-//!    `var` bindings are collected: `var string` values are resolved and
-//!    accumulated into scopes immediately, while `var shell` declarations are
-//!    collected as placeholders and deferred to the config-eval phase. Project,
-//!    function, and run declarations are collected into an intermediate
-//!    representation.
+//!    Globals are resolved as they are encountered: a `var string` value is
+//!    substituted, and a `var shell` global is executed live at its declaration
+//!    point so a later `import` path (which is also loaded during this pass) can
+//!    read its real output. Project, function, and run declarations are collected
+//!    into an intermediate representation, with project variable names declared
+//!    into the namespaces map for later reference checks.
 //!
 //! 2. **Validation** (`validation::validate_configuration`) — structural constraints
-//!    are checked against the pre-built variable scopes: run-to-function references
-//!    and undefined variable references within function bodies. Validation runs
-//!    *before* any `var shell` command executes; those commands are evaluated in a
-//!    dedicated config-eval phase immediately afterwards.
+//!    are checked against the namespaces map: run-to-function references and
+//!    undefined variable references within function bodies.
 //!
-//! 3. **Resolution** (`resolve::resolve_with_scopes`) — all remaining variable
-//!    references (standalone `$var` in expressions; `` `${var}` `` interpolation
-//!    inside backtick strings) are substituted purely against the scopes built in
-//!    step 1.  Function bodies are lowered to [`crate::plan::PlanStmt`]s — no
-//!    `Expr` or `VarDecl` nodes remain.  Project fields (url, dir, sync, branch)
-//!    are resolved.  Run declarations pass through unchanged.
+//! 3. **Resolution** (`resolve::resolve_config`) — projects are resolved in
+//!    topological order. Each project/function `var shell` command is executed
+//!    (live, no caching), all remaining variable references (standalone `$var`;
+//!    `` `${var}` `` interpolation inside backtick strings) are substituted, and
+//!    function bodies are lowered to [`crate::plan::PlanStmt`]s — no `Expr` or
+//!    `VarDecl` nodes remain. Project fields (url, dir, sync, branch) are
+//!    resolved. Run declarations pass through unchanged.
 
 pub(crate) mod compile;
 pub(crate) mod error;

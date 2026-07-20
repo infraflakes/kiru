@@ -1,44 +1,44 @@
 use crate::compiler::error::{CompileError, io_err, spanned_err_named};
 
-use crate::compiler::namespaces::{Namespaces, ShellCache, resolve_expr};
+use crate::compiler::namespaces::{Namespaces, resolve_expr};
 use crate::compiler::resolve::resolve_config;
 use crate::compiler::types::{ProjectVarStmt, UnresolvedProject};
 use crate::compiler::validation;
 use crate::dsl::Parser;
 use crate::dsl::{Expr, Program, ProjectField, Stmt, TopLevel, VarType, ast::QualifiedFnRef};
+use crate::error::SourceFile;
 use crate::plan::Plan;
+use crate::shell::execute_shell_variable;
 use miette::miette;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// Run the full compilation pipeline:
-/// 1. Linear processing: walk items in source order, resolve vars and fields,
-///    load imports (with variable interpolation), accumulate projects, and
-///    build the single `Namespaces` map (variable names declared, `var shell`
-///    globals left as placeholders to be evaluated later).
-/// 2. Validate references against the namespaces map (no shell runs yet).
-/// 3. Resolve in dependency order: run `var shell` commands and inline every
-///    value into the plan.
+/// 1. Linear processing: walk items in source order, resolve globals and load
+///    imports (both in source order). A global `var shell` is executed live at
+///    its declaration point, so a later `import` path or global that reads
+///    `global::name` sees its real output. Projects are accumulated into the
+///    single `Namespaces` map (their names declared for reference checks).
+/// 2. Validate references against the namespaces map.
+/// 3. Resolve in dependency order: run each project/function `var shell`
+///    command and inline every value into the plan.
 pub fn compile_and_resolve(entry_path: &Path, force_cwd: bool) -> Result<Plan, CompileError> {
     let abs_entry = canonicalize_entry(entry_path)?;
     let linear_result = resolve_linear(&abs_entry, ImportPolicy::Strict)?;
-    // Validation runs before any shell execution: the namespaces map already
-    // carries every declared variable name, so reference checks need no
-    // command output.
+    // Globals (including their `var shell` output) are already resolved; project
+    // and function `var shell` commands run in the resolve pass below.
     let sources = linear_result.unresolved.source_texts.clone();
     validation::validate_configuration(
         &linear_result.unresolved,
         &linear_result.namespaces,
         &sources,
     )?;
-    let mut shell_cache = ShellCache::new();
     resolve_config(
         linear_result.namespaces,
         linear_result.unresolved,
         &sources,
         force_cwd,
-        &mut shell_cache,
         true,
     )
 }
@@ -51,8 +51,6 @@ struct LinearState {
     /// `import` paths (and later reference validation) can resolve variable
     /// references as soon as their names are declared.
     namespaces: Namespaces,
-    /// Top-level `var` / `var shell` declarations, in source order.
-    global_vars: Vec<ProjectVarStmt>,
     projects: HashMap<String, UnresolvedProject>,
     /// Top-level `run` blocks, keyed by run name.
     runs: HashMap<String, Vec<Vec<QualifiedFnRef>>>,
@@ -66,7 +64,6 @@ impl LinearState {
     fn new(import_policy: ImportPolicy) -> Self {
         Self {
             namespaces: Namespaces::new(),
-            global_vars: Vec::new(),
             projects: HashMap::new(),
             loaded_files: HashSet::new(),
             recursion_stack: HashSet::new(),
@@ -428,32 +425,29 @@ fn linear_process_program(program: &Program, state: &mut LinearState) -> Result<
                     len,
                     ..
                 } => {
-                    // Collect the global declaration for the resolve pass and
-                    // declare its name into the namespaces map immediately so
-                    // later globals / imports can reference it. `var shell`
-                    // globals are left as a placeholder; their command output is
-                    // evaluated in the resolve pass.
+                    // Resolve the global immediately, in source order, and
+                    // declare it into the namespaces map so later globals and
+                    // `import` paths can read `global::name`. A `var shell`
+                    // global is executed live here (not deferred), because an
+                    // `import` path may depend on its output and imports are
+                    // loaded during this same linear pass. Globals always run in
+                    // the current process directory.
                     let resolved = resolve_expr(value, &state.namespaces, &state.source_texts)?;
-                    let placeholder = if *var_type == VarType::Shell {
-                        String::new()
+                    let final_value = if *var_type == VarType::Shell {
+                        let source =
+                            SourceFile::from_registry(&state.source_texts, value.source_name());
+                        execute_shell_variable(name, &resolved, None, &source, *offset, *len)?
                     } else {
                         resolved
                     };
                     state.namespaces.declare_global(
                         name,
-                        placeholder,
+                        final_value,
                         &program.source_name,
                         *offset,
                         *len,
                         &state.source_texts,
                     )?;
-                    state.global_vars.push(ProjectVarStmt {
-                        var_type: var_type.clone(),
-                        name: name.clone(),
-                        value: value.clone(),
-                        offset: *offset,
-                        len: *len,
-                    });
                 }
                 Stmt::Project {
                     name,
@@ -539,7 +533,6 @@ fn resolve_linear(
     }
 
     let unresolved = super::types::UnresolvedConfig {
-        global_vars: std::mem::take(&mut state.global_vars),
         projects: state.projects,
         runs: std::mem::take(&mut state.runs),
         source_texts: state.source_texts,
@@ -560,15 +553,7 @@ pub fn parse_projects_metadata(entry_path: &Path) -> Result<Plan, CompileError> 
     let abs_entry = canonicalize_entry(entry_path)?;
     let linear = resolve_linear(&abs_entry, ImportPolicy::SkipMissing)?;
     let sources = linear.unresolved.source_texts.clone();
-    let mut shell_cache = ShellCache::new();
-    resolve_config(
-        linear.namespaces,
-        linear.unresolved,
-        &sources,
-        false,
-        &mut shell_cache,
-        false,
-    )
+    resolve_config(linear.namespaces, linear.unresolved, &sources, false, false)
 }
 
 #[cfg(test)]
@@ -636,6 +621,40 @@ mod tests {
             !rendered.contains("run.kiru"),
             "diagnostic must not point at run.kiru, got: {}",
             rendered
+        );
+    }
+
+    /// Regression: an `import` path that interpolates a value derived from a
+    /// global `var shell` must resolve against the command's real output. The
+    /// shell global is executed live during the linear pass (in source order),
+    /// so a later import sees the true directory rather than an empty
+    /// placeholder (which previously produced paths like `/kiru/...`).
+    #[test]
+    fn test_import_path_depends_on_global_var_shell() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let base = dir.path().canonicalize().unwrap();
+        std::fs::create_dir_all(base.join("sub")).unwrap();
+        write_config(
+            &base.join("sub"),
+            "imported.kiru",
+            "pr fromimport [url = `u` dir = `d`] { }\n",
+        );
+        write_config(
+            &base,
+            "main.kiru",
+            &format!(
+                "\
+             var shell root = `echo {}`;\n\
+             var string subdir = `${{global::root}}/sub`;\n\
+             import `${{global::subdir}}/imported.kiru`;\n\
+             ",
+                base.to_string_lossy()
+            ),
+        );
+        let cfg = compile_full(&base.join("main.kiru")).unwrap();
+        assert!(
+            cfg.projects.contains_key("fromimport"),
+            "import whose path depends on a global var shell should load"
         );
     }
 

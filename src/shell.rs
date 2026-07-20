@@ -215,8 +215,10 @@ pub(crate) fn exec_and_get_stdout(
 /// `Error::Spawn` (the shell could not be started at all) and `Error::Timeout`
 /// (the command hung) are surfaced via miette and abort compilation.
 ///
-/// All shell evaluation is quarantined to the config-eval phase and funnelled
-/// through `compiler::resolve::evaluate_config_shell`, which memoizes results.
+/// This is the single funnel for every `var shell` command. There is no
+/// memoization: each `var shell` is executed live at the point it is resolved
+/// (globals during the linear pass, project/function vars during the resolve
+/// pass), so the same command declared twice runs twice.
 ///
 /// `working_dir` — when `Some`, runs the command in that directory;
 /// when `None`, runs in the current process directory.

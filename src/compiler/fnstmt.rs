@@ -9,9 +9,7 @@
 //! trait-object / boxed-clone indirection for AI agents to diverge on.
 
 use crate::compiler::error::CompileError;
-use crate::compiler::namespaces::{
-    Namespaces, ShellCache, evaluate_config_shell, resolve_case_pattern, resolve_expr,
-};
+use crate::compiler::namespaces::{Namespaces, resolve_case_pattern, resolve_expr};
 use crate::compiler::validation::is_var_defined;
 use crate::dsl::{CaseStmt, EnvBlockStmt, Expr, FnStmt, VarDeclStmt, VarType};
 use crate::error::{SourceFile, spanned_report_on};
@@ -19,6 +17,7 @@ use crate::plan::{
     PlanCaseArm, PlanCaseStmt, PlanCdStmt, PlanEnvBlockStmt, PlanEnvPair, PlanExecStmt,
     PlanLogStmt, PlanStmt,
 };
+use crate::shell::execute_shell_variable;
 use miette::Report;
 use std::collections::HashMap;
 use std::path::Path;
@@ -45,7 +44,6 @@ pub(crate) struct ResolveFnCtx<'a> {
     pub project: &'a str,
     pub working_dir: Option<&'a Path>,
     pub sources: &'a HashMap<String, String>,
-    pub shell_cache: &'a mut ShellCache,
 }
 
 // ── Recursive dispatch helpers ───────────────────────────────────────────────
@@ -185,14 +183,13 @@ fn resolve_var_decl(
     let source = SourceFile::from_registry(ctx.sources, s.value.source_name());
     let resolved_value = resolve_expr(&s.value, ctx.namespaces, ctx.sources)?;
     let final_value = if s.var_type == VarType::Shell {
-        evaluate_config_shell(
+        execute_shell_variable(
             &s.name,
             &resolved_value,
             ctx.working_dir,
             &source,
             offset,
             len,
-            ctx.shell_cache,
         )?
     } else {
         resolved_value

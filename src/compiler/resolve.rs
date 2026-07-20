@@ -1,14 +1,14 @@
 use crate::compiler::error::CompileError;
 use crate::compiler::fnstmt::{ResolveFnCtx, resolve_fn_body_stmts};
 use crate::compiler::namespaces::{
-    Namespaces, ShellCache, evaluate_config_shell, resolve_dir_field, resolve_expr,
-    resolve_optional_expr, topo_order_projects,
+    Namespaces, resolve_dir_field, resolve_expr, resolve_optional_expr, topo_order_projects,
 };
 use crate::compiler::types::{ProjectVarStmt, UnresolvedConfig};
 use crate::dsl::Expr;
 use crate::dsl::VarType;
 use crate::error::SourceFile;
 use crate::plan::{Plan, PlanProject, parse_sync_mode};
+use crate::shell::execute_shell_variable;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -52,36 +52,18 @@ fn reject_field_fn_body_var_refs(
 /// metadata). `force_cwd` mirrors the `KIRU_CWD` env var: when set,
 /// project-body `var shell` commands run in the current directory instead of
 /// the resolved project directory.
+///
+/// Globals were already fully resolved (and their `var shell` commands executed)
+/// during the linear pass, so `namespaces` already carries their real values;
+/// this pass only resolves per-project variables, fields, and function bodies.
 pub(crate) fn resolve_config(
     mut namespaces: Namespaces,
     unresolved: UnresolvedConfig,
     sources: &std::collections::HashMap<String, String>,
     force_cwd: bool,
-    shell_cache: &mut ShellCache,
     lower_functions: bool,
 ) -> Result<Plan, CompileError> {
-    // 1. Globals are resolved first, in source order, so a `global::b` that
-    //    reads an earlier `global::a` sees `a`'s real (shell-evaluated) value.
-    for gv in &unresolved.global_vars {
-        let resolved = resolve_expr(&gv.value, &namespaces, sources)?;
-        let final_value = if gv.var_type == VarType::Shell {
-            let source = SourceFile::from_registry(sources, gv.value.source_name());
-            evaluate_config_shell(
-                &gv.name,
-                &resolved,
-                None,
-                &source,
-                gv.offset,
-                gv.len,
-                shell_cache,
-            )?
-        } else {
-            resolved
-        };
-        namespaces.set_global(&gv.name, final_value);
-    }
-
-    // 2. Projects in dependency order.
+    // Projects in dependency order.
     let order = topo_order_projects(&unresolved.projects)?;
 
     let mut projects: std::collections::HashMap<String, PlanProject> =
@@ -122,14 +104,7 @@ pub(crate) fn resolve_config(
         // variables. A body var or function may read `name::var` of any
         // (donor) project; fields are not referenceable.
         for var_stmt in &unresolved_project.var_stmts {
-            resolve_project_var(
-                var_stmt,
-                &mut namespaces,
-                &name,
-                working_dir,
-                sources,
-                shell_cache,
-            )?;
+            resolve_project_var(var_stmt, &mut namespaces, &name, working_dir, sources)?;
         }
 
         reject_field_fn_body_var_refs(&unresolved_project.url, "url", &name, &namespaces)?;
@@ -155,7 +130,6 @@ pub(crate) fn resolve_config(
                     project: &name,
                     working_dir,
                     sources,
-                    shell_cache,
                 };
                 let resolved_body = resolve_fn_body_stmts(body, &mut resolve_ctx)?;
                 functions.insert(fn_name.clone(), resolved_body);
@@ -190,27 +164,26 @@ pub(crate) fn resolve_config(
 }
 
 /// Resolve a `var` / `var shell` from a `ProjectVarStmt` into the enclosing
-/// project namespace. Runs `var shell` in `working_dir` and records the real
-/// value via `namespaces.set_project_var`.
+/// project namespace. Runs `var shell` in `working_dir` (executing the command
+/// live, every time) and records the real value via
+/// `namespaces.set_project_var`.
 pub(crate) fn resolve_project_var(
     var: &ProjectVarStmt,
     namespaces: &mut Namespaces,
     project: &str,
     working_dir: Option<&Path>,
     sources: &std::collections::HashMap<String, String>,
-    shell_cache: &mut ShellCache,
 ) -> Result<(), CompileError> {
     let source = SourceFile::from_registry(sources, var.value.source_name());
     let resolved = resolve_expr(&var.value, namespaces, sources)?;
     let final_val = if var.var_type == VarType::Shell {
-        evaluate_config_shell(
+        execute_shell_variable(
             &var.name,
             &resolved,
             working_dir,
             &source,
             var.offset,
             var.len,
-            shell_cache,
         )?
     } else {
         resolved
@@ -219,7 +192,6 @@ pub(crate) fn resolve_project_var(
     Ok(())
 }
 
-#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use crate::compiler::CompileError;

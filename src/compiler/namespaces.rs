@@ -21,7 +21,6 @@
 
 use crate::compiler::error::{CompileError, spanned_err_named};
 use crate::dsl::Expr;
-use crate::error::SourceFile;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -159,13 +158,6 @@ impl Namespaces {
         self.fn_body_var_names
             .get(ns)
             .is_some_and(|names| names.contains(name))
-    }
-
-    /// Set (overwrite) a global variable. Used by the resolve pass after the
-    /// declare pass inserted a placeholder, so duplicate detection stays in
-    /// the declare pass while real (shell-evaluated) values land here.
-    pub fn set_global(&mut self, name: &str, value: String) {
-        self.global.insert(name.to_string(), value);
     }
 
     /// Set (overwrite) a project variable.
@@ -423,35 +415,6 @@ pub(crate) fn resolve_case_pattern(
         },
         crate::dsl::CasePattern::Default => Ok(crate::plan::PlanCasePattern::Default),
     }
-}
-
-/// Memo key for config-time shell evaluation: the resolved command text and the
-/// working directory it ran in.
-pub(crate) type ShellCache = std::collections::HashMap<(String, Option<String>), String>;
-
-/// The single funnel for every `var shell` command. Memoizes by (command,
-/// working_dir) and delegates to `shell::execute_shell_variable`, which now
-/// propagates failures as compile errors.
-pub(crate) fn evaluate_config_shell(
-    name: &str,
-    command: &str,
-    working_dir: Option<&Path>,
-    source: &SourceFile<'_>,
-    offset: usize,
-    len: usize,
-    cache: &mut ShellCache,
-) -> Result<String, CompileError> {
-    let key = (
-        command.to_string(),
-        working_dir.map(|p| p.to_string_lossy().to_string()),
-    );
-    if let Some(cached) = cache.get(&key) {
-        return Ok(cached.clone());
-    }
-    let result =
-        crate::shell::execute_shell_variable(name, command, working_dir, source, offset, len)?;
-    cache.insert(key, result.clone());
-    Ok(result)
 }
 
 /// Collect every donor project name referenced by qualified variable reads in
