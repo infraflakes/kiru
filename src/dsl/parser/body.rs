@@ -1,6 +1,6 @@
 use super::expr::parse_interpolation_parts;
 use super::*;
-use crate::dsl::fnstmt::{CaseStmt, CdStmt, EnvBlockStmt, ExecStmt, FnStmt, LogStmt, VarDeclStmt};
+use crate::dsl::fnstmt::{CaseStmt, EnvBlockStmt, FnStmt, VarDeclStmt};
 
 impl Parser {
     pub(crate) fn parse_log_stmt(&mut self) -> Result<FnStmt, ParseError> {
@@ -9,7 +9,7 @@ impl Parser {
         let value = self.parse_expr()?;
         self.expect_with_context(TokenType::Semicolon, "after `log`")?;
 
-        Ok(FnStmt::Log(LogStmt { value }))
+        Ok(FnStmt::Log(value))
     }
 
     pub(crate) fn parse_exec_stmt(&mut self) -> Result<FnStmt, ParseError> {
@@ -18,7 +18,7 @@ impl Parser {
         let value = self.parse_expr()?;
         self.expect_with_context(TokenType::Semicolon, "after `exec`")?;
 
-        Ok(FnStmt::Exec(ExecStmt { value }))
+        Ok(FnStmt::Exec(value))
     }
 
     pub(crate) fn parse_cd_stmt(&mut self) -> Result<FnStmt, ParseError> {
@@ -27,7 +27,7 @@ impl Parser {
         let arg = self.parse_expr()?;
         self.expect_with_context(TokenType::Semicolon, "after `cd`")?;
 
-        Ok(FnStmt::Cd(CdStmt { value: arg }))
+        Ok(FnStmt::Cd(arg))
     }
 
     pub(crate) fn parse_fn_var_decl(&mut self) -> Result<FnStmt, ParseError> {

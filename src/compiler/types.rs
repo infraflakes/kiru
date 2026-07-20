@@ -1,5 +1,5 @@
 use crate::dsl::{Expr, FnStmt, VarType, ast::QualifiedFnRef};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Minimal representation of a `var` / `var shell` statement inside a project
 /// body (or at the top level), extracted from the full `Stmt` AST node to avoid
@@ -31,24 +31,19 @@ pub struct UnresolvedProject {
     /// declared into the project namespace (which performs duplicate
     /// detection against the declare pass).
     pub var_stmts: Vec<ProjectVarStmt>,
-    pub functions: HashMap<String, Vec<FnStmt>>,
-    /// Source order of `functions` keys, so function bodies resolve and declare
-    /// their variables deterministically (a later function may read an earlier
-    /// function's project-global variables). `HashMap` iteration alone is not
-    /// ordered.
-    pub fn_order: Vec<String>,
+    pub functions: BTreeMap<String, Vec<FnStmt>>,
 }
 
 /// The pre-resolution config with unresolved AST fields.
 /// Validation operates on this type so errors surface before any shell execution.
 #[derive(Debug, Clone)]
 pub struct UnresolvedConfig {
-    pub projects: HashMap<String, UnresolvedProject>,
+    pub projects: BTreeMap<String, UnresolvedProject>,
     /// Top-level `run` blocks, keyed by run name. Each run is a set of chains of
     /// `namespace::function` references executed by the runner. `run` is global
     /// (namespacing already disambiguates the project a function belongs to),
     /// so it is no longer nested inside a `pr` body.
-    pub runs: HashMap<String, Vec<Vec<QualifiedFnRef>>>,
+    pub runs: BTreeMap<String, Vec<Vec<QualifiedFnRef>>>,
     /// Full text of every source file parsed during the linear phase, keyed by
     /// canonical path. Let every diagnostic resolve the correct file for its
     /// span: a project's body is merged from several `.kiru` files, so a node's

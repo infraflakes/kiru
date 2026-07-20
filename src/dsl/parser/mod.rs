@@ -24,16 +24,14 @@ pub(crate) mod test_support;
 pub(crate) struct Parser {
     lexer: Lexer,
     current: Token,
+    /// One token of lookahead, used to disambiguate `namespace::name` forms
+    /// (e.g. a function copy) from a bare identifier in a project body.
+    next: Token,
     source_len: usize,
     source_name: String,
 }
 
 impl Parser {
-    /// Convenience constructor that creates a Parser from a source string directly.
-    pub(crate) fn from_source(source: String) -> Self {
-        Parser::new(Lexer::new(source))
-    }
-
     /// Records the canonical path of the source file so every parsed node
     /// carries the name used to resolve its diagnostic span. The compiler sets
     /// this before parsing — tests that only inspect structure leave it empty.
@@ -46,9 +44,11 @@ impl Parser {
     pub(crate) fn new(mut lexer: Lexer) -> Self {
         let source_len = lexer.source_len();
         let current = lexer.next_token();
+        let next = lexer.next_token();
         Parser {
             lexer,
             current,
+            next,
             source_len,
             source_name: String::new(),
         }
@@ -61,7 +61,7 @@ impl Parser {
 
     /// Advances to the next token from the lexer.
     fn advance(&mut self) {
-        self.current = self.lexer.next_token();
+        self.current = std::mem::replace(&mut self.next, self.lexer.next_token());
     }
 
     /// Returns a SourceSpan that safely handles EOF by pointing at the last byte.
@@ -269,17 +269,6 @@ impl Parser {
         }
     }
 
-    /// Dispatches to the correct statement parser for statements inside a project body.
-    pub(crate) fn parse_project_body_stmt(&mut self) -> Result<Stmt, ParseError> {
-        self.err_on_illegal_token()?;
-        match self.current_token().ty {
-            TokenType::Var => self.parse_var_decl(),
-            TokenType::Fn => self.parse_fn_decl(),
-            TokenType::Run => self.parse_run_decl(),
-            _ => Err(self.unexpected_stmt_start_error("var, fn, or run")),
-        }
-    }
-
     #[cfg(test)]
     fn skip_to_stmt_boundary(&mut self) {
         use TokenType::*;
@@ -352,10 +341,11 @@ mod tests {
     #[test]
     fn test_multiple_top_level_statements() {
         let input = "var string x = `hello`;\n\
-                      pr p [url = `u` dir = `d`] { fn f { log `hi`; } }\n\
+                      fn f { log `hi`; }\n\
+                      pr p [url = `u` dir = `d`] { use f; }\n\
                       run s { p::f; }";
         let prog = parse_program(input).unwrap();
-        assert_eq!(count_stmt_types(&prog), vec!["var", "pr", "run"]);
+        assert_eq!(count_stmt_types(&prog), vec!["var", "fn", "pr", "run"]);
     }
 
     #[test]
@@ -384,7 +374,7 @@ mod tests {
 
     #[test]
     fn test_underscore_outside_case_pattern() {
-        let result = parse_program("pr p { fn test { log `_`; _; } }");
+        let result = parse_program("fn test { log `_`; _; }");
         let errs = result.unwrap_err();
         assert!(
             errs.iter().any(|e| e

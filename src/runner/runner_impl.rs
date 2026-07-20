@@ -68,17 +68,18 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
+        fn deploy {\n\
+            case $self::os {\n\
+                `Linux` { log `matched`; };\n\
+                _ { log `default`; };\n\
+            };\n\
+        }\n\
         pr test [\n\
             url = `http://example.com`\n\
             dir = `test`\n\
         ] {\n\
             var string os = `Linux`;\n\
-            fn deploy {\n\
-                case $test::os {\n\
-                    `Linux` { log `matched`; };\n\
-                    _ { log `default`; };\n\
-                };\n\
-            }\n\
+            use deploy;\n\
         }\
         ",
         );
@@ -94,16 +95,17 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
+        fn deploy {\n\
+            case $self::os {\n\
+                `Linux` { log `only-linux`; };\n\
+            };\n\
+        }\n\
         pr test [\n\
             url = `http://example.com`\n\
             dir = `test`\n\
         ] {\n\
             var string os = `Darwin`;\n\
-            fn deploy {\n\
-                case $test::os {\n\
-                    `Linux` { log `only-linux`; };\n\
-                };\n\
-            }\n\
+            use deploy;\n\
         }\
         ",
         );

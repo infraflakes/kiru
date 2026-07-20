@@ -31,6 +31,7 @@ pub(crate) fn count_stmt_types(program: &Program) -> Vec<&'static str> {
             TopLevel::Stmt(Stmt::Field { .. }) => "field",
             TopLevel::Stmt(Stmt::Fn { .. }) => "fn",
             TopLevel::Stmt(Stmt::Run { .. }) => "run",
+            TopLevel::Stmt(Stmt::Use { .. }) => "use",
             TopLevel::Import(_) => "import",
         })
         .collect()
@@ -42,6 +43,7 @@ pub(crate) fn count_body_stmt_types(body: &[Stmt]) -> Vec<&'static str> {
             Stmt::Var { .. } => "var",
             Stmt::Fn { .. } => "fn",
             Stmt::Run { .. } => "run",
+            Stmt::Use { .. } => "use",
             Stmt::Project { .. } | Stmt::Field { .. } => "other",
         })
         .collect()

@@ -69,10 +69,10 @@ fn drain_events(
     loop {
         match event_receiver.try_recv() {
             Ok(TuiEvent::UpdateStatus(idx, status)) => {
-                Model::lock(model).update_task_status(idx, status);
+                model.lock().unwrap().update_task_status(idx, status);
             }
             Ok(TuiEvent::AppendOutput(idx, line)) => {
-                Model::lock(model).append_output(idx, line);
+                model.lock().unwrap().append_output(idx, line);
             }
             Err(mpsc::error::TryRecvError::Empty) => return false,
             Err(mpsc::error::TryRecvError::Disconnected) => return true,
@@ -128,9 +128,9 @@ pub async fn run_tui_event_loop(
     loop {
         let disconnected = drain_events(&model, &mut event_receiver);
 
-        if disconnected || Model::lock(&model).all_done() {
+        if disconnected || model.lock().unwrap().all_done() {
             terminal.draw(|frame| {
-                let guard = Model::lock(&model);
+                let guard = model.lock().unwrap();
                 render_fn(frame, &guard, spinner_idx);
             })?;
             break;
@@ -139,8 +139,7 @@ pub async fn run_tui_event_loop(
         if matches!(raw, RawMode::Enabled) {
             if handle_keyboard_input() {
                 let _ = disable_raw_mode();
-                eprintln!("Kiru force exited");
-                std::process::exit(0);
+                break;
             }
         } else {
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -148,7 +147,7 @@ pub async fn run_tui_event_loop(
 
         spinner_idx = (spinner_idx + 1) % SPINNER_FRAMES.len();
         terminal.draw(|frame| {
-            let guard = Model::lock(&model);
+            let guard = model.lock().unwrap();
             render_fn(frame, &guard, spinner_idx);
         })?;
     }
@@ -156,7 +155,7 @@ pub async fn run_tui_event_loop(
     drop(terminal);
     drop(raw);
 
-    let guard = Model::lock(&model);
+    let guard = model.lock().unwrap();
     let dump = format_fn(&guard);
     drop(guard);
 

@@ -9,25 +9,11 @@ pub(crate) const OK_ANSI: &str = "\x1b[92m";
 /// Red ANSI color for failure status.
 pub(crate) const FAILED_ANSI: &str = "\x1b[91m";
 
-/// Bright-yellow ANSI base reused by every "active" semantic color so the
-/// escape is defined exactly once. Aliasing instead of repeating the literal
-/// means retuning the shade updates `log`/`cd`/`running` output together
-/// rather than drifting apart.
+/// Bright-yellow ANSI escape for every "active" semantic color so the escape
+/// is defined exactly once.
 pub(crate) const BRIGHT_YELLOW_ANSI: &str = "\x1b[93m";
-/// Gray ANSI base reused by every muted/pending color.
+/// Gray ANSI escape for muted/pending text.
 pub(crate) const GRAY_ANSI: &str = "\x1b[90m";
-
-/// Yellow ANSI color for running status.
-pub(crate) const RUNNING_ANSI: &str = BRIGHT_YELLOW_ANSI;
-/// Yellow color for `log` statements.
-pub(crate) const LOG_ANSI: &str = BRIGHT_YELLOW_ANSI;
-/// Yellow color for `cd` statements.
-pub(crate) const CD_ANSI: &str = BRIGHT_YELLOW_ANSI;
-
-/// Gray ANSI color for pending status.
-pub(crate) const PENDING_ANSI: &str = GRAY_ANSI;
-/// Muted text color.
-pub(crate) const MUTED_ANSI: &str = GRAY_ANSI;
 
 /// Bold ANSI escape code.
 pub(crate) const BOLD: &str = "\x1b[1m";
@@ -35,8 +21,6 @@ pub(crate) const BOLD: &str = "\x1b[1m";
 pub(crate) const YELLOW: &str = "\x1b[33m";
 /// Cyan ANSI color.
 pub(crate) const CYAN: &str = "\x1b[36m";
-/// Gray ANSI color (alias for muted text).
-pub(crate) const GRAY: &str = GRAY_ANSI;
 /// Bold cyan ANSI color.
 pub(crate) const BOLD_CYAN: &str = "\x1b[1;36m";
 
@@ -74,11 +58,11 @@ pub(crate) fn colored_line_parts(line: &str) -> (usize, &'static str, &'static s
     let indent = line.len() - trimmed.len();
 
     if let Some(rest) = trimmed.strip_prefix(LOG_PREFIX) {
-        (indent, LOG_PREFIX, LOG_ANSI, rest)
+        (indent, LOG_PREFIX, BRIGHT_YELLOW_ANSI, rest)
     } else if let Some(rest) = trimmed.strip_prefix(EXEC_PREFIX) {
         (indent, EXEC_PREFIX, EXEC_ANSI, rest)
     } else if let Some(rest) = trimmed.strip_prefix(CD_PREFIX) {
-        (indent, CD_PREFIX, CD_ANSI, rest)
+        (indent, CD_PREFIX, BRIGHT_YELLOW_ANSI, rest)
     } else if let Some(rest) = trimmed.strip_prefix(ENV_PREFIX) {
         (indent, ENV_PREFIX, ENV_ANSI, rest)
     } else {
@@ -109,9 +93,9 @@ mod tests {
     #[test]
     fn colored_line_parts_recognizes_every_prefix() {
         let cases = [
-            (LOG_PREFIX, LOG_ANSI),
+            (LOG_PREFIX, BRIGHT_YELLOW_ANSI),
             (EXEC_PREFIX, EXEC_ANSI),
-            (CD_PREFIX, CD_ANSI),
+            (CD_PREFIX, BRIGHT_YELLOW_ANSI),
             (ENV_PREFIX, ENV_ANSI),
         ];
         for (prefix, expected_color) in cases {
@@ -128,7 +112,7 @@ mod tests {
     fn colored_line_string_round_trips() {
         let line = format!("{}{}", LOG_PREFIX, "hello");
         let rendered = colored_line_string(&line);
-        assert!(rendered.starts_with(LOG_ANSI));
+        assert!(rendered.starts_with(BRIGHT_YELLOW_ANSI));
         assert!(rendered.contains(LOG_PREFIX));
         assert!(rendered.contains("hello"));
         assert!(rendered.ends_with(RESET));

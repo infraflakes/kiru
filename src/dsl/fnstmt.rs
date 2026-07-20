@@ -7,21 +7,6 @@
 use crate::dsl::{CaseArm, EnvPair, Expr, VarType};
 
 #[derive(Debug, Clone)]
-pub struct LogStmt {
-    pub value: Expr,
-}
-
-#[derive(Debug, Clone)]
-pub struct ExecStmt {
-    pub value: Expr,
-}
-
-#[derive(Debug, Clone)]
-pub struct CdStmt {
-    pub value: Expr,
-}
-
-#[derive(Debug, Clone)]
 pub struct VarDeclStmt {
     pub var_type: VarType,
     pub name: String,
@@ -43,25 +28,55 @@ pub struct CaseStmt {
 /// A parsed (unresolved) function-body statement.
 #[derive(Debug, Clone)]
 pub enum FnStmt {
-    Log(LogStmt),
-    Exec(ExecStmt),
-    Cd(CdStmt),
+    Log(Expr),
+    Exec(Expr),
+    Cd(Expr),
     VarDecl(VarDeclStmt),
     EnvBlock(EnvBlockStmt),
     Case(CaseStmt),
 }
 
 impl FnStmt {
-    /// Invoke `f` with every variable this statement references, including the
-    /// expressions inside `env` pairs and `case` conditions/patterns. The
-    /// callback receives `(name, namespace)` — both always present, since every
-    /// reference is written `namespace::name`. Mirrors [`Expr::visit_vars`] so
-    /// the var walk is defined in exactly one place per node kind.
+    /// Invoke `f` with a mutable handle to the namespace of every variable this
+    /// statement references (including `env` pairs and `case`
+    /// conditions/patterns/bodies), plus each reference's span. Mirrors
+    /// [`FnStmt::visit_vars`] so a normalization pass can rewrite the `self`
+    /// alias throughout a function body in one place.
+    pub fn visit_namespaces_mut(&mut self, f: &mut impl FnMut(&mut String, usize, usize, &str)) {
+        match self {
+            FnStmt::Log(value) => value.visit_namespaces_mut(f),
+            FnStmt::Exec(value) => value.visit_namespaces_mut(f),
+            FnStmt::Cd(value) => value.visit_namespaces_mut(f),
+            FnStmt::VarDecl(s) => s.value.visit_namespaces_mut(f),
+            FnStmt::EnvBlock(s) => {
+                for pair in &mut s.pairs {
+                    pair.value.visit_namespaces_mut(f);
+                }
+                for stmt in &mut s.body {
+                    stmt.visit_namespaces_mut(f);
+                }
+            }
+            FnStmt::Case(s) => {
+                s.condition.visit_namespaces_mut(f);
+                for arm in &mut s.scopes {
+                    arm.pattern.visit_namespaces_mut(f);
+                    for stmt in &mut arm.body {
+                        stmt.visit_namespaces_mut(f);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Invoke `f` with every variable reference this statement contains,
+    /// including `env` pairs and `case` conditions/patterns/bodies, as
+    /// `(name, namespace)`. Mirrors [`Expr::visit_vars`] so the var walk is
+    /// defined in exactly one place per node kind.
     pub fn visit_vars(&self, f: &mut impl FnMut(&str, &str)) {
         match self {
-            FnStmt::Log(s) => s.value.visit_vars(f),
-            FnStmt::Exec(s) => s.value.visit_vars(f),
-            FnStmt::Cd(s) => s.value.visit_vars(f),
+            FnStmt::Log(value) => value.visit_vars(f),
+            FnStmt::Exec(value) => value.visit_vars(f),
+            FnStmt::Cd(value) => value.visit_vars(f),
             FnStmt::VarDecl(s) => s.value.visit_vars(f),
             FnStmt::EnvBlock(s) => {
                 for pair in &s.pairs {

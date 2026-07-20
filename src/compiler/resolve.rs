@@ -1,7 +1,9 @@
 use crate::compiler::error::CompileError;
-use crate::compiler::fnstmt::{ResolveFnCtx, resolve_fn_body_stmts};
+use crate::compiler::error::spanned_err_named;
+use crate::compiler::error::spanned_err_on_field;
+use crate::compiler::fnstmt::resolve_fn_body_stmts;
 use crate::compiler::namespaces::{
-    Namespaces, resolve_dir_field, resolve_expr, resolve_optional_expr, topo_order_projects,
+    Namespaces, resolve_dir_field, resolve_expr, resolve_optional_expr,
 };
 use crate::compiler::types::{ProjectVarStmt, UnresolvedConfig};
 use crate::dsl::Expr;
@@ -9,17 +11,18 @@ use crate::dsl::VarType;
 use crate::error::SourceFile;
 use crate::plan::{Plan, PlanProject, parse_sync_mode};
 use crate::shell::execute_shell_variable;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 /// A project's metadata field (`url`/`dir`/`sync`/`branch`) may reference
-/// config variables (globals and project-body / donor variables) but never a
+/// config variables (globals and this project's own body variables) but never a
 /// function-body variable. Reject such a reference before resolution.
-fn reject_field_fn_body_var_refs(
+pub(crate) fn reject_field_fn_body_var_refs(
     field: &Option<Expr>,
     field_kind: &str,
-    project: &str,
     namespaces: &Namespaces,
+    sources: &HashMap<String, String>,
 ) -> Result<(), CompileError> {
     let Some(expr) = field else {
         return Ok(());
@@ -31,27 +34,30 @@ fn reject_field_fn_body_var_refs(
         }
     });
     if let Some((ns, name)) = bad {
-        return Err(CompileError::ValidationReport(vec![miette::miette!(
-            "project {}: field {} cannot reference function-body variable {}::{}",
-            project,
+        return Err(spanned_err_on_field(
+            format!(
+                "field {} cannot reference function-body variable {}::{}",
+                field_kind, ns, name
+            ),
+            sources,
+            field,
             field_kind,
-            ns,
-            name
-        )]));
+        ));
     }
     Ok(())
 }
 
-/// Resolve using the single namespaces map, in dependency order.
+/// Resolve using the single namespaces map.
 ///
-/// Projects are resolved in topological order (a project reading
-/// `donor::name` requires `donor` to be fully resolved first), so qualified
-/// cross-project reads are inlined from the donor's already-resolved variables.
-/// `lower_functions` controls whether function bodies are lowered into
-/// `PlanStmt`s; `kiru sync` sets it to `false` (it only needs the project
-/// metadata). `force_cwd` mirrors the `KIRU_CWD` env var: when set,
-/// project-body `var shell` commands run in the current directory instead of
-/// the resolved project directory.
+/// Projects are isolated: a variable reference may only read `self::` (the
+/// project itself) or `global::`, never another project, so projects have no
+/// inter-dependencies and may be resolved in any order. They are resolved in
+/// sorted-name order purely for deterministic diagnostics (e.g. which
+/// duplicate-directory pair is reported first). `lower_functions` controls
+/// whether function bodies are lowered into `PlanStmt`s; `kiru sync` sets it to
+/// `false` (it only needs the project metadata). `force_cwd` mirrors the
+/// `KIRU_CWD` env var: when set, project-body `var shell` commands run in the
+/// current directory instead of the resolved project directory.
 ///
 /// Globals were already fully resolved (and their `var shell` commands executed)
 /// during the linear pass, so `namespaces` already carries their real values;
@@ -63,31 +69,28 @@ pub(crate) fn resolve_config(
     force_cwd: bool,
     lower_functions: bool,
 ) -> Result<Plan, CompileError> {
-    // Projects in dependency order.
-    let order = topo_order_projects(&unresolved.projects)?;
-
-    let mut projects: std::collections::HashMap<String, PlanProject> =
-        std::collections::HashMap::new();
+    let mut projects = std::collections::BTreeMap::new();
     let mut seen_dirs: HashSet<String> = HashSet::new();
 
-    for name in order {
-        let unresolved_project = &unresolved.projects[&name];
+    for name in unresolved.projects.keys() {
+        let unresolved_project = &unresolved.projects[name];
 
         // `dir` is needed to compute the working directory for `var shell` and
-        // to detect duplicate directories. It may reference globals and donor
-        // projects' variables (this project's own body variables are not yet
-        // resolved). A project's metadata fields are internal runner data and
-        // are never themselves referenceable, and may never read a
-        // function-body variable.
-        reject_field_fn_body_var_refs(&unresolved_project.dir, "dir", &name, &namespaces)?;
+        // to detect duplicate directories. It may reference globals (this
+        // project's own body variables are not yet resolved). A project's
+        // metadata fields are internal runner data and are never themselves
+        // referenceable, and may never read a function-body variable.
+        reject_field_fn_body_var_refs(&unresolved_project.dir, "dir", &namespaces, sources)?;
         let dir = resolve_dir_field(unresolved_project, &namespaces, sources)?;
 
         if !dir.is_empty() && !seen_dirs.insert(dir.clone()) {
-            return Err(CompileError::ValidationReport(vec![miette::miette!(
-                "project {:?}: duplicate directory {:?}",
-                name,
-                dir
-            )]));
+            return Err(spanned_err_named(
+                format!("project {:?}: duplicate directory {:?}", name, dir),
+                sources,
+                &unresolved_project.source_file,
+                0,
+                1,
+            ));
         }
 
         // The project body runs in the resolved project directory (or the
@@ -101,37 +104,31 @@ pub(crate) fn resolve_config(
 
         // Body variables resolve first so the remaining field expressions
         // (`url`/`sync`/`branch`) may read this project's own config
-        // variables. A body var or function may read `name::var` of any
-        // (donor) project; fields are not referenceable.
+        // variables. A body var or function may read only `self::` (this
+        // project) or `global::`; fields are not referenceable.
         for var_stmt in &unresolved_project.var_stmts {
-            resolve_project_var(var_stmt, &mut namespaces, &name, working_dir, sources)?;
+            resolve_project_var(var_stmt, &mut namespaces, name, working_dir, sources)?;
         }
 
-        reject_field_fn_body_var_refs(&unresolved_project.url, "url", &name, &namespaces)?;
+        reject_field_fn_body_var_refs(&unresolved_project.url, "url", &namespaces, sources)?;
         let url = resolve_optional_expr(&unresolved_project.url, &namespaces, sources)?
             .unwrap_or_default();
-        reject_field_fn_body_var_refs(&unresolved_project.sync, "sync", &name, &namespaces)?;
+        reject_field_fn_body_var_refs(&unresolved_project.sync, "sync", &namespaces, sources)?;
         let sync = match resolve_optional_expr(&unresolved_project.sync, &namespaces, sources)? {
             Some(mode) => mode,
             None => "clone".to_string(),
         };
-        reject_field_fn_body_var_refs(&unresolved_project.branch, "branch", &name, &namespaces)?;
+        reject_field_fn_body_var_refs(&unresolved_project.branch, "branch", &namespaces, sources)?;
         let branch = resolve_optional_expr(&unresolved_project.branch, &namespaces, sources)?;
 
-        // Function bodies, in source order so a later function can read an
-        // earlier function's variables deterministically (project-global,
-        // insertion-ordered).
-        let mut functions = std::collections::HashMap::new();
+        // Function bodies, in alphabetical order so a later function can read an
+        // earlier function's variables deterministically.
+        let mut functions = std::collections::BTreeMap::new();
         if lower_functions {
-            for fn_name in &unresolved_project.fn_order {
+            for fn_name in unresolved_project.functions.keys() {
                 let body = &unresolved_project.functions[fn_name];
-                let mut resolve_ctx = ResolveFnCtx {
-                    namespaces: &mut namespaces,
-                    project: &name,
-                    working_dir,
-                    sources,
-                };
-                let resolved_body = resolve_fn_body_stmts(body, &mut resolve_ctx)?;
+                let resolved_body =
+                    resolve_fn_body_stmts(body, &mut namespaces, name, working_dir, sources)?;
                 functions.insert(fn_name.clone(), resolved_body);
             }
         }
@@ -146,7 +143,7 @@ pub(crate) fn resolve_config(
         })?;
 
         projects.insert(
-            name,
+            name.clone(),
             PlanProject {
                 url,
                 dir,
@@ -195,6 +192,7 @@ pub(crate) fn resolve_project_var(
 #[cfg(test)]
 mod tests {
     use crate::compiler::CompileError;
+    use crate::compiler::compile::compile_and_resolve;
     use crate::compiler::test_support::*;
     use crate::plan::PlanStmt;
     use miette::Report;
@@ -358,21 +356,22 @@ mod tests {
             "main.kiru",
             &format!(
                 "\
+         fn check_kcwd {{\n\
+             log $self::cwd;\n\
+         }}\n\
          pr test [\n\
              url = `http://example.com`\n\
              dir = `{}`\n\
          ] {{\n\
              var shell cwd = `pwd`;\n\
-             fn check {{\n\
-                 log $test::cwd;\n\
-             }}\n\
+             use check_kcwd as check;\n\
          }}\n\
          ",
                 subdir.to_string_lossy()
             ),
         );
 
-        let cfg = compile_full_with_cwd(&dir.path().join("main.kiru"), true).unwrap();
+        let cfg = compile_and_resolve(&dir.path().join("main.kiru"), true).unwrap();
 
         let proj = &cfg.projects["test"];
         let fn_body = &proj.functions["check"];
@@ -382,7 +381,7 @@ mod tests {
             other => panic!("expected Log statement, got {:?}", other),
         };
         let expected = current_dir.to_string_lossy().to_string();
-        assert_eq!(*stmt.value, expected);
+        assert_eq!(**stmt, expected);
     }
 
     #[test]
@@ -396,14 +395,15 @@ mod tests {
             "main.kiru",
             &format!(
                 "\
+         fn check_psvs {{\n\
+             log $self::cwd;\n\
+         }}\n\
          pr test [\n\
              url = `http://example.com`\n\
              dir = `{}`\n\
          ] {{\n\
              var shell cwd = `pwd`;\n\
-             fn check {{\n\
-                 log $test::cwd;\n\
-             }}\n\
+             use check_psvs as check;\n\
          }}\n\
          ",
                 subdir.to_string_lossy()
@@ -421,7 +421,7 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .to_string();
-        assert_eq!(*stmt.value, expected);
+        assert_eq!(**stmt, expected);
     }
 
     #[test]
@@ -435,14 +435,15 @@ mod tests {
             "main.kiru",
             &format!(
                 "\
+         fn check_fsvs {{\n\
+             var shell cwd = `pwd`;\n\
+             log $self::cwd;\n\
+         }}\n\
          pr test [\n\
              url = `http://example.com`\n\
              dir = `{}`\n\
          ] {{\n\
-             fn check {{\n\
-                 var shell cwd = `pwd`;\n\
-                 log $test::cwd;\n\
-             }}\n\
+             use check_fsvs as check;\n\
          }}\n\
          ",
                 subdir.to_string_lossy()
@@ -460,7 +461,7 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .to_string();
-        assert_eq!(*stmt.value, expected);
+        assert_eq!(**stmt, expected);
     }
 
     #[test]
@@ -471,11 +472,12 @@ mod tests {
             "main.kiru",
             "\
          var shell msg = `echo hello-from-global`;\n\
+         fn check_gvs { log $global::msg; }\n\
          pr test [\n\
              url = $global::msg\n\
              dir = `d`\n\
          ] {\n\
-             fn check { log $global::msg; }\n\
+             use check_gvs as check;\n\
          }\
          ",
         );
@@ -487,7 +489,7 @@ mod tests {
             PlanStmt::Log(s) => s,
             other => panic!("expected Log statement, got {:?}", other),
         };
-        assert_eq!(stmt.value, "hello-from-global");
+        assert_eq!(*stmt, "hello-from-global");
     }
 
     #[test]
@@ -497,12 +499,13 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
+         fn check_frpbv { log $self::x; }\n\
          pr test [\n\
              url = $test::x\n\
              dir = $test::x\n\
          ] {\n\
              var shell x = `echo workspace`;\n\
-             fn check { log $test::x; }\n\
+             use check_frpbv as check;\n\
          }\
          ",
         );
@@ -517,13 +520,12 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
+         fn first_fbpg { log $self::shared; }
+         fn second_fbpg { log $self::shared; }
          pr test [url = `u` dir = `d`] {
-             fn first {
-                 var string shared = `VALUE`;
-             }
-             fn second {
-                 log $test::shared;
-             }
+             var string shared = `VALUE`;
+             use first_fbpg as first;
+             use second_fbpg as second;
          }
          ",
         );
@@ -533,7 +535,7 @@ mod tests {
             PlanStmt::Log(s) => s,
             other => panic!("expected Log statement, got {:?}", other),
         };
-        assert_eq!(stmt.value, "VALUE");
+        assert_eq!(*stmt, "VALUE");
     }
 
     #[test]
@@ -543,11 +545,12 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
+         fn check_fcrf { var shell x = `echo workspace`; }\n\
          pr test [\n\
              url = $test::x\n\
              dir = $test::x\n\
          ] {\n\
-             fn check { var shell x = `echo workspace`; }\n\
+             use check_fcrf as check;\n\
          }\
          ",
         );
@@ -567,11 +570,12 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
+             fn check_fbrr {
+                 var string docker_bin = `y`;
+             }
              pr test [ url = `u` dir = `d` ] {
                  var string docker_bin = `x`;
-                 fn check {
-                     var string docker_bin = `y`;
-                 }
+                 use check_fbrr as check;
              }
              ",
         );
@@ -583,8 +587,24 @@ mod tests {
         let _ = miette::set_hook(Box::new(|_| {
             Box::new(miette::MietteHandlerOpts::new().build())
         }));
+        // Render the diagnostic and assert on the sub-phrases that survive
+        // miette's Debug trimming (the full help text is not available via
+        // `format!("{:?}", ..)`).
         let rendered = format!("{:?}", report);
-        assert!(rendered.contains("already defined"), "got: {}", rendered);
+        assert!(
+            rendered.contains("collides with a variable already")
+                && rendered.contains("declared in project")
+                && rendered.contains("docker_bin"),
+            "got: {}",
+            rendered
+        );
+        // The collision must point at the applying project's `use`, not at the
+        // reusable function definition.
+        assert!(
+            rendered.contains("use check_fbrr as check"),
+            "diagnostic should point at the `use` site, got: {}",
+            rendered
+        );
         assert!(
             !rendered.contains("OutOfBounds"),
             "diagnostic leaked an out-of-bounds artifact: {}",
@@ -609,14 +629,15 @@ mod tests {
             "main.kiru",
             &format!(
                 "\
+         fn check_pvsro {{\n\
+             log $self::x;\n\
+         }}\n\
          pr test [\n\
              url = `http://example.com`\n\
              dir = `{}`\n\
          ] {{\n\
              var shell x = `echo 1 >> {} && echo done`;\n\
-             fn check {{\n\
-                 log $test::x;\n\
-             }}\n\
+             use check_pvsro as check;\n\
          }}\n\
          ",
                 subdir.to_string_lossy(),
@@ -631,7 +652,7 @@ mod tests {
             PlanStmt::Log(s) => s,
             other => panic!("expected Log statement, got {:?}", other),
         };
-        assert_eq!(stmt.value, "done");
+        assert_eq!(*stmt, "done");
         let count = std::fs::read_to_string(&marker).unwrap();
         assert_eq!(
             count.lines().count(),
@@ -642,7 +663,34 @@ mod tests {
     }
 
     #[test]
-    fn test_cross_project_field_read_is_undefined_var() {
+    fn test_cross_project_var_read_is_rejected() {
+        // Projects are isolated: reading another project's variable (here a
+        // donor body var) is a hard error, not a resolvable reference.
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+             pr a [url = `ua` dir = `da`] {\n\
+                 var string shared = `VALUE`;\n\
+             }\n\
+             pr b [url = $a::shared dir = `db`] { }\
+             ",
+        );
+        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("invalid variable reference `a::`")
+                && msg.contains("may only reference `self::` or `global::`"),
+            "expected isolation error, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_cross_project_field_read_is_rejected() {
+        // A field reading another project (even its metadata) is rejected up
+        // front by the isolation check, before any undefined-var reasoning.
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
@@ -656,70 +704,56 @@ mod tests {
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("undefined variable"),
-            "expected undefined variable error, got: {}",
-            msg
-        );
-        assert!(
-            !msg.contains("unknown project"),
-            "should not be an unknown-project error: {}",
-            msg
-        );
-        assert!(
-            !msg.contains("cyclic"),
-            "should not be a cyclic error: {}",
+            msg.contains("invalid variable reference `a::`"),
+            "expected isolation error, got: {}",
             msg
         );
     }
 
     #[test]
-    fn test_cross_project_var_read_from_donor_body() {
+    fn test_self_reference_resolves_to_enclosing_project() {
+        // `self::` inside a project resolves to that project's own namespace,
+        // so a field and a body var may read the project's own variables.
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
             "main.kiru",
             "\
-             pr a [url = `ua` dir = `da`] {\n\
-                 var string shared = `VALUE`;\n\
-             }\n\
-             pr b [url = $a::shared dir = `db`] { }\
+             fn check_srr { log $self::echoed; }\n\
+             pr test [\n\
+                 url = `http://example.com/${self::name}`\n\
+                 dir = `d`\n\
+             ] {\n\
+                 var string name = `myproject`;\n\
+                 var string echoed = $self::name;\n\
+                 use check_srr as check;\n\
+             }\
              ",
         );
         let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
-        assert_eq!(cfg.projects["b"].url, "VALUE");
+        assert_eq!(cfg.projects["test"].url, "http://example.com/myproject");
+        let stmt = match &cfg.projects["test"].functions["check"][0] {
+            PlanStmt::Log(s) => s,
+            other => panic!("expected Log statement, got {:?}", other),
+        };
+        assert_eq!(*stmt, "myproject");
     }
 
     #[test]
-    fn test_unknown_cross_project_reference_errors() {
+    fn test_self_reference_at_global_scope() {
+        // `self::` at the top level means `global::`.
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
             "main.kiru",
             "\
-             pr b [url = $nope::url dir = `db`] { }\
+             var string base = `hello`;\n\
+             var string derived = `${self::base}-world`;\n\
+             pr p [url = $global::derived dir = `d`] { }\
              ",
         );
-        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(err.to_string().contains("unknown project"), "got: {}", err);
-    }
-
-    #[test]
-    fn test_cyclic_cross_project_dependency_errors() {
-        let dir = tempfile::TempDir::new().unwrap();
-        write_config(
-            dir.path(),
-            "main.kiru",
-            "\
-             pr a [url = `ua` dir = `da`] {
-                 var string x = $b::y;
-             }
-             pr b [url = `ub` dir = `db`] {
-                 var string y = $a::x;
-             }
-             ",
-        );
-        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(err.to_string().contains("cyclic"), "got: {}", err);
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        assert_eq!(cfg.projects["p"].url, "hello-world");
     }
 
     #[test]
@@ -745,20 +779,26 @@ mod tests {
             "main.kiru",
             "\
              var string os = `x`;\n\
-             pr test [\n\
-                 url = `u`\n\
-                 dir = `d`\n\
-             ] {\n\
-                 fn bad {\n\
-                     case $global::os {\n\
-                         `Linux` { var string x = `a`; };\n\
-                         _ { var string x = `b`; };\n\
-                     };\n\
-                 }\n\
-             }\
-             ",
+             fn bad_cavc {\n\
+                 case $global::os {\n\
+                     `Linux` { var string x = `a`; };\n\
+                     _ { var string x = `b`; };\n\
+                 };\n\
+             }\n\
+              pr test [\n\
+                  url = `u`\n\
+                  dir = `d`\n\
+              ] {\n\
+                  use bad_cavc as bad;\n\
+              }\
+              ",
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(err.to_string().contains("already defined"), "got: {}", err);
+        assert!(
+            err.to_string()
+                .contains("collides with a variable already declared in project `test`"),
+            "got: {}",
+            err
+        );
     }
 }

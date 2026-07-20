@@ -32,7 +32,7 @@ impl<'a> ExecContext<'a> {
     /// directory is always used (useful for CI/CD workflows where the caller
     /// has already positioned the process in the correct directory).
     pub(crate) fn new(project: Option<&'a PlanProject>, output: &'a mut OutputCallback) -> Self {
-        let use_cwd = std::env::var("KIRU_CWD").as_deref() == Ok("1");
+        let use_cwd = crate::runner::kiru_cwd_enabled();
         let work_dir = if use_cwd {
             std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
         } else {
@@ -82,9 +82,9 @@ impl<'a> ExecContext<'a> {
     pub(crate) fn exec_stmts(&mut self, body: &[PlanStmt]) -> Result<(), RuntimeError> {
         for stmt in body {
             match stmt {
-                PlanStmt::Log(s) => self.exec_log(&s.value)?,
-                PlanStmt::Exec(s) => self.exec_command(&s.value)?,
-                PlanStmt::Cd(s) => self.exec_cd(&s.value)?,
+                PlanStmt::Log(s) => self.exec_log(s)?,
+                PlanStmt::Exec(s) => self.exec_command(s)?,
+                PlanStmt::Cd(s) => self.exec_cd(s)?,
                 PlanStmt::EnvBlock(s) => self.exec_resolved_env_block(&s.pairs, &s.body)?,
                 PlanStmt::Case(s) => {
                     for arm in &s.scopes {
@@ -101,19 +101,16 @@ impl<'a> ExecContext<'a> {
     pub(crate) fn exec_log(&mut self, msg: &str) -> Result<(), RuntimeError> {
         let indent = self.compute_indent_string(0);
         let line = format!("{}{}{}", indent, colors::LOG_PREFIX, msg);
-        self.emit(line);
+        (self.output)(line);
         Ok(())
     }
 
     pub(crate) fn exec_cd(&mut self, resolved: &str) -> Result<(), RuntimeError> {
-        if Path::new(resolved).is_absolute() {
-            return Err(RuntimeError::Lookup(format!(
-                "cd {}: absolute path not allowed",
-                resolved
-            )));
-        }
-
-        let candidate = self.work_dir.join(resolved);
+        let candidate = if Path::new(resolved).is_absolute() {
+            PathBuf::from(resolved)
+        } else {
+            self.work_dir.join(resolved)
+        };
 
         let candidate = std::fs::canonicalize(&candidate)
             .map_err(|e| RuntimeError::Lookup(format!("cd {}: {}", resolved, e)))?;
@@ -129,7 +126,7 @@ impl<'a> ExecContext<'a> {
 
         let indent = self.compute_indent_string(0);
         let line = format!("{}{}{}", indent, colors::CD_PREFIX, resolved);
-        self.emit(line);
+        (self.output)(line);
         Ok(())
     }
 
@@ -146,7 +143,7 @@ impl<'a> ExecContext<'a> {
         let keys: Vec<&str> = pairs.iter().map(|p| p.key.as_str()).collect();
         let indent = self.compute_indent_string(0);
         let line = format!("{}{}{}", indent, colors::ENV_PREFIX, keys.join(", "));
-        self.emit(line);
+        (self.output)(line);
 
         self.env_stack.push(layer);
         let result = self.exec_stmts(body);
@@ -154,15 +151,10 @@ impl<'a> ExecContext<'a> {
         result
     }
 
-    /// Forward a single output line to the configured sink.
-    fn emit(&self, line: String) {
-        (self.output)(line);
-    }
-
     pub(crate) fn exec_command(&mut self, cmd_str: &str) -> Result<(), RuntimeError> {
         let indent = self.compute_indent_string(0);
         let line = format!("{}{}{}", indent, colors::EXEC_PREFIX, cmd_str);
-        self.emit(line);
+        (self.output)(line);
 
         let shell = shell::get_current_shell_path();
         let mut child = Command::new(&shell)
@@ -178,7 +170,7 @@ impl<'a> ExecContext<'a> {
         if let Some(stdout) = child.stdout.take() {
             for line_result in io::BufReader::new(stdout).lines() {
                 match line_result {
-                    Ok(text) => self.emit(format!("{}{}", indent_str, text)),
+                    Ok(text) => (self.output)(format!("{}{}", indent_str, text)),
                     Err(_) => break,
                 }
             }
@@ -207,7 +199,7 @@ pub(crate) fn match_case_pattern(pattern: &crate::plan::PlanCasePattern, conditi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan::{PlanCaseArm, PlanCasePattern, PlanCaseStmt, PlanLogStmt, PlanStmt};
+    use crate::plan::{PlanCaseArm, PlanCasePattern, PlanCaseStmt, PlanStmt};
 
     #[test]
     fn test_match_literal_pattern() {
@@ -239,15 +231,11 @@ mod tests {
             scopes: vec![
                 PlanCaseArm {
                     pattern: PlanCasePattern::Literal("a".to_string()),
-                    body: vec![PlanStmt::Log(PlanLogStmt {
-                        value: "first".to_string(),
-                    })],
+                    body: vec![PlanStmt::Log("first".to_string())],
                 },
                 PlanCaseArm {
                     pattern: PlanCasePattern::Default,
-                    body: vec![PlanStmt::Log(PlanLogStmt {
-                        value: "second".to_string(),
-                    })],
+                    body: vec![PlanStmt::Log("second".to_string())],
                 },
             ],
         })];
@@ -262,9 +250,7 @@ mod tests {
             condition: "no-match".to_string(),
             scopes: vec![PlanCaseArm {
                 pattern: PlanCasePattern::Literal("a".to_string()),
-                body: vec![PlanStmt::Log(PlanLogStmt {
-                    value: "should-not-run".to_string(),
-                })],
+                body: vec![PlanStmt::Log("should-not-run".to_string())],
             }],
         })];
         ctx.exec_stmts(&body).unwrap();

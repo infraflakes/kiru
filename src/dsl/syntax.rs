@@ -69,6 +69,36 @@ impl Expr {
             }
         }
     }
+
+    /// Invoke `f` with a mutable handle to the namespace of every variable this
+    /// expression references, plus the span `(offset, len, source_name)` that
+    /// locates the reference. The mutable handle lets a normalization pass
+    /// rewrite a namespace in place (e.g. the `self` alias into the enclosing
+    /// scope name). Mirrors [`Expr::visit_vars`] so the namespace walk stays
+    /// defined once per node kind.
+    pub fn visit_namespaces_mut(&mut self, f: &mut impl FnMut(&mut String, usize, usize, &str)) {
+        match self {
+            Expr::VarRef {
+                namespace,
+                offset,
+                len,
+                source_name,
+                ..
+            } => f(namespace, *offset, *len, source_name),
+            Expr::BacktickLit {
+                parts,
+                offset,
+                len,
+                source_name,
+            } => {
+                for part in parts {
+                    if part.is_var {
+                        f(&mut part.namespace, *offset, *len, source_name);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// A segment of a backtick-quoted expression.
@@ -152,6 +182,34 @@ impl CasePattern {
                 for part in parts {
                     if part.is_var {
                         f(&part.value, &part.namespace);
+                    }
+                }
+            }
+            CasePattern::Default => {}
+        }
+    }
+
+    /// Invoke `f` with a mutable handle to the namespace of every variable this
+    /// pattern references, plus its span. Mirrors [`Expr::visit_namespaces_mut`]
+    /// so a normalization pass can rewrite the `self` alias inside case patterns.
+    pub fn visit_namespaces_mut(&mut self, f: &mut impl FnMut(&mut String, usize, usize, &str)) {
+        match self {
+            CasePattern::VarRef {
+                namespace,
+                offset,
+                len,
+                source_name,
+                ..
+            } => f(namespace, *offset, *len, source_name),
+            CasePattern::Literal {
+                parts,
+                offset,
+                len,
+                source_name,
+            } => {
+                for part in parts {
+                    if part.is_var {
+                        f(&mut part.namespace, *offset, *len, source_name);
                     }
                 }
             }

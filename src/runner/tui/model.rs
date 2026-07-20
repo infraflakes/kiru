@@ -1,5 +1,3 @@
-use std::sync::{Arc, Mutex};
-
 /// Runtime execution status of a single task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskStatus {
@@ -43,12 +41,6 @@ impl Model {
             tasks: Vec::new(),
             chains: Vec::new(),
         }
-    }
-
-    /// Lock the model behind an `Arc<Mutex<>>` and return a guard.
-    /// Recovers from poisoned mutexes by taking ownership of the data.
-    pub(super) fn lock(arc: &Arc<Mutex<Model>>) -> std::sync::MutexGuard<'_, Model> {
-        arc.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Register a new chain of sequential tasks by their display names.

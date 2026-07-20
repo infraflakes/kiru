@@ -28,6 +28,7 @@ pub enum TokenType {
     Cd,
     Env,
     Case,
+    Use,
 }
 
 /// A lexical token with source position tracking.
@@ -68,6 +69,7 @@ pub fn lookup_ident(ident: &str) -> TokenType {
         "cd" => TokenType::Cd,
         "shell" => TokenType::Shell,
         "case" => TokenType::Case,
+        "use" => TokenType::Use,
         _ => TokenType::Ident(ident.to_string()),
     }
 }
@@ -93,6 +95,7 @@ pub fn format_token_type(ty: &TokenType) -> &'static str {
         TokenType::Arrow => "`=>`",
         TokenType::Env => "`env`",
         TokenType::Case => "`case`",
+        TokenType::Use => "`use`",
         TokenType::Log => "`log`",
         TokenType::Exec => "`exec`",
         TokenType::Cd => "`cd`",
@@ -120,6 +123,7 @@ pub fn is_keyword_token(ty: &TokenType) -> bool {
             | TokenType::Exec
             | TokenType::Cd
             | TokenType::Case
+            | TokenType::Use
             | TokenType::Env
             | TokenType::Var
             | TokenType::Fn

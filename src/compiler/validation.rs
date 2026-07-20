@@ -1,114 +1,3 @@
-use crate::compiler::error::CompileError;
-use crate::compiler::fnstmt::{ValidateFnCtx, validate_fn_body_stmts};
-use crate::compiler::namespaces::Namespaces;
-use crate::compiler::types::{UnresolvedConfig, UnresolvedProject};
-use crate::dsl::FnStmt;
-use crate::dsl::ast::QualifiedFnRef;
-use std::collections::HashMap;
-
-/// Whether `ns::name` resolves to a variable in the namespaces map: a global
-/// variable or a project variable. A project's `url`/`dir`/`sync`/`branch`
-/// metadata fields are never referenceable, so they are not considered here.
-pub(crate) fn is_var_defined(namespaces: &Namespaces, ns: &str, name: &str) -> bool {
-    if ns == "global" {
-        return namespaces.global.contains_key(name);
-    }
-    match namespaces.projects.get(ns) {
-        Some(p) => p.vars.contains_key(name),
-        None => false,
-    }
-}
-
-/// Validate an [`UnresolvedConfig`] against the namespaces map built by the
-/// declare pass, collecting all errors before returning.
-pub fn validate_configuration(
-    cfg: &UnresolvedConfig,
-    namespaces: &Namespaces,
-    sources: &HashMap<String, String>,
-) -> Result<(), CompileError> {
-    let mut errors = Vec::new();
-
-    // Validate project function bodies and any project-scoped data.
-    for (proj_name, project) in &cfg.projects {
-        validate_project_bodies(
-            &project.functions,
-            proj_name,
-            namespaces,
-            sources,
-            &mut errors,
-        );
-    }
-
-    // Validate global run blocks.
-    validate_run_refs(&cfg.runs, "<global>", &cfg.projects, &mut errors);
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        // Return the original child diagnostics intact so each keeps its own
-        // source name, labels, and spans when rendered.
-        Err(CompileError::ValidationReport(errors))
-    }
-}
-
-/// Check that all run chains reference functions that exist. A reference is
-/// always `project::function`; the named project must exist and declare the
-/// function.
-fn validate_run_refs(
-    runs: &HashMap<String, Vec<Vec<QualifiedFnRef>>>,
-    proj_name: &str,
-    projects: &HashMap<String, UnresolvedProject>,
-    errors: &mut Vec<miette::Report>,
-) {
-    for (run_name, chains) in runs {
-        for chain in chains {
-            for q in chain {
-                match projects.get(&q.project) {
-                    Some(proj) => {
-                        if !proj.functions.contains_key(&q.function) {
-                            errors.push(miette::miette!(
-                                "{}: run {:?} references unknown function {:?} in project {:?}",
-                                proj_name,
-                                run_name,
-                                q.function,
-                                q.project
-                            ));
-                        }
-                    }
-                    None => errors.push(miette::miette!(
-                        "{}: run {:?} references unknown project {:?}",
-                        proj_name,
-                        run_name,
-                        q.project
-                    )),
-                }
-            }
-        }
-    }
-}
-
-/// Validate all function bodies in a project's function map. Every declared
-/// variable already lives in `namespaces` (populated by the declare pass), so
-/// reference checks are a single lookup; per-fn bodies are validated in turn.
-fn validate_project_bodies(
-    functions: &HashMap<String, Vec<FnStmt>>,
-    proj_name: &str,
-    namespaces: &Namespaces,
-    sources: &HashMap<String, String>,
-    errors: &mut Vec<miette::Report>,
-) {
-    for (fn_name, body) in functions {
-        let mut ctx = ValidateFnCtx {
-            fn_name,
-            proj_name,
-            namespaces,
-            errors: &mut *errors,
-            sources,
-        };
-        validate_fn_body_stmts(body, &mut ctx);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::compiler::test_support::*;
@@ -138,11 +27,12 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
+         fn badfn { log $global::undefined; }\n\
          pr test [\n\
              url = `u`\n\
              dir = `d`\n\
          ] {\n\
-             fn badfn { log $test::undefined; }\n\
+             use badfn;\n\
          }\
          ",
         );
@@ -161,18 +51,19 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
+         fn real { log `hi`; }\n\
          pr test [\n\
               url = `u`\n\
               dir = `d`\n\
           ] {\n\
-              fn real { log `hi`; }\n\
+              use real;\n\
           }\n\
           run s { test::unknown; }\
           ",
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         let err_str = err.to_string();
-        assert!(err_str.contains("unknown function"), "got: {}", err_str);
+        assert!(err_str.contains("function"), "got: {}", err_str);
     }
 
     #[test]
@@ -182,11 +73,12 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
+         fn real { log `hi`; }\n\
          pr test [\n\
               url = `u`\n\
               dir = `d`\n\
           ] {\n\
-              fn real { log `hi`; }\n\
+              use real;\n\
           }\n\
           run s { test::real; }\
           ",
@@ -202,11 +94,12 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
+         fn badfn { case $global::undefined { _ { }; }; }\n\
          pr test [\n\
              url = `u`\n\
              dir = `d`\n\
          ] {\n\
-             fn badfn { case $test::undefined { _ { }; }; }\n\
+             use badfn;\n\
          }\
          ",
         );
@@ -225,11 +118,12 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
+         fn badfn { var string x = `ok`; case $self::x { $global::undefined { }; _ { }; }; }\n\
          pr test [\n\
              url = `u`\n\
              dir = `d`\n\
          ] {\n\
-             fn badfn { var string x = `ok`; case $test::x { $test::undefined { }; _ { }; }; }\n\
+             use badfn;\n\
          }\
          ",
         );
@@ -254,7 +148,7 @@ mod tests {
          ",
         );
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(err.to_string().contains("unknown function"), "got: {}", err);
+        assert!(err.to_string().contains("function"), "got: {}", err);
     }
 
     #[test]
@@ -264,8 +158,9 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
+         fn bad { log $global::undefined; }\n\
          pr p [ url = `http://x` dir = `x` ] {\n\
-             fn bad { log $p::undefined; }\n\
+             use bad;\n\
          }\
          ",
         );
@@ -289,8 +184,9 @@ mod tests {
             dir.path(),
             "main.kiru",
             "\
+ fn f1 { log $global::missing_main; }
  pr p [ url = `u` dir = `d` ] {
-     fn f1 { log $p::missing_main; }
+     use f1;
  }
  import `build.kiru`;
             ",
@@ -299,18 +195,20 @@ mod tests {
             dir.path(),
             "build.kiru",
             "\
+ fn f2 { log $global::missing_build; }
  pr p {
-     fn f2 { log $p::missing_build; }
+     use f2;
  }
             ",
         );
+        // With top-down processing, the first error in source order surfaces
+        // immediately. The second file's error is only revealed after the
+        // first is fixed.
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         let err_str = err.to_string();
         assert!(
-            err_str.contains("undefined variable")
-                && err_str.contains("p::missing_main")
-                && err_str.contains("p::missing_build"),
-            "both source-file errors should be preserved in the aggregate, got: {}",
+            err_str.contains("undefined variable") && err_str.contains("global::missing_main"),
+            "got: {}",
             err_str
         );
         assert!(

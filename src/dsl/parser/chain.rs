@@ -15,6 +15,7 @@ impl Parser {
     }
 
     fn parse_fn_name_in_run(&mut self) -> Result<QualifiedFnRef, ParseError> {
+        let start_offset = self.current_token().offset;
         let project = match &self.current_token().ty {
             TokenType::Ident(ident) => ident.clone(),
             _ => {
@@ -47,14 +48,20 @@ impl Parser {
                 ));
             }
         };
+        let end_offset = self.current_token().offset + self.current_token().len;
         self.advance();
-        Ok(QualifiedFnRef { project, function })
+        Ok(QualifiedFnRef {
+            project,
+            function,
+            offset: start_offset,
+            len: end_offset - start_offset,
+            source_name: self.source_name.clone(),
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::dsl::ast::QualifiedFnRef;
     use crate::dsl::parser::test_support::*;
     use crate::dsl::{Stmt, TopLevel};
 
@@ -65,13 +72,10 @@ mod tests {
         match &prog.items[0] {
             TopLevel::Stmt(Stmt::Run { chains, .. }) => {
                 assert_eq!(chains.len(), 1);
-                assert_eq!(
-                    chains[0],
-                    vec![QualifiedFnRef {
-                        project: "p".to_string(),
-                        function: "build".to_string()
-                    }]
-                );
+                let refs = &chains[0];
+                assert_eq!(refs.len(), 1);
+                assert_eq!(refs[0].project, "p");
+                assert_eq!(refs[0].function, "build");
             }
             _ => panic!("expected RunDecl"),
         }
@@ -84,22 +88,13 @@ mod tests {
         match &prog.items[0] {
             TopLevel::Stmt(Stmt::Run { chains, .. }) => {
                 assert_eq!(chains.len(), 1);
+                let names: Vec<(&str, &str)> = chains[0]
+                    .iter()
+                    .map(|q| (q.project.as_str(), q.function.as_str()))
+                    .collect();
                 assert_eq!(
-                    chains[0],
-                    vec![
-                        QualifiedFnRef {
-                            project: "p".to_string(),
-                            function: "build".to_string()
-                        },
-                        QualifiedFnRef {
-                            project: "p".to_string(),
-                            function: "deploy".to_string()
-                        },
-                        QualifiedFnRef {
-                            project: "p".to_string(),
-                            function: "notify".to_string()
-                        }
-                    ]
+                    names,
+                    vec![("p", "build"), ("p", "deploy"), ("p", "notify")]
                 );
             }
             _ => panic!("expected RunDecl"),
@@ -114,27 +109,13 @@ mod tests {
             TopLevel::Stmt(Stmt::Run { name, chains, .. }) => {
                 assert_eq!(name, "all");
                 assert_eq!(chains.len(), 3);
-                assert_eq!(
-                    chains[0],
-                    vec![QualifiedFnRef {
-                        project: "p".to_string(),
-                        function: "build".to_string()
-                    }]
-                );
-                assert_eq!(
-                    chains[1],
-                    vec![QualifiedFnRef {
-                        project: "p".to_string(),
-                        function: "test".to_string()
-                    }]
-                );
-                assert_eq!(
-                    chains[2],
-                    vec![QualifiedFnRef {
-                        project: "p".to_string(),
-                        function: "deploy".to_string()
-                    }]
-                );
+                for (i, expected_fn) in ["build", "test", "deploy"].iter().enumerate() {
+                    let names: Vec<(&str, &str)> = chains[i]
+                        .iter()
+                        .map(|q| (q.project.as_str(), q.function.as_str()))
+                        .collect();
+                    assert_eq!(names, vec![("p", *expected_fn)], "chain {i}");
+                }
             }
             _ => panic!("expected RunDecl"),
         }
@@ -142,7 +123,7 @@ mod tests {
 
     #[test]
     fn test_run_chain_in_project() {
-        let input = "pr p [url = `u`] { run local { p::build; } fn build { exec `make`; } }";
+        let input = "pr p [url = `u`] { run local { p::build; } use build; }";
         let result = parse_program(input);
         assert!(result.is_err());
         let errors = result.unwrap_err();
@@ -152,7 +133,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(
-            err_msg.contains("expected fn or var in project body"),
+            err_msg.contains("expected `var` or `use` in project body"),
             "got: {}",
             err_msg
         );

@@ -10,7 +10,7 @@
 //! DSL is an IaC task runner, not a general-purpose language.
 
 use crate::dsl::ast::QualifiedFnRef;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fmt;
 
 /// How a project's dotfiles are synchronized from its git remote.
@@ -69,24 +69,6 @@ pub struct PlanCaseArm {
     pub body: Vec<PlanStmt>,
 }
 
-/// Resolved `log` statement payload.
-#[derive(Debug, Clone)]
-pub struct PlanLogStmt {
-    pub value: String,
-}
-
-/// Resolved `exec` statement payload.
-#[derive(Debug, Clone)]
-pub struct PlanExecStmt {
-    pub value: String,
-}
-
-/// Resolved `cd` statement payload.
-#[derive(Debug, Clone)]
-pub struct PlanCdStmt {
-    pub value: String,
-}
-
 /// Resolved `env` block payload.
 #[derive(Debug, Clone)]
 pub struct PlanEnvBlockStmt {
@@ -104,9 +86,9 @@ pub struct PlanCaseStmt {
 /// A fully resolved function-body statement, ready to execute.
 #[derive(Debug, Clone)]
 pub enum PlanStmt {
-    Log(PlanLogStmt),
-    Exec(PlanExecStmt),
-    Cd(PlanCdStmt),
+    Log(String),
+    Exec(String),
+    Cd(String),
     EnvBlock(PlanEnvBlockStmt),
     Case(PlanCaseStmt),
 }
@@ -120,14 +102,14 @@ pub struct PlanProject {
     pub dir: String,
     pub sync: SyncMode,
     pub branch: Option<String>,
-    pub functions: HashMap<String, Vec<PlanStmt>>,
+    pub functions: BTreeMap<String, Vec<PlanStmt>>,
 }
 
 /// The final, fully resolved plan. The runner works exclusively with this type.
 #[derive(Debug, Clone)]
 pub struct Plan {
-    pub projects: HashMap<String, PlanProject>,
+    pub projects: BTreeMap<String, PlanProject>,
     /// Top-level run blocks, keyed by run name. Each run is a set of chains of
     /// `namespace::function` references executed by the runner.
-    pub runs: HashMap<String, Vec<Vec<QualifiedFnRef>>>,
+    pub runs: BTreeMap<String, Vec<Vec<QualifiedFnRef>>>,
 }

@@ -37,18 +37,6 @@ impl fmt::Display for CompileError {
     }
 }
 
-/// Spanned error located by an explicit source name and span. Covers the
-/// remaining cases where the span is computed separately from any single node
-/// (variable-reference resolution, whole-program errors).
-pub(crate) fn spanned_err(
-    msg: String,
-    source: &SourceFile<'_>,
-    offset: usize,
-    len: usize,
-) -> CompileError {
-    CompileError::ValidationReport(vec![spanned_report(msg, source, offset, len)])
-}
-
 /// Spanned error resolved through the source-text registry by file name. Used
 /// when only the declaring file name is known (rather than a `SourceFile`),
 /// e.g. whole-program or variable-reference resolution errors.
@@ -59,12 +47,12 @@ pub(crate) fn spanned_err_named(
     offset: usize,
     len: usize,
 ) -> CompileError {
-    spanned_err(
+    CompileError::ValidationReport(vec![spanned_report(
         msg.into(),
         &SourceFile::from_registry(sources, name),
         offset,
         len,
-    )
+    )])
 }
 
 /// Spanned error for an optional `Expr` field. When the field is present the

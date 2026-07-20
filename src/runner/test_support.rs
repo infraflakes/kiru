@@ -1,6 +1,6 @@
 use crate::plan::{Plan, PlanProject, SyncMode};
 use crate::runner::execution_context::OutputCallback;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// Create a minimal `(Plan, PlanProject, OutputCallback)` triple for runner tests.
@@ -11,11 +11,11 @@ pub(crate) fn test_context() -> (Plan, PlanProject, OutputCallback) {
         dir: "test".to_string(),
         sync: SyncMode::Clone,
         branch: Some("main".to_string()),
-        functions: HashMap::new(),
+        functions: BTreeMap::new(),
     };
     let cfg = Plan {
-        projects: HashMap::new(),
-        runs: HashMap::new(),
+        projects: BTreeMap::new(),
+        runs: BTreeMap::new(),
     };
     (cfg, project, Arc::new(|_| {}))
 }

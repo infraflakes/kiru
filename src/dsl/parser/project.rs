@@ -59,7 +59,7 @@ impl Parser {
                 }
             };
 
-            if !seen_fields.insert(key.clone()) {
+            if !seen_fields.insert(key) {
                 return Err(ParseError::new(
                     self.eof_aware_span(),
                     format!("duplicate project field: {}", key_str),
@@ -87,19 +87,58 @@ impl Parser {
         let mut body = Vec::new();
         while self.current_token().ty != TokenType::RBrace {
             match &self.current_token().ty {
-                TokenType::Var | TokenType::Fn => {
-                    body.push(self.parse_project_body_stmt()?);
+                TokenType::Var => {
+                    body.push(self.parse_var_decl()?);
+                }
+                TokenType::Use => {
+                    body.push(self.parse_use_stmt()?);
+                }
+                TokenType::Fn => {
+                    return Err(ParseError::new(
+                        self.eof_aware_span(),
+                        "project-level functions are not allowed; declare the function at the top level and apply it with `use`".to_string(),
+                    ));
                 }
                 _ => {
                     return Err(ParseError::new(
                         self.eof_aware_span(),
-                        "expected fn or var in project body".to_string(),
+                        "expected `var` or `use` in project body".to_string(),
                     ));
                 }
             }
         }
         self.expect_with_context(TokenType::RBrace, "to close project body")?;
         Ok(body)
+    }
+
+    /// Parses a function application: `use name;` or `use name as alias;`. The
+    /// shared (global) function `name` is bound into the enclosing project as
+    /// `project::name`, or `project::alias` when `as` is given. The trailing
+    /// `;` closes the statement.
+    fn parse_use_stmt(&mut self) -> Result<Stmt, ParseError> {
+        let offset = self.current_token().offset;
+        let source_name = self.source_name.clone();
+        self.advance(); // skip `use`
+
+        let function = self.parse_ident_name("function", "expected function name after `use`")?;
+
+        let alias = if self.current_token().ty == TokenType::Ident("as".to_string()) {
+            self.advance();
+            Some(self.parse_ident_name("function alias", "expected alias name after `as`")?)
+        } else {
+            None
+        };
+
+        self.expect_with_context(TokenType::Semicolon, "after `use`")?;
+
+        let len = self.current_token().offset - offset;
+        Ok(Stmt::Use {
+            function,
+            alias,
+            offset,
+            len,
+            source_name,
+        })
     }
 }
 
@@ -110,7 +149,7 @@ mod tests {
 
     #[test]
     fn test_project_with_url_and_dir() {
-        let input = "pr myproj [url = `u` dir = `d`] { fn build { exec `make`; } }";
+        let input = "pr myproj [url = `u` dir = `d`] { use build; }";
         let prog = parse_program(input).unwrap();
         assert_eq!(count_stmt_types(&prog), vec!["pr"]);
         match &prog.items[0] {
@@ -133,7 +172,7 @@ mod tests {
                         ..
                     }
                 ));
-                assert_eq!(count_body_stmt_types(body), vec!["fn"]);
+                assert_eq!(count_body_stmt_types(body), vec!["use"]);
             }
             _ => panic!("expected Project"),
         }
@@ -141,7 +180,7 @@ mod tests {
 
     #[test]
     fn test_project_with_all_fields() {
-        let input = "pr p [url = `u` dir = `d` sync = `s` branch = `b`] { fn f { log `x`; } }";
+        let input = "pr p [url = `u` dir = `d` sync = `s` branch = `b`] { use f; }";
         let prog = parse_program(input).unwrap();
         match &prog.items[0] {
             TopLevel::Stmt(Stmt::Project { fields, .. }) => {
@@ -165,12 +204,12 @@ mod tests {
 
     #[test]
     fn test_project_empty_fields() {
-        let input = "pr p [] { fn b { log `x`; } }";
+        let input = "pr p [] { use b; }";
         let prog = parse_program(input).unwrap();
         match &prog.items[0] {
             TopLevel::Stmt(Stmt::Project { fields, body, .. }) => {
                 assert!(fields.is_empty());
-                assert_eq!(count_body_stmt_types(body), vec!["fn"]);
+                assert_eq!(count_body_stmt_types(body), vec!["use"]);
             }
             _ => panic!("expected Project"),
         }
@@ -178,7 +217,7 @@ mod tests {
 
     #[test]
     fn test_project_without_fields_errors() {
-        let result = parse_program("pr p { fn b { log `x`; }; }");
+        let result = parse_program("pr p { use b; ; }");
         assert!(result.is_err());
     }
 

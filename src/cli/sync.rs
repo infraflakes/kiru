@@ -52,6 +52,6 @@ pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
         .iter()
         .map(|(name, _)| (name.clone(), vec![name.clone()]))
         .collect();
-    let projects: std::collections::HashMap<String, PlanProject> = projects.into_iter().collect();
+    let projects: std::collections::BTreeMap<String, PlanProject> = projects.into_iter().collect();
     runner::sync::run_sync_for_projects(projects, chain_pairs)
 }

@@ -60,7 +60,7 @@ pub fn write_separator(buf: &mut String, label: &str) {
     let sep_len = SEPARATOR_WIDTH.saturating_sub(label.len() + 4);
     let left = sep_len / 2;
     let right = sep_len - left;
-    buf.push_str(colors::MUTED_ANSI);
+    buf.push_str(colors::GRAY_ANSI);
     for _ in 0..left {
         buf.push('─');
     }
