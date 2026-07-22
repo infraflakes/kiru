@@ -75,11 +75,22 @@ pub(crate) fn resolve_config(
     for name in unresolved.projects.keys() {
         let unresolved_project = &unresolved.projects[name];
 
-        // `dir` is needed to compute the working directory for `var shell` and
-        // to detect duplicate directories. It may reference globals (this
-        // project's own body variables are not yet resolved). A project's
-        // metadata fields are internal runner data and are never themselves
-        // referenceable, and may never read a function-body variable.
+        // Phase 1: Plain `var` body variables resolve first — they do not need
+        // `working_dir` and their values become available for `dir` to
+        // reference. A body var or function may read only `self::` (this
+        // project) or `global::`; fields are not referenceable.
+        for var_stmt in &unresolved_project.var_stmts {
+            if var_stmt.var_type != VarType::Shell {
+                resolve_project_var(var_stmt, &mut namespaces, name, None, sources)?;
+            }
+        }
+
+        // Phase 2: Resolve `dir` now that plain body vars are available.
+        // `dir` is needed to compute the working directory for `var shell`
+        // and to detect duplicate directories. It may reference globals or
+        // this project's plain body variables. A project's metadata fields
+        // are internal runner data and are never themselves referenceable,
+        // and may never read a function-body variable.
         reject_field_fn_body_var_refs(&unresolved_project.dir, "dir", &namespaces, sources)?;
         let dir = resolve_dir_field(unresolved_project, &namespaces, sources)?;
 
@@ -102,12 +113,12 @@ pub(crate) fn resolve_config(
         };
         let working_dir: Option<&Path> = effective_dir.as_deref();
 
-        // Body variables resolve first so the remaining field expressions
-        // (`url`/`sync`/`branch`) may read this project's own config
-        // variables. A body var or function may read only `self::` (this
-        // project) or `global::`; fields are not referenceable.
+        // Phase 3: `var shell` body variables resolve last — they need
+        // `working_dir` derived from `dir`.
         for var_stmt in &unresolved_project.var_stmts {
-            resolve_project_var(var_stmt, &mut namespaces, name, working_dir, sources)?;
+            if var_stmt.var_type == VarType::Shell {
+                resolve_project_var(var_stmt, &mut namespaces, name, working_dir, sources)?;
+            }
         }
 
         reject_field_fn_body_var_refs(&unresolved_project.url, "url", &namespaces, sources)?;
@@ -800,5 +811,48 @@ mod tests {
             "got: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_dir_references_plain_body_var() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+         pr test [\n\
+             url = `http://example.com`\n\
+             dir = $test::name\n\
+         ] {\n\
+             var string name = `mydir`;\n\
+         }\
+         ",
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        // `resolve_dir_field` makes relative paths absolute against the source
+        // file's parent directory, so the result is `<tmpdir>/mydir`.
+        let expected = dir.path().join("mydir").to_string_lossy().to_string();
+        assert_eq!(cfg.projects["test"].dir, expected);
+    }
+
+    #[test]
+    fn test_dir_references_shell_body_var_resolves_to_empty() {
+        let dir = tempfile::TempDir::new().unwrap();
+        write_config(
+            dir.path(),
+            "main.kiru",
+            "\
+         pr test [\n\
+             url = `http://example.com`\n\
+             dir = $test::name\n\
+         ] {\n\
+             var shell name = `echo mydir`;\n\
+         }\
+         ",
+        );
+        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
+        // `var shell` body vars are resolved after `dir` (they need
+        // `working_dir`), so `dir` sees the placeholder empty string.
+        assert_eq!(cfg.projects["test"].dir, "");
     }
 }
