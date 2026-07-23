@@ -20,22 +20,11 @@ use miette::Report;
 use std::collections::HashMap;
 use std::path::Path;
 
-fn is_var_defined(
-    namespaces: &Namespaces,
-    fn_locals: &HashMap<String, Vec<String>>,
-    fn_key: &str,
-    ns: &str,
-    name: &str,
-) -> bool {
+fn is_var_defined(namespaces: &Namespaces, ns: &str, name: &str) -> bool {
     if ns == "global" {
         return namespaces.global.contains_key(name);
     }
-    if namespaces.project_var_exists(ns, name) {
-        return true;
-    }
-    fn_locals
-        .get(fn_key)
-        .is_some_and(|locals| locals.iter().any(|n| n == name))
+    namespaces.project_var_exists(ns, name)
 }
 
 /// Per-body constants + mutable state for validating one function body.
@@ -43,15 +32,11 @@ fn is_var_defined(
 /// Bundles the per-body constants (`fn_name`, `proj_name`) with the namespaces
 /// map and the error sink, so each statement validates itself via
 /// `validate_fn_stmt(stmt, ctx)` instead of the old central match threading
-/// these parameters individually. Every declared variable already lives in
-/// `namespaces` (populated by the declare pass), so reference checks are a
-/// single `get` lookup.
+/// these parameters individually.
 pub(crate) struct ValidateFnCtx<'a> {
     pub fn_name: &'a str,
     pub proj_name: &'a str,
     pub namespaces: &'a Namespaces,
-    pub fn_locals: &'a HashMap<String, Vec<String>>,
-    pub fn_key: &'a str,
     pub errors: &'a mut Vec<Report>,
     pub sources: &'a HashMap<String, String>,
 }
@@ -144,7 +129,7 @@ fn validate_case(s: &CaseStmt, ctx: &mut ValidateFnCtx) {
 /// namespace (global or a known project).
 fn validate_expr(value: &Expr, ctx: &mut ValidateFnCtx) {
     value.visit_vars(&mut |name: &str, namespace: &str| {
-        if !is_var_defined(ctx.namespaces, ctx.fn_locals, ctx.fn_key, namespace, name) {
+        if !is_var_defined(ctx.namespaces, namespace, name) {
             let msg = if ctx.namespaces.contains_ns(namespace) {
                 format!(
                     "project {:?}: fn {:?}: undefined variable {}::{}",
@@ -171,7 +156,7 @@ fn validate_expr(value: &Expr, ctx: &mut ValidateFnCtx) {
 /// `$namespace::name` var-ref).
 fn validate_expr_pattern(pattern: &crate::dsl::CasePattern, ctx: &mut ValidateFnCtx) {
     pattern.visit_vars(&mut |name: &str, namespace: &str| {
-        if !is_var_defined(ctx.namespaces, ctx.fn_locals, ctx.fn_key, namespace, name) {
+        if !is_var_defined(ctx.namespaces, namespace, name) {
             let msg = if ctx.namespaces.contains_ns(namespace) {
                 format!(
                     "project {:?}: fn {:?}: undefined variable {}::{}",

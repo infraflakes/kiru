@@ -462,15 +462,10 @@ fn process_project_block(
 
             // Validate and then resolve the function body.
             let mut errors = Vec::new();
-            let fn_key = format!("{}::{}", name, bound_name);
-            let mut fn_locals = HashMap::new();
-            fn_locals.insert(fn_key.clone(), fn_local_names);
             let mut validation_ctx = crate::compiler::fnstmt::ValidateFnCtx {
                 fn_name: &bound_name,
                 proj_name: name,
                 namespaces: &state.namespaces,
-                fn_locals: &fn_locals,
-                fn_key: &fn_key,
                 errors: &mut errors,
                 sources: &state.source_texts,
             };
