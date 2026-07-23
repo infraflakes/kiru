@@ -43,6 +43,10 @@ var shell os    = `uname -s`;
 # eventually host the function. When applied via use, self:: gets
 # rewritten to that project's name.
 #
+# Inside a global function template, none of the body statements execute
+# at declaration time. They are stored as AST and only resolved when the
+# function is applied to a project via use.
+#
 # A function body can contain:
 #
 #   log  `message`;         print a message
@@ -50,7 +54,9 @@ var shell os    = `uname -s`;
 #   cd   `path`;            change directory (persistent, relative joins)
 #
 #   var string x = `val`;   project-scoped variable (visible to all fns)
-#   var shell  x = `cmd`;   shell variable (runs in the project dir)
+#   var shell  x = `cmd`;   shell variable (runs in the project dir when
+#                            the function is applied via use; never runs
+#                            at function declaration time)
 #
 #   env [KEY = `val`] {     scoped env vars for the block
 #       ...;

@@ -18,7 +18,6 @@
 //! level means `global`), but they are otherwise left to `validate_run_refs`,
 //! which is what permits `global` to reach into projects by function.
 
-use crate::compiler::types::UnresolvedProject;
 use crate::dsl::Expr;
 use crate::error::{SourceFile, spanned_report};
 use std::collections::HashMap;
@@ -83,37 +82,4 @@ pub(crate) fn normalize_expr(
     expr.visit_namespaces_mut(&mut |namespace, offset, len, source_name| {
         rewrite_and_check(namespace, scope, offset, len, source_name, sources, errors);
     });
-}
-
-/// Normalize (and check) every variable reference in a whole project: its
-/// metadata fields, body variables, and function bodies. The enclosing scope is
-/// the project's own name.
-pub(crate) fn normalize_project(
-    project: &mut UnresolvedProject,
-    sources: &HashMap<String, String>,
-    errors: &mut Vec<miette::Report>,
-) {
-    let scope = project.name.clone();
-    for field in [
-        &mut project.url,
-        &mut project.dir,
-        &mut project.sync,
-        &mut project.branch,
-    ]
-    .iter_mut()
-    .filter_map(|field| field.as_mut())
-    {
-        normalize_expr(field, &scope, sources, errors);
-    }
-    for var_stmt in &mut project.var_stmts {
-        normalize_expr(&mut var_stmt.value, &scope, sources, errors);
-    }
-    for fn_name in project.functions.keys().cloned().collect::<Vec<_>>() {
-        let body = project.functions.get_mut(&fn_name).unwrap();
-        for stmt in body {
-            stmt.visit_namespaces_mut(&mut |namespace, offset, len, source_name| {
-                rewrite_and_check(namespace, &scope, offset, len, source_name, sources, errors);
-            });
-        }
-    }
 }

@@ -215,8 +215,10 @@ where
             std::process::exit(130);
         }
 
-        let _ = worker.await;
-        Ok(())
+        let worker_result: miette::Result<()> = worker
+            .await
+            .map_err(|e| miette::miette!("worker panicked: {}", e))?;
+        worker_result
     });
     result
 }

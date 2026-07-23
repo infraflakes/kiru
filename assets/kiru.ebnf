@@ -50,7 +50,7 @@ case_pattern     = backtick_expr          (* literal — exact string match *)
 
 project_decl     = "pr" ident [ "[" field_decl { field_decl } "]" ] "{" { project_stmt } "}" ;
 project_stmt     = var_decl | use_decl ;
-field_decl       = ident "=" expr ";" ;
+field_decl       = ident "=" expr ;
 
 (* Recognised field names: url, dir, sync, branch. Unknown fields are *)
 (* rejected at parse time.                                            *)

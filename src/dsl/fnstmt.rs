@@ -4,7 +4,7 @@
 //! into `ResolvedFnStmt` lives in `crate::compiler::fnstmt`, so the semantic
 //! layer depends on this syntax layer rather than the reverse.
 
-use crate::dsl::{CaseArm, EnvPair, Expr, VarType};
+use crate::dsl::{CaseArm, CasePattern, EnvPair, Expr, VarType};
 
 #[derive(Debug, Clone)]
 pub struct VarDeclStmt {
@@ -62,6 +62,77 @@ impl FnStmt {
                     arm.pattern.visit_namespaces_mut(f);
                     for stmt in &mut arm.body {
                         stmt.visit_namespaces_mut(f);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Overwrite the source span (`source_name`, `offset`, `len`) on every
+    /// `Expr` and `CasePattern` node in this statement tree. Used by the
+    /// `use fn` handler so that errors from resolving a cloned global
+    /// template point to the applying `use` statement rather than to the
+    /// original global function definition.
+    pub fn remap_source_span(&mut self, new_source: &str, new_offset: usize, new_len: usize) {
+        let remap_expr = |e: &mut Expr| match e {
+            Expr::BacktickLit {
+                offset,
+                len,
+                source_name,
+                ..
+            } => {
+                *offset = new_offset;
+                *len = new_len;
+                *source_name = new_source.to_string();
+            }
+            Expr::VarRef {
+                offset,
+                len,
+                source_name,
+                ..
+            } => {
+                *offset = new_offset;
+                *len = new_len;
+                *source_name = new_source.to_string();
+            }
+        };
+        let remap_pattern = |p: &mut CasePattern| match p {
+            CasePattern::Literal {
+                offset,
+                len,
+                source_name,
+                ..
+            }
+            | CasePattern::VarRef {
+                offset,
+                len,
+                source_name,
+                ..
+            } => {
+                *offset = new_offset;
+                *len = new_len;
+                *source_name = new_source.to_string();
+            }
+            CasePattern::Default => {}
+        };
+
+        match self {
+            FnStmt::Log(e) | FnStmt::Exec(e) | FnStmt::Cd(e) => remap_expr(e),
+            FnStmt::VarDecl(s) => remap_expr(&mut s.value),
+            FnStmt::EnvBlock(s) => {
+                for pair in &mut s.pairs {
+                    remap_expr(&mut pair.value);
+                }
+                for stmt in &mut s.body {
+                    stmt.remap_source_span(new_source, new_offset, new_len);
+                }
+            }
+            FnStmt::Case(s) => {
+                remap_expr(&mut s.condition);
+                for arm in &mut s.scopes {
+                    remap_pattern(&mut arm.pattern);
+                    for stmt in &mut arm.body {
+                        stmt.remap_source_span(new_source, new_offset, new_len);
                     }
                 }
             }

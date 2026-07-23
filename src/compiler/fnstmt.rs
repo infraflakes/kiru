@@ -12,7 +12,9 @@ use crate::compiler::error::CompileError;
 use crate::compiler::namespaces::{Namespaces, resolve_case_pattern, resolve_expr};
 use crate::dsl::{CaseStmt, EnvBlockStmt, Expr, FnStmt, VarDeclStmt, VarType};
 use crate::error::{SourceFile, spanned_report_on};
-use crate::plan::{PlanCaseArm, PlanCaseStmt, PlanEnvBlockStmt, PlanEnvPair, PlanStmt};
+use crate::plan::{
+    PlanCaseArm, PlanCaseStmt, PlanEnvBlockStmt, PlanEnvPair, PlanStmt, match_case_pattern,
+};
 use crate::shell::execute_shell_variable;
 use miette::Report;
 use std::collections::HashMap;
@@ -243,15 +245,20 @@ fn resolve_case(
     sources: &HashMap<String, String>,
 ) -> Result<Option<PlanStmt>, CompileError> {
     let condition = resolve_expr(&s.condition, namespaces, sources)?;
+    let mut matched = false;
     let mut resolved_scopes = Vec::new();
     for arm in &s.scopes {
         let pattern = resolve_case_pattern(&arm.pattern, namespaces, sources)?;
-        // No per-arm bucket: the arm body resolves against the same project
-        // namespace. Arm-local `var`s declare into the project namespace
-        // (collision with a sibling arm is accepted — it was an exact
-        // redeclaration and is reported during the declare pass).
-        let body = resolve_fn_body_stmts(&arm.body, namespaces, project, working_dir, sources)?;
-        resolved_scopes.push(PlanCaseArm { pattern, body });
+        if !matched && match_case_pattern(&pattern, &condition) {
+            matched = true;
+            let body = resolve_fn_body_stmts(&arm.body, namespaces, project, working_dir, sources)?;
+            resolved_scopes.push(PlanCaseArm { pattern, body });
+        } else {
+            resolved_scopes.push(PlanCaseArm {
+                pattern,
+                body: Vec::new(),
+            });
+        }
     }
     Ok(Some(PlanStmt::Case(PlanCaseStmt {
         condition,

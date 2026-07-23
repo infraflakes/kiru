@@ -82,12 +82,12 @@ run ci {
 | form | what it does |
 |------|-------------|
 | `var string name = \`value\`;` | store a string as-is; `\${...}` gets substituted |
-| `var shell name = \`cmd\`;` | **run the command now** at config-check time and store its output |
+| `var shell name = \`cmd\`;` | **run the command** at config-check time and store its output |
 
 A `var shell` command runs where it's declared:
 - **Global scope** — runs in the current directory
 - **Inside a project** — runs in that project's directory
-- **Inside a function** — runs in the host project's directory
+- **Inside a global function** — does **not** run at declaration time. The function is a template; the `var shell` runs only when the function is applied to a project via `use`, and then in that project's directory.
 
 Non-zero exit is not an error — `var shell` returns `""` if the command fails. This makes it useful as a probe (e.g. `` var shell has_feature = `test -f x && echo yes` ``).
 
@@ -102,7 +102,7 @@ Every variable reference must be namespaced with `namespace::name`:
 | `$global::app` or `\${global::app}` | a global variable |
 | `$self::version` or `\${self::version}` | the **current project's** variable (rewritten to the project name at config-check time) |
 
-Inside a function body, use `$self::name` to refer to a variable of whatever project eventually hosts the function. When the function is applied to a project via `use`, `self::` gets rewritten to that project's name.
+Inside a function body or project field value, use `$self::name` to refer to a variable of whatever project eventually hosts the function. When the function is applied to a project via `use` (or the project body is processed), `self::` gets rewritten to that project's name.
 
 A project can only read its own variables and globals. Reading another project's variables is a compile-time error.
 

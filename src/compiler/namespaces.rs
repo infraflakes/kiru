@@ -21,8 +21,7 @@
 
 use crate::compiler::error::{CompileError, spanned_err_named};
 use crate::dsl::Expr;
-use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::collections::HashMap;
 
 /// The single compile-time resolution map. `lookup_var` is the one and only
 /// lookup path used by every resolver and validator.
@@ -30,12 +29,6 @@ use std::path::Path;
 pub struct Namespaces {
     pub global: HashMap<String, String>,
     pub projects: HashMap<String, HashMap<String, String>>,
-    /// Names of variables declared inside function bodies, per project. A
-    /// project's metadata fields (`url`/`dir`/`sync`/`branch`) may reference
-    /// config variables (globals and this project's own body variables) but
-    /// never a function-body variable, so those names are tracked separately to
-    /// reject such references.
-    fn_body_var_names: HashMap<String, HashSet<String>>,
 }
 
 impl Namespaces {
@@ -43,7 +36,6 @@ impl Namespaces {
         Namespaces {
             global: HashMap::new(),
             projects: HashMap::new(),
-            fn_body_var_names: HashMap::new(),
         }
     }
 
@@ -136,24 +128,6 @@ impl Namespaces {
         Ok(())
     }
 
-    /// Record that `name` is a function-body variable of project `ns`. Function
-    /// bodies are the only place these names may be referenced; a project's
-    /// metadata fields must never read them.
-    pub fn declare_fn_body_var(&mut self, ns: &str, name: &str) {
-        self.fn_body_var_names
-            .entry(ns.to_string())
-            .or_default()
-            .insert(name.to_string());
-    }
-
-    /// Whether `name` is a function-body variable of project `ns` (and thus
-    /// forbidden from being referenced by a metadata field expression).
-    pub fn is_fn_body_var(&self, ns: &str, name: &str) -> bool {
-        self.fn_body_var_names
-            .get(ns)
-            .is_some_and(|names| names.contains(name))
-    }
-
     /// Set (overwrite) a project variable.
     pub fn set_project_var(&mut self, ns: &str, name: &str, value: String) {
         self.projects
@@ -217,26 +191,6 @@ fn redeclaration_err(
         offset,
         len,
     )
-}
-
-/// Resolve the optional `Expr` field to a concrete string against `namespaces`.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn resolve_optional_expr(
-    expr: &Option<Expr>,
-    namespaces: &Namespaces,
-    sources: &HashMap<String, String>,
-) -> Result<Option<String>, CompileError> {
-    match expr {
-        Some(e) => {
-            let resolved = resolve_expr(e, namespaces, sources)?;
-            if resolved.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(resolved))
-            }
-        }
-        None => Ok(None),
-    }
 }
 
 /// Resolve an `Expr` against the single namespaces map: a `VarRef` is one
@@ -322,33 +276,6 @@ pub(crate) fn resolve_expr(
             Ok(result)
         }
     }
-}
-
-/// Resolve a `dir` field, joining relative paths against the source file's
-/// directory so that `dir = \`./foo\`` resolves relative to the `.kiru` file.
-pub(crate) fn resolve_dir_field(
-    unresolved: &crate::compiler::types::UnresolvedProject,
-    namespaces: &Namespaces,
-    sources: &HashMap<String, String>,
-) -> Result<String, CompileError> {
-    let raw = resolve_optional_expr(&unresolved.dir, namespaces, sources)?.unwrap_or_default();
-    if raw.is_empty() || Path::new(&raw).is_absolute() {
-        return Ok(raw);
-    }
-    let dir_source_name = unresolved
-        .dir
-        .as_ref()
-        .map(|e| e.source_name())
-        .unwrap_or(unresolved.source_file.as_str());
-    let base_dir = Path::new(dir_source_name).parent().ok_or_else(|| {
-        crate::compiler::error::spanned_err_on_field(
-            "cannot determine base directory for dir".to_string(),
-            sources,
-            &unresolved.dir,
-            &unresolved.source_file,
-        )
-    })?;
-    Ok(base_dir.join(&raw).to_string_lossy().to_string())
 }
 
 /// Resolve a case pattern's literal/var-ref against the namespaces map.

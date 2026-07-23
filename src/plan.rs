@@ -54,6 +54,15 @@ pub struct PlanEnvPair {
     pub value: String,
 }
 
+/// Check whether a resolved condition matches a case pattern at compile time
+/// or runtime.
+pub fn match_case_pattern(pattern: &PlanCasePattern, condition: &str) -> bool {
+    match pattern {
+        PlanCasePattern::Literal(lit) => condition == lit,
+        PlanCasePattern::Default => true,
+    }
+}
+
 /// A pattern arm inside a resolved `case` block.
 /// `VarRef` is flattened to `Literal`; only `Default` survives as-is.
 #[derive(Debug, Clone)]

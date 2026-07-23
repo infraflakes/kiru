@@ -1,4 +1,4 @@
-use crate::plan::{PlanEnvPair, PlanProject, PlanStmt};
+use crate::plan::{PlanEnvPair, PlanProject, PlanStmt, match_case_pattern};
 use crate::runner::colors;
 use crate::runner::error::RuntimeError;
 use crate::shell;
@@ -185,14 +185,6 @@ impl<'a> ExecContext<'a> {
         }
 
         Ok(())
-    }
-}
-
-/// Check whether a runtime condition matches a resolved case pattern.
-pub(crate) fn match_case_pattern(pattern: &crate::plan::PlanCasePattern, condition: &str) -> bool {
-    match pattern {
-        crate::plan::PlanCasePattern::Literal(lit) => condition == lit,
-        crate::plan::PlanCasePattern::Default => true,
     }
 }
 

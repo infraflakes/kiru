@@ -1,67 +1,73 @@
-use crate::compiler::error::{CompileError, io_err, spanned_err_named};
-use crate::compiler::fnstmt::validate_fn_body_stmts;
+use crate::compiler::error::{CompileError, io_err, spanned_err_named, spanned_err_on_field};
+use crate::compiler::fnstmt::{resolve_fn_body_stmts, validate_fn_body_stmts};
 
 use crate::compiler::namespaces::{Namespaces, resolve_expr};
-use crate::compiler::resolve::{reject_field_fn_body_var_refs, resolve_config};
-use crate::compiler::types::{ProjectVarStmt, UnresolvedProject};
 use crate::dsl::Parser;
 use crate::dsl::lexer::Lexer;
 use crate::dsl::{Expr, Program, ProjectField, Stmt, TopLevel, VarType, ast::QualifiedFnRef};
 use crate::error::SourceFile;
 use crate::error::spanned_report;
-use crate::plan::Plan;
+use crate::plan::{Plan, PlanProject, PlanStmt, parse_sync_mode};
 use crate::shell::execute_shell_variable;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-/// Run the full compilation pipeline:
-/// 1. Linear processing: walk items in source order, resolve globals and load
-///    imports (both in source order). A global `var shell` is executed live at
-///    its declaration point, so a later `import` path or global that reads
-///    `global::name` sees its real output. Projects are accumulated into the
-///    single `Namespaces` map (their names declared for reference checks).
-/// 2. Validate references against the namespaces map.
-/// 3. Resolve in dependency order: run each project/function `var shell`
-///    command and inline every value into the plan.
+/// Run the full compilation pipeline in one eager pass:
+/// 1. Walk items in source order, resolving globals as they are encountered.
+/// 2. For each `pr` block: resolve fields immediately (globals only), then
+///    process body statements eagerly — `var`/`var shell` are resolved at
+///    their declaration point, `use fn` clones the global template, rewrites
+///    `self::`, validates, and resolves the body immediately (case arms are
+///    compile-time matched). At the end, `build_plan` returns a `Plan`
+///    with every project's functions already lowered to `PlanStmt`.
 pub fn compile_and_resolve(entry_path: &Path, force_cwd: bool) -> Result<Plan, CompileError> {
     let abs_entry = canonicalize_entry(entry_path)?;
-    let linear_result = resolve_linear(&abs_entry, false)?;
-    // Globals (including their `var shell` output) are already resolved; project
-    // and function `var shell` commands run in the resolve pass below.
-    let sources = linear_result.unresolved.source_texts.clone();
-    resolve_config(
-        linear_result.namespaces,
-        linear_result.unresolved,
-        &sources,
-        force_cwd,
-        true,
-    )
+    let mut state = LinearState::new(false, force_cwd, true);
+    linear_process_file(&abs_entry, &mut state)?;
+    build_plan(state)
 }
 
-// Linear-processing pipeline
+/// Lightweight compilation that resolves project metadata without lowering
+/// function bodies. Used by `kiru sync`, which only needs each project's
+/// `url`/`dir`/`sync`/`branch`. Imports are tolerant of not-yet-cloned
+/// repositories (`skip_missing = true`).
+pub fn parse_projects_metadata(entry_path: &Path) -> Result<Plan, CompileError> {
+    let abs_entry = canonicalize_entry(entry_path)?;
+    let mut state = LinearState::new(true, false, false);
+    linear_process_file(&abs_entry, &mut state)?;
+    build_plan(state)
+}
 
-/// Mutable state threaded through the linear processing phase.
+// ── Mutable state ──────────────────────────────────────────────────────────
+
 struct LinearState {
-    /// The single compile-time resolution map, built incrementally so that
-    /// `import` paths (and later reference validation) can resolve variable
-    /// references as soon as their names are declared.
     namespaces: Namespaces,
-    projects: BTreeMap<String, UnresolvedProject>,
-    /// Top-level (shared) functions, keyed by function name. A project binds
-    /// one of these into itself with `use name;`. The body is stored unmodified;
-    /// its `self::` references are rewritten to the destination project when the
-    /// binding is instantiated.
+    projects: BTreeMap<String, PendingProject>,
     global_functions: BTreeMap<String, Vec<crate::dsl::FnStmt>>,
-    /// Top-level `run` blocks, keyed by run name.
     runs: BTreeMap<String, Vec<Vec<QualifiedFnRef>>>,
     loaded_files: HashSet<PathBuf>,
     recursion_stack: HashSet<PathBuf>,
     skip_missing: bool,
+    force_cwd: bool,
+    lower_functions: bool,
     source_texts: HashMap<String, String>,
 }
 
+/// A project being accumulated across merged `pr` blocks.
+/// Fields are resolved `String`s; `None` means not yet set (duplicate
+/// detection for merges). Functions are resolved `PlanStmt` arrays when
+/// `lower_functions` is true, otherwise empty.
+struct PendingProject {
+    source_file: String,
+    url: Option<String>,
+    dir: Option<String>,
+    sync: Option<String>,
+    branch: Option<String>,
+    functions: BTreeMap<String, Vec<PlanStmt>>,
+}
+
 impl LinearState {
-    fn new(skip_missing: bool) -> Self {
+    fn new(skip_missing: bool, force_cwd: bool, lower_functions: bool) -> Self {
         Self {
             namespaces: Namespaces::new(),
             projects: BTreeMap::new(),
@@ -69,20 +75,41 @@ impl LinearState {
             loaded_files: HashSet::new(),
             recursion_stack: HashSet::new(),
             skip_missing,
+            force_cwd,
+            lower_functions,
             source_texts: HashMap::new(),
             runs: BTreeMap::new(),
         }
     }
 }
 
-/// Intermediate result from the linear processing phase.
-struct LinearResult {
-    unresolved: super::types::UnresolvedConfig,
-    namespaces: Namespaces,
+// ── Plan assembly ──────────────────────────────────────────────────────────
+
+fn build_plan(state: LinearState) -> Result<Plan, CompileError> {
+    let mut projects = BTreeMap::new();
+    for (name, p) in state.projects {
+        let sync_str = p.sync.unwrap_or_else(|| "clone".to_string());
+        let sync = parse_sync_mode(&sync_str)
+            .map_err(|msg| spanned_err_on_field(msg, &state.source_texts, &None, &p.source_file))?;
+        projects.insert(
+            name,
+            PlanProject {
+                url: p.url.unwrap_or_default(),
+                dir: p.dir.unwrap_or_default(),
+                sync,
+                branch: p.branch,
+                functions: p.functions,
+            },
+        );
+    }
+    Ok(Plan {
+        projects,
+        runs: state.runs,
+    })
 }
 
-/// Canonicalize the entry path, resolving relative paths against the current
-/// working directory. All paths within the pipeline are absolute after this.
+// ── File / import processing ───────────────────────────────────────────────
+
 pub(crate) fn canonicalize_entry(path: &Path) -> Result<PathBuf, CompileError> {
     let abs_path = if path.is_absolute() {
         path.to_path_buf()
@@ -94,9 +121,6 @@ pub(crate) fn canonicalize_entry(path: &Path) -> Result<PathBuf, CompileError> {
     std::fs::canonicalize(&abs_path).map_err(|e| io_err("Failed to resolve", &abs_path, &e))
 }
 
-/// Parse a single file into a [`Program`]. `canon_path` MUST be the canonical
-/// absolute path. Does NOT manage `recursion_stack` — the caller is responsible
-/// for that. Marks the file as loaded on success to prevent re-parsing.
 fn parse_file(
     canon_path: &Path,
     loaded_files: &mut HashSet<PathBuf>,
@@ -104,15 +128,12 @@ fn parse_file(
     if loaded_files.contains(canon_path) {
         return Ok(Program::new());
     }
-
     let data = std::fs::read_to_string(canon_path)
         .map_err(|e| io_err("Failed to read", canon_path, &e))?;
-
     let source_name = canon_path.display().to_string();
     let source_text = data.clone();
     let mut parser = Parser::new(Lexer::new(data)).with_source_name(source_name.clone());
     let mut program = Program::new_with_source(source_name, source_text);
-
     while let Some(toplevel) = parser.parse_toplevel().map_err(|e| {
         CompileError::ParseReports(vec![miette::Report::new(e).with_source_code(
             miette::NamedSource::new(program.source_name.clone(), program.source_text.clone()),
@@ -120,17 +141,13 @@ fn parse_file(
     })? {
         program.items.push(toplevel);
     }
-
     loaded_files.insert(canon_path.to_path_buf());
     Ok(program)
 }
 
-/// Walk items in lexical order, resolving vars into the namespaces map, loading
-/// imports when their paths become resolvable, and accumulating projects.
 fn linear_process_file(file_path: &Path, state: &mut LinearState) -> Result<(), CompileError> {
     let canon_path =
         std::fs::canonicalize(file_path).map_err(|e| io_err("Failed to resolve", file_path, &e))?;
-
     if state.recursion_stack.contains(&canon_path) {
         return Err(spanned_err_named(
             format!("circular import: {}", canon_path.display()),
@@ -140,63 +157,76 @@ fn linear_process_file(file_path: &Path, state: &mut LinearState) -> Result<(), 
             1,
         ));
     }
-
     if state.loaded_files.contains(&canon_path) {
         return Ok(());
     }
-
     state.recursion_stack.insert(canon_path.clone());
     let program = parse_file(&canon_path, &mut state.loaded_files)?;
-
     let result = linear_process_program(&program, state);
-
     state.recursion_stack.remove(&canon_path);
     result
 }
 
-/// Merge a single statement into a project body during AST collection.
-pub(crate) fn merge_project_body_stmt(
-    project: &mut UnresolvedProject,
-    stmt: &Stmt,
-    sources: &HashMap<String, String>,
-    source_name: &str,
+fn process_import(
+    expr: &Expr,
+    state: &mut LinearState,
+    program: &Program,
 ) -> Result<(), CompileError> {
-    let make_err = |msg: String, offset: usize, len: usize| -> CompileError {
-        spanned_err_named(msg, sources, source_name, offset, len)
-    };
-    match stmt {
-        Stmt::Var { .. } => {}
-        Stmt::Use { .. } => {}
-        Stmt::Field {
-            key,
-            value,
+    let mut expr = expr.clone();
+    let mut scope_errors = Vec::new();
+    crate::compiler::scope::normalize_expr(
+        &mut expr,
+        crate::compiler::scope::GLOBAL_SCOPE,
+        &state.source_texts,
+        &mut scope_errors,
+    );
+    if !scope_errors.is_empty() {
+        return Err(CompileError::ValidationReport(scope_errors));
+    }
+    let path_str = resolve_expr(&expr, &state.namespaces, &state.source_texts)?;
+    if path_str.is_empty() {
+        let (offset, len) = expr.offset_len();
+        return Err(spanned_err_named(
+            "import path cannot be empty".to_string(),
+            &state.source_texts,
+            &program.source_name,
             offset,
             len,
-            ..
-        } => {
-            let slot: &mut Option<Expr> = match &key {
-                ProjectField::Url => &mut project.url,
-                ProjectField::Dir => &mut project.dir,
-                ProjectField::Sync => &mut project.sync,
-                ProjectField::Branch => &mut project.branch,
-            };
-            if slot.is_some() {
-                return Err(make_err(
-                    format!("duplicate field '{:?}' in project '{}'", key, project.name),
-                    *offset,
-                    *len,
-                ));
-            }
-            *slot = Some(value.clone());
-        }
-        _ => {}
+        ));
     }
-    Ok(())
+    let (import_offset, import_len) = expr.offset_len();
+    let import_source = expr.source_name().to_string();
+    let base_dir = Path::new(&program.source_name).parent().ok_or_else(|| {
+        spanned_err_named(
+            format!(
+                "cannot determine base directory for import from '{}'",
+                program.source_name
+            ),
+            &state.source_texts,
+            &import_source,
+            import_offset,
+            import_len,
+        )
+    })?;
+    let target = base_dir.join(&path_str);
+    if state.skip_missing && !target.exists() {
+        let report = spanned_report(
+            format!(
+                "import target '{}' does not exist yet (from {}), skipping",
+                path_str, program.source_name
+            ),
+            &SourceFile::from_registry(&state.source_texts, &import_source),
+            import_offset,
+            import_len,
+        );
+        eprintln!("{:?}", report);
+        return Ok(());
+    }
+    linear_process_file(&target, state)
 }
 
-/// Process a `pr <name> { ... }` block: set up the project entry, populate
-/// fields, collect fn/run/var blocks, and declare the project's variable names
-/// into the namespaces map (detecting exact `project::name` duplicates).
+// ── Project block ──────────────────────────────────────────────────────────
+
 fn process_project_block(
     name: &str,
     fields: &[Stmt],
@@ -204,36 +234,123 @@ fn process_project_block(
     state: &mut LinearState,
     program: &Program,
 ) -> Result<(), CompileError> {
-    // Register the project namespace immediately so references like
-    // `name::var` resolve during the validation pass. Real values are filled
-    // in by the resolve pass. A project's metadata fields (`url`/`dir`/
-    // `sync`/`branch`) are never referenceable, so they are not registered.
+    // Register the project namespace immediately.
     state.namespaces.declare_project(name)?;
 
-    let project_entry =
-        state
-            .projects
-            .entry(name.to_owned())
-            .or_insert_with(|| UnresolvedProject {
-                name: name.to_owned(),
-                source_file: program.source_name.clone(),
-                url: None,
-                dir: None,
-                sync: None,
-                branch: None,
-                var_stmts: Vec::new(),
-                functions: BTreeMap::new(),
-            });
+    // Get or create the pending project entry.
+    let project = state
+        .projects
+        .entry(name.to_owned())
+        .or_insert_with(|| PendingProject {
+            source_file: program.source_name.clone(),
+            url: None,
+            dir: None,
+            sync: None,
+            branch: None,
+            functions: BTreeMap::new(),
+        });
 
+    // ── Process fields ──────────────────────────────────────────────────
     for field_stmt in fields {
-        merge_project_body_stmt(
-            project_entry,
-            field_stmt,
-            &state.source_texts,
-            &program.source_name,
-        )?;
+        if let Stmt::Field {
+            key,
+            value,
+            offset,
+            len,
+            ..
+        } = field_stmt
+        {
+            // Normalize (rewrite self:: → project name) and resolve eagerly.
+            let mut value = value.clone();
+            let mut scope_errors = Vec::new();
+            crate::compiler::scope::normalize_expr(
+                &mut value,
+                name,
+                &state.source_texts,
+                &mut scope_errors,
+            );
+            if !scope_errors.is_empty() {
+                return Err(CompileError::ValidationReport(scope_errors));
+            }
+            let resolved = resolve_expr(&value, &state.namespaces, &state.source_texts)?;
+            match key {
+                ProjectField::Dir => {
+                    if project.dir.is_some() {
+                        return Err(spanned_err_named(
+                            format!("duplicate field 'dir' in project '{}'", name),
+                            &state.source_texts,
+                            &program.source_name,
+                            *offset,
+                            *len,
+                        ));
+                    }
+                    // Resolve relative paths against the source file.
+                    let dir = if resolved.is_empty() || Path::new(&resolved).is_absolute() {
+                        resolved
+                    } else {
+                        let base = Path::new(&program.source_name).parent().ok_or_else(|| {
+                            spanned_err_named(
+                                "cannot determine base directory for dir".to_string(),
+                                &state.source_texts,
+                                &program.source_name,
+                                *offset,
+                                *len,
+                            )
+                        })?;
+                        base.join(&resolved).to_string_lossy().to_string()
+                    };
+                    project.dir = Some(dir);
+                }
+                ProjectField::Url => {
+                    if project.url.is_some() {
+                        return Err(spanned_err_named(
+                            format!("duplicate field 'url' in project '{}'", name),
+                            &state.source_texts,
+                            &program.source_name,
+                            *offset,
+                            *len,
+                        ));
+                    }
+                    project.url = Some(resolved);
+                }
+                ProjectField::Sync => {
+                    if project.sync.is_some() {
+                        return Err(spanned_err_named(
+                            format!("duplicate field 'sync' in project '{}'", name),
+                            &state.source_texts,
+                            &program.source_name,
+                            *offset,
+                            *len,
+                        ));
+                    }
+                    project.sync = Some(resolved);
+                }
+                ProjectField::Branch => {
+                    if project.branch.is_some() {
+                        return Err(spanned_err_named(
+                            format!("duplicate field 'branch' in project '{}'", name),
+                            &state.source_texts,
+                            &program.source_name,
+                            *offset,
+                            *len,
+                        ));
+                    }
+                    project.branch = Some(resolved);
+                }
+            }
+        }
     }
 
+    // Compute working_dir for var shell execution and function body resolution.
+    let dir = project.dir.clone().unwrap_or_default();
+    let working_dir: Option<PathBuf> = if state.force_cwd || dir.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(&dir))
+    };
+    let working_dir_ref = working_dir.as_deref();
+
+    // ── Process body statements eagerly ─────────────────────────────────
     for body_stmt in body {
         if let Stmt::Use {
             function,
@@ -255,7 +372,7 @@ fn process_project_block(
                 )
             })?;
 
-            if project_entry.functions.contains_key(&bound_name) {
+            if project.functions.contains_key(&bound_name) {
                 return Err(spanned_err_named(
                     format!(
                         "duplicate function in project '{}': {} (also applied via `use`)",
@@ -305,7 +422,13 @@ fn process_project_block(
             }
 
             // Clone and rewrite `self::` to the destination project.
+            // Also remap every expression's source span to point to the `use`
+            // statement so that errors from resolving the body reference the
+            // applying project, not the global template.
             let mut body = global_body.clone();
+            for stmt in &mut body {
+                stmt.remap_source_span(source_name, *offset, *len);
+            }
             let mut scope_errors = Vec::new();
             for stmt in &mut body {
                 stmt.visit_namespaces_mut(&mut |namespace, offset, len, src| {
@@ -337,7 +460,7 @@ fn process_project_block(
                 source_name,
             )?;
 
-            // Validate the function body's variable references.
+            // Validate and then resolve the function body.
             let mut errors = Vec::new();
             let fn_key = format!("{}::{}", name, bound_name);
             let mut fn_locals = HashMap::new();
@@ -356,9 +479,19 @@ fn process_project_block(
                 return Err(CompileError::ValidationReport(errors));
             }
 
-            project_entry.functions.insert(bound_name, body);
+            if state.lower_functions {
+                let resolved_body = resolve_fn_body_stmts(
+                    &body,
+                    &mut state.namespaces,
+                    name,
+                    working_dir_ref,
+                    &state.source_texts,
+                )?;
+                project.functions.insert(bound_name, resolved_body);
+            }
             continue;
         }
+
         if let Stmt::Var {
             var_type,
             name: var_name,
@@ -368,48 +501,49 @@ fn process_project_block(
             ..
         } = body_stmt
         {
-            // Declare the body-var name into the project namespace now so a
-            // later reference (or a sibling fn) resolves it; the real value is
-            // filled in during the resolve pass.
+            // Normalize (rewrite self:: → project name) and resolve eagerly.
+            let mut value = value.clone();
+            let mut scope_errors = Vec::new();
+            crate::compiler::scope::normalize_expr(
+                &mut value,
+                name,
+                &state.source_texts,
+                &mut scope_errors,
+            );
+            if !scope_errors.is_empty() {
+                return Err(CompileError::ValidationReport(scope_errors));
+            }
+            let resolved = resolve_expr(&value, &state.namespaces, &state.source_texts)?;
+            let final_value = if *var_type == VarType::Shell {
+                let source = SourceFile::from_registry(&state.source_texts, value.source_name());
+                execute_shell_variable(
+                    var_name,
+                    &resolved,
+                    working_dir_ref,
+                    &source,
+                    *offset,
+                    *len,
+                )?
+            } else {
+                resolved
+            };
             state.namespaces.declare_project_var(
                 name,
                 var_name,
-                String::new(),
+                final_value,
                 &program.source_name,
                 *offset,
                 *len,
                 &state.source_texts,
             )?;
-            project_entry.var_stmts.push(ProjectVarStmt {
-                var_type: var_type.clone(),
-                name: var_name.clone(),
-                value: value.clone(),
-                offset: *offset,
-                len: *len,
-            });
         }
-    }
-
-    // Normalize project metadata fields and body variables so their
-    // `self::` references resolve to the enclosing project (and cross-project
-    // reads are rejected).
-    let mut scope_errors = Vec::new();
-    crate::compiler::scope::normalize_project(
-        project_entry,
-        &state.source_texts,
-        &mut scope_errors,
-    );
-    if !scope_errors.is_empty() {
-        return Err(CompileError::ValidationReport(scope_errors));
     }
 
     Ok(())
 }
 
-/// Collects the names of every variable declared inside function bodies
-/// (`var`/`var shell`), recursing through `env` and `case` nesting. Used by
-/// the inline `use` handler to exclude a function's own local variables from
-/// the eager "missing `self::` variable" check.
+// ── Function body helpers ──────────────────────────────────────────────────
+
 fn collect_fn_local_var_names(
     stmts: &[crate::dsl::FnStmt],
     out: &mut std::collections::HashSet<String>,
@@ -430,14 +564,6 @@ fn collect_fn_local_var_names(
     }
 }
 
-/// Walk a function body (including `env` and `case` nesting) and record every
-/// `var` as a local of the binding `fn_key` (`project::function`). A local
-/// variable collides with another local in the same function, or with a
-/// variable the applying project already declared (so a shared function whose
-/// local name clashes with a host project's variable is rejected at the
-/// applying `use`). `use_offset`/`use_len`/`use_source` point at that `use`, so
-/// the diagnostic names the project that applied the shared function rather than
-/// its reusable definition.
 #[allow(clippy::too_many_arguments)]
 fn declare_fn_body_vars_inner(
     namespaces: &mut Namespaces,
@@ -467,7 +593,19 @@ fn declare_fn_body_vars_inner(
                     ));
                 }
                 current_locals.push(s.name.clone());
-                namespaces.declare_fn_body_var(project_name, &s.name);
+                // Also declare an empty placeholder so validation of
+                // sibling arms sees this name as defined. The real value
+                // will be set by resolve_fn_body_stmts when the matching
+                // case arm is resolved.
+                let _ = namespaces.declare_project_var(
+                    project_name,
+                    &s.name,
+                    String::new(),
+                    use_source,
+                    use_offset,
+                    use_len,
+                    source_texts,
+                );
             }
             crate::dsl::FnStmt::EnvBlock(s) => {
                 declare_fn_body_vars_inner(
@@ -501,73 +639,8 @@ fn declare_fn_body_vars_inner(
     Ok(())
 }
 
-/// Resolve and load an `import` statement. The expression is first
-/// interpolated (variable substitution), then resolved against the
-/// directory of the source file.  `Path::join` handles absolute vs
-/// relative transparently.
-fn process_import(
-    expr: &Expr,
-    state: &mut LinearState,
-    program: &Program,
-) -> Result<(), CompileError> {
-    // An import path is a top-level expression, so the `self` alias means
-    // `global` and only `self::`/`global::` reads are legal.
-    let mut expr = expr.clone();
-    let mut scope_errors = Vec::new();
-    crate::compiler::scope::normalize_expr(
-        &mut expr,
-        crate::compiler::scope::GLOBAL_SCOPE,
-        &state.source_texts,
-        &mut scope_errors,
-    );
-    if !scope_errors.is_empty() {
-        return Err(CompileError::ValidationReport(scope_errors));
-    }
-    let path_str = resolve_expr(&expr, &state.namespaces, &state.source_texts)?;
-    if path_str.is_empty() {
-        let (offset, len) = expr.offset_len();
-        return Err(spanned_err_named(
-            "import path cannot be empty".to_string(),
-            &state.source_texts,
-            &program.source_name,
-            offset,
-            len,
-        ));
-    }
-    let (import_offset, import_len) = expr.offset_len();
-    let import_source = expr.source_name().to_string();
-    let base_dir = Path::new(&program.source_name).parent().ok_or_else(|| {
-        spanned_err_named(
-            format!(
-                "cannot determine base directory for import from '{}'",
-                program.source_name
-            ),
-            &state.source_texts,
-            &import_source,
-            import_offset,
-            import_len,
-        )
-    })?;
-    let target = base_dir.join(&path_str);
+// ── Top-level program processing ───────────────────────────────────────────
 
-    if state.skip_missing && !target.exists() {
-        let report = spanned_report(
-            format!(
-                "import target '{}' does not exist yet (from {}), skipping",
-                path_str, program.source_name
-            ),
-            &SourceFile::from_registry(&state.source_texts, &import_source),
-            import_offset,
-            import_len,
-        );
-        eprintln!("{:?}", report);
-        return Ok(());
-    }
-
-    linear_process_file(&target, state)
-}
-
-/// Process a program's items in lexical order.
 fn linear_process_program(program: &Program, state: &mut LinearState) -> Result<(), CompileError> {
     state
         .source_texts
@@ -583,16 +656,6 @@ fn linear_process_program(program: &Program, state: &mut LinearState) -> Result<
                     len,
                     ..
                 } => {
-                    // Resolve the global immediately, in source order, and
-                    // declare it into the namespaces map so later globals and
-                    // `import` paths can read `global::name`. A `var shell`
-                    // global is executed live here (not deferred), because an
-                    // `import` path may depend on its output and imports are
-                    // loaded during this same linear pass. Globals always run in
-                    // the current process directory.
-                    // Rewrite the `self` alias (which means `global` at the top
-                    // level) and reject any project-namespaced read: a global
-                    // variable may only reference `self::` or `global::`.
                     let mut value = value.clone();
                     let mut scope_errors = Vec::new();
                     crate::compiler::scope::normalize_expr(
@@ -633,14 +696,6 @@ fn linear_process_program(program: &Program, state: &mut LinearState) -> Result<
                     len,
                     ..
                 } => {
-                    // A top-level `fn` is a shared (global) function. It is not a
-                    // project function; a project binds it with `use` and runs it
-                    // with the project's `cwd`. Its body may only reference
-                    // `self::` (the future applying project, left symbolic here)
-                    // or `global::`, so check that scope rule now — but do NOT
-                    // freeze `self::` to `global`. `TEMPLATE_SCOPE` keeps `self::`
-                    // unchanged so the binding happens when the function is
-                    // `use`d. Duplicate global function names are rejected.
                     if state.global_functions.contains_key(name) {
                         return Err(spanned_err_named(
                             format!("duplicate global function: {}", name),
@@ -671,10 +726,6 @@ fn linear_process_program(program: &Program, state: &mut LinearState) -> Result<
                     state.global_functions.insert(name.clone(), body);
                 }
                 Stmt::Use { offset, len, .. } => {
-                    // A function application (`use`) is only valid inside a
-                    // project body, where it is collected into `pending_uses` by
-                    // `process_project_block`. At the top level it is a syntax
-                    // error.
                     return Err(spanned_err_named(
                         "function applications (`use`) are only valid inside a project body"
                             .to_string(),
@@ -700,21 +751,12 @@ fn linear_process_program(program: &Program, state: &mut LinearState) -> Result<
                             *len,
                         ));
                     }
-                    // Rewrite `self::` to `global::` (top-level run block).
-                    for chain in chains {
-                        for reference in chain {
-                            if reference.project == "self" {
-                                // Can't mutate through shared ref; clone the chains.
-                            }
-                        }
-                    }
                     let mut chains = chains.clone();
                     for chain in &mut chains {
                         for reference in chain {
                             if reference.project == "self" {
                                 reference.project = "global".to_string();
                             }
-                            // Validate that the referenced project and function exist.
                             match state.projects.get(&reference.project) {
                                 Some(proj) => {
                                     if !proj.functions.contains_key(&reference.function) {
@@ -755,70 +797,14 @@ fn linear_process_program(program: &Program, state: &mut LinearState) -> Result<
     Ok(())
 }
 
-/// The core linear processing phase: entry point.
-fn resolve_linear(entry_path: &Path, skip_missing: bool) -> Result<LinearResult, CompileError> {
-    let mut state = LinearState::new(skip_missing);
-    linear_process_file(entry_path, &mut state)?;
-
-    // Reject metadata field references to function-body variables now that
-    // every function has been instantiated (the declare pass ran inline during
-    // `use` processing).
-    for project in state.projects.values() {
-        reject_field_fn_body_var_refs(&project.dir, "dir", &state.namespaces, &state.source_texts)?;
-        reject_field_fn_body_var_refs(&project.url, "url", &state.namespaces, &state.source_texts)?;
-        reject_field_fn_body_var_refs(
-            &project.sync,
-            "sync",
-            &state.namespaces,
-            &state.source_texts,
-        )?;
-        reject_field_fn_body_var_refs(
-            &project.branch,
-            "branch",
-            &state.namespaces,
-            &state.source_texts,
-        )?;
-    }
-
-    let unresolved = super::types::UnresolvedConfig {
-        projects: state.projects,
-        runs: std::mem::take(&mut state.runs),
-        source_texts: state.source_texts,
-    };
-
-    Ok(LinearResult {
-        unresolved,
-        namespaces: state.namespaces,
-    })
-}
-
-/// Lightweight compilation that resolves project metadata without validating
-/// or lowering function bodies. Used by `kiru sync`, which only needs each
-/// project's `url`/`dir`/`sync`/`branch`. Reuses the same resolve pass with
-/// function lowering disabled and import resolution tolerant of not-yet-cloned
-/// repositories (`SkipMissing`).
-pub fn parse_projects_metadata(entry_path: &Path) -> Result<Plan, CompileError> {
-    let abs_entry = canonicalize_entry(entry_path)?;
-    let linear = resolve_linear(&abs_entry, true)?;
-    let sources = linear.unresolved.source_texts.clone();
-    resolve_config(linear.namespaces, linear.unresolved, &sources, false, false)
-}
-
 #[cfg(test)]
 mod tests {
     use crate::compiler::test_support::*;
     use crate::compiler::{CompileError, parse_projects_metadata};
 
-    /// Regression test for the cross-file wrong-location bug: when a project
-    /// body is merged from several `.kiru` files (all declaring `pr kiru`), a
-    /// redeclaration diagnostic must point at the file that actually declared
-    /// the conflicting node — not the first file that happened to declare
-    /// `pr kiru`. Previously the span resolved against `run.kiru` (the first
-    /// `pr kiru`) even though the duplicate `docker_bin` lives in `build.kiru`.
     #[test]
     fn test_cross_file_redeclaration_points_at_defining_file() {
         let dir = tempfile::TempDir::new().unwrap();
-        // main.kiru imports two sibling files; both declare `pr kiru`.
         write_config(
             dir.path(),
             "main.kiru",
@@ -847,7 +833,6 @@ mod tests {
             }\n\
             ",
         );
-
         let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
         let rendered = match &err {
             CompileError::ValidationReport(reports) => format!("{:?}", reports[0]),
@@ -858,8 +843,6 @@ mod tests {
             "expected redeclaration diagnostic, got: {}",
             rendered
         );
-        // The conflicting declaration is in build.kiru, so the span must
-        // reference that file — never run.kiru (the first `pr kiru`).
         assert!(
             rendered.contains("build.kiru"),
             "diagnostic should point at build.kiru, got: {}",
@@ -872,11 +855,6 @@ mod tests {
         );
     }
 
-    /// Regression: an `import` path that interpolates a value derived from a
-    /// global `var shell` must resolve against the command's real output. The
-    /// shell global is executed live during the linear pass (in source order),
-    /// so a later import sees the true directory rather than an empty
-    /// placeholder (which previously produced paths like `/kiru/...`).
     #[test]
     fn test_import_path_depends_on_global_var_shell() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -1218,7 +1196,6 @@ mod tests {
     #[test]
     fn test_parse_metadata_skips_missing_import() {
         let dir = tempfile::TempDir::new().unwrap();
-        // main.kiru imports ./missing.kiru which does not exist.
         write_config(
             dir.path(),
             "main.kiru",
@@ -1251,8 +1228,6 @@ mod tests {
     #[test]
     fn test_parse_metadata_still_errors_on_malformed_import() {
         let dir = tempfile::TempDir::new().unwrap();
-        // The imported file exists and is parseable, so SkipMissing still
-        // processes it normally — syntax errors inside must surface.
         write_config(
             dir.path(),
             "bad.kiru",
@@ -1269,7 +1244,6 @@ mod tests {
          ",
         );
         let err = parse_projects_metadata(&dir.path().join("main.kiru")).unwrap_err();
-        // Parse errors are wrapped in ParseReports, not silently swallowed.
         assert!(
             matches!(err, CompileError::ParseReports(_)),
             "expected a parse error, got: {}",
@@ -1292,17 +1266,11 @@ mod tests {
         let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
         assert!(cfg.projects["a"].functions.contains_key("shared"));
         assert!(cfg.projects["b"].functions.contains_key("shared"));
-        // The binding is a real project function, callable via `project::shared`.
         assert!(cfg.runs.is_empty());
     }
 
     #[test]
     fn test_use_function_runs_with_project_cwd() {
-        // A shared function runs inside the destination project: its `global::`
-        // references resolve against the global scope, and (at runtime) its
-        // commands execute with the project's `dir`. `self::` inside the shared
-        // body means the applying project, so a shared function may depend on
-        // globals as well as the destination project's variables.
         let dir = tempfile::TempDir::new().unwrap();
         write_config(
             dir.path(),
