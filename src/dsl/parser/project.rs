@@ -128,10 +128,10 @@ impl Parser {
         } else {
             None
         };
-
+        let semi_end = self.current_token().offset + self.current_token().len;
         self.expect_with_context(TokenType::Semicolon, "after `use`")?;
 
-        let len = self.current_token().offset - offset;
+        let len = semi_end - offset;
         Ok(Stmt::Use {
             function,
             alias,

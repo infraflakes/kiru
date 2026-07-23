@@ -107,13 +107,15 @@ fn dump_final_output(height: u16, dump: &str) -> Result<(), io::Error> {
 
 /// Main TUI event loop: drains events from the channel, draws frames, and
 /// handles keyboard input (q / Ctrl+C to quit).
+/// Returns `true` if the user cancelled via keyboard, `false` if the worker
+/// finished naturally.
 pub async fn run_tui_event_loop(
     model: Arc<Mutex<Model>>,
     mut event_receiver: mpsc::UnboundedReceiver<TuiEvent>,
     height: u16,
     render_fn: fn(&mut Frame, &Model, usize),
     format_fn: fn(&Model) -> String,
-) -> Result<(), io::Error> {
+) -> Result<bool, io::Error> {
     let raw = RawMode::try_enable();
 
     let mut terminal = Terminal::with_options(
@@ -124,6 +126,7 @@ pub async fn run_tui_event_loop(
     )?;
 
     let mut spinner_idx = 0;
+    let mut cancelled = false;
 
     loop {
         let disconnected = drain_events(&model, &mut event_receiver);
@@ -139,6 +142,7 @@ pub async fn run_tui_event_loop(
         if matches!(raw, RawMode::Enabled) {
             if handle_keyboard_input() {
                 let _ = disable_raw_mode();
+                cancelled = true;
                 break;
             }
         } else {
@@ -162,7 +166,7 @@ pub async fn run_tui_event_loop(
     if !dump.is_empty() {
         dump_final_output(height, &dump)?;
     }
-    Ok(())
+    Ok(cancelled)
 }
 
 /// Set up the tokio runtime, build the model from chains, and run the TUI
@@ -178,7 +182,7 @@ where
     Fut: Future<Output = miette::Result<()>> + Send + 'static,
 {
     let tokio_runtime = tokio::runtime::Runtime::new().map_err(|e| miette::miette!("{}", e))?;
-    tokio_runtime.block_on(async {
+    let result: miette::Result<()> = tokio_runtime.block_on(async {
         let mut model = Model::new();
         for (label, task_names) in chains {
             model.add_chain(label, task_names);
@@ -200,13 +204,21 @@ where
         ));
         let worker = tokio::spawn(worker(event_sender));
 
-        tui.await
+        let cancelled = tui
+            .await
             .map_err(|e| miette::miette!("TUI panicked: {}", e))?
             .map_err(|e| miette::miette!("TUI error: {}", e))?;
-        worker
-            .await
-            .map_err(|e| miette::miette!("worker panicked: {}", e))?
-    })
+
+        if cancelled {
+            // Kill everything immediately — running shell commands included.
+            // The TUI loop already disabled raw mode and dropped the terminal.
+            std::process::exit(130);
+        }
+
+        let _ = worker.await;
+        Ok(())
+    });
+    result
 }
 
 /// Run the TUI with run-specific render and format functions.

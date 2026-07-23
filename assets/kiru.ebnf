@@ -1,39 +1,25 @@
 (* ──────────────────────────────────────────────────────────────────── *)
 (*  kiru DSL — EBNF Grammar                                          *)
-(*  This is the authoritative grammar of the kiru configuration DSL.  *)
-(*  Tokens are defined at the lexical level; comments (# ...) and     *)
-(*  whitespace are ignored between tokens.                            *)
 (* ──────────────────────────────────────────────────────────────────── *)
 
 (* ═══════════════════════════════════════════════════════════════════ *)
-(*  PROGRAM (top-level)                                               *)
+(*  PROGRAM                                                          *)
 (* ═══════════════════════════════════════════════════════════════════ *)
 
 program          = { statement } ;
 statement        = import_decl | var_decl
-                 | project_decl | fn_decl | run_decl ;
+                 | fn_decl | project_decl | run_decl ;
 
 (* ═══════════════════════════════════════════════════════════════════ *)
-(*  SIMPLE DECLARATIONS                                               *)
+(*  GLOBAL DECLARATIONS                                              *)
 (* ═══════════════════════════════════════════════════════════════════ *)
 
-import_decl      = "import"  expr ";" ;
+import_decl      = "import" expr ";" ;
 var_decl         = "var" type ident "=" expr ";" ;
 type             = "string" | "shell" ;
 
 (* ═══════════════════════════════════════════════════════════════════ *)
-(*  PROJECT BLOCK                                                     *)
-(* ═══════════════════════════════════════════════════════════════════ *)
-
-project_decl     = "pr" ident [ "[" field_decl { field_decl } "]" ] "{" { project_stmt } "}" ;
-project_stmt     = field_decl | var_decl | fn_decl | run_decl ;
-field_decl       = ident "=" expr ";" ;
-
-(* Recognised field names: url, dir, sync, branch.                      *)
-(* Unknown field names are rejected at parse time.                      *)
-
-(* ═══════════════════════════════════════════════════════════════════ *)
-(*  FUNCTION BLOCK                                                    *)
+(*  FUNCTION (always top-level)                                      *)
 (* ═══════════════════════════════════════════════════════════════════ *)
 
 fn_decl          = "fn" ident "{" { fn_stmt } "}" ;
@@ -54,29 +40,44 @@ env_pair         = ident "=" expr ;
 
 case_stmt        = "case" expr "{" case_arm { case_arm } "}" ";" ;
 case_arm         = case_pattern "{" { fn_stmt } "}" ";" ;
-case_pattern       = backtick_expr    (* literal — exact string match   *)
-                 | var_ref          (* variable reference             *)
-                 | "_" ;            (* default / catch-all            *)
+case_pattern     = backtick_expr          (* literal — exact string match *)
+                 | var_ref                (* variable reference         *)
+                 | "_" ;                  (* default / catch-all        *)
 
 (* ═══════════════════════════════════════════════════════════════════ *)
-(*  RUN BLOCK                                                         *)
+(*  PROJECT — declares a repo + applies global functions             *)
+(* ═══════════════════════════════════════════════════════════════════ *)
+
+project_decl     = "pr" ident [ "[" field_decl { field_decl } "]" ] "{" { project_stmt } "}" ;
+project_stmt     = var_decl | use_decl ;
+field_decl       = ident "=" expr ";" ;
+
+(* Recognised field names: url, dir, sync, branch. Unknown fields are *)
+(* rejected at parse time.                                            *)
+
+use_decl         = "use" ident [ "as" ident ] ";" ;
+
+(* ═══════════════════════════════════════════════════════════════════ *)
+(*  RUN BLOCK — orchestrates functions across projects              *)
 (* ═══════════════════════════════════════════════════════════════════ *)
 
 run_decl         = "run" ident "{" chain { chain } "}" ;
-chain            = ident { "=>" ident } ";" ;
+chain            = qualified_fn_ref { "=>" qualified_fn_ref } ";" ;
+qualified_fn_ref = ident "::" ident ;     (* project::function *)
 
 (* ═══════════════════════════════════════════════════════════════════ *)
-(*  EXPRESSIONS                                                       *)
+(*  EXPRESSIONS                                                      *)
 (* ═══════════════════════════════════════════════════════════════════ *)
 
 expr             = backtick_expr | var_ref ;
-var_ref          = "$" ident ;
+
+var_ref          = "$" ident "::" ident ;   (* $namespace::name *)
 
 backtick_expr    = "`" { interpolation | raw_char } "`" ;
-interpolation    = "${" ident "}" ;
+interpolation    = "${" ident "::" ident "}" ;  (* ${namespace::name} *)
 
 (* ═══════════════════════════════════════════════════════════════════ *)
-(*  LEXICAL TOKENS                                                    *)
+(*  LEXICAL TOKENS                                                   *)
 (* ═══════════════════════════════════════════════════════════════════ *)
 
 ident            = ( letter | "_" ) { letter | digit | "_" } ;
@@ -84,9 +85,8 @@ letter           = "A" | "B" | … | "Z" | "a" | "b" | … | "z" ;
 digit            = "0" | "1" | … | "9" ;
 raw_char         = ? any character except "`" or "\n" ? ;
 
-(* Key identifiers are reserved and cannot be used as user-defined    *)
-(* names: import var string shell pr fn run log exec cd               *)
-(* env case.                                                          *)
-(*                                                                    *)
-(* Comments start with # and run to end of line.                      *)
+(* Keywords (reserved, cannot be used as identifiers):               *)
+(*   import var string shell pr fn run log exec cd env case use      *)
+(*                                                                   *)
+(* Comments start with # and run to end of line.                     *)
 (* ──────────────────────────────────────────────────────────────────── *)
