@@ -483,6 +483,11 @@ fn process_project_block(
                     &state.source_texts,
                 )?;
                 project.functions.insert(bound_name, resolved_body);
+            } else {
+                // Register the function name with an empty body so run-block
+                // validation can find it even when function lowering is off
+                // (e.g. during `kiru sync`).
+                project.functions.insert(bound_name, Vec::new());
             }
             continue;
         }
