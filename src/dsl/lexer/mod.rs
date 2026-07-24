@@ -92,10 +92,20 @@ impl Lexer {
                     self.byte_offset - start_byte_offset,
                 )
             }
-            Some(ch @ ('(' | ')')) => {
+            Some('(') => {
                 self.read_char();
                 Token::new(
-                    TokenType::Illegal(format!("unexpected character: {}", ch)),
+                    TokenType::LParen,
+                    start_line,
+                    start_col,
+                    start_byte_offset,
+                    self.byte_offset - start_byte_offset,
+                )
+            }
+            Some(')') => {
+                self.read_char();
+                Token::new(
+                    TokenType::RParen,
                     start_line,
                     start_col,
                     start_byte_offset,
@@ -147,6 +157,27 @@ impl Lexer {
                 } else {
                     Token::new(
                         TokenType::Assign,
+                        start_line,
+                        start_col,
+                        start_byte_offset,
+                        self.byte_offset - start_byte_offset,
+                    )
+                }
+            }
+            Some(':') => {
+                self.read_char();
+                if self.ch == Some(':') {
+                    self.read_char();
+                    Token::new(
+                        TokenType::NamespaceSep,
+                        start_line,
+                        start_col,
+                        start_byte_offset,
+                        self.byte_offset - start_byte_offset,
+                    )
+                } else {
+                    Token::new(
+                        TokenType::Illegal("unexpected character: :".to_string()),
                         start_line,
                         start_col,
                         start_byte_offset,
@@ -349,6 +380,14 @@ mod tests {
             tokens,
             vec![TokenType::Dollar, TokenType::Ident("port1".to_string())]
         );
+    }
+
+    #[test]
+    fn test_namespace_sep() {
+        let mut lexer = Lexer::new("a::b".to_string());
+        assert_eq!(lexer.next_token().ty, TokenType::Ident("a".to_string()));
+        assert_eq!(lexer.next_token().ty, TokenType::NamespaceSep);
+        assert_eq!(lexer.next_token().ty, TokenType::Ident("b".to_string()));
     }
 
     #[test]

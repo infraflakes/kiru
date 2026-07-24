@@ -6,13 +6,14 @@ mod sync;
 
 pub use args::{Cli, Commands};
 
-use crate::compiler::{CompileError, Config};
+use crate::compiler::CompileError;
+use crate::plan::Plan;
 use clap::Parser;
 use std::path::PathBuf;
 
-fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Config> {
+fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Plan> {
     let config_path = get_config_path(config_arg);
-    let force_cwd = std::env::var("KIRU_CWD").as_deref() == Ok("1");
+    let force_cwd = crate::runner::kiru_cwd_enabled();
     crate::compiler::compile_and_resolve(&config_path, force_cwd).map_err(compile_error_to_report)
 }
 
@@ -60,9 +61,7 @@ pub fn run_cli() -> miette::Result<()> {
     match parsed_cli.command {
         Commands::Status => status::run_status_command(parsed_cli.config),
         Commands::Sync => sync::run_sync_command(parsed_cli.config),
-        Commands::Run { name, project } => {
-            exec::execute_run_block(parsed_cli.config, name, project)
-        }
+        Commands::Run { name } => exec::execute_run_block(parsed_cli.config, name),
         Commands::Fn { name, project } => exec::execute_function(parsed_cli.config, name, project),
         Commands::Version => run_version(),
     }
@@ -76,7 +75,7 @@ fn get_config_path(config_arg: Option<PathBuf>) -> PathBuf {
     // In CI/CD (or any invocation where `KIRU_CWD=1` is set) the caller is
     // already inside the project, so resolve the config to `main.kiru` in the
     // current directory rather than the global `~/.config/kiru/main.kiru`.
-    if std::env::var("KIRU_CWD").as_deref() == Ok("1") {
+    if crate::runner::kiru_cwd_enabled() {
         return PathBuf::from("main.kiru");
     }
 

@@ -1,5 +1,6 @@
 #[cfg(test)]
 use crate::dsl::Program;
+use crate::dsl::ast::QualifiedFnRef;
 use crate::dsl::error::ParseError;
 use crate::dsl::lexer::Lexer;
 use crate::dsl::token::{Token, TokenType, format_token, format_token_type, is_keyword_token};
@@ -23,16 +24,14 @@ pub(crate) mod test_support;
 pub(crate) struct Parser {
     lexer: Lexer,
     current: Token,
+    /// One token of lookahead, used to disambiguate `namespace::name` forms
+    /// (e.g. a function copy) from a bare identifier in a project body.
+    next: Token,
     source_len: usize,
     source_name: String,
 }
 
 impl Parser {
-    /// Convenience constructor that creates a Parser from a source string directly.
-    pub(crate) fn from_source(source: String) -> Self {
-        Parser::new(Lexer::new(source))
-    }
-
     /// Records the canonical path of the source file so every parsed node
     /// carries the name used to resolve its diagnostic span. The compiler sets
     /// this before parsing — tests that only inspect structure leave it empty.
@@ -45,9 +44,11 @@ impl Parser {
     pub(crate) fn new(mut lexer: Lexer) -> Self {
         let source_len = lexer.source_len();
         let current = lexer.next_token();
+        let next = lexer.next_token();
         Parser {
             lexer,
             current,
+            next,
             source_len,
             source_name: String::new(),
         }
@@ -60,7 +61,7 @@ impl Parser {
 
     /// Advances to the next token from the lexer.
     fn advance(&mut self) {
-        self.current = self.lexer.next_token();
+        self.current = std::mem::replace(&mut self.next, self.lexer.next_token());
     }
 
     /// Returns a SourceSpan that safely handles EOF by pointing at the last byte.
@@ -151,16 +152,41 @@ impl Parser {
         )
     }
 
-    /// Parses a `$name` variable reference after the caller has recorded the
-    /// starting offset: advances past `$`, reads the identifier (rejecting
-    /// keywords), and returns the name with its end offset. Shared by
+    /// Parses a `$ns::name` variable reference after the caller has recorded the
+    /// starting offset: advances past `$`, reads the namespace identifier
+    /// (rejecting keywords), the `::` separator, and the name identifier
+    /// (rejecting keywords), returning the namespace, the name, and its end
+    /// offset. A `::` after the name (nested qualifier) is rejected. Shared by
     /// expression and case-pattern parsing.
     fn parse_dollar_var_name(
         &mut self,
-        _start_offset: usize,
         expected: &'static str,
         fallback: &'static str,
-    ) -> Result<(String, usize), ParseError> {
+    ) -> Result<(String, String, usize), ParseError> {
+        self.advance();
+        let namespace = match &self.current_token().ty {
+            TokenType::Ident(name_str) => name_str.clone(),
+            ty if is_keyword_token(ty) => {
+                return Err(ParseError::new(
+                    self.eof_aware_span(),
+                    format!(
+                        "{}, found {} (reserved keyword)",
+                        expected,
+                        format_token(self.current_token())
+                    ),
+                ));
+            }
+            _ => {
+                return Err(ParseError::new(self.eof_aware_span(), fallback.to_string()));
+            }
+        };
+        self.advance();
+        if self.current_token().ty != TokenType::NamespaceSep {
+            return Err(ParseError::new(
+                self.eof_aware_span(),
+                "variable reference must be namespaced as `namespace::name`".to_string(),
+            ));
+        }
         self.advance();
         let name = match &self.current_token().ty {
             TokenType::Ident(name_str) => name_str.clone(),
@@ -178,9 +204,15 @@ impl Parser {
                 return Err(ParseError::new(self.eof_aware_span(), fallback.to_string()));
             }
         };
-        let end_offset = self.current_token().offset + self.current_token().len;
+        let name_end = self.current_token().offset + self.current_token().len;
         self.advance();
-        Ok((name, end_offset))
+        if self.current_token().ty == TokenType::NamespaceSep {
+            return Err(ParseError::new(
+                self.eof_aware_span(),
+                "nested namespace qualifier `::` is not allowed".to_string(),
+            ));
+        }
+        Ok((namespace, name, name_end))
     }
 
     /// Parses one top-level item, returning None on EOF.
@@ -234,17 +266,6 @@ impl Parser {
             TokenType::Fn => self.parse_fn_decl(),
             TokenType::Run => self.parse_run_decl(),
             _ => Err(self.unexpected_stmt_start_error("var, pr, fn, or run")),
-        }
-    }
-
-    /// Dispatches to the correct statement parser for statements inside a project body.
-    pub(crate) fn parse_project_body_stmt(&mut self) -> Result<Stmt, ParseError> {
-        self.err_on_illegal_token()?;
-        match self.current_token().ty {
-            TokenType::Var => self.parse_var_decl(),
-            TokenType::Fn => self.parse_fn_decl(),
-            TokenType::Run => self.parse_run_decl(),
-            _ => Err(self.unexpected_stmt_start_error("var, fn, or run")),
         }
     }
 
@@ -320,9 +341,11 @@ mod tests {
     #[test]
     fn test_multiple_top_level_statements() {
         let input = "var string x = `hello`;\n\
-                      pr p [url = `u` dir = `d`] { fn f { log `hi`; } run s { f; } }";
+                      fn f { log `hi`; }\n\
+                      pr p [url = `u` dir = `d`] { use f; }\n\
+                      run s { p::f; }";
         let prog = parse_program(input).unwrap();
-        assert_eq!(count_stmt_types(&prog), vec!["var", "pr"]);
+        assert_eq!(count_stmt_types(&prog), vec!["var", "fn", "pr", "run"]);
     }
 
     #[test]
@@ -351,7 +374,7 @@ mod tests {
 
     #[test]
     fn test_underscore_outside_case_pattern() {
-        let result = parse_program("pr p { fn test { log `_`; _; } }");
+        let result = parse_program("fn test { log `_`; _; }");
         let errs = result.unwrap_err();
         assert!(
             errs.iter().any(|e| e

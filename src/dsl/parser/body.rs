@@ -1,6 +1,6 @@
 use super::expr::parse_interpolation_parts;
 use super::*;
-use crate::dsl::fnstmt::{CaseStmt, CdStmt, EnvBlockStmt, ExecStmt, FnStmt, LogStmt, VarDeclStmt};
+use crate::dsl::fnstmt::{CaseStmt, EnvBlockStmt, FnStmt, VarDeclStmt};
 
 impl Parser {
     pub(crate) fn parse_log_stmt(&mut self) -> Result<FnStmt, ParseError> {
@@ -9,7 +9,7 @@ impl Parser {
         let value = self.parse_expr()?;
         self.expect_with_context(TokenType::Semicolon, "after `log`")?;
 
-        Ok(FnStmt::Log(LogStmt { value }))
+        Ok(FnStmt::Log(value))
     }
 
     pub(crate) fn parse_exec_stmt(&mut self) -> Result<FnStmt, ParseError> {
@@ -18,7 +18,7 @@ impl Parser {
         let value = self.parse_expr()?;
         self.expect_with_context(TokenType::Semicolon, "after `exec`")?;
 
-        Ok(FnStmt::Exec(ExecStmt { value }))
+        Ok(FnStmt::Exec(value))
     }
 
     pub(crate) fn parse_cd_stmt(&mut self) -> Result<FnStmt, ParseError> {
@@ -27,7 +27,7 @@ impl Parser {
         let arg = self.parse_expr()?;
         self.expect_with_context(TokenType::Semicolon, "after `cd`")?;
 
-        Ok(FnStmt::Cd(CdStmt { value: arg }))
+        Ok(FnStmt::Cd(arg))
     }
 
     pub(crate) fn parse_fn_var_decl(&mut self) -> Result<FnStmt, ParseError> {
@@ -128,12 +128,12 @@ impl Parser {
             }
             TokenType::Dollar => {
                 let start_offset = self.current_token().offset;
-                let (name, end_offset) = self.parse_dollar_var_name(
-                    start_offset,
+                let (namespace, name, end_offset) = self.parse_dollar_var_name(
                     "expected identifier after `$` in case pattern",
                     "expected identifier after `$` in case pattern",
                 )?;
                 Ok(CasePattern::VarRef {
+                    namespace,
                     name,
                     offset: start_offset,
                     len: end_offset - start_offset,
@@ -233,7 +233,7 @@ mod tests {
     #[test]
     fn test_case_single_branch() {
         let input = "fn test {\n\
-                      case $os {\n\
+                      case $global::os {\n\
                       `Linux` { exec `linux-deploy`; };\n\
                       };\n\
                       }";
@@ -254,7 +254,7 @@ mod tests {
     #[test]
     fn test_case_multiple_branches_with_default() {
         let input = "fn deploy {\n\
-                      case $target {\n\
+                      case $global::target {\n\
                       `production` { exec `deploy-prod`; };\n\
                       `staging` { exec `deploy-staging`; };\n\
                       _ { log `unknown target`; };\n\
@@ -284,9 +284,9 @@ mod tests {
     #[test]
     fn test_case_nested() {
         let input = "fn test {\n\
-                      case $os {\n\
+                      case $global::os {\n\
                       `Linux` {\n\
-                      case $arch {\n\
+                      case $global::arch {\n\
                       `x86_64` { exec `linux-amd64`; };\n\
                       `aarch64` { exec `linux-arm64`; };\n\
                       };\n\

@@ -1,36 +1,35 @@
-var string app    = `todo`;
-var shell os      = `uname -s`;
+var string app = `todo`;
+var shell os   = `uname -s`;
+
+fn build {
+    log `Building ${global::app}...`;
+    case $global::os {
+        `Linux` {
+            exec `go build -o bin/${global::app} .`;
+        };
+        `Darwin` {
+            exec `go build -o bin/${global::app} .`;
+        };
+        _ { log `unsupported OS: ${global::os}`; };
+    };
+}
+
+fn test {
+    env [CGO_ENABLED = `0`] {
+        exec `go test -race ./...`;
+    };
+}
 
 pr todo [
-  url  = `git@github.com:yourname/todo.git`
-  dir  = `todo`
-  sync = `clone`
+    url  = `git@github.com:yourname/todo.git`
+    dir  = `todo`
+    sync = `clone`
 ] {
-    var shell version = `git describe --tags --always --dirty 2>/dev/null || echo dev`;
+    var string version = `dev`;
+    use build;
+    use test;
+}
 
-    fn build {
-        log `Building ${app} at ${version}`;
-        case $os {
-            `Linux` {
-                cd `cmd`;
-                exec `go build -ldflags='${version}' -o bin/${app} .`;
-            };
-            `Darwin` {
-                cd `cmd`;
-                exec `go build -ldflags='${version}' -o bin/${app} .`;
-            };
-            _ { log `unsupported OS: ${os}`; };
-        };
-    }
-
-    fn test {
-        env [CGO_ENABLED = `0` GOPATH = `$HOME/go`] {
-            exec `go test -race ./...`;
-            exec `go vet ./...`;
-        };
-    }
-
-    run ci {
-        test => build;
-    }
+run ci {
+    todo::test => todo::build;
 }

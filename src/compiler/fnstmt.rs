@@ -1,89 +1,44 @@
 //! Function-body statements as enums with co-located free functions.
 //!
-//! `FnStmt` (parsed) and `ResolvedFnStmt` (resolved) are enums. Adding a
-//! statement kind is: one enum variant + its payload struct + the per-variant
-//! `validate_*` / `resolve_*` free functions below (all co-located here) +
-//! one parser arm in `body.rs`. The dispatchers `validate_fn_body_stmts` and
-//! `resolve_fn_body_stmts` are a single `match`, so the compiler forces every
+//! `FnStmt` (parsed) and `PlanStmt` (resolved, in `crate::plan`) are enums.
+//! Adding a statement kind is: one enum variant + its payload struct + the
+//! per-variant `validate_*` / `resolve_*` free functions below (all co-located
+//! here) + one parser arm in `body.rs`. The dispatchers `validate_fn_body_stmts`
+//! and `resolve_fn_body_stmts` are a single `match`, so the compiler forces every
 //! variant to be handled — no central match scattered across files, and no
 //! trait-object / boxed-clone indirection for AI agents to diverge on.
 
 use crate::compiler::error::CompileError;
-use crate::compiler::resolve::redeclaration_err;
-use crate::compiler::resolve::resolve_case_pattern;
-use crate::compiler::resolve::resolve_expr;
-use crate::compiler::scope::{ScopeKind, ScopeStack};
-use crate::compiler::types::{ResolvedCaseArm, ResolvedEnvPair};
-use crate::compiler::validation::validate_expr;
+use crate::compiler::namespaces::{Namespaces, resolve_case_pattern, resolve_expr};
 use crate::dsl::{CaseStmt, EnvBlockStmt, Expr, FnStmt, VarDeclStmt, VarType};
 use crate::error::{SourceFile, spanned_report_on};
-use crate::shell;
+use crate::plan::{
+    PlanCaseArm, PlanCaseStmt, PlanEnvBlockStmt, PlanEnvPair, PlanStmt, match_case_pattern,
+};
+use crate::shell::execute_shell_variable;
 use miette::Report;
 use std::collections::HashMap;
 use std::path::Path;
 
+fn is_var_defined(namespaces: &Namespaces, ns: &str, name: &str) -> bool {
+    if ns == "global" {
+        return namespaces.global.contains_key(name);
+    }
+    namespaces.project_var_exists(ns, name)
+}
+
 /// Per-body constants + mutable state for validating one function body.
 ///
-/// Bundles the per-body constants (`fn_name`, `proj_name`) with the mutable
-/// scope and error sink, so each statement validates itself via
+/// Bundles the per-body constants (`fn_name`, `proj_name`) with the namespaces
+/// map and the error sink, so each statement validates itself via
 /// `validate_fn_stmt(stmt, ctx)` instead of the old central match threading
 /// these parameters individually.
 pub(crate) struct ValidateFnCtx<'a> {
     pub fn_name: &'a str,
     pub proj_name: &'a str,
-    pub scope: &'a mut ScopeStack<()>,
+    pub namespaces: &'a Namespaces,
     pub errors: &'a mut Vec<Report>,
     pub sources: &'a HashMap<String, String>,
-}
-
-/// Per-body state for lowering one function body.
-pub(crate) struct ResolveFnCtx<'a> {
-    pub scope: &'a mut ScopeStack<String>,
-    pub working_dir: Option<&'a Path>,
-    pub sources: &'a HashMap<String, String>,
-}
-
-// ── Resolved statement payloads ──────────────────────────────────────────────
-//
-// Note: the parsed counterparts (`FnStmt` and its payloads) live in
-// `crate::dsl::fnstmt` — this module is the semantic (resolution) layer and
-// therefore depends on the syntax layer, not the reverse.
-
-#[derive(Debug, Clone)]
-pub struct ResolvedLogStmt {
-    pub value: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct ResolvedExecStmt {
-    pub value: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct ResolvedCdStmt {
-    pub value: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct ResolvedEnvBlockStmt {
-    pub pairs: Vec<ResolvedEnvPair>,
-    pub body: Vec<ResolvedFnStmt>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ResolvedCaseStmt {
-    pub condition: String,
-    pub scopes: Vec<ResolvedCaseArm>,
-}
-
-/// A fully resolved function-body statement, ready to execute.
-#[derive(Debug, Clone)]
-pub enum ResolvedFnStmt {
-    Log(ResolvedLogStmt),
-    Exec(ResolvedExecStmt),
-    Cd(ResolvedCdStmt),
-    EnvBlock(ResolvedEnvBlockStmt),
-    Case(ResolvedCaseStmt),
 }
 
 // ── Recursive dispatch helpers ───────────────────────────────────────────────
@@ -99,11 +54,16 @@ pub(crate) fn validate_fn_body_stmts(body: &[FnStmt], ctx: &mut ValidateFnCtx) {
 /// declarations resolve to nothing and are therefore omitted.
 pub(crate) fn resolve_fn_body_stmts(
     body: &[FnStmt],
-    ctx: &mut ResolveFnCtx,
-) -> Result<Vec<ResolvedFnStmt>, CompileError> {
+    namespaces: &mut Namespaces,
+    project: &str,
+    working_dir: Option<&Path>,
+    sources: &HashMap<String, String>,
+) -> Result<Vec<PlanStmt>, CompileError> {
     let mut resolved = Vec::new();
     for stmt in body {
-        if let Some(resolved_stmt) = resolve_fn_stmt(stmt, ctx)? {
+        if let Some(resolved_stmt) =
+            resolve_fn_stmt(stmt, namespaces, project, working_dir, sources)?
+        {
             resolved.push(resolved_stmt);
         }
     }
@@ -112,9 +72,9 @@ pub(crate) fn resolve_fn_body_stmts(
 
 fn validate_fn_stmt(stmt: &FnStmt, ctx: &mut ValidateFnCtx) {
     match stmt {
-        FnStmt::Log(s) => validate_string_expr(&s.value, ctx),
-        FnStmt::Exec(s) => validate_string_expr(&s.value, ctx),
-        FnStmt::Cd(s) => validate_string_expr(&s.value, ctx),
+        FnStmt::Log(value) => validate_expr(value, ctx),
+        FnStmt::Exec(value) => validate_expr(value, ctx),
+        FnStmt::Cd(value) => validate_expr(value, ctx),
         FnStmt::VarDecl(s) => validate_var_decl(s, ctx),
         FnStmt::EnvBlock(s) => validate_env_block(s, ctx),
         FnStmt::Case(s) => validate_case(s, ctx),
@@ -123,153 +83,140 @@ fn validate_fn_stmt(stmt: &FnStmt, ctx: &mut ValidateFnCtx) {
 
 fn resolve_fn_stmt(
     stmt: &FnStmt,
-    ctx: &mut ResolveFnCtx,
-) -> Result<Option<ResolvedFnStmt>, CompileError> {
+    namespaces: &mut Namespaces,
+    project: &str,
+    working_dir: Option<&Path>,
+    sources: &HashMap<String, String>,
+) -> Result<Option<PlanStmt>, CompileError> {
     match stmt {
-        FnStmt::Log(s) => Ok(Some(ResolvedFnStmt::Log(ResolvedLogStmt {
-            value: resolve_string_expr(&s.value, ctx)?,
-        }))),
-        FnStmt::Exec(s) => Ok(Some(ResolvedFnStmt::Exec(ResolvedExecStmt {
-            value: resolve_string_expr(&s.value, ctx)?,
-        }))),
-        FnStmt::Cd(s) => Ok(Some(ResolvedFnStmt::Cd(ResolvedCdStmt {
-            value: resolve_string_expr(&s.value, ctx)?,
-        }))),
-        FnStmt::VarDecl(s) => resolve_var_decl(s, ctx),
-        FnStmt::EnvBlock(s) => resolve_env_block(s, ctx),
-        FnStmt::Case(s) => resolve_case(s, ctx),
+        FnStmt::Log(value) => Ok(Some(PlanStmt::Log(resolve_expr(
+            value, namespaces, sources,
+        )?))),
+        FnStmt::Exec(value) => Ok(Some(PlanStmt::Exec(resolve_expr(
+            value, namespaces, sources,
+        )?))),
+        FnStmt::Cd(value) => Ok(Some(PlanStmt::Cd(resolve_expr(
+            value, namespaces, sources,
+        )?))),
+        FnStmt::VarDecl(s) => resolve_var_decl(s, namespaces, project, working_dir, sources),
+        FnStmt::EnvBlock(s) => resolve_env_block(s, namespaces, project, working_dir, sources),
+        FnStmt::Case(s) => resolve_case(s, namespaces, project, working_dir, sources),
     }
-}
-
-fn resolve_string_expr(value: &Expr, ctx: &mut ResolveFnCtx) -> Result<String, CompileError> {
-    resolve_expr(value, ctx.scope, ctx.sources)
 }
 
 // ── Per-variant validate ─────────────────────────────────────────────────────
 
-fn validate_string_expr(value: &Expr, ctx: &mut ValidateFnCtx) {
-    validate_expr(
-        value,
-        ctx.fn_name,
-        &*ctx.scope,
-        &mut *ctx.errors,
-        ctx.proj_name,
-        ctx.sources,
-    );
-}
-
 fn validate_var_decl(s: &VarDeclStmt, ctx: &mut ValidateFnCtx) {
-    validate_expr(
-        &s.value,
-        ctx.fn_name,
-        &*ctx.scope,
-        &mut *ctx.errors,
-        ctx.proj_name,
-        ctx.sources,
-    );
-    if ctx.scope.is_declared(&s.name) {
-        let kind = ctx
-            .scope
-            .declaring_kind(&s.name)
-            .unwrap_or(ScopeKind::Global);
-        ctx.errors.push(spanned_report_on(
-            format!("${} is already defined at {}", s.name, kind),
-            ctx.sources,
-            &s.value,
-        ));
-    }
-    let _ = ctx.scope.declare(s.name.clone(), ());
+    validate_expr(&s.value, ctx);
 }
 
 fn validate_env_block(s: &EnvBlockStmt, ctx: &mut ValidateFnCtx) {
     for pair in &s.pairs {
-        validate_expr(
-            &pair.value,
-            ctx.fn_name,
-            &*ctx.scope,
-            &mut *ctx.errors,
-            ctx.proj_name,
-            ctx.sources,
-        );
+        validate_expr(&pair.value, ctx);
     }
     validate_fn_body_stmts(&s.body, ctx);
 }
 
 fn validate_case(s: &CaseStmt, ctx: &mut ValidateFnCtx) {
-    validate_expr(
-        &s.condition,
-        ctx.fn_name,
-        &*ctx.scope,
-        &mut *ctx.errors,
-        ctx.proj_name,
-        ctx.sources,
-    );
+    validate_expr(&s.condition, ctx);
     for arm in &s.scopes {
-        arm.pattern.visit_vars(|name| {
-            if !ctx.scope.is_declared(name) {
-                ctx.errors.push(spanned_report_on(
-                    format!(
-                        "project {:?}: fn {:?}: undefined variable ${}",
-                        ctx.proj_name, ctx.fn_name, name
-                    ),
-                    ctx.sources,
-                    &arm.pattern,
-                ));
-            }
-        });
-        let guard = ctx.scope.enter(ScopeKind::Case);
-        let mut arm_ctx = ValidateFnCtx {
-            fn_name: ctx.fn_name,
-            proj_name: ctx.proj_name,
-            scope: &mut *guard.stack,
-            errors: ctx.errors,
-            sources: ctx.sources,
-        };
-        validate_fn_body_stmts(&arm.body, &mut arm_ctx);
+        validate_expr_pattern(&arm.pattern, ctx);
+        validate_fn_body_stmts(&arm.body, ctx);
     }
+}
+
+/// Validate that every variable referenced by an `Expr` is defined in some
+/// namespace (global or a known project).
+fn validate_expr(value: &Expr, ctx: &mut ValidateFnCtx) {
+    value.visit_vars(&mut |name: &str, namespace: &str| {
+        if !is_var_defined(ctx.namespaces, namespace, name) {
+            let msg = if ctx.namespaces.contains_ns(namespace) {
+                format!(
+                    "project {:?}: fn {:?}: undefined variable {}::{}",
+                    ctx.proj_name, ctx.fn_name, namespace, name
+                )
+            } else {
+                format!(
+                    "project {:?}: fn {:?}: unknown project namespace {}",
+                    ctx.proj_name, ctx.fn_name, namespace
+                )
+            };
+            ctx.errors.push(spanned_report_on(
+                msg,
+                ctx.sources,
+                value.source_name(),
+                value.offset_len().0,
+                value.offset_len().1,
+            ));
+        }
+    });
+}
+
+/// Validate references inside a case pattern (literal interpolation or a
+/// `$namespace::name` var-ref).
+fn validate_expr_pattern(pattern: &crate::dsl::CasePattern, ctx: &mut ValidateFnCtx) {
+    pattern.visit_vars(&mut |name: &str, namespace: &str| {
+        if !is_var_defined(ctx.namespaces, namespace, name) {
+            let msg = if ctx.namespaces.contains_ns(namespace) {
+                format!(
+                    "project {:?}: fn {:?}: undefined variable {}::{}",
+                    ctx.proj_name, ctx.fn_name, namespace, name
+                )
+            } else {
+                format!(
+                    "project {:?}: fn {:?}: unknown project namespace {}",
+                    ctx.proj_name, ctx.fn_name, namespace
+                )
+            };
+            ctx.errors.push(spanned_report_on(
+                msg,
+                ctx.sources,
+                pattern.source_name(),
+                pattern.offset_len().0,
+                pattern.offset_len().1,
+            ));
+        }
+    });
 }
 
 // ── Per-variant resolve ──────────────────────────────────────────────────────
 
 fn resolve_var_decl(
     s: &VarDeclStmt,
-    ctx: &mut ResolveFnCtx,
-) -> Result<Option<ResolvedFnStmt>, CompileError> {
+    namespaces: &mut Namespaces,
+    project: &str,
+    working_dir: Option<&Path>,
+    sources: &HashMap<String, String>,
+) -> Result<Option<PlanStmt>, CompileError> {
     let (offset, len) = s.value.offset_len();
-    let source = SourceFile::from_registry(ctx.sources, s.value.source_name());
-    let resolved_value = resolve_expr(&s.value, ctx.scope, ctx.sources)?;
+    let source = SourceFile::from_registry(sources, s.value.source_name());
+    let resolved_value = resolve_expr(&s.value, namespaces, sources)?;
     let final_value = if s.var_type == VarType::Shell {
-        shell::execute_shell_variable(
-            &s.name,
-            &resolved_value,
-            ctx.working_dir,
-            &source,
-            offset,
-            len,
-        )?
+        execute_shell_variable(&s.name, &resolved_value, working_dir, &source, offset, len)?
     } else {
         resolved_value
     };
-    ctx.scope
-        .declare(s.name.to_string(), final_value)
-        .map_err(|r| redeclaration_err(r, ctx.sources, s.value.source_name(), offset, len))?;
+    namespaces.set_project_var(project, &s.name, final_value);
     Ok(None)
 }
 
 fn resolve_env_block(
     s: &EnvBlockStmt,
-    ctx: &mut ResolveFnCtx,
-) -> Result<Option<ResolvedFnStmt>, CompileError> {
+    namespaces: &mut Namespaces,
+    project: &str,
+    working_dir: Option<&Path>,
+    sources: &HashMap<String, String>,
+) -> Result<Option<PlanStmt>, CompileError> {
     let mut resolved_pairs = Vec::new();
     for pair in &s.pairs {
-        let resolved_value = resolve_expr(&pair.value, ctx.scope, ctx.sources)?;
-        resolved_pairs.push(ResolvedEnvPair {
+        let resolved_value = resolve_expr(&pair.value, namespaces, sources)?;
+        resolved_pairs.push(PlanEnvPair {
             key: pair.key.clone(),
             value: resolved_value,
         });
     }
-    let body = resolve_fn_body_stmts(&s.body, ctx)?;
-    Ok(Some(ResolvedFnStmt::EnvBlock(ResolvedEnvBlockStmt {
+    let body = resolve_fn_body_stmts(&s.body, namespaces, project, working_dir, sources)?;
+    Ok(Some(PlanStmt::EnvBlock(PlanEnvBlockStmt {
         pairs: resolved_pairs,
         body,
     })))
@@ -277,24 +224,28 @@ fn resolve_env_block(
 
 fn resolve_case(
     s: &CaseStmt,
-    ctx: &mut ResolveFnCtx,
-) -> Result<Option<ResolvedFnStmt>, CompileError> {
-    let condition = resolve_expr(&s.condition, ctx.scope, ctx.sources)?;
+    namespaces: &mut Namespaces,
+    project: &str,
+    working_dir: Option<&Path>,
+    sources: &HashMap<String, String>,
+) -> Result<Option<PlanStmt>, CompileError> {
+    let condition = resolve_expr(&s.condition, namespaces, sources)?;
+    let mut matched = false;
     let mut resolved_scopes = Vec::new();
     for arm in &s.scopes {
-        let pattern = resolve_case_pattern(&arm.pattern, ctx.scope, ctx.sources)?;
-        let guard = ctx.scope.enter(ScopeKind::Case);
-        let body = resolve_fn_body_stmts(
-            &arm.body,
-            &mut ResolveFnCtx {
-                scope: &mut *guard.stack,
-                working_dir: ctx.working_dir,
-                sources: ctx.sources,
-            },
-        )?;
-        resolved_scopes.push(ResolvedCaseArm { pattern, body });
+        let pattern = resolve_case_pattern(&arm.pattern, namespaces, sources)?;
+        if !matched && match_case_pattern(&pattern, &condition) {
+            matched = true;
+            let body = resolve_fn_body_stmts(&arm.body, namespaces, project, working_dir, sources)?;
+            resolved_scopes.push(PlanCaseArm { pattern, body });
+        } else {
+            resolved_scopes.push(PlanCaseArm {
+                pattern,
+                body: Vec::new(),
+            });
+        }
     }
-    Ok(Some(ResolvedFnStmt::Case(ResolvedCaseStmt {
+    Ok(Some(PlanStmt::Case(PlanCaseStmt {
         condition,
         scopes: resolved_scopes,
     })))

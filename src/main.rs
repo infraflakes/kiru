@@ -2,6 +2,7 @@ mod cli;
 mod compiler;
 mod dsl;
 mod error;
+mod plan;
 mod runner;
 mod shell;
 

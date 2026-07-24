@@ -1,12 +1,26 @@
 use crate::dsl::{Expr, FnStmt, VarType};
 
 /// The key of a project block field (e.g., `url`, `dir`, `sync`, `branch`).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProjectField {
     Url,
     Dir,
     Sync,
     Branch,
+}
+
+/// A function reference qualified by a project namespace.
+///
+/// Every run-chain reference is written `project::function` (the parser
+/// requires the `project::` prefix), so `project` is always present. A
+/// reference like `nix::build` is executed under `nix`'s `cwd` at runtime.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct QualifiedFnRef {
+    pub project: String,
+    pub function: String,
+    pub offset: usize,
+    pub len: usize,
+    pub source_name: String,
 }
 
 /// A parsed statement node in the kiru DSL.
@@ -23,6 +37,7 @@ pub enum Stmt {
     /// A project block: `pr name [ field = value ... ] { fn/run/var ... }`.
     /// Fields (`url`, `dir`, `sync`, `branch`) are in `fields`; function,
     /// run, and var declarations are in `body`.
+    #[allow(dead_code)]
     Project {
         name: String,
         fields: Vec<Stmt>,
@@ -47,9 +62,25 @@ pub enum Stmt {
     /// A run block definition (`run ... { ... }`).
     Run {
         name: String,
-        chains: Vec<Vec<String>>,
+        chains: Vec<Vec<QualifiedFnRef>>,
         offset: usize,
         len: usize,
+    },
+    /// Applies a shared (global) function to the enclosing project. Written
+    /// `use name;` (or `use name as alias;`) inside a project body, it binds the
+    /// global function `name` into the project as `project::name` (or
+    /// `project::alias`). The project's own `var`s become the function's
+    /// "metadata": `self::` inside the function resolves to the project, and the
+    /// function runs with the project's `cwd`. A project may apply the same
+    /// global function under several aliases, but re-applying an already-bound
+    /// name is a duplicate-function error. Projects no longer declare functions
+    /// inline — every function is global and applied with `use`.
+    Use {
+        function: String,
+        alias: Option<String>,
+        offset: usize,
+        len: usize,
+        source_name: String,
     },
 }
 
@@ -79,8 +110,11 @@ impl Program {
         }
     }
 
-    pub fn set_source(&mut self, name: String, text: String) {
-        self.source_name = name;
-        self.source_text = text;
+    pub fn new_with_source(name: String, text: String) -> Self {
+        Self {
+            items: Vec::new(),
+            source_name: name,
+            source_text: text,
+        }
     }
 }

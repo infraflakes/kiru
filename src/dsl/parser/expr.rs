@@ -7,12 +7,12 @@ impl Parser {
             TokenType::Backtick(_) => self.parse_backtick_expr(),
             TokenType::Dollar => {
                 let start_offset = self.current_token().offset;
-                let (name, name_end) = self.parse_dollar_var_name(
-                    start_offset,
+                let (namespace, name, name_end) = self.parse_dollar_var_name(
                     "expected identifier after `$`",
                     "expected identifier after `$`",
                 )?;
                 Ok(Expr::VarRef {
+                    namespace,
                     name,
                     offset: start_offset,
                     len: name_end - start_offset,
@@ -59,6 +59,7 @@ pub(crate) fn parse_interpolation_parts(
             if !current.is_empty() {
                 parts.push(InterpolationPart {
                     is_var: false,
+                    namespace: String::new(),
                     value: current.clone(),
                 });
                 current.clear();
@@ -85,9 +86,30 @@ pub(crate) fn parse_interpolation_parts(
                 ));
             }
 
+            let (namespace, value) = match var_name.split_once("::") {
+                Some((ns, name)) => {
+                    if ns.is_empty() || name.is_empty() || ns.contains("::") || name.contains("::")
+                    {
+                        return Err(ParseError::new(
+                            SourceSpan::new((offset + 1 + idx).into(), 3),
+                            "invalid namespace qualifier in variable interpolation".to_string(),
+                        ));
+                    }
+                    (ns.to_string(), name.to_string())
+                }
+                None => {
+                    return Err(ParseError::new(
+                        SourceSpan::new((offset + 1 + idx).into(), 3),
+                        "variable interpolation must be namespaced as `namespace::name`"
+                            .to_string(),
+                    ));
+                }
+            };
+
             parts.push(InterpolationPart {
                 is_var: true,
-                value: var_name,
+                namespace,
+                value,
             });
         } else {
             current.push(ch);
@@ -97,6 +119,7 @@ pub(crate) fn parse_interpolation_parts(
     if !current.is_empty() {
         parts.push(InterpolationPart {
             is_var: false,
+            namespace: String::new(),
             value: current,
         });
     }
@@ -118,11 +141,12 @@ mod tests {
 
     #[test]
     fn test_template_with_var() {
-        let parts = parse_interpolation_parts("hello ${name} world", 0).unwrap();
+        let parts = parse_interpolation_parts("hello ${ns::name} world", 0).unwrap();
         assert_eq!(parts.len(), 3);
         assert!(!parts[0].is_var);
         assert_eq!(parts[0].value, "hello ");
         assert!(parts[1].is_var);
+        assert_eq!(parts[1].namespace, "ns");
         assert_eq!(parts[1].value, "name");
         assert!(!parts[2].is_var);
         assert_eq!(parts[2].value, " world");

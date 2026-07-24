@@ -69,8 +69,8 @@ pub fn render_run_output(frame: &mut Frame, model: &Model, spinner_idx: usize) {
 fn format_task_output(buf: &mut String, task: &Task) {
     let color = match task.status {
         TaskStatus::Success => colors::OK_ANSI,
-        TaskStatus::Running => colors::RUNNING_ANSI,
-        TaskStatus::Pending => colors::PENDING_ANSI,
+        TaskStatus::Running => colors::BRIGHT_YELLOW_ANSI,
+        TaskStatus::Pending => colors::GRAY_ANSI,
         TaskStatus::Error => colors::FAILED_ANSI,
     };
     let marker = task_marker(task, 0);
@@ -90,7 +90,7 @@ fn format_task_output(buf: &mut String, task: &Task) {
 
         if hidden_lines > 0 {
             buf.push_str("   ");
-            buf.push_str(colors::MUTED_ANSI);
+            buf.push_str(colors::GRAY_ANSI);
             buf.push('↑');
             buf.push(' ');
             buf.push_str(&hidden_lines.to_string());
@@ -101,7 +101,7 @@ fn format_task_output(buf: &mut String, task: &Task) {
 
         for output_line in task.output.iter().rev().take(visible_lines).rev() {
             buf.push_str("  ");
-            buf.push_str(colors::MUTED_ANSI);
+            buf.push_str(colors::GRAY_ANSI);
             buf.push_str("  ");
             buf.push_str(colors::RESET);
             render::write_colored_line_buf(buf, output_line);

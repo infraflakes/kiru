@@ -13,9 +13,16 @@ pub enum Expr {
     },
     VarRef {
         name: String,
+        /// Project namespace qualifier of this reference (e.g. `global` or a
+        /// project name). Always present — references are always written
+        /// `namespace::name` and never bare. Populated by the parser;
+        /// resolution looks the name up in exactly this namespace.
+        namespace: String,
         offset: usize,
         len: usize,
         /// Canonical path of the `.kiru` file this expression was parsed from.
+        /// Carried on every node so diagnostics resolve against the correct
+        /// source when a project body is merged across several files.
         source_name: String,
     },
 }
@@ -40,20 +47,53 @@ impl Expr {
         }
     }
 
-    /// Invoke `f` with the name of every variable this expression references,
-    /// whether as a bare `$name` or an interpolation `${name}` inside a backtick
-    /// literal.
+    /// Invoke `f` with every variable this expression references, whether as a
+    /// `$namespace::name` reference or an interpolation `${namespace::name}`
+    /// inside a backtick literal. Both arguments are always present: `name`
+    /// then `namespace` — there is no bare (unqualified) reference form.
     ///
     /// Defined once per node type so the var walk is centralized: adding an
     /// `Expr` variant requires extending only this method (and that variant's
     /// own resolve), not every call site that collects referenced variables.
-    pub fn visit_vars(&self, mut f: impl FnMut(&str)) {
+    pub fn visit_vars(&self, f: &mut impl FnMut(&str, &str)) {
         match self {
-            Expr::VarRef { name, .. } => f(name),
+            Expr::VarRef {
+                namespace, name, ..
+            } => f(name, namespace),
             Expr::BacktickLit { parts, .. } => {
                 for part in parts {
                     if part.is_var {
-                        f(&part.value);
+                        f(&part.value, &part.namespace);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Invoke `f` with a mutable handle to the namespace of every variable this
+    /// expression references, plus the span `(offset, len, source_name)` that
+    /// locates the reference. The mutable handle lets a normalization pass
+    /// rewrite a namespace in place (e.g. the `self` alias into the enclosing
+    /// scope name). Mirrors [`Expr::visit_vars`] so the namespace walk stays
+    /// defined once per node kind.
+    pub fn visit_namespaces_mut(&mut self, f: &mut impl FnMut(&mut String, usize, usize, &str)) {
+        match self {
+            Expr::VarRef {
+                namespace,
+                offset,
+                len,
+                source_name,
+                ..
+            } => f(namespace, *offset, *len, source_name),
+            Expr::BacktickLit {
+                parts,
+                offset,
+                len,
+                source_name,
+            } => {
+                for part in parts {
+                    if part.is_var {
+                        f(&mut part.namespace, *offset, *len, source_name);
                     }
                 }
             }
@@ -66,6 +106,9 @@ impl Expr {
 #[derive(Debug, Clone)]
 pub struct InterpolationPart {
     pub is_var: bool,
+    /// Project namespace qualifier for `is_var` parts (e.g. the `nix` in
+    /// `${nix::url}`). Always present — interpolation requires `namespace::name`.
+    pub namespace: String,
     pub value: String,
 }
 
@@ -90,6 +133,9 @@ pub enum CasePattern {
     },
     VarRef {
         name: String,
+        /// Project namespace qualifier from a `ns::name` pattern (e.g.
+        /// `nix::url`). Always present — references are always `namespace::name`.
+        namespace: String,
         offset: usize,
         len: usize,
         /// Canonical path of the `.kiru` file this pattern was parsed from.
@@ -122,16 +168,48 @@ impl CasePattern {
     }
 
     /// Invoke `f` with the name of every variable this pattern references,
-    /// including bare `$name`, backtick interpolation `${name}`, and default
-    /// (`_`) patterns (which reference no variables). Mirrors
-    /// [`Expr::visit_vars`] so the var-walk API is uniform across node kinds.
-    pub fn visit_vars(&self, mut f: impl FnMut(&str)) {
+    /// including `$namespace::name` and backtick interpolation
+    /// `${namespace::name}`, and default (`_`) patterns (which reference no
+    /// variables). Both arguments are always present (`name`, then
+    /// `namespace`). Mirrors [`Expr::visit_vars`] so the var-walk API is
+    /// uniform across node kinds.
+    pub fn visit_vars(&self, f: &mut impl FnMut(&str, &str)) {
         match self {
-            CasePattern::VarRef { name, .. } => f(name),
+            CasePattern::VarRef {
+                namespace, name, ..
+            } => f(name, namespace),
             CasePattern::Literal { parts, .. } => {
                 for part in parts {
                     if part.is_var {
-                        f(&part.value);
+                        f(&part.value, &part.namespace);
+                    }
+                }
+            }
+            CasePattern::Default => {}
+        }
+    }
+
+    /// Invoke `f` with a mutable handle to the namespace of every variable this
+    /// pattern references, plus its span. Mirrors [`Expr::visit_namespaces_mut`]
+    /// so a normalization pass can rewrite the `self` alias inside case patterns.
+    pub fn visit_namespaces_mut(&mut self, f: &mut impl FnMut(&mut String, usize, usize, &str)) {
+        match self {
+            CasePattern::VarRef {
+                namespace,
+                offset,
+                len,
+                source_name,
+                ..
+            } => f(namespace, *offset, *len, source_name),
+            CasePattern::Literal {
+                parts,
+                offset,
+                len,
+                source_name,
+            } => {
+                for part in parts {
+                    if part.is_var {
+                        f(&mut part.namespace, *offset, *len, source_name);
                     }
                 }
             }

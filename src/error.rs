@@ -1,9 +1,6 @@
 use std::collections::HashMap;
 
 use miette::Diagnostic;
-
-use crate::dsl::{CasePattern, Expr};
-
 /// Identifies the source file a diagnostic span refers to. Bundles the file
 /// name and full text so span offsets are always interpreted against the
 /// correct source, and so callers pass one value instead of two loose strings
@@ -29,42 +26,11 @@ impl<'a> SourceFile<'a> {
     ///
     /// Falls back to empty text when the name is unknown, so the span is still
     /// clamped (never out of bounds) instead of panicking.
-    pub(crate) fn from_registry<'b>(sources: &'a HashMap<String, String>, name: &'b str) -> Self
-    where
-        'b: 'a,
-    {
+    pub(crate) fn from_registry(sources: &'a HashMap<String, String>, name: &'a str) -> Self {
         Self {
             name,
             text: sources.get(name).map(|s| s.as_str()).unwrap_or(""),
         }
-    }
-}
-
-/// A parsed node that can locate itself in a source file: it knows the file
-/// that defined it and the byte span it occupies. Implementing this lets a
-/// diagnostic be built from the node alone instead of re-deriving the source
-/// name and span at every call site (which previously let callers accidentally
-/// fall back to the first merged declaration's file).
-pub(crate) trait Spanned {
-    fn source_name(&self) -> &str;
-    fn offset_len(&self) -> (usize, usize);
-}
-
-impl Spanned for Expr {
-    fn source_name(&self) -> &str {
-        self.source_name()
-    }
-    fn offset_len(&self) -> (usize, usize) {
-        self.offset_len()
-    }
-}
-
-impl Spanned for CasePattern {
-    fn source_name(&self) -> &str {
-        self.source_name()
-    }
-    fn offset_len(&self) -> (usize, usize) {
-        self.offset_len()
     }
 }
 
@@ -98,17 +64,19 @@ pub(crate) fn spanned_report(
     })
 }
 
-/// Spanned miette report located on a node, resolved against the source-text
-/// registry. Used by the batch validation pass, which collects `Report`s.
-pub(crate) fn spanned_report_on<S: Spanned + ?Sized>(
+/// Spanned miette report resolved against the source-text registry from a
+/// node's own source name and span. Used by the batch validation pass, which
+/// collects `Report`s.
+pub(crate) fn spanned_report_on(
     msg: impl Into<String>,
     sources: &HashMap<String, String>,
-    node: &S,
+    source_name: &str,
+    offset: usize,
+    len: usize,
 ) -> miette::Report {
-    let (offset, len) = node.offset_len();
     spanned_report(
         msg.into(),
-        &SourceFile::from_registry(sources, node.source_name()),
+        &SourceFile::from_registry(sources, source_name),
         offset,
         len,
     )

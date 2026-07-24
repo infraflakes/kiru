@@ -13,6 +13,18 @@ pub(crate) use execution_context::OutputCallback;
 pub(crate) use runner_impl::{Runner, resolve_project_fn};
 pub(crate) use tui::{TaskStatus, TuiEvent, run_tui_with_run, run_tui_with_sync, send_tui_event};
 
+/// Whether the current invocation was started with `KIRU_CWD=1`.
+///
+/// When this is set, project-body `var shell` commands run in the process's
+/// current working directory (the assumption is the caller already `cd`'d
+/// into the project, e.g. in CI). When unset, they run in the project's own
+/// directory[^1] instead.
+///
+/// [^1]: `project.dir`, resolved from the project's `dir` field.
+pub(crate) fn kiru_cwd_enabled() -> bool {
+    std::env::var("KIRU_CWD").as_deref() == Ok("1")
+}
+
 use tokio::sync::mpsc;
 use tokio::task::JoinError;
 

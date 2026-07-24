@@ -207,8 +207,18 @@ pub(crate) fn exec_and_get_stdout(
 }
 
 /// Execute a shell command for a `var shell` statement.
-/// Non-zero exit codes produce an empty string (callers use this to
-/// gracefully handle failed shell commands during variable resolution).
+///
+/// Semantics match the shell's `$(...)`: a command that runs but exits
+/// non-zero (e.g. a probe like `` `test -f x && echo yes` `` that fails its
+/// condition) yields an empty string — this is the intended probe/boolean
+/// idiom and must NOT be an error. Only a genuine environment failure is fatal:
+/// `Error::Spawn` (the shell could not be started at all) and `Error::Timeout`
+/// (the command hung) are surfaced via miette and abort compilation.
+///
+/// This is the single funnel for every `var shell` command. There is no
+/// memoization: each `var shell` is executed live at the point it is resolved
+/// (globals during the linear pass, project/function vars during the resolve
+/// pass), so the same command declared twice runs twice.
 ///
 /// `working_dir` — when `Some`, runs the command in that directory;
 /// when `None`, runs in the current process directory.
@@ -222,9 +232,10 @@ pub(crate) fn execute_shell_variable(
 ) -> Result<String, CompileError> {
     match exec_and_get_stdout(resolved_command, working_dir, None) {
         Ok(stdout) => Ok(stdout),
-        // Non-zero exit is not an error — empty string is a valid value
-        // in Kiru's type system.
+        // Non-zero exit is not an error — empty string is the probe idiom.
         Err(Error::Exit { .. }) => Ok(String::new()),
+        // A command that could not even be spawned, or timed out, is a real
+        // environment failure and must surface.
         Err(e) => Err(CompileError::ValidationReport(vec![spanned_report(
             format!("shell var ${} failed: {}", name, e),
             source,
