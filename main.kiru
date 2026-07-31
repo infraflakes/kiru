@@ -46,9 +46,9 @@ fn fail_kiru {
   };
 }
 
-var shell workdir = `echo $HOME/Projects`;
+# var shell workdir = `echo $HOME/Projects`;
 
-var string kiru_dir = `${global::workdir}/kiru`;
+# var string kiru_dir = `${global::workdir}/kiru`;
 pr kiru [
   # url = `https://github.com/infraflakes/kiru.git`
   # dir = $global::kiru_dir
@@ -64,15 +64,15 @@ pr kiru [
 }
 # import `${global::kiru_dir}/main.kiru`;
 
-run all {
+run all_kiru {
   kiru::test => kiru::build;
   kiru::fmt => kiru::test;
   kiru::fail => kiru::fmt;
 }
-run test {
+run test_kiru {
   kiru::fmt => kiru::test;
   kiru::build;
 }
-run ci {
+run ci_kiru {
   kiru::test => kiru::build;
 }
