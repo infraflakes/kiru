@@ -11,7 +11,6 @@ pub(crate) enum RuntimeError {
         exit_code: Option<i32>,
         detail: String,
     },
-    Panic(String),
 }
 
 impl RuntimeError {
@@ -56,7 +55,6 @@ impl fmt::Display for RuntimeError {
                     )
                 }
             },
-            RuntimeError::Panic(s) => write!(f, "runtime panic: {}", s),
         }
     }
 }

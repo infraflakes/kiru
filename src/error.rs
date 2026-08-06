@@ -97,3 +97,22 @@ fn clamped_span(text: &str, offset: usize, len: usize) -> miette::SourceSpan {
     let safe_len = len.max(1).min(available);
     miette::SourceSpan::new(safe_offset.into(), safe_len)
 }
+
+/// Render a miette diagnostic to stderr using the installed handler.
+///
+/// Centralizes diagnostic printing so callers do not reach for ad-hoc
+/// `eprintln!("{:?}", report)`, which drops the handler's source snippets and
+/// styling. The handler is installed once in `main` via `miette::set_hook`.
+///
+/// Lives at the crate root next to the other miette plumbing because both the
+/// compiler (skip warnings during metadata-only parsing) and the CLI (batch
+/// error reports) emit diagnostics: a single printer keeps every layer
+/// rendering through the same handler.
+pub(crate) fn print_diagnostic(report: &miette::Report) {
+    use std::io::Write;
+
+    let mut stderr = std::io::stderr();
+    if writeln!(stderr, "{:?}", report).is_err() {
+        std::eprintln!("{:?}", report);
+    }
+}

@@ -33,15 +33,15 @@ impl fmt::Display for SyncMode {
 
 /// Parse a `sync = <name>` string into a `SyncMode`.
 ///
-/// The set of accepted names is tiny (clone / ignore), so a direct
-/// `match` is simpler and more readable than a lookup table. Unknown
-/// names produce a diagnostic listing the accepted names.
+/// The default sync mode is [`SyncMode::Clone`] and applies when the field is
+/// omitted. Because `clone` is the default it is not a valid field value:
+/// `ignore` is the only accepted name, and anything else — including `clone` —
+/// is rejected by the generic invalid-value path below.
 pub fn parse_sync_mode(value: &str) -> Result<SyncMode, String> {
     match value {
-        "clone" => Ok(SyncMode::Clone),
         "ignore" => Ok(SyncMode::Ignore),
         _ => Err(format!(
-            "invalid sync value {:?} (expected one of: clone, ignore)",
+            "invalid sync value {:?} (expected: `ignore`; the repo is cloned and updated by default, so omit the field)",
             value
         )),
     }

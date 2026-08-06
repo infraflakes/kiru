@@ -1,6 +1,6 @@
 use super::super::load_config;
 use crate::runner::colors;
-use crate::runner::{OutputCallback, Runner, resolve_project_fn};
+use crate::runner::{OutputCallback, Runner};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,14 +21,9 @@ pub fn execute_function(
     });
 
     match project {
-        Some(ref project_name) => {
-            if !config.projects.contains_key(project_name) {
-                return Err(miette::miette!("unknown project: {}", project_name));
-            }
-            resolve_project_fn(&config.projects[project_name], project_name, &name)?;
-
+        Some(project_name) => {
             let mut runner = Runner::new(Arc::new(config), callback);
-            runner.execute_fn_call(&name, project_name)?;
+            runner.execute_fn_call(&name, &project_name)?;
             Ok(())
         }
         None => Err(miette::miette!(

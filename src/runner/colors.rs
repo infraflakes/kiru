@@ -51,6 +51,11 @@ pub(crate) const CD_PREFIX: &str = "cd   ";
 /// Prefix written before an `env` statement's keys in captured output.
 pub(crate) const ENV_PREFIX: &str = "env  ";
 
+/// Sync progress-line prefixes, shared by the line emitters (sync runner)
+/// and the TUI payload stripper (`sync_message`) so the two never diverge.
+/// Order: skip, update, clone.
+pub(crate) const SYNC_PREFIXES: [&str; 3] = ["skip  ", "update  ", "clone  "];
+
 /// Decompose an output line into (indent, prefix, ANSI color, rest) for
 /// rendering.  Used by both terminal and TUI output paths.
 pub(crate) fn colored_line_parts(line: &str) -> (usize, &'static str, &'static str, &str) {

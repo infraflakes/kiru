@@ -12,7 +12,7 @@ fn main() {
     }));
 
     if let Err(report) = cli::run_cli() {
-        cli::print_diagnostic(&report);
+        error::print_diagnostic(&report);
         std::process::exit(1);
     }
 }

@@ -9,22 +9,18 @@ use ratatui::{
     widgets::{Clear, Paragraph},
 };
 
-/// Extract the meaningful payload from a sync summary line by stripping
-/// the known prefix ("skip  ", "exists  ", "clone  "). Returns the
-/// line unchanged if no recognised prefix is found.
+/// Extract the meaningful payload from a sync summary line by stripping the
+/// known sync prefix. Returns the line unchanged if no prefix matches.
 fn sync_message(line: &str) -> &str {
-    if let Some(rest) = line
-        .strip_prefix("skip  ")
-        .or_else(|| line.strip_prefix("exists  "))
-        .or_else(|| line.strip_prefix("clone  "))
-    {
-        if let Some(pos) = rest.find(' ') {
-            rest[pos + 1..].trim()
-        } else {
-            rest.trim()
-        }
-    } else {
-        line
+    let Some(rest) = crate::runner::colors::SYNC_PREFIXES
+        .iter()
+        .find_map(|prefix| line.strip_prefix(prefix))
+    else {
+        return line;
+    };
+    match rest.find(' ') {
+        Some(pos) => rest[pos + 1..].trim(),
+        None => rest.trim(),
     }
 }
 

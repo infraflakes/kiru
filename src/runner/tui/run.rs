@@ -1,4 +1,4 @@
-use super::render::{self, status_color, status_label, task_marker};
+use super::render::{self, status_color, status_glyph, status_label};
 use super::{MAX_PANEL_HEIGHT, Model, Task, TaskStatus};
 use crate::runner::colors;
 use ratatui::{
@@ -45,7 +45,7 @@ pub fn render_run_output(frame: &mut Frame, model: &Model, spinner_idx: usize) {
                 break;
             }
             if let Some(task) = model.tasks.get(chain.task_start + task_offset) {
-                let tmarker = task_marker(task, spinner_idx);
+                let tmarker = status_glyph(task.status, spinner_idx);
                 let tcolor = status_color(task.status);
                 let line = format!(
                     "│   {}  {} {}",
@@ -73,7 +73,7 @@ fn format_task_output(buf: &mut String, task: &Task) {
         TaskStatus::Pending => colors::GRAY_ANSI,
         TaskStatus::Error => colors::FAILED_ANSI,
     };
-    let marker = task_marker(task, 0);
+    let marker = status_glyph(task.status, 0);
 
     buf.push(' ');
     buf.push_str(color);

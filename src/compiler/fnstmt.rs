@@ -9,13 +9,14 @@
 //! trait-object / boxed-clone indirection for AI agents to diverge on.
 
 use crate::compiler::error::CompileError;
-use crate::compiler::namespaces::{Namespaces, resolve_case_pattern, resolve_expr};
-use crate::dsl::{CaseStmt, EnvBlockStmt, Expr, FnStmt, VarDeclStmt, VarType};
+use crate::compiler::namespaces::{
+    Namespaces, resolve_case_pattern, resolve_expr, resolve_var_value,
+};
+use crate::dsl::{CaseStmt, EnvBlockStmt, FnStmt, VarDeclStmt};
 use crate::error::{SourceFile, spanned_report_on};
 use crate::plan::{
     PlanCaseArm, PlanCaseStmt, PlanEnvBlockStmt, PlanEnvPair, PlanStmt, match_case_pattern,
 };
-use crate::shell::execute_shell_variable;
 use miette::Report;
 use std::collections::HashMap;
 use std::path::Path;
@@ -71,14 +72,28 @@ pub(crate) fn resolve_fn_body_stmts(
 }
 
 fn validate_fn_stmt(stmt: &FnStmt, ctx: &mut ValidateFnCtx) {
-    match stmt {
-        FnStmt::Log(value) => validate_expr(value, ctx),
-        FnStmt::Exec(value) => validate_expr(value, ctx),
-        FnStmt::Cd(value) => validate_expr(value, ctx),
-        FnStmt::VarDecl(s) => validate_var_decl(s, ctx),
-        FnStmt::EnvBlock(s) => validate_env_block(s, ctx),
-        FnStmt::Case(s) => validate_case(s, ctx),
-    }
+    stmt.visit_vars_spanned(&mut |name, namespace, offset, len, source_name| {
+        if !is_var_defined(ctx.namespaces, namespace, name) {
+            let msg = if ctx.namespaces.contains_ns(namespace) {
+                format!(
+                    "project {:?}: fn {:?}: undefined variable {}::{}",
+                    ctx.proj_name, ctx.fn_name, namespace, name
+                )
+            } else {
+                format!(
+                    "project {:?}: fn {:?}: unknown project namespace {}",
+                    ctx.proj_name, ctx.fn_name, namespace
+                )
+            };
+            ctx.errors.push(spanned_report_on(
+                msg,
+                ctx.sources,
+                source_name,
+                offset,
+                len,
+            ));
+        }
+    });
 }
 
 fn resolve_fn_stmt(
@@ -89,97 +104,28 @@ fn resolve_fn_stmt(
     sources: &HashMap<String, String>,
 ) -> Result<Option<PlanStmt>, CompileError> {
     match stmt {
-        FnStmt::Log(value) => Ok(Some(PlanStmt::Log(resolve_expr(
-            value, namespaces, sources,
-        )?))),
-        FnStmt::Exec(value) => Ok(Some(PlanStmt::Exec(resolve_expr(
-            value, namespaces, sources,
-        )?))),
-        FnStmt::Cd(value) => Ok(Some(PlanStmt::Cd(resolve_expr(
-            value, namespaces, sources,
-        )?))),
+        FnStmt::Log(value) => resolve_expr_stmt(value, PlanStmt::Log, namespaces, sources),
+        FnStmt::Exec(value) => resolve_expr_stmt(value, PlanStmt::Exec, namespaces, sources),
+        FnStmt::Cd(value) => resolve_expr_stmt(value, PlanStmt::Cd, namespaces, sources),
         FnStmt::VarDecl(s) => resolve_var_decl(s, namespaces, project, working_dir, sources),
         FnStmt::EnvBlock(s) => resolve_env_block(s, namespaces, project, working_dir, sources),
         FnStmt::Case(s) => resolve_case(s, namespaces, project, working_dir, sources),
     }
 }
 
-// ── Per-variant validate ─────────────────────────────────────────────────────
-
-fn validate_var_decl(s: &VarDeclStmt, ctx: &mut ValidateFnCtx) {
-    validate_expr(&s.value, ctx);
-}
-
-fn validate_env_block(s: &EnvBlockStmt, ctx: &mut ValidateFnCtx) {
-    for pair in &s.pairs {
-        validate_expr(&pair.value, ctx);
-    }
-    validate_fn_body_stmts(&s.body, ctx);
-}
-
-fn validate_case(s: &CaseStmt, ctx: &mut ValidateFnCtx) {
-    validate_expr(&s.condition, ctx);
-    for arm in &s.scopes {
-        validate_expr_pattern(&arm.pattern, ctx);
-        validate_fn_body_stmts(&arm.body, ctx);
-    }
-}
-
-/// Validate that every variable referenced by an `Expr` is defined in some
-/// namespace (global or a known project).
-fn validate_expr(value: &Expr, ctx: &mut ValidateFnCtx) {
-    value.visit_vars(&mut |name: &str, namespace: &str| {
-        if !is_var_defined(ctx.namespaces, namespace, name) {
-            let msg = if ctx.namespaces.contains_ns(namespace) {
-                format!(
-                    "project {:?}: fn {:?}: undefined variable {}::{}",
-                    ctx.proj_name, ctx.fn_name, namespace, name
-                )
-            } else {
-                format!(
-                    "project {:?}: fn {:?}: unknown project namespace {}",
-                    ctx.proj_name, ctx.fn_name, namespace
-                )
-            };
-            ctx.errors.push(spanned_report_on(
-                msg,
-                ctx.sources,
-                value.source_name(),
-                value.offset_len().0,
-                value.offset_len().1,
-            ));
-        }
-    });
-}
-
-/// Validate references inside a case pattern (literal interpolation or a
-/// `$namespace::name` var-ref).
-fn validate_expr_pattern(pattern: &crate::dsl::CasePattern, ctx: &mut ValidateFnCtx) {
-    pattern.visit_vars(&mut |name: &str, namespace: &str| {
-        if !is_var_defined(ctx.namespaces, namespace, name) {
-            let msg = if ctx.namespaces.contains_ns(namespace) {
-                format!(
-                    "project {:?}: fn {:?}: undefined variable {}::{}",
-                    ctx.proj_name, ctx.fn_name, namespace, name
-                )
-            } else {
-                format!(
-                    "project {:?}: fn {:?}: unknown project namespace {}",
-                    ctx.proj_name, ctx.fn_name, namespace
-                )
-            };
-            ctx.errors.push(spanned_report_on(
-                msg,
-                ctx.sources,
-                pattern.source_name(),
-                pattern.offset_len().0,
-                pattern.offset_len().1,
-            ));
-        }
-    });
-}
-
 // ── Per-variant resolve ──────────────────────────────────────────────────────
+
+/// Resolve a single-expression statement (`log`, `exec`, `cd`): the payload
+/// is one value expression, so all three share this resolution flow and
+/// differ only by their `PlanStmt` constructor.
+fn resolve_expr_stmt(
+    value: &crate::dsl::Expr,
+    construct: fn(String) -> PlanStmt,
+    namespaces: &mut Namespaces,
+    sources: &HashMap<String, String>,
+) -> Result<Option<PlanStmt>, CompileError> {
+    Ok(Some(construct(resolve_expr(value, namespaces, sources)?)))
+}
 
 fn resolve_var_decl(
     s: &VarDeclStmt,
@@ -191,11 +137,15 @@ fn resolve_var_decl(
     let (offset, len) = s.value.offset_len();
     let source = SourceFile::from_registry(sources, s.value.source_name());
     let resolved_value = resolve_expr(&s.value, namespaces, sources)?;
-    let final_value = if s.var_type == VarType::Shell {
-        execute_shell_variable(&s.name, &resolved_value, working_dir, &source, offset, len)?
-    } else {
-        resolved_value
-    };
+    let final_value = resolve_var_value(
+        &s.var_type,
+        &s.name,
+        resolved_value,
+        working_dir,
+        &source,
+        offset,
+        len,
+    )?;
     namespaces.set_project_var(project, &s.name, final_value);
     Ok(None)
 }

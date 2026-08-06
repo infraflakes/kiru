@@ -21,6 +21,33 @@ mod tests {
     }
 
     #[test]
+    fn test_invalid_sync_value() {
+        // `clone` is the default sync mode and is not a valid field value —
+        // it falls through the generic invalid-value path like any other
+        // unknown sync value.
+        for value in ["clone", "always"] {
+            let dir = tempfile::TempDir::new().unwrap();
+            write_config(
+                dir.path(),
+                "main.kiru",
+                &format!(
+                    "\
+             pr p [ url = `u` dir = `d` sync = `{}` ] {{ }}\
+             ",
+                    value
+                ),
+            );
+            let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains(&format!("invalid sync value {:?}", value)),
+                "got: {}",
+                err
+            );
+        }
+    }
+
+    #[test]
     fn test_undefined_var_in_fn_body() {
         let dir = tempfile::TempDir::new().unwrap();
         write_config(

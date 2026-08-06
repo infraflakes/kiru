@@ -4,9 +4,7 @@ use std::path::PathBuf;
 
 /// Sync all projects via the TUI.
 pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
-    let config_path = super::get_config_path(config_arg);
-    let config = crate::compiler::parse_projects_metadata(&config_path)
-        .map_err(super::compile_error_to_report)?;
+    let config = super::load_config_via(config_arg, crate::compiler::parse_projects_metadata)?;
 
     let total_project_count = config.projects.len();
 
@@ -14,23 +12,21 @@ pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
         .projects
         .into_iter()
         .filter(|(name, proj)| {
-            if proj.url.is_empty() && proj.dir.is_empty() {
-                eprintln!(
-                    "{:?}",
-                    miette::miette!("project {:?}: missing url and dir, skipping sync", name)
-                );
-                false
+            let skip_reason = if proj.url.is_empty() && proj.dir.is_empty() {
+                Some("missing url and dir")
             } else if proj.url.is_empty() {
-                eprintln!(
-                    "{:?}",
-                    miette::miette!("project {:?}: missing url, skipping sync", name)
-                );
-                false
+                Some("missing url")
             } else if proj.dir.is_empty() {
-                eprintln!(
-                    "{:?}",
-                    miette::miette!("project {:?}: missing dir, skipping sync", name)
-                );
+                Some("missing dir")
+            } else {
+                None
+            };
+            if let Some(reason) = skip_reason {
+                crate::error::print_diagnostic(&miette::miette!(
+                    "project {:?}: {}, skipping sync",
+                    name,
+                    reason
+                ));
                 false
             } else {
                 true
@@ -40,7 +36,7 @@ pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
 
     if projects.is_empty() {
         if total_project_count == 0 {
-            eprintln!("{:?}", miette::miette!("no projects to sync"));
+            crate::error::print_diagnostic(&miette::miette!("no projects to sync"));
             return Ok(());
         }
         return Err(miette::miette!(
@@ -48,10 +44,6 @@ pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
         ));
     }
 
-    let chain_pairs: Vec<(String, Vec<String>)> = projects
-        .iter()
-        .map(|(name, _)| (name.clone(), vec![name.clone()]))
-        .collect();
     let projects: std::collections::BTreeMap<String, PlanProject> = projects.into_iter().collect();
-    runner::sync::run_sync_for_projects(projects, chain_pairs)
+    runner::sync::run_sync_for_projects(projects)
 }

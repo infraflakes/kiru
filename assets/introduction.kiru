@@ -132,7 +132,7 @@ fn release {
 # Fields (space-separated, inside brackets):
 #   url     — git remote URL
 #   dir     — local directory (relative paths resolve against this file)
-#   sync    — "clone" (default) or "ignore"
+#   sync    — "ignore" (optional; repos are cloned/updated by default)
 #   branch  — git branch to clone (optional)
 #
 # Project body (inside the braces):
@@ -142,7 +142,6 @@ fn release {
 pr myapp [
     url  = `git@github.com:${global::user}/myapp.git`
     dir  = `${global::app}`
-    sync = `clone`
     branch = `main`
 ] {
     var string docker_registry = `ghcr.io/${global::user}`;

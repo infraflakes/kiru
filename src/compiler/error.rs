@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
 
-use crate::dsl::Expr;
 use crate::error::{SourceFile, spanned_report};
 
 /// Compilation errors across the parsing, merging, and validation pipeline.
@@ -53,25 +52,6 @@ pub(crate) fn spanned_err_named(
         offset,
         len,
     )])
-}
-
-/// Spanned error for an optional `Expr` field. When the field is present the
-/// span references the file that defined it; when absent it falls back to
-/// `fallback_name` (the first merged declaration's file) with a zero-length
-/// span. Centralizes the "use the defining file, not the first merged
-/// declaration" rule so it can't be re-introduced per field.
-pub(crate) fn spanned_err_on_field(
-    msg: impl Into<String>,
-    sources: &HashMap<String, String>,
-    field: &Option<Expr>,
-    fallback_name: &str,
-) -> CompileError {
-    let name = field
-        .as_ref()
-        .map(|e| e.source_name())
-        .unwrap_or(fallback_name);
-    let (offset, len) = field.as_ref().map(|e| e.offset_len()).unwrap_or((0, 1));
-    spanned_err_named(msg, sources, name, offset, len)
 }
 
 /// Wrap an [`std::io::Error`] into a [`CompileError::Io`] with a descriptive

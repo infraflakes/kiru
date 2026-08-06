@@ -10,7 +10,7 @@ pub(crate) mod tui;
 mod test_support;
 
 pub(crate) use execution_context::OutputCallback;
-pub(crate) use runner_impl::{Runner, resolve_project_fn};
+pub(crate) use runner_impl::Runner;
 pub(crate) use tui::{TaskStatus, TuiEvent, run_tui_with_run, run_tui_with_sync, send_tui_event};
 
 /// Whether the current invocation was started with `KIRU_CWD=1`.
@@ -25,8 +25,9 @@ pub(crate) fn kiru_cwd_enabled() -> bool {
     std::env::var("KIRU_CWD").as_deref() == Ok("1")
 }
 
+use crate::runner::error::RuntimeError;
 use tokio::sync::mpsc;
-use tokio::task::JoinError;
+use tokio::task::{JoinError, JoinHandle};
 
 /// Outcome of a single async task (a chain step or a project sync), used to
 /// centralize the TUI event reporting shared by the chain and sync runners.
@@ -43,11 +44,13 @@ pub(crate) enum TaskOutcome<E> {
 ///
 /// This removes the duplicated success/error/panic reporting that previously
 /// lived inline in both the chain and sync runners. The emitted output text is
-/// preserved exactly so existing TUI behavior stays unchanged.
+/// preserved exactly so existing TUI behavior stays unchanged. The error is
+/// borrowed so callers keep ownership of the underlying value and can
+/// propagate it further.
 pub(crate) fn report_task_outcome<E: std::fmt::Display>(
     tx: &mpsc::UnboundedSender<TuiEvent>,
     index: usize,
-    outcome: TaskOutcome<E>,
+    outcome: TaskOutcome<&E>,
 ) -> bool {
     match outcome {
         TaskOutcome::Success => {
@@ -67,5 +70,41 @@ pub(crate) fn report_task_outcome<E: std::fmt::Display>(
             send_tui_event(tx, TuiEvent::UpdateStatus(index, TaskStatus::Error));
             true
         }
+    }
+}
+
+/// Await all spawned task handles and reduce their results to a single
+/// aggregate error message.
+///
+/// Success and error outcomes are reported by each task's own blocking
+/// closure (chain tasks report per-step as they progress, sync tasks report
+/// when a project finishes), so this driver only joins the handles, reports
+/// panics the closures had no chance to surface, and fails with
+/// `failure_message` when any task failed or panicked.
+pub(crate) async fn await_tasks_and_report(
+    tx: &mpsc::UnboundedSender<TuiEvent>,
+    task_handles: Vec<(usize, JoinHandle<Result<(), RuntimeError>>)>,
+    failure_message: &str,
+) -> miette::Result<()> {
+    let mut any_failed = false;
+    for (task_index, handle) in task_handles {
+        match handle.await {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => any_failed = true,
+            Err(join_error) => {
+                if report_task_outcome(
+                    tx,
+                    task_index,
+                    TaskOutcome::<&RuntimeError>::Panic(join_error),
+                ) {
+                    any_failed = true;
+                }
+            }
+        }
+    }
+    if any_failed {
+        Err(miette::miette!("{}", failure_message))
+    } else {
+        Ok(())
     }
 }

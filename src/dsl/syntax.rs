@@ -56,17 +56,28 @@ impl Expr {
     /// `Expr` variant requires extending only this method (and that variant's
     /// own resolve), not every call site that collects referenced variables.
     pub fn visit_vars(&self, f: &mut impl FnMut(&str, &str)) {
+        self.visit_vars_spanned(&mut |name, namespace, _, _, _| f(name, namespace));
+    }
+
+    /// Invoke `f` with every variable this expression references plus the
+    /// source span `(offset, len, source_name)` locating the reference, so
+    /// validation can point errors at the exact spot. Every other var walk
+    /// (e.g. [`Expr::visit_vars`]) is derived from this one.
+    pub fn visit_vars_spanned(&self, f: &mut impl FnMut(&str, &str, usize, usize, &str)) {
         match self {
             Expr::VarRef {
-                namespace, name, ..
-            } => f(name, namespace),
-            Expr::BacktickLit { parts, .. } => {
-                for part in parts {
-                    if part.is_var {
-                        f(&part.value, &part.namespace);
-                    }
-                }
-            }
+                namespace,
+                name,
+                offset,
+                len,
+                source_name,
+            } => f(name, namespace, *offset, *len, source_name),
+            Expr::BacktickLit {
+                parts,
+                offset,
+                len,
+                source_name,
+            } => visit_part_vars(parts, *offset, *len, source_name, f),
         }
     }
 
@@ -99,6 +110,31 @@ impl Expr {
             }
         }
     }
+
+    /// Overwrite the source span (`source_name`, `offset`, `len`) on this node.
+    /// Used by the `use fn` handler so that errors from resolving a cloned
+    /// global template point to the applying `use` statement rather than to
+    /// the original global function definition.
+    pub fn remap_source_span(&mut self, new_source: &str, new_offset: usize, new_len: usize) {
+        match self {
+            Expr::BacktickLit {
+                offset,
+                len,
+                source_name,
+                ..
+            }
+            | Expr::VarRef {
+                offset,
+                len,
+                source_name,
+                ..
+            } => {
+                *offset = new_offset;
+                *len = new_len;
+                *source_name = new_source.to_string();
+            }
+        }
+    }
 }
 
 /// A segment of a backtick-quoted expression.
@@ -110,6 +146,23 @@ pub struct InterpolationPart {
     /// `${nix::url}`). Always present — interpolation requires `namespace::name`.
     pub namespace: String,
     pub value: String,
+}
+
+/// Invoke `f` for every interpolated variable part of a backtick literal,
+/// attaching the literal's source span. The single shared implementation of
+/// the part loop used by `visit_vars_spanned` on both `Expr` and `CasePattern`.
+fn visit_part_vars(
+    parts: &[InterpolationPart],
+    offset: usize,
+    len: usize,
+    source_name: &str,
+    f: &mut impl FnMut(&str, &str, usize, usize, &str),
+) {
+    for part in parts {
+        if part.is_var {
+            f(&part.value, &part.namespace, offset, len, source_name);
+        }
+    }
 }
 
 /// The type of a variable declaration.
@@ -145,28 +198,6 @@ pub enum CasePattern {
 }
 
 impl CasePattern {
-    /// Returns the source span `(offset, len)` for this pattern. `Default`
-    /// carries no span, so it returns `(0, 0)` — callers only use this for
-    /// non-default patterns, where a variable reference is being reported.
-    pub fn offset_len(&self) -> (usize, usize) {
-        match self {
-            CasePattern::Literal { offset, len, .. } => (*offset, *len),
-            CasePattern::VarRef { offset, len, .. } => (*offset, *len),
-            CasePattern::Default => (0, 0),
-        }
-    }
-
-    /// Returns the canonical path of the `.kiru` file this pattern was parsed
-    /// from. Used to resolve the diagnostic span against the correct source
-    /// when a project body is merged across several files.
-    pub fn source_name(&self) -> &str {
-        match self {
-            CasePattern::Literal { source_name, .. } => source_name,
-            CasePattern::VarRef { source_name, .. } => source_name,
-            CasePattern::Default => "",
-        }
-    }
-
     /// Invoke `f` with the name of every variable this pattern references,
     /// including `$namespace::name` and backtick interpolation
     /// `${namespace::name}`, and default (`_`) patterns (which reference no
@@ -174,17 +205,27 @@ impl CasePattern {
     /// `namespace`). Mirrors [`Expr::visit_vars`] so the var-walk API is
     /// uniform across node kinds.
     pub fn visit_vars(&self, f: &mut impl FnMut(&str, &str)) {
+        self.visit_vars_spanned(&mut |name, namespace, _, _, _| f(name, namespace));
+    }
+
+    /// Invoke `f` with every variable this pattern references plus its source
+    /// span `(offset, len, source_name)`. Mirrors
+    /// [`Expr::visit_vars_spanned`]; other pattern var walks derive from it.
+    pub fn visit_vars_spanned(&self, f: &mut impl FnMut(&str, &str, usize, usize, &str)) {
         match self {
             CasePattern::VarRef {
-                namespace, name, ..
-            } => f(name, namespace),
-            CasePattern::Literal { parts, .. } => {
-                for part in parts {
-                    if part.is_var {
-                        f(&part.value, &part.namespace);
-                    }
-                }
-            }
+                namespace,
+                name,
+                offset,
+                len,
+                source_name,
+            } => f(name, namespace, *offset, *len, source_name),
+            CasePattern::Literal {
+                parts,
+                offset,
+                len,
+                source_name,
+            } => visit_part_vars(parts, *offset, *len, source_name, f),
             CasePattern::Default => {}
         }
     }
@@ -212,6 +253,30 @@ impl CasePattern {
                         f(&mut part.namespace, *offset, *len, source_name);
                     }
                 }
+            }
+            CasePattern::Default => {}
+        }
+    }
+
+    /// Overwrite the source span (`source_name`, `offset`, `len`) on this
+    /// pattern. Mirrors [`Expr::remap_source_span`].
+    pub fn remap_source_span(&mut self, new_source: &str, new_offset: usize, new_len: usize) {
+        match self {
+            CasePattern::Literal {
+                offset,
+                len,
+                source_name,
+                ..
+            }
+            | CasePattern::VarRef {
+                offset,
+                len,
+                source_name,
+                ..
+            } => {
+                *offset = new_offset;
+                *len = new_len;
+                *source_name = new_source.to_string();
             }
             CasePattern::Default => {}
         }

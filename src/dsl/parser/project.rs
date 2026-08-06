@@ -6,7 +6,7 @@ impl Parser {
         let len = self.current_token().len;
         self.advance(); // skip 'pr'
 
-        let name = self.parse_ident_name("project", "expected project name")?;
+        let name = self.parse_ident_name("project name")?;
 
         // `pr name [ field = value, ... ] { fn/run/var ... }`
         if self.current_token().ty == TokenType::LBracket {
@@ -43,15 +43,11 @@ impl Parser {
             std::collections::HashSet::new();
         while self.current_token().ty != TokenType::RBracket {
             let type_offset = self.current_token().offset;
-            let key_str =
-                self.parse_ident_name("field", "expected field name in project field list")?;
+            let key_str = self.parse_ident_name("field name")?;
 
-            let key = match key_str.as_str() {
-                "url" => ProjectField::Url,
-                "dir" => ProjectField::Dir,
-                "sync" => ProjectField::Sync,
-                "branch" => ProjectField::Branch,
-                _ => {
+            let key = match key_str.parse::<ProjectField>() {
+                Ok(key) => key,
+                Err(_) => {
                     return Err(ParseError::new(
                         self.eof_aware_span(),
                         format!("unknown project field: {}", key_str),
@@ -120,11 +116,11 @@ impl Parser {
         let source_name = self.source_name.clone();
         self.advance(); // skip `use`
 
-        let function = self.parse_ident_name("function", "expected function name after `use`")?;
+        let function = self.parse_ident_name("function name")?;
 
         let alias = if self.current_token().ty == TokenType::Ident("as".to_string()) {
             self.advance();
-            Some(self.parse_ident_name("function alias", "expected alias name after `as`")?)
+            Some(self.parse_ident_name("alias name")?)
         } else {
             None
         };
@@ -219,6 +215,24 @@ mod tests {
     fn test_project_without_fields_errors() {
         let result = parse_program("pr p { use b; ; }");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_project_sync_ignore_value_ok() {
+        let input = "pr p [sync = `ignore`] { use f; }";
+        let prog = parse_program(input).unwrap();
+        match &prog.items[0] {
+            TopLevel::Stmt(Stmt::Project { fields, .. }) => {
+                assert!(matches!(
+                    &fields[0],
+                    Stmt::Field {
+                        key: ProjectField::Sync,
+                        ..
+                    }
+                ));
+            }
+            _ => panic!("expected Project"),
+        }
     }
 
     #[test]

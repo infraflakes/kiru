@@ -52,7 +52,7 @@ fn fail_kiru {
 pr kiru [
   # url = `https://github.com/infraflakes/kiru.git`
   # dir = $global::kiru_dir
-  # sync = `clone`
+  # sync = `ignore`
   # branch = `dev`
 ] {
   use clean_kiru as clean;

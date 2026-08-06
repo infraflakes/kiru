@@ -3,31 +3,26 @@ use super::*;
 use crate::dsl::fnstmt::{CaseStmt, EnvBlockStmt, FnStmt, VarDeclStmt};
 
 impl Parser {
-    pub(crate) fn parse_log_stmt(&mut self) -> Result<FnStmt, ParseError> {
+    /// Parses a keyword-expr-semicolon statement (`log`, `exec`, `cd`): the
+    /// keyword token is already current, so this skips it, parses the value
+    /// expression, and expects the terminating semicolon.
+    fn parse_expr_stmt(&mut self, context: &'static str) -> Result<Expr, ParseError> {
         self.advance();
-
         let value = self.parse_expr()?;
-        self.expect_with_context(TokenType::Semicolon, "after `log`")?;
+        self.expect_with_context(TokenType::Semicolon, context)?;
+        Ok(value)
+    }
 
-        Ok(FnStmt::Log(value))
+    pub(crate) fn parse_log_stmt(&mut self) -> Result<FnStmt, ParseError> {
+        Ok(FnStmt::Log(self.parse_expr_stmt("after `log`")?))
     }
 
     pub(crate) fn parse_exec_stmt(&mut self) -> Result<FnStmt, ParseError> {
-        self.advance();
-
-        let value = self.parse_expr()?;
-        self.expect_with_context(TokenType::Semicolon, "after `exec`")?;
-
-        Ok(FnStmt::Exec(value))
+        Ok(FnStmt::Exec(self.parse_expr_stmt("after `exec`")?))
     }
 
     pub(crate) fn parse_cd_stmt(&mut self) -> Result<FnStmt, ParseError> {
-        self.advance();
-
-        let arg = self.parse_expr()?;
-        self.expect_with_context(TokenType::Semicolon, "after `cd`")?;
-
-        Ok(FnStmt::Cd(arg))
+        Ok(FnStmt::Cd(self.parse_expr_stmt("after `cd`")?))
     }
 
     pub(crate) fn parse_fn_var_decl(&mut self) -> Result<FnStmt, ParseError> {
@@ -46,25 +41,7 @@ impl Parser {
 
         let mut pairs = Vec::new();
         while self.current_token().ty != TokenType::RBracket {
-            let key = match &self.current_token().ty {
-                TokenType::Ident(key_str) => key_str.clone(),
-                ty if is_keyword_token(ty) => {
-                    return Err(ParseError::new(
-                        self.eof_aware_span(),
-                        format!(
-                            "expected identifier in env pair, found {} (reserved keyword)",
-                            format_token(self.current_token())
-                        ),
-                    ));
-                }
-                _ => {
-                    return Err(ParseError::new(
-                        self.eof_aware_span(),
-                        "expected identifier in env pair".to_string(),
-                    ));
-                }
-            };
-            self.advance();
+            let key = self.parse_ident_name("identifier in env pair")?;
 
             self.expect_with_context(TokenType::Assign, "in env pair")?;
 
@@ -77,13 +54,11 @@ impl Parser {
         }
         self.expect_with_context(TokenType::RBracket, "to close env pairs")?;
 
-        self.expect_with_context(TokenType::LBrace, "to open env block body")?;
-
-        let mut body = Vec::new();
-        while self.current_token().ty != TokenType::RBrace {
-            body.push(self.parse_fn_stmt()?);
-        }
-        self.expect_with_context(TokenType::RBrace, "to close env block body")?;
+        let body = self.parse_braced_block(
+            "to open env block body",
+            "to close env block body",
+            Self::parse_fn_stmt,
+        )?;
 
         self.expect_with_context(TokenType::Semicolon, "after env block")?;
 
@@ -101,12 +76,11 @@ impl Parser {
         while self.current_token().ty != TokenType::RBrace {
             let pattern = self.parse_case_pattern()?;
 
-            self.expect_with_context(TokenType::LBrace, "after case pattern")?;
-            let mut body = Vec::new();
-            while self.current_token().ty != TokenType::RBrace {
-                body.push(self.parse_fn_stmt()?);
-            }
-            self.expect_with_context(TokenType::RBrace, "to close case arm body")?;
+            let body = self.parse_braced_block(
+                "after case pattern",
+                "to close case arm body",
+                Self::parse_fn_stmt,
+            )?;
 
             self.expect_with_context(TokenType::Semicolon, "after case arm")?;
 
@@ -128,10 +102,8 @@ impl Parser {
             }
             TokenType::Dollar => {
                 let start_offset = self.current_token().offset;
-                let (namespace, name, end_offset) = self.parse_dollar_var_name(
-                    "expected identifier after `$` in case pattern",
-                    "expected identifier after `$` in case pattern",
-                )?;
+                let (namespace, name, end_offset) =
+                    self.parse_dollar_var_name("expected identifier after `$` in case pattern")?;
                 Ok(CasePattern::VarRef {
                     namespace,
                     name,

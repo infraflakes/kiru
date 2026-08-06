@@ -18,7 +18,8 @@
 //! level means `global`), but they are otherwise left to `validate_run_refs`,
 //! which is what permits `global` to reach into projects by function.
 
-use crate::dsl::Expr;
+use crate::compiler::error::CompileError;
+use crate::dsl::{Expr, FnStmt};
 use crate::error::{SourceFile, spanned_report};
 use std::collections::HashMap;
 
@@ -82,4 +83,51 @@ pub(crate) fn normalize_expr(
     expr.visit_namespaces_mut(&mut |namespace, offset, len, source_name| {
         rewrite_and_check(namespace, scope, offset, len, source_name, sources, errors);
     });
+}
+
+/// Normalize an expression for `scope`, returning a `ValidationReport` with
+/// every illegal reference if any. The error-checking entry point — callers
+/// that collect errors themselves use [`normalize_expr`].
+pub(crate) fn normalize_expr_checked(
+    expr: &mut Expr,
+    scope: &str,
+    sources: &HashMap<String, String>,
+) -> Result<(), CompileError> {
+    let mut scope_errors = Vec::new();
+    normalize_expr(expr, scope, sources, &mut scope_errors);
+    if scope_errors.is_empty() {
+        Ok(())
+    } else {
+        Err(CompileError::ValidationReport(scope_errors))
+    }
+}
+
+/// Normalize every variable reference in a function body's statements for
+/// `scope`, returning a `ValidationReport` with every illegal reference if
+/// any. Shared by the global template rewrite and the `use fn` binding
+/// rewrite — the two places a whole body is scope-checked at once.
+pub(crate) fn normalize_stmts_checked(
+    stmts: &mut [FnStmt],
+    scope: &str,
+    sources: &HashMap<String, String>,
+) -> Result<(), CompileError> {
+    let mut scope_errors = Vec::new();
+    for stmt in stmts {
+        stmt.visit_namespaces_mut(&mut |namespace, offset, len, source_name| {
+            rewrite_and_check(
+                namespace,
+                scope,
+                offset,
+                len,
+                source_name,
+                sources,
+                &mut scope_errors,
+            );
+        });
+    }
+    if scope_errors.is_empty() {
+        Ok(())
+    } else {
+        Err(CompileError::ValidationReport(scope_errors))
+    }
 }

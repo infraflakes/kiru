@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use crate::dsl::{Expr, FnStmt, VarType};
 
 /// The key of a project block field (e.g., `url`, `dir`, `sync`, `branch`).
@@ -7,6 +9,32 @@ pub enum ProjectField {
     Dir,
     Sync,
     Branch,
+}
+
+impl ProjectField {
+    /// The source spelling of the field key, used in diagnostics.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProjectField::Url => "url",
+            ProjectField::Dir => "dir",
+            ProjectField::Sync => "sync",
+            ProjectField::Branch => "branch",
+        }
+    }
+}
+
+impl FromStr for ProjectField {
+    type Err = ();
+
+    fn from_str(key: &str) -> Result<Self, Self::Err> {
+        match key {
+            "url" => Ok(ProjectField::Url),
+            "dir" => Ok(ProjectField::Dir),
+            "sync" => Ok(ProjectField::Sync),
+            "branch" => Ok(ProjectField::Branch),
+            _ => Err(()),
+        }
+    }
 }
 
 /// A function reference qualified by a project namespace.
@@ -21,6 +49,25 @@ pub struct QualifiedFnRef {
     pub offset: usize,
     pub len: usize,
     pub source_name: String,
+}
+
+impl QualifiedFnRef {
+    /// Fully-qualified `namespace::function` name used in TUI labels and
+    /// run-chain rendering. Single formatter so every caller renders a
+    /// reference identically.
+    pub fn fqn(&self) -> String {
+        format!("{}::{}", self.project, self.function)
+    }
+
+    /// Rewrites the `self` alias of a top-level run reference to its canonical
+    /// project namespace (`global`). Template bodies written for `use fn`
+    /// application use `self` as a placeholder; a run block referencing it
+    /// means the global function.
+    pub fn resolve_self_alias(&mut self) {
+        if self.project == "self" {
+            self.project = "global".to_string();
+        }
+    }
 }
 
 /// A parsed statement node in the kiru DSL.

@@ -20,8 +20,11 @@
 //! `namespace::name`. See `plan.md` section 2 for the authoritative spec.
 
 use crate::compiler::error::{CompileError, spanned_err_named};
-use crate::dsl::Expr;
+use crate::dsl::{Expr, VarType};
+use crate::error::SourceFile;
+use crate::shell::execute_shell_variable;
 use std::collections::HashMap;
+use std::path::Path;
 
 /// The single compile-time resolution map. `lookup_var` is the one and only
 /// lookup path used by every resolver and validator.
@@ -33,10 +36,35 @@ pub struct Namespaces {
 
 impl Namespaces {
     pub fn new() -> Self {
-        Namespaces {
-            global: HashMap::new(),
-            projects: HashMap::new(),
+        Self::default()
+    }
+
+    /// Insert `name => value` into `map` if absent, erroring on an exact
+    /// duplicate `ns::name`. The single duplicate-declaration guard shared by
+    /// the global and project declaration paths.
+    #[allow(clippy::too_many_arguments)]
+    fn declare_unique(
+        map: &mut HashMap<String, String>,
+        ns: &str,
+        name: &str,
+        value: String,
+        source_name: &str,
+        offset: usize,
+        len: usize,
+        sources: &HashMap<String, String>,
+    ) -> Result<(), CompileError> {
+        if map.contains_key(name) {
+            return Err(redeclaration_err(
+                ns,
+                name,
+                source_name,
+                offset,
+                len,
+                sources,
+            ));
         }
+        map.insert(name.to_string(), value);
+        Ok(())
     }
 
     /// Look up `ns::name` and return its resolved value.
@@ -77,18 +105,16 @@ impl Namespaces {
         len: usize,
         sources: &HashMap<String, String>,
     ) -> Result<(), CompileError> {
-        if self.global.contains_key(name) {
-            return Err(redeclaration_err(
-                "global",
-                name,
-                source_name,
-                offset,
-                len,
-                sources,
-            ));
-        }
-        self.global.insert(name.to_string(), value);
-        Ok(())
+        Self::declare_unique(
+            &mut self.global,
+            "global",
+            name,
+            value,
+            source_name,
+            offset,
+            len,
+            sources,
+        )
     }
 
     /// Register a project namespace. Project bodies may be merged across files
@@ -114,18 +140,7 @@ impl Namespaces {
         sources: &HashMap<String, String>,
     ) -> Result<(), CompileError> {
         let entry = self.projects.entry(ns.to_string()).or_default();
-        if entry.contains_key(name) {
-            return Err(redeclaration_err(
-                ns,
-                name,
-                source_name,
-                offset,
-                len,
-                sources,
-            ));
-        }
-        entry.insert(name.to_string(), value);
-        Ok(())
+        Self::declare_unique(entry, ns, name, value, source_name, offset, len, sources)
     }
 
     /// Set (overwrite) a project variable.
@@ -193,6 +208,49 @@ fn redeclaration_err(
     )
 }
 
+/// Look up `ns::name` and produce the matching resolution error: an undefined
+/// variable when the namespace exists, an unknown namespace when it does not.
+/// The single implementation of the lookup + error fork shared by variable
+/// references, interpolation parts, and case-pattern references.
+pub(crate) fn lookup_var_or_err(
+    namespaces: &Namespaces,
+    ns: &str,
+    name: &str,
+    offset: usize,
+    len: usize,
+    sources: &HashMap<String, String>,
+    source_name: &str,
+) -> Result<String, CompileError> {
+    match namespaces.lookup_var(ns, name) {
+        Some(val) => Ok(val.clone()),
+        None => Err(if namespaces.contains_ns(ns) {
+            undefined_var_err(ns, name, offset, len, sources, source_name)
+        } else {
+            unknown_namespace_err(ns, offset, len, sources, source_name)
+        }),
+    }
+}
+
+/// Resolve a variable's declared value to its final string: plain `var`
+/// values are kept as-is, `var shell` values are executed as a shell command
+/// at compile time. The single implementation of the `var shell` fork shared
+/// by global, project, and function-local variable declarations.
+pub(crate) fn resolve_var_value(
+    var_type: &VarType,
+    name: &str,
+    resolved_value: String,
+    working_dir: Option<&Path>,
+    source: &SourceFile,
+    offset: usize,
+    len: usize,
+) -> Result<String, CompileError> {
+    if *var_type == VarType::Shell {
+        execute_shell_variable(name, &resolved_value, working_dir, source, offset, len)
+    } else {
+        Ok(resolved_value)
+    }
+}
+
 /// Resolve an `Expr` against the single namespaces map: a `VarRef` is one
 /// lookup; a backtick literal concatenates its parts, substituting variable
 /// parts via the same lookup. No `Some`/`None` fork — every reference carries
@@ -209,32 +267,15 @@ pub(crate) fn resolve_expr(
             offset,
             len,
             source_name,
-        } => {
-            let resolved = namespaces.lookup_var(namespace, name);
-            match resolved {
-                Some(val) => Ok(val.clone()),
-                None => {
-                    if namespaces.contains_ns(namespace) {
-                        Err(undefined_var_err(
-                            namespace,
-                            name,
-                            *offset,
-                            *len,
-                            sources,
-                            source_name,
-                        ))
-                    } else {
-                        Err(unknown_namespace_err(
-                            namespace,
-                            *offset,
-                            *len,
-                            sources,
-                            source_name,
-                        ))
-                    }
-                }
-            }
-        }
+        } => lookup_var_or_err(
+            namespaces,
+            namespace,
+            name,
+            *offset,
+            *len,
+            sources,
+            source_name,
+        ),
         Expr::BacktickLit {
             parts,
             offset,
@@ -244,31 +285,15 @@ pub(crate) fn resolve_expr(
             let mut result = String::new();
             for part in parts {
                 if part.is_var {
-                    let val = namespaces.lookup_var(&part.namespace, &part.value);
-                    match val {
-                        Some(val) => result.push_str(val),
-                        None => {
-                            let err = if namespaces.contains_ns(&part.namespace) {
-                                undefined_var_err(
-                                    &part.namespace,
-                                    &part.value,
-                                    *offset,
-                                    *len,
-                                    sources,
-                                    source_name,
-                                )
-                            } else {
-                                unknown_namespace_err(
-                                    &part.namespace,
-                                    *offset,
-                                    *len,
-                                    sources,
-                                    source_name,
-                                )
-                            };
-                            return Err(err);
-                        }
-                    }
+                    result.push_str(&lookup_var_or_err(
+                        namespaces,
+                        &part.namespace,
+                        &part.value,
+                        *offset,
+                        *len,
+                        sources,
+                        source_name,
+                    )?);
                 } else {
                     result.push_str(&part.value);
                 }
@@ -294,30 +319,15 @@ pub(crate) fn resolve_case_pattern(
             let mut result = String::new();
             for part in parts {
                 if part.is_var {
-                    let val = namespaces.lookup_var(&part.namespace, &part.value);
-                    match val {
-                        Some(val) => result.push_str(val),
-                        None => {
-                            return Err(if namespaces.contains_ns(&part.namespace) {
-                                undefined_var_err(
-                                    &part.namespace,
-                                    &part.value,
-                                    *offset,
-                                    *len,
-                                    sources,
-                                    source_name,
-                                )
-                            } else {
-                                unknown_namespace_err(
-                                    &part.namespace,
-                                    *offset,
-                                    *len,
-                                    sources,
-                                    source_name,
-                                )
-                            });
-                        }
-                    }
+                    result.push_str(&lookup_var_or_err(
+                        namespaces,
+                        &part.namespace,
+                        &part.value,
+                        *offset,
+                        *len,
+                        sources,
+                        source_name,
+                    )?);
                 } else {
                     result.push_str(&part.value);
                 }
@@ -330,14 +340,15 @@ pub(crate) fn resolve_case_pattern(
             offset,
             len,
             source_name,
-        } => match namespaces.lookup_var(namespace, name) {
-            Some(val) => Ok(crate::plan::PlanCasePattern::Literal(val.clone())),
-            None => Err(if namespaces.contains_ns(namespace) {
-                undefined_var_err(namespace, name, *offset, *len, sources, source_name)
-            } else {
-                unknown_namespace_err(namespace, *offset, *len, sources, source_name)
-            }),
-        },
+        } => Ok(crate::plan::PlanCasePattern::Literal(lookup_var_or_err(
+            namespaces,
+            namespace,
+            name,
+            *offset,
+            *len,
+            sources,
+            source_name,
+        )?)),
         crate::dsl::CasePattern::Default => Ok(crate::plan::PlanCasePattern::Default),
     }
 }

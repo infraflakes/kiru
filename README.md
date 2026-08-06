@@ -54,7 +54,6 @@ fn test {
 pr todo [
     url  = `git@github.com:yourname/todo.git`
     dir  = `todo`
-    sync = `clone`
 ] {
     var string version = `dev`;
     use build;
@@ -72,6 +71,9 @@ run ci {
 | `kiru sync` | clone or update all declared repos |
 | `kiru run ci` | execute the `ci` pipeline (sequentially chains functions) |
 | `kiru fn build todo` | run a single function in a project directly |
+| `kiru version` | print the installed version |
+
+All commands accept `-c <path>` to use a config file other than `~/.config/kiru/main.kiru`.
 
 ---
 
@@ -166,7 +168,7 @@ run all {
 pr name [
     url    = `git@github.com:user/repo.git`
     dir    = `./project`
-    sync   = `clone`       # "clone" (default) or "ignore"
+    sync   = `ignore`      # optional: omit to clone/update the repo (default)
     branch = `main`         # optional
 ] {
     var string x = `...`;
@@ -174,14 +176,34 @@ pr name [
 }
 ```
 
-Fields are space-separated inside brackets. Relative `dir` paths resolve against the config file's directory. If `sync` is `ignore`, the repo won't be cloned or updated.
+Fields are space-separated inside brackets. Relative `dir` paths resolve against the config file's directory. Repos are cloned (and updated on `kiru sync`) by default; set `sync` to `ignore` to leave one alone. Writing `sync = \`clone\`` is rejected — it is the default, so the field only ever needs to opt *out*.
+
+### Imports: splitting configs
+
+A config can be split across several files with `import`. The path is a backtick literal and resolves **relative to the importing file**:
+
+```kiru
+import `./shared.kiru`;
+```
+
+The path may interpolate globals declared earlier in the file:
+
+```kiru
+var string dir = `~/configs`;
+import `${global::dir}/common.kiru`;
+```
+
+- Imported files are processed in place, as if their contents were written at the `import` statement.
+- The same file can be imported more than once; it is loaded only on its first occurrence.
+- Circular imports (a file importing itself, directly or indirectly) are a compile-time error.
+- During `kiru sync`'s lightweight metadata pass, a missing import target is skipped with a warning; full compilation (`status`, `run`, `fn`) treats it as an error.
 
 ---
 
 ## Examples
 
 - [Introduction to kiru](./assets/introduction.kiru) — walks through every DSL feature step by step.
-- [dots.kiru](./dots.kiru) — a real-world config managing 4 projects with shared functions.
+- [main.kiru](./main.kiru) — kiru's own config, used to build, test, and CI the kiru repository itself.
 
 ---
 

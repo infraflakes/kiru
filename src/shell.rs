@@ -1,24 +1,30 @@
 use crate::compiler::error::CompileError;
 use crate::error::{SourceFile, spanned_report};
-use std::io::Read;
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
-use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
+use std::process::{Command, ExitStatus, Stdio};
+use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
-const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
-/// Errors from shell command execution.
+/// A line of subprocess output, tagged by the stream it arrived on.
 #[derive(Debug)]
-pub(crate) enum Error {
+pub(crate) enum SubprocessLine {
+    Stdout(String),
+    Stderr(String),
+}
+
+/// Errors from spawning or supervising a subprocess.
+#[derive(Debug)]
+pub(crate) enum SubprocessError {
+    /// The program could not be started at all. No command is stored: every
+    /// caller wraps the error with its own command context.
     Spawn(std::io::Error),
-    Exit {
-        command: String,
-        exit_code: Option<i32>,
-        stderr: String,
-    },
+    /// The program ran past its timeout and was killed; partial output is
+    /// kept for diagnostics.
     Timeout {
         command: String,
         partial_stdout: String,
@@ -26,29 +32,11 @@ pub(crate) enum Error {
     },
 }
 
-impl std::fmt::Display for Error {
+impl std::fmt::Display for SubprocessError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::Spawn(e) => write!(f, "failed to spawn shell: {}", e),
-            Error::Exit {
-                command,
-                exit_code,
-                stderr,
-                ..
-            } => match exit_code {
-                Some(code) if stderr.is_empty() => {
-                    write!(f, "shell command failed: {} (exit code {})", command, code)
-                }
-                Some(code) => {
-                    write!(
-                        f,
-                        "shell command failed: {}: {} (exit code {})",
-                        command, stderr, code
-                    )
-                }
-                None => write!(f, "shell command failed: {}: {}", command, stderr),
-            },
-            Error::Timeout {
+            SubprocessError::Spawn(e) => write!(f, "failed to spawn process: {}", e),
+            SubprocessError::Timeout {
                 command,
                 partial_stdout,
                 partial_stderr,
@@ -59,151 +47,136 @@ impl std::fmt::Display for Error {
                     partial_stderr.trim()
                 };
                 if detail.is_empty() {
-                    write!(f, "shell command timed out: {}", command)
+                    write!(f, "command timed out: {}", command)
                 } else {
-                    write!(f, "shell command timed out: {}: {}", command, detail)
+                    write!(f, "command timed out: {}: {}", command, detail)
                 }
             }
         }
     }
 }
 
-impl std::error::Error for Error {
+impl std::error::Error for SubprocessError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Error::Spawn(e) => Some(e),
+            SubprocessError::Spawn(e) => Some(e),
             _ => None,
         }
     }
 }
 
-/// Spawn a thread that reads a child process stdout/stderr pipe to EOF and
-/// appends every byte into a shared `Mutex<Vec<u8>>` buffer.
-fn spawn_reader_thread<T: Read + Send + 'static>(
-    child_stream: Option<T>,
-    buffer: Arc<Mutex<Vec<u8>>>,
-) -> Option<JoinHandle<()>> {
-    child_stream.map(|stream| {
-        std::thread::spawn(move || {
-            let mut read_buffer = Vec::new();
-            let _ = std::io::BufReader::new(stream).read_to_end(&mut read_buffer);
-            buffer
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .extend(read_buffer);
+/// Describe why a subprocess exited unsuccessfully: the signal that killed
+/// it or its exit code. Single home for the signal-vs-code branch shared by
+/// every exit-status check.
+pub(crate) fn describe_exit_failure(status: &ExitStatus) -> String {
+    use std::os::unix::process::ExitStatusExt;
+    match (status.signal(), status.code()) {
+        (Some(signal), _) => format!("terminated by signal {}", signal),
+        (None, Some(code)) => format!("exited with code {}", code),
+        (None, None) => "exited abnormally".to_string(),
+    }
+}
+
+/// Spawn a reader thread that forwards every line of one child stream
+/// through the channel until EOF.
+fn spawn_stream_reader<T: Read + Send + 'static>(
+    stream: Option<T>,
+    tag: fn(String) -> SubprocessLine,
+    sender: mpsc::Sender<SubprocessLine>,
+) -> Option<thread::JoinHandle<()>> {
+    stream.map(|stream| {
+        thread::spawn(move || {
+            for line in BufReader::new(stream).lines().map_while(Result::ok) {
+                if sender.send(tag(line)).is_err() {
+                    break;
+                }
+            }
         })
     })
 }
 
-/// Wait for a child process to finish, polling with a timeout.
-/// Returns the exit status on success, or a `Timeout`/`Spawn` error.
-/// On timeout the reader threads are joined and their partial output
-/// captured in the error.
-fn poll_child_with_timeout(
-    child: &mut std::process::Child,
-    command: &str,
-    start: Instant,
-    stdout_reader: &mut Option<JoinHandle<()>>,
-    stderr_reader: &mut Option<JoinHandle<()>>,
-    stdout_buf: &Arc<Mutex<Vec<u8>>>,
-    stderr_buf: &Arc<Mutex<Vec<u8>>>,
-) -> Result<std::process::ExitStatus, Error> {
+/// Run a program with piped output, streaming its stdout/stderr lines
+/// through `on_line` as they arrive. `cmd_desc` names the invocation in
+/// timeout diagnostics; `argv`'s first element is the program. When
+/// `timeout` is set the process is killed once it runs longer than that,
+/// keeping the partial output in the error.
+///
+/// The exit status is returned to the caller, who decides whether non-zero
+/// exit is an error (var-shell probes deliberately treat it as an empty
+/// result). This is the single spawn/read/wait implementation shared by the
+/// var-shell capture, `exec` statement streaming, and git sync paths.
+pub(crate) fn run_subprocess(
+    cmd_desc: &str,
+    argv: &[&str],
+    working_dir: Option<&Path>,
+    env_overrides: Option<&HashMap<String, String>>,
+    timeout: Option<Duration>,
+    on_line: &mut dyn FnMut(SubprocessLine),
+) -> Result<ExitStatus, SubprocessError> {
+    let (program, args) = argv
+        .split_first()
+        .expect("run_subprocess requires the program as argv[0]");
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(dir) = working_dir {
+        command.current_dir(dir);
+    }
+    if let Some(overrides) = env_overrides {
+        command.envs(overrides);
+    }
+    let mut child = command.spawn().map_err(SubprocessError::Spawn)?;
+
+    // Each stream is drained by a reader thread forwarding lines through a
+    // channel. The channel closes once every reader hits EOF, which marks
+    // the moment the child's output is fully flushed.
+    let (line_sender, line_receiver) = mpsc::channel::<SubprocessLine>();
+    let _stdout_reader = spawn_stream_reader(
+        child.stdout.take(),
+        SubprocessLine::Stdout,
+        line_sender.clone(),
+    );
+    let _stderr_reader = spawn_stream_reader(
+        child.stderr.take(),
+        SubprocessLine::Stderr,
+        line_sender.clone(),
+    );
+    drop(line_sender);
+
+    let start = Instant::now();
+    let mut partial_stdout = String::new();
+    let mut partial_stderr = String::new();
+
     loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return Ok(status),
-            Ok(None) => {
-                if start.elapsed() >= COMMAND_TIMEOUT {
+        match line_receiver.recv_timeout(Duration::from_millis(50)) {
+            Ok(SubprocessLine::Stdout(line)) => {
+                partial_stdout.push_str(&line);
+                partial_stdout.push('\n');
+                on_line(SubprocessLine::Stdout(line));
+            }
+            Ok(SubprocessLine::Stderr(line)) => {
+                partial_stderr.push_str(&line);
+                partial_stderr.push('\n');
+                on_line(SubprocessLine::Stderr(line));
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if timeout.is_some_and(|limit| start.elapsed() >= limit) {
                     let _ = child.kill();
                     let _ = child.wait();
-                    if let Some(h) = stdout_reader.take() {
-                        let _ = h.join();
-                    }
-                    if let Some(h) = stderr_reader.take() {
-                        let _ = h.join();
-                    }
-                    let so = stdout_buf.lock().unwrap_or_else(|e| e.into_inner());
-                    let se = stderr_buf.lock().unwrap_or_else(|e| e.into_inner());
-                    return Err(Error::Timeout {
-                        command: command.to_string(),
-                        partial_stdout: String::from_utf8_lossy(&so).into_owned(),
-                        partial_stderr: String::from_utf8_lossy(&se).into_owned(),
+                    return Err(SubprocessError::Timeout {
+                        command: cmd_desc.to_string(),
+                        partial_stdout,
+                        partial_stderr,
                     });
                 }
-                std::thread::sleep(POLL_INTERVAL);
-            }
-            Err(e) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(Error::Spawn(e));
             }
         }
     }
-}
 
-/// Execute a shell command and capture stdout.  Applies an optional working
-/// directory and environment variable overrides.  Times out after 30 seconds.
-pub(crate) fn exec_and_get_stdout(
-    command: &str,
-    working_dir: Option<&Path>,
-    env_overrides: Option<&std::collections::HashMap<String, String>>,
-) -> Result<String, Error> {
-    let shell_path = get_current_shell_path();
-    let mut shell_command = Command::new(shell_path);
-    shell_command
-        .arg("-c")
-        .arg(command)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    if let Some(dir) = working_dir {
-        shell_command.current_dir(dir);
-    }
-    if let Some(overrides) = env_overrides {
-        shell_command.envs(overrides);
-    }
-
-    let mut child = shell_command.spawn().map_err(Error::Spawn)?;
-
-    let start = Instant::now();
-
-    let stdout_buf = Arc::new(Mutex::new(Vec::new()));
-    let stderr_buf = Arc::new(Mutex::new(Vec::new()));
-
-    let mut stdout_reader = spawn_reader_thread(child.stdout.take(), Arc::clone(&stdout_buf));
-    let mut stderr_reader = spawn_reader_thread(child.stderr.take(), Arc::clone(&stderr_buf));
-
-    let status = poll_child_with_timeout(
-        &mut child,
-        command,
-        start,
-        &mut stdout_reader,
-        &mut stderr_reader,
-        &stdout_buf,
-        &stderr_buf,
-    )?;
-
-    if let Some(h) = stdout_reader {
-        let _ = h.join();
-    }
-    if let Some(h) = stderr_reader {
-        let _ = h.join();
-    }
-
-    let stdout_data = stdout_buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let stderr_data = stderr_buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
-
-    let stdout = String::from_utf8_lossy(&stdout_data).trim_end().to_string();
-    let stderr = String::from_utf8_lossy(&stderr_data).to_string();
-
-    if !status.success() {
-        return Err(Error::Exit {
-            command: command.to_string(),
-            exit_code: status.code(),
-            stderr: stderr.trim().to_string(),
-        });
-    }
-
-    Ok(stdout)
+    child.wait().map_err(SubprocessError::Spawn)
 }
 
 /// Execute a shell command for a `var shell` statement.
@@ -211,9 +184,9 @@ pub(crate) fn exec_and_get_stdout(
 /// Semantics match the shell's `$(...)`: a command that runs but exits
 /// non-zero (e.g. a probe like `` `test -f x && echo yes` `` that fails its
 /// condition) yields an empty string — this is the intended probe/boolean
-/// idiom and must NOT be an error. Only a genuine environment failure is fatal:
-/// `Error::Spawn` (the shell could not be started at all) and `Error::Timeout`
-/// (the command hung) are surfaced via miette and abort compilation.
+/// idiom and must NOT be an error. Only a genuine environment failure is
+/// fatal: a spawn failure (the shell could not be started at all) and a
+/// timeout (the command hung) are surfaced via miette and abort compilation.
 ///
 /// This is the single funnel for every `var shell` command. There is no
 /// memoization: each `var shell` is executed live at the point it is resolved
@@ -230,10 +203,25 @@ pub(crate) fn execute_shell_variable(
     offset: usize,
     len: usize,
 ) -> Result<String, CompileError> {
-    match exec_and_get_stdout(resolved_command, working_dir, None) {
-        Ok(stdout) => Ok(stdout),
+    let mut captured_stdout = String::new();
+    let shell_path = get_current_shell_path();
+    let result = run_subprocess(
+        resolved_command,
+        &[&shell_path, "-c", resolved_command],
+        working_dir,
+        None,
+        Some(COMMAND_TIMEOUT),
+        &mut |line| {
+            if let SubprocessLine::Stdout(line) = line {
+                captured_stdout.push_str(&line);
+                captured_stdout.push('\n');
+            }
+        },
+    );
+    match result {
         // Non-zero exit is not an error — empty string is the probe idiom.
-        Err(Error::Exit { .. }) => Ok(String::new()),
+        Ok(status) if !status.success() => Ok(String::new()),
+        Ok(_) => Ok(captured_stdout.trim_end().to_string()),
         // A command that could not even be spawned, or timed out, is a real
         // environment failure and must surface.
         Err(e) => Err(CompileError::ValidationReport(vec![spanned_report(
