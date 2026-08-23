@@ -52,13 +52,10 @@ pub enum Stmt {
     /// A project block: `pr name [ field = value ... ] { fn/run/var ... }`.
     /// Fields (`url`, `dir`, `sync`, `branch`) are in `fields`; function,
     /// run, and var declarations are in `body`.
-    #[allow(dead_code)]
     Project {
         name: String,
         fields: Vec<Stmt>,
         body: Vec<Stmt>,
-        offset: usize,
-        len: usize,
     },
     /// A named field inside a project block (url, dir, sync, branch).
     Field {

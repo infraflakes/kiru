@@ -13,7 +13,7 @@ use crate::compiler::namespaces::{
     Namespaces, resolve_case_pattern, resolve_expr, resolve_var_value,
 };
 use crate::dsl::{CaseStmt, EnvBlockStmt, FnStmt, VarDeclStmt};
-use crate::error::{SourceFile, spanned_report_on};
+use crate::error::{Span, spanned_report_on};
 use crate::plan::{
     PlanCaseArm, PlanCaseStmt, PlanEnvBlockStmt, PlanEnvPair, PlanStmt, match_case_pattern,
 };
@@ -135,17 +135,14 @@ fn resolve_var_decl(
     sources: &HashMap<String, String>,
 ) -> Result<Option<PlanStmt>, CompileError> {
     let (offset, len) = s.value.offset_len();
-    let source = SourceFile::from_registry(sources, s.value.source_name());
-    let resolved_value = resolve_expr(&s.value, namespaces, sources)?;
-    let final_value = resolve_var_value(
-        &s.var_type,
-        &s.name,
-        resolved_value,
-        working_dir,
-        &source,
+    let span = Span {
+        source_name: s.value.source_name(),
         offset,
         len,
-    )?;
+        sources,
+    };
+    let resolved_value = resolve_expr(&s.value, namespaces, sources)?;
+    let final_value = resolve_var_value(&s.var_type, &s.name, resolved_value, working_dir, &span)?;
     namespaces.set_project_var(project, &s.name, final_value);
     Ok(None)
 }

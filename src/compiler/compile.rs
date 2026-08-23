@@ -1,12 +1,11 @@
-use crate::compiler::error::{CompileError, io_err, spanned_err_named};
+use crate::compiler::error::{CompileError, io_err, spanned_err};
 use crate::compiler::fnstmt::{resolve_fn_body_stmts, validate_fn_body_stmts};
 
 use crate::compiler::namespaces::{Namespaces, resolve_expr, resolve_var_value};
 use crate::dsl::Parser;
 use crate::dsl::lexer::Lexer;
 use crate::dsl::{Expr, Program, ProjectField, Stmt, TopLevel, VarType};
-use crate::error::SourceFile;
-use crate::error::spanned_report;
+use crate::error::Span;
 use crate::plan::QualifiedFnRef;
 use crate::plan::{Plan, PlanProject, PlanStmt, SyncMode, parse_sync_mode};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -106,7 +105,15 @@ impl LinearState {
         offset: usize,
         len: usize,
     ) -> CompileError {
-        spanned_err_named(msg, &self.source_texts, name, offset, len)
+        spanned_err(
+            &Span {
+                source_name: name,
+                offset,
+                len,
+                sources: &self.source_texts,
+            },
+            msg,
+        )
     }
 }
 
@@ -230,15 +237,16 @@ fn process_import(
     })?;
     let target = base_dir.join(&path_str);
     if state.skip_missing && !target.exists() {
-        let report = spanned_report(
-            format!(
-                "import target '{}' does not exist yet (from {}), skipping",
-                path_str, program.source_name
-            ),
-            &SourceFile::from_registry(&state.source_texts, &import_source),
-            import_offset,
-            import_len,
-        );
+        let span = Span {
+            source_name: &import_source,
+            offset: import_offset,
+            len: import_len,
+            sources: &state.source_texts,
+        };
+        let report = span.report(format!(
+            "import target '{}' does not exist yet (from {}), skipping",
+            path_str, program.source_name
+        ));
         crate::error::print_diagnostic(&report);
         return Ok(());
     }
@@ -294,21 +302,25 @@ fn process_project_block(
             // `state`) prevents using the `state.spanned` delegate.
             if *key == ProjectField::Sync {
                 if project.sync.is_some() {
-                    return Err(spanned_err_named(
+                    return Err(spanned_err(
+                        &Span {
+                            source_name: &program.source_name,
+                            offset: *offset,
+                            len: *len,
+                            sources: &state.source_texts,
+                        },
                         format!("duplicate field '{}' in project '{}'", key.as_str(), name),
-                        &state.source_texts,
-                        &program.source_name,
-                        *offset,
-                        *len,
                     ));
                 }
                 project.sync = Some(parse_sync_mode(&resolved).map_err(|msg| {
-                    spanned_err_named(
+                    spanned_err(
+                        &Span {
+                            source_name: &program.source_name,
+                            offset: *offset,
+                            len: *len,
+                            sources: &state.source_texts,
+                        },
                         msg,
-                        &state.source_texts,
-                        &program.source_name,
-                        *offset,
-                        *len,
                     )
                 })?);
                 continue;
@@ -331,12 +343,14 @@ fn process_project_block(
                     let base = Path::new(&program.source_name).parent().ok_or_else(|| {
                         // Borrows only the source-text registry field — `project`
                         // (a live mutable borrow into `state`) is still in use.
-                        spanned_err_named(
+                        spanned_err(
+                            &Span {
+                                source_name: &program.source_name,
+                                offset: *offset,
+                                len: *len,
+                                sources: &state.source_texts,
+                            },
                             "cannot determine base directory for dir".to_string(),
-                            &state.source_texts,
-                            &program.source_name,
-                            *offset,
-                            *len,
                         )
                     })?;
                     base.join(&resolved).to_string_lossy().to_string()
@@ -372,12 +386,14 @@ fn process_project_block(
                 // Field-level borrow: `project` (a live mutable borrow into
                 // `state`) is still in use, so the whole-state delegate is
                 // unavailable here.
-                spanned_err_named(
+                spanned_err(
+                    &Span {
+                        source_name,
+                        offset: *offset,
+                        len: *len,
+                        sources: &state.source_texts,
+                    },
                     format!("unknown global function: `{}`", function),
-                    &state.source_texts,
-                    source_name,
-                    *offset,
-                    *len,
                 )
             })?;
 
@@ -440,15 +456,18 @@ fn process_project_block(
 
             // Declare function-local vars, checking collisions with project vars.
             let mut fn_local_names: Vec<String> = Vec::new();
+            let use_span = Span {
+                source_name,
+                offset: *offset,
+                len: *len,
+                sources: &state.source_texts,
+            };
             declare_fn_body_vars_inner(
                 &mut state.namespaces,
                 name,
                 &body,
                 &mut fn_local_names,
-                &state.source_texts,
-                *offset,
-                *len,
-                source_name,
+                &use_span,
             )?;
 
             // Validate and then resolve the function body.
@@ -492,28 +511,24 @@ fn process_project_block(
             ..
         } = body_stmt
         {
-            process_var_decl(
+            let span = Span {
+                source_name: &program.source_name,
+                offset: *offset,
+                len: *len,
+                sources: &state.source_texts,
+            };
+            let final_value = process_var_decl(
                 var_type,
                 var_name,
                 value,
-                *offset,
-                *len,
                 name,
                 working_dir_ref,
-                &state.source_texts,
                 &mut state.namespaces,
-                |namespaces, final_value| {
-                    namespaces.declare_project_var(
-                        name,
-                        var_name,
-                        final_value,
-                        &program.source_name,
-                        *offset,
-                        *len,
-                        &state.source_texts,
-                    )
-                },
+                &span,
             )?;
+            state
+                .namespaces
+                .declare_project_var(name, var_name, final_value, &span)?;
         }
     }
 
@@ -542,16 +557,12 @@ fn collect_fn_local_var_names(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn declare_fn_body_vars_inner(
     namespaces: &mut Namespaces,
     project_name: &str,
     stmts: &[crate::dsl::FnStmt],
     current_locals: &mut Vec<String>,
-    source_texts: &HashMap<String, String>,
-    use_offset: usize,
-    use_len: usize,
-    use_source: &str,
+    use_span: &Span,
 ) -> Result<(), CompileError> {
     for stmt in stmts {
         match stmt {
@@ -559,15 +570,12 @@ fn declare_fn_body_vars_inner(
                 if namespaces.project_var_exists(project_name, &s.name)
                     || current_locals.iter().any(|n| n == &s.name)
                 {
-                    return Err(spanned_err_named(
+                    return Err(spanned_err(
+                        use_span,
                         format!(
                             "function local variable `{}` collides with a variable already declared in project `{}` or this function (rename the function's local variable)",
                             s.name, project_name
                         ),
-                        source_texts,
-                        use_source,
-                        use_offset,
-                        use_len,
                     ));
                 }
                 current_locals.push(s.name.clone());
@@ -575,15 +583,8 @@ fn declare_fn_body_vars_inner(
                 // sibling arms sees this name as defined. The real value
                 // will be set by resolve_fn_body_stmts when the matching
                 // case arm is resolved.
-                let _ = namespaces.declare_project_var(
-                    project_name,
-                    &s.name,
-                    String::new(),
-                    use_source,
-                    use_offset,
-                    use_len,
-                    source_texts,
-                );
+                let _ =
+                    namespaces.declare_project_var(project_name, &s.name, String::new(), use_span);
             }
             crate::dsl::FnStmt::EnvBlock(s) => {
                 declare_fn_body_vars_inner(
@@ -591,10 +592,7 @@ fn declare_fn_body_vars_inner(
                     project_name,
                     &s.body,
                     current_locals,
-                    source_texts,
-                    use_offset,
-                    use_len,
-                    use_source,
+                    use_span,
                 )?;
             }
             crate::dsl::FnStmt::Case(s) => {
@@ -604,10 +602,7 @@ fn declare_fn_body_vars_inner(
                         project_name,
                         &arm.body,
                         current_locals,
-                        source_texts,
-                        use_offset,
-                        use_len,
-                        use_source,
+                        use_span,
                     )?;
                 }
             }
@@ -620,31 +615,22 @@ fn declare_fn_body_vars_inner(
 // ── Variable declarations ───────────────────────────────────────────────────
 
 /// Process a `var` declaration: rewrite `self::` references, resolve the
-/// value against the namespaces, run `var shell` commands at compile time,
-/// and declare the result. Shared by top-level (global) and project-body
-/// variables — the only differences are the scope name used for
-/// normalization, the working directory for shell vars, and the declaration
-/// target (supplied as a closure).
-#[allow(clippy::too_many_arguments)]
+/// value against the namespaces, run `var shell` commands at compile time, and
+/// return the finalized string. Shared by top-level (global) and project-body
+/// variables — the caller declares the result into the right namespace.
 fn process_var_decl(
     var_type: &VarType,
     name: &str,
     value: &Expr,
-    offset: usize,
-    len: usize,
     scope_name: &str,
     working_dir: Option<&Path>,
-    sources: &HashMap<String, String>,
     namespaces: &mut Namespaces,
-    declare: impl FnOnce(&mut Namespaces, String) -> Result<(), CompileError>,
-) -> Result<(), CompileError> {
+    span: &Span,
+) -> Result<String, CompileError> {
     let mut value = value.clone();
-    crate::compiler::scope::normalize_expr_checked(&mut value, scope_name, sources)?;
-    let resolved = resolve_expr(&value, namespaces, sources)?;
-    let source = SourceFile::from_registry(sources, value.source_name());
-    let final_value =
-        resolve_var_value(var_type, name, resolved, working_dir, &source, offset, len)?;
-    declare(namespaces, final_value)
+    crate::compiler::scope::normalize_expr_checked(&mut value, scope_name, span.sources)?;
+    let resolved = resolve_expr(&value, namespaces, span.sources)?;
+    resolve_var_value(var_type, name, resolved, working_dir, span)
 }
 
 // ── Top-level program processing ───────────────────────────────────────────
@@ -664,27 +650,22 @@ fn linear_process_program(program: &Program, state: &mut LinearState) -> Result<
                     len,
                     ..
                 } => {
-                    process_var_decl(
+                    let span = Span {
+                        source_name: &program.source_name,
+                        offset: *offset,
+                        len: *len,
+                        sources: &state.source_texts,
+                    };
+                    let final_value = process_var_decl(
                         var_type,
                         name,
                         value,
-                        *offset,
-                        *len,
                         crate::compiler::scope::GLOBAL_SCOPE,
                         None,
-                        &state.source_texts,
                         &mut state.namespaces,
-                        |namespaces, final_value| {
-                            namespaces.declare_global(
-                                name,
-                                final_value,
-                                &program.source_name,
-                                *offset,
-                                *len,
-                                &state.source_texts,
-                            )
-                        },
+                        &span,
                     )?;
+                    state.namespaces.declare_global(name, final_value, &span)?;
                 }
                 Stmt::Project {
                     name, fields, body, ..

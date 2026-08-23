@@ -34,6 +34,33 @@ impl<'a> SourceFile<'a> {
     }
 }
 
+/// A source position for a spanned diagnostic: the declaring file name, the
+/// byte span within it, and the registry of file texts used to resolve a
+/// [`SourceFile`].
+///
+/// Replaces the four loose `(sources, source_name, offset, len)` values that
+/// every spanned-error helper otherwise took as separate arguments — bundling
+/// them removes the `clippy::too_many_arguments` suppressions that used to
+/// litter the compiler and keeps call sites passing one value.
+pub(crate) struct Span<'a> {
+    pub source_name: &'a str,
+    pub offset: usize,
+    pub len: usize,
+    pub sources: &'a HashMap<String, String>,
+}
+
+impl<'a> Span<'a> {
+    /// Resolve the registry entry for this span's file into a [`SourceFile`].
+    pub(crate) fn source_file(&self) -> SourceFile<'a> {
+        SourceFile::from_registry(self.sources, self.source_name)
+    }
+
+    /// Build a miette report at this span with `msg` as its message.
+    pub(crate) fn report(&self, msg: impl Into<String>) -> miette::Report {
+        spanned_report(msg.into(), &self.source_file(), self.offset, self.len)
+    }
+}
+
 /// A miette-based validation error with source span information.
 #[derive(Debug, Diagnostic, thiserror::Error)]
 #[error("{message}")]

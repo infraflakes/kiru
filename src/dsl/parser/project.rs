@@ -2,8 +2,6 @@ use super::*;
 
 impl Parser {
     pub(crate) fn parse_project_decl(&mut self) -> Result<Stmt, ParseError> {
-        let offset = self.current_token().offset;
-        let len = self.current_token().len;
         self.advance(); // skip 'pr'
 
         let name = self.parse_ident_name("project name")?;
@@ -13,13 +11,7 @@ impl Parser {
             let fields = self.parse_project_fields_section()?;
             self.expect_with_context(TokenType::LBrace, "after project field list")?;
             let body = self.parse_project_body()?;
-            return Ok(Stmt::Project {
-                name,
-                fields,
-                body,
-                offset,
-                len,
-            });
+            return Ok(Stmt::Project { name, fields, body });
         }
 
         // `pr name { fn/run/var ... }` — body only, no fields
@@ -30,8 +22,6 @@ impl Parser {
             name,
             fields: Vec::new(),
             body,
-            offset,
-            len,
         })
     }
 

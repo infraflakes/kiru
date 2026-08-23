@@ -19,9 +19,9 @@
 //! logic. A redeclaration is an error *only* on an exact duplicate
 //! `namespace::name`. See `plan.md` section 2 for the authoritative spec.
 
-use crate::compiler::error::{CompileError, spanned_err_named};
+use crate::compiler::error::{CompileError, spanned_err};
 use crate::dsl::{Expr, VarType};
-use crate::error::{SourceFile, spanned_report};
+use crate::error::Span;
 use crate::shell::execute_shell_variable;
 use std::collections::HashMap;
 use std::path::Path;
@@ -42,26 +42,15 @@ impl Namespaces {
     /// Insert `name => value` into `map` if absent, erroring on an exact
     /// duplicate `ns::name`. The single duplicate-declaration guard shared by
     /// the global and project declaration paths.
-    #[allow(clippy::too_many_arguments)]
     fn declare_unique(
         map: &mut HashMap<String, String>,
         ns: &str,
         name: &str,
         value: String,
-        source_name: &str,
-        offset: usize,
-        len: usize,
-        sources: &HashMap<String, String>,
+        span: &Span,
     ) -> Result<(), CompileError> {
         if map.contains_key(name) {
-            return Err(redeclaration_err(
-                ns,
-                name,
-                source_name,
-                offset,
-                len,
-                sources,
-            ));
+            return Err(redeclaration_err(ns, name, span));
         }
         map.insert(name.to_string(), value);
         Ok(())
@@ -100,21 +89,9 @@ impl Namespaces {
         &mut self,
         name: &str,
         value: String,
-        source_name: &str,
-        offset: usize,
-        len: usize,
-        sources: &HashMap<String, String>,
+        span: &Span,
     ) -> Result<(), CompileError> {
-        Self::declare_unique(
-            &mut self.global,
-            "global",
-            name,
-            value,
-            source_name,
-            offset,
-            len,
-            sources,
-        )
+        Self::declare_unique(&mut self.global, "global", name, value, span)
     }
 
     /// Register a project namespace. Project bodies may be merged across files
@@ -128,19 +105,15 @@ impl Namespaces {
 
     /// Declare a project variable into `ns`'s namespace, erroring on an exact
     /// duplicate `ns::name`.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn declare_project_var(
         &mut self,
         ns: &str,
         name: &str,
         value: String,
-        source_name: &str,
-        offset: usize,
-        len: usize,
-        sources: &HashMap<String, String>,
+        span: &Span,
     ) -> Result<(), CompileError> {
         let entry = self.projects.entry(ns.to_string()).or_default();
-        Self::declare_unique(entry, ns, name, value, source_name, offset, len, sources)
+        Self::declare_unique(entry, ns, name, value, span)
     }
 
     /// Set (overwrite) a project variable.
@@ -155,57 +128,19 @@ impl Namespaces {
 /// Build the "undefined variable" error for a `ns::name` reference absent from
 /// the namespaces map. Centralizes the `format!("undefined variable: ...")`
 /// construction used by expression and case-pattern resolution.
-pub(crate) fn undefined_var_err(
-    ns: &str,
-    name: &str,
-    offset: usize,
-    len: usize,
-    sources: &HashMap<String, String>,
-    source_name: &str,
-) -> CompileError {
-    spanned_err_named(
-        format!("undefined variable: {}::{}", ns, name),
-        sources,
-        source_name,
-        offset,
-        len,
-    )
+pub(crate) fn undefined_var_err(ns: &str, name: &str, span: &Span) -> CompileError {
+    spanned_err(span, format!("undefined variable: {}::{}", ns, name))
 }
 
 /// Build the "unknown project" error for a reference into a namespace that was
 /// never declared.
-pub(crate) fn unknown_namespace_err(
-    ns: &str,
-    offset: usize,
-    len: usize,
-    sources: &HashMap<String, String>,
-    source_name: &str,
-) -> CompileError {
-    spanned_err_named(
-        format!("unknown project namespace: {}", ns),
-        sources,
-        source_name,
-        offset,
-        len,
-    )
+pub(crate) fn unknown_namespace_err(ns: &str, span: &Span) -> CompileError {
+    spanned_err(span, format!("unknown project namespace: {}", ns))
 }
 
 /// Build a spanned redeclaration error for an exact `ns::name` duplicate.
-fn redeclaration_err(
-    ns: &str,
-    name: &str,
-    source_name: &str,
-    offset: usize,
-    len: usize,
-    sources: &HashMap<String, String>,
-) -> CompileError {
-    spanned_err_named(
-        format!("${}::{} is already defined", ns, name),
-        sources,
-        source_name,
-        offset,
-        len,
-    )
+fn redeclaration_err(ns: &str, name: &str, span: &Span) -> CompileError {
+    spanned_err(span, format!("${}::{} is already defined", ns, name))
 }
 
 /// Look up `ns::name` and produce the matching resolution error: an undefined
@@ -216,17 +151,14 @@ pub(crate) fn lookup_var_or_err(
     namespaces: &Namespaces,
     ns: &str,
     name: &str,
-    offset: usize,
-    len: usize,
-    sources: &HashMap<String, String>,
-    source_name: &str,
+    span: &Span,
 ) -> Result<String, CompileError> {
     match namespaces.lookup_var(ns, name) {
         Some(val) => Ok(val.clone()),
         None => Err(if namespaces.contains_ns(ns) {
-            undefined_var_err(ns, name, offset, len, sources, source_name)
+            undefined_var_err(ns, name, span)
         } else {
-            unknown_namespace_err(ns, offset, len, sources, source_name)
+            unknown_namespace_err(ns, span)
         }),
     }
 }
@@ -240,18 +172,13 @@ pub(crate) fn resolve_var_value(
     name: &str,
     resolved_value: String,
     working_dir: Option<&Path>,
-    source: &SourceFile,
-    offset: usize,
-    len: usize,
+    span: &Span,
 ) -> Result<String, CompileError> {
     if *var_type == VarType::Shell {
         execute_shell_variable(&resolved_value, working_dir).map_err(|e| {
-            CompileError::ValidationReport(vec![spanned_report(
-                format!("shell var ${} failed: {}", name, e),
-                source,
-                offset,
-                len,
-            )])
+            CompileError::ValidationReport(vec![
+                span.report(format!("shell var ${} failed: {}", name, e)),
+            ])
         })
     } else {
         Ok(resolved_value)
@@ -278,10 +205,12 @@ pub(crate) fn resolve_expr(
             namespaces,
             namespace,
             name,
-            *offset,
-            *len,
-            sources,
-            source_name,
+            &Span {
+                source_name,
+                offset: *offset,
+                len: *len,
+                sources,
+            },
         ),
         Expr::BacktickLit {
             parts,
@@ -289,6 +218,12 @@ pub(crate) fn resolve_expr(
             len,
             source_name,
         } => {
+            let span = Span {
+                source_name,
+                offset: *offset,
+                len: *len,
+                sources,
+            };
             let mut result = String::new();
             for part in parts {
                 if part.is_var {
@@ -296,10 +231,7 @@ pub(crate) fn resolve_expr(
                         namespaces,
                         &part.namespace,
                         &part.value,
-                        *offset,
-                        *len,
-                        sources,
-                        source_name,
+                        &span,
                     )?);
                 } else {
                     result.push_str(&part.value);
@@ -323,6 +255,12 @@ pub(crate) fn resolve_case_pattern(
             len,
             source_name,
         } => {
+            let span = Span {
+                source_name,
+                offset: *offset,
+                len: *len,
+                sources,
+            };
             let mut result = String::new();
             for part in parts {
                 if part.is_var {
@@ -330,10 +268,7 @@ pub(crate) fn resolve_case_pattern(
                         namespaces,
                         &part.namespace,
                         &part.value,
-                        *offset,
-                        *len,
-                        sources,
-                        source_name,
+                        &span,
                     )?);
                 } else {
                     result.push_str(&part.value);
@@ -351,10 +286,12 @@ pub(crate) fn resolve_case_pattern(
             namespaces,
             namespace,
             name,
-            *offset,
-            *len,
-            sources,
-            source_name,
+            &Span {
+                source_name,
+                offset: *offset,
+                len: *len,
+                sources,
+            },
         )?)),
         crate::dsl::CasePattern::Default => Ok(crate::plan::PlanCasePattern::Default),
     }
