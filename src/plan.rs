@@ -9,7 +9,6 @@
 //! Everything is a resolved `String`. There is no type or operator system — the
 //! DSL is an IaC task runner, not a general-purpose language.
 
-use crate::dsl::ast::QualifiedFnRef;
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -37,13 +36,46 @@ impl fmt::Display for SyncMode {
 /// omitted. Because `clone` is the default it is not a valid field value:
 /// `ignore` is the only accepted name, and anything else — including `clone` —
 /// is rejected by the generic invalid-value path below.
-pub fn parse_sync_mode(value: &str) -> Result<SyncMode, String> {
+pub(crate) fn parse_sync_mode(value: &str) -> Result<SyncMode, String> {
     match value {
         "ignore" => Ok(SyncMode::Ignore),
         _ => Err(format!(
             "invalid sync value {:?} (expected: `ignore`; the repo is cloned and updated by default, so omit the field)",
             value
         )),
+    }
+}
+
+/// A `namespace::function` reference inside a `run` block, resolved to its two
+/// parts. The `offset`/`len`/`source_name` fields carry the original source
+/// span so errors can point at the user's config even after the compiler has
+/// discarded the `Expr` tree. This type lives at the plan boundary rather than
+/// in the `dsl` module so that `Plan` does not depend on the parser.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct QualifiedFnRef {
+    pub project: String,
+    pub function: String,
+    pub offset: usize,
+    pub len: usize,
+    pub source_name: String,
+}
+
+impl QualifiedFnRef {
+    /// Fully-qualified `namespace::function` name used in TUI labels and
+    /// run-chain rendering. Single formatter so every caller renders a
+    /// reference identically.
+    pub fn fqn(&self) -> String {
+        format!("{}::{}", self.project, self.function)
+    }
+
+    /// Rewrites the `self` alias of a top-level run reference to its canonical
+    /// project namespace (`global`). Template bodies written for `use fn`
+    /// application use `self` as a placeholder; a run block referencing it
+    /// means the global function.
+    pub fn resolve_self_alias(&mut self) {
+        if self.project == "self" {
+            self.project = "global".to_string();
+        }
     }
 }
 
@@ -56,7 +88,7 @@ pub struct PlanEnvPair {
 
 /// Check whether a resolved condition matches a case pattern at compile time
 /// or runtime.
-pub fn match_case_pattern(pattern: &PlanCasePattern, condition: &str) -> bool {
+pub(crate) fn match_case_pattern(pattern: &PlanCasePattern, condition: &str) -> bool {
     match pattern {
         PlanCasePattern::Literal(lit) => condition == lit,
         PlanCasePattern::Default => true,

@@ -1,5 +1,5 @@
-use crate::dsl::ast::QualifiedFnRef;
 use crate::plan::Plan;
+use crate::plan::QualifiedFnRef;
 use crate::runner::error::RuntimeError;
 use crate::runner::{
     self, Runner, TaskOutcome, TaskStatus, TuiEvent, await_tasks_and_report, report_task_outcome,

@@ -1,5 +1,3 @@
-use crate::compiler::error::CompileError;
-use crate::error::{SourceFile, spanned_report};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
@@ -8,6 +6,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+/// The maximum time a `var shell` capture may run before it is killed.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A line of subprocess output, tagged by the stream it arrived on.
@@ -186,7 +185,10 @@ pub(crate) fn run_subprocess(
 /// condition) yields an empty string — this is the intended probe/boolean
 /// idiom and must NOT be an error. Only a genuine environment failure is
 /// fatal: a spawn failure (the shell could not be started at all) and a
-/// timeout (the command hung) are surfaced via miette and abort compilation.
+/// timeout (the command hung) are surfaced to the caller as a
+/// `SubprocessError`. The caller owns the variable's span, so it is
+/// responsible for wrapping that error in a `CompileError` with source
+/// position — `shell` stays free of any compile-time type.
 ///
 /// This is the single funnel for every `var shell` command. There is no
 /// memoization: each `var shell` is executed live at the point it is resolved
@@ -196,13 +198,9 @@ pub(crate) fn run_subprocess(
 /// `working_dir` — when `Some`, runs the command in that directory;
 /// when `None`, runs in the current process directory.
 pub(crate) fn execute_shell_variable(
-    name: &str,
     resolved_command: &str,
     working_dir: Option<&Path>,
-    source: &SourceFile<'_>,
-    offset: usize,
-    len: usize,
-) -> Result<String, CompileError> {
+) -> Result<String, SubprocessError> {
     let mut captured_stdout = String::new();
     let shell_path = get_current_shell_path();
     let result = run_subprocess(
@@ -222,14 +220,7 @@ pub(crate) fn execute_shell_variable(
         // Non-zero exit is not an error — empty string is the probe idiom.
         Ok(status) if !status.success() => Ok(String::new()),
         Ok(_) => Ok(captured_stdout.trim_end().to_string()),
-        // A command that could not even be spawned, or timed out, is a real
-        // environment failure and must surface.
-        Err(e) => Err(CompileError::ValidationReport(vec![spanned_report(
-            format!("shell var ${} failed: {}", name, e),
-            source,
-            offset,
-            len,
-        )])),
+        Err(e) => Err(e),
     }
 }
 

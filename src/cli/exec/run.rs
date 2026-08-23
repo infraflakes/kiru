@@ -1,5 +1,5 @@
 use super::super::load_config;
-use crate::dsl::ast::QualifiedFnRef;
+use crate::plan::QualifiedFnRef;
 use crate::runner;
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -1,6 +1,7 @@
 use std::str::FromStr;
 
 use crate::dsl::{Expr, FnStmt, VarType};
+use crate::plan::QualifiedFnRef;
 
 /// The key of a project block field (e.g., `url`, `dir`, `sync`, `branch`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -33,39 +34,6 @@ impl FromStr for ProjectField {
             "sync" => Ok(ProjectField::Sync),
             "branch" => Ok(ProjectField::Branch),
             _ => Err(()),
-        }
-    }
-}
-
-/// A function reference qualified by a project namespace.
-///
-/// Every run-chain reference is written `project::function` (the parser
-/// requires the `project::` prefix), so `project` is always present. A
-/// reference like `nix::build` is executed under `nix`'s `cwd` at runtime.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct QualifiedFnRef {
-    pub project: String,
-    pub function: String,
-    pub offset: usize,
-    pub len: usize,
-    pub source_name: String,
-}
-
-impl QualifiedFnRef {
-    /// Fully-qualified `namespace::function` name used in TUI labels and
-    /// run-chain rendering. Single formatter so every caller renders a
-    /// reference identically.
-    pub fn fqn(&self) -> String {
-        format!("{}::{}", self.project, self.function)
-    }
-
-    /// Rewrites the `self` alias of a top-level run reference to its canonical
-    /// project namespace (`global`). Template bodies written for `use fn`
-    /// application use `self` as a placeholder; a run block referencing it
-    /// means the global function.
-    pub fn resolve_self_alias(&mut self) {
-        if self.project == "self" {
-            self.project = "global".to_string();
         }
     }
 }

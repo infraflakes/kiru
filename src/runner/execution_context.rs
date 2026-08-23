@@ -180,7 +180,10 @@ impl<'a> ExecContext<'a> {
         .map_err(|e| RuntimeError::exec_io_error(cmd_str, e))?;
 
         if !status.success() {
-            return Err(RuntimeError::exec_exit_code(cmd_str, status.code()));
+            return Err(RuntimeError::exec_io_error(
+                cmd_str,
+                shell::describe_exit_failure(&status),
+            ));
         }
 
         Ok(())

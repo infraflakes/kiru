@@ -18,6 +18,9 @@ pub fn run_status_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
     Ok(())
 }
 
+/// Render the whole config (projects + runs) as an indented tree suitable for
+/// the pager. Each project lists its fields and functions; each run lists its
+/// chains of `namespace::function` references.
 fn format_config_as_tree(config: &Plan) -> String {
     let mut formatted_output = String::new();
     formatted_output.push('\n');
@@ -58,7 +61,7 @@ fn format_config_as_tree(config: &Plan) -> String {
 
                 let chain_str = chain
                     .iter()
-                    .map(crate::dsl::ast::QualifiedFnRef::fqn)
+                    .map(crate::plan::QualifiedFnRef::fqn)
                     .collect::<Vec<_>>()
                     .join(" => ");
 

@@ -1,6 +1,5 @@
 #[cfg(test)]
 use crate::dsl::Program;
-use crate::dsl::ast::QualifiedFnRef;
 use crate::dsl::error::ParseError;
 use crate::dsl::lexer::Lexer;
 use crate::dsl::token::{Token, TokenType, format_token, format_token_type, is_keyword_token};
@@ -8,6 +7,7 @@ use crate::dsl::{
     CaseArm, CasePattern, EnvPair, Expr, FnStmt, InterpolationPart, ProjectField, Stmt, TopLevel,
     VarType,
 };
+use crate::plan::QualifiedFnRef;
 use miette::SourceSpan;
 
 mod body;

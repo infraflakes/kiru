@@ -21,7 +21,7 @@
 
 use crate::compiler::error::{CompileError, spanned_err_named};
 use crate::dsl::{Expr, VarType};
-use crate::error::SourceFile;
+use crate::error::{SourceFile, spanned_report};
 use crate::shell::execute_shell_variable;
 use std::collections::HashMap;
 use std::path::Path;
@@ -29,13 +29,13 @@ use std::path::Path;
 /// The single compile-time resolution map. `lookup_var` is the one and only
 /// lookup path used by every resolver and validator.
 #[derive(Debug, Clone, Default)]
-pub struct Namespaces {
-    pub global: HashMap<String, String>,
-    pub projects: HashMap<String, HashMap<String, String>>,
+pub(crate) struct Namespaces {
+    pub(crate) global: HashMap<String, String>,
+    pub(crate) projects: HashMap<String, HashMap<String, String>>,
 }
 
 impl Namespaces {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
@@ -73,7 +73,7 @@ impl Namespaces {
     /// - otherwise the named project is looked up and `name` resolves to a
     ///   project variable. There is no fallback between namespaces. A project's
     ///   `url`/`dir`/`sync`/`branch` metadata fields are never referenceable.
-    pub fn lookup_var(&self, ns: &str, name: &str) -> Option<&String> {
+    pub(crate) fn lookup_var(&self, ns: &str, name: &str) -> Option<&String> {
         if ns == "global" {
             return self.global.get(name);
         }
@@ -83,20 +83,20 @@ impl Namespaces {
     /// Whether `name` is a project variable of `ns` (declared in its body or
     /// injected by a function binding). Function-body locals live in their own
     /// per-function map and are not consulted here.
-    pub fn project_var_exists(&self, ns: &str, name: &str) -> bool {
+    pub(crate) fn project_var_exists(&self, ns: &str, name: &str) -> bool {
         self.projects
             .get(ns)
             .is_some_and(|entry| entry.contains_key(name))
     }
 
     /// Whether `ns` is a known namespace (`global` or a declared project).
-    pub fn contains_ns(&self, ns: &str) -> bool {
+    pub(crate) fn contains_ns(&self, ns: &str) -> bool {
         ns == "global" || self.projects.contains_key(ns)
     }
 
     /// Declare a top-level variable into the `global` namespace, erroring on an
     /// exact duplicate `global::name`.
-    pub fn declare_global(
+    pub(crate) fn declare_global(
         &mut self,
         name: &str,
         value: String,
@@ -121,7 +121,7 @@ impl Namespaces {
     /// (several `pr name` blocks combine), so a second registration of the same
     /// name is idempotent rather than an error — only an exact duplicate
     /// `name::var` (handled by `declare_project_var`) is rejected.
-    pub fn declare_project(&mut self, name: &str) -> Result<(), CompileError> {
+    pub(crate) fn declare_project(&mut self, name: &str) -> Result<(), CompileError> {
         self.projects.entry(name.to_string()).or_default();
         Ok(())
     }
@@ -129,7 +129,7 @@ impl Namespaces {
     /// Declare a project variable into `ns`'s namespace, erroring on an exact
     /// duplicate `ns::name`.
     #[allow(clippy::too_many_arguments)]
-    pub fn declare_project_var(
+    pub(crate) fn declare_project_var(
         &mut self,
         ns: &str,
         name: &str,
@@ -144,7 +144,7 @@ impl Namespaces {
     }
 
     /// Set (overwrite) a project variable.
-    pub fn set_project_var(&mut self, ns: &str, name: &str, value: String) {
+    pub(crate) fn set_project_var(&mut self, ns: &str, name: &str, value: String) {
         self.projects
             .entry(ns.to_string())
             .or_default()
@@ -245,7 +245,14 @@ pub(crate) fn resolve_var_value(
     len: usize,
 ) -> Result<String, CompileError> {
     if *var_type == VarType::Shell {
-        execute_shell_variable(name, &resolved_value, working_dir, source, offset, len)
+        execute_shell_variable(&resolved_value, working_dir).map_err(|e| {
+            CompileError::ValidationReport(vec![spanned_report(
+                format!("shell var ${} failed: {}", name, e),
+                source,
+                offset,
+                len,
+            )])
+        })
     } else {
         Ok(resolved_value)
     }
