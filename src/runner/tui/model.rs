@@ -7,14 +7,13 @@ pub enum TaskStatus {
     Error,
 }
 
-/// A single task within a chain: tracks its name, current status, accumulated
-/// output lines, and whether it has finished.
+/// A single task within a chain: tracks its name, current status, and
+/// accumulated output lines.
 #[derive(Debug, Clone)]
 pub(crate) struct Task {
     pub name: String,
     pub status: TaskStatus,
     pub output: Vec<String>,
-    pub finalized: bool,
 }
 
 /// A chain of sequential tasks. Tasks are stored contiguously in `Model::tasks`
@@ -53,7 +52,6 @@ impl Model {
                 name,
                 status: TaskStatus::Pending,
                 output: Vec::new(),
-                finalized: false,
             });
         }
         self.chains.push(Chain {
@@ -63,12 +61,10 @@ impl Model {
         });
     }
 
-    /// Update the status of the task at `index`. Terminal states
-    /// (Success, Error) mark the task as finalized.
+    /// Update the status of the task at `index`.
     pub fn update_task_status(&mut self, index: usize, status: TaskStatus) {
         if let Some(task) = self.tasks.get_mut(index) {
             task.status = status;
-            task.finalized = matches!(status, TaskStatus::Success | TaskStatus::Error);
         }
     }
 

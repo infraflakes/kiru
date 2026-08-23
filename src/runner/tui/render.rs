@@ -1,4 +1,4 @@
-use super::{SPINNER_FRAMES, Task, TaskStatus};
+use super::{SPINNER_FRAMES, TaskStatus};
 use crate::runner::colors;
 use ratatui::style::Color;
 
@@ -6,23 +6,15 @@ use ratatui::style::Color;
 /// in the final text output.
 pub const SEPARATOR_WIDTH: usize = 78;
 
-/// Return a single-character visual marker for a task's state.
-/// Spinning frames are used for running tasks; checkmark/cross for
-/// finalized tasks; a middle dot for pending tasks.
-pub fn task_marker(task: &Task, spinner_idx: usize) -> String {
-    if task.finalized {
-        if task.status == TaskStatus::Success {
-            "✓".to_string()
-        } else {
-            "✗".to_string()
-        }
-    } else {
-        match task.status {
-            TaskStatus::Success => "✓".to_string(),
-            TaskStatus::Error => "✗".to_string(),
-            TaskStatus::Pending => "·".to_string(),
-            TaskStatus::Running => SPINNER_FRAMES[spinner_idx].to_string(),
-        }
+/// Return a single-character visual marker for a task status: spinning
+/// frames for running, checkmark/cross for success/error, a middle dot for
+/// pending.
+pub fn status_glyph(status: TaskStatus, spinner_idx: usize) -> String {
+    match status {
+        TaskStatus::Success => "✓".to_string(),
+        TaskStatus::Error => "✗".to_string(),
+        TaskStatus::Pending => "·".to_string(),
+        TaskStatus::Running => SPINNER_FRAMES[spinner_idx].to_string(),
     }
 }
 

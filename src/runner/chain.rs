@@ -1,93 +1,65 @@
-use crate::dsl::ast::QualifiedFnRef;
 use crate::plan::Plan;
+use crate::plan::QualifiedFnRef;
 use crate::runner::error::RuntimeError;
-use crate::runner::{self, Runner, TaskOutcome, TaskStatus, TuiEvent, report_task_outcome};
+use crate::runner::{
+    self, Runner, TaskOutcome, TaskStatus, TuiEvent, await_tasks_and_report, report_task_outcome,
+};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
-
-type ExecFn = Arc<dyn Fn(&mut Runner, &QualifiedFnRef) -> Result<(), RuntimeError> + Send + Sync>;
 
 /// Execute a single chain of functions sequentially inside a blocking task.
-/// Each function's output is forwarded through the TUI event channel.
+///
+/// Each step gets its own `Runner` whose output callback captures the step's
+/// task slot directly, so no shared current-task index is needed. Output lines
+/// are forwarded through the TUI event channel and each step's outcome is
+/// reported as it completes. The chain's failing error is propagated so the
+/// caller keeps the detail.
 fn execute_single_chain(
     chain: Vec<QualifiedFnRef>,
     start_index: usize,
     config: Arc<Plan>,
     tx: mpsc::UnboundedSender<TuiEvent>,
-    exec_fn: ExecFn,
-) -> Result<(), ()> {
-    let current_task = Arc::new(AtomicUsize::new(0));
-    let output_callback = {
-        let tx = tx.clone();
-        let current_task = Arc::clone(&current_task);
-        move |line: String| {
-            let task_index = current_task.load(Ordering::Relaxed);
-            runner::send_tui_event(&tx, TuiEvent::AppendOutput(task_index, line))
-        }
-    };
-    let mut runner = Runner::new(config, Arc::new(output_callback));
-
+) -> Result<(), RuntimeError> {
     for (fn_idx, qualified) in chain.iter().enumerate() {
         let task_idx = start_index + fn_idx;
-        current_task.store(task_idx, Ordering::Relaxed);
+        let output_callback = {
+            let tx = tx.clone();
+            move |line: String| runner::send_tui_event(&tx, TuiEvent::AppendOutput(task_idx, line))
+        };
+        let mut runner = Runner::new(config.clone(), Arc::new(output_callback));
         runner::send_tui_event(&tx, TuiEvent::UpdateStatus(task_idx, TaskStatus::Running));
 
-        let outcome = match exec_fn(&mut runner, qualified) {
-            Ok(()) => TaskOutcome::Success,
-            Err(e) => TaskOutcome::Error(e),
-        };
-        if report_task_outcome(&tx, task_idx, outcome) {
-            return Err(());
-        }
+        let result = runner.execute_fn_call(&qualified.function, &qualified.project);
+        report_task_outcome(
+            &tx,
+            task_idx,
+            match &result {
+                Ok(()) => TaskOutcome::Success,
+                Err(error) => TaskOutcome::Error(error),
+            },
+        );
+        result?;
     }
 
     Ok(())
-}
-
-/// Await all chain handles and collect whether any failed.
-async fn collect_chain_results(
-    chain_handles: Vec<JoinHandle<Result<(), ()>>>,
-) -> Result<(), miette::Report> {
-    let mut any_err = false;
-    for handle in chain_handles {
-        match handle.await {
-            Ok(Ok(())) => {}
-            _ => any_err = true,
-        }
-    }
-    if any_err {
-        Err(miette::miette!("One or more chain tasks failed"))
-    } else {
-        Ok(())
-    }
 }
 
 /// Execute a list of function chains through the TUI.
 pub fn execute_task_chains(
     config: Arc<Plan>,
     chains: Vec<Vec<QualifiedFnRef>>,
-    task_name_fn: impl Fn(&QualifiedFnRef) -> String + Send + 'static,
-    exec_fn: impl Fn(&mut Runner, &QualifiedFnRef) -> Result<(), RuntimeError> + Send + Sync + 'static,
 ) -> miette::Result<()> {
     let (chain_pairs, chain_tasks): (Vec<_>, Vec<_>) = chains
         .iter()
         .map(|chain| {
-            let label = chain
-                .iter()
-                .map(&task_name_fn)
-                .collect::<Vec<_>>()
-                .join(" → ");
-            let task_names: Vec<String> = chain.iter().map(&task_name_fn).collect();
+            let task_names: Vec<String> = chain.iter().map(QualifiedFnRef::fqn).collect();
+            let label = task_names.join(" → ");
             ((label, task_names), chain.clone())
         })
         .unzip();
 
-    let exec_fn = Arc::new(exec_fn);
     runner::run_tui_with_run(chain_pairs, move |tx| {
         let config = Arc::clone(&config);
-        let exec_fn = Arc::clone(&exec_fn);
         async move {
             let mut chain_handles = Vec::new();
             let mut base_index = 0;
@@ -95,20 +67,23 @@ pub fn execute_task_chains(
             for chain in &chain_tasks {
                 let tx = tx.clone();
                 let config = Arc::clone(&config);
-                let exec_fn = Arc::clone(&exec_fn);
                 let chain = chain.clone();
                 let start_index = base_index;
                 let chain_len = chain.len();
 
                 let handle = tokio::task::spawn_blocking(move || {
-                    execute_single_chain(chain, start_index, config, tx, exec_fn)
+                    execute_single_chain(chain, start_index, config, tx)
                 });
 
-                chain_handles.push(handle);
+                // The chain's final step is the anchor used to surface a
+                // panic: any step that already reported keeps its outcome,
+                // and the last slot is the one most likely still pending.
+                let panic_anchor = start_index + chain_len.saturating_sub(1);
+                chain_handles.push((panic_anchor, handle));
                 base_index += chain_len;
             }
 
-            collect_chain_results(chain_handles).await
+            await_tasks_and_report(&tx, chain_handles, "One or more chain tasks failed").await
         }
     })?;
     Ok(())

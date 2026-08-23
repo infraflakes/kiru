@@ -16,40 +16,11 @@ impl Parser {
 
     fn parse_fn_name_in_run(&mut self) -> Result<QualifiedFnRef, ParseError> {
         let start_offset = self.current_token().offset;
-        let project = match &self.current_token().ty {
-            TokenType::Ident(ident) => ident.clone(),
-            _ => {
-                return Err(ParseError::new(
-                    self.eof_aware_span(),
-                    format!(
-                        "expected project namespace in run block, found {}",
-                        format_token(self.current_token())
-                    ),
-                ));
-            }
-        };
-        self.advance();
-        if self.current_token().ty != TokenType::NamespaceSep {
-            return Err(ParseError::new(
-                self.eof_aware_span(),
-                "run block reference must be namespaced as `namespace::function`".to_string(),
-            ));
-        }
-        self.advance();
-        let function = match &self.current_token().ty {
-            TokenType::Ident(ident) => ident.clone(),
-            _ => {
-                return Err(ParseError::new(
-                    self.eof_aware_span(),
-                    format!(
-                        "expected function name after `::` in run block, found {}",
-                        format_token(self.current_token())
-                    ),
-                ));
-            }
-        };
-        let end_offset = self.current_token().offset + self.current_token().len;
-        self.advance();
+        let (project, function, end_offset) = self.parse_qualified_ref(
+            "expected project namespace in run block",
+            "expected function name after `::` in run block",
+            "run block reference must be namespaced as `namespace::function`",
+        )?;
         Ok(QualifiedFnRef {
             project,
             function,

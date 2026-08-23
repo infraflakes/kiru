@@ -18,6 +18,9 @@ pub fn run_status_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
     Ok(())
 }
 
+/// Render the whole config (projects + runs) as an indented tree suitable for
+/// the pager. Each project lists its fields and functions; each run lists its
+/// chains of `namespace::function` references.
 fn format_config_as_tree(config: &Plan) -> String {
     let mut formatted_output = String::new();
     formatted_output.push('\n');
@@ -58,7 +61,7 @@ fn format_config_as_tree(config: &Plan) -> String {
 
                 let chain_str = chain
                     .iter()
-                    .map(|q| format!("{}::{}", q.project, q.function))
+                    .map(crate::plan::QualifiedFnRef::fqn)
                     .collect::<Vec<_>>()
                     .join(" => ");
 
@@ -88,14 +91,18 @@ fn draw_project(out: &mut String, name: &str, project: &PlanProject, last: bool)
 
     let indent = if last { "   " } else { "│  " };
 
-    project_field(out, indent, "url", &project.url);
-    project_field(out, indent, "dir", &project.dir);
-
-    if let Some(ref branch) = project.branch {
-        project_field(out, indent, "branch", branch);
+    let sync_mode = project.sync.to_string();
+    let fields: [(&str, Option<&str>); 4] = [
+        ("url", Some(&project.url)),
+        ("dir", Some(&project.dir)),
+        ("branch", project.branch.as_deref()),
+        ("sync", Some(&sync_mode)),
+    ];
+    for (key, value) in fields {
+        if let Some(value) = value {
+            project_field(out, indent, key, value);
+        }
     }
-
-    project_field(out, indent, "sync", &project.sync.to_string());
 
     let project_function_names: Vec<&String> = project.functions.keys().collect();
 

@@ -53,7 +53,8 @@ project_stmt     = var_decl | use_decl ;
 field_decl       = ident "=" expr ;
 
 (* Recognised field names: url, dir, sync, branch. Unknown fields are *)
-(* rejected at parse time.                                            *)
+(* rejected at parse time. The sync field accepts only `ignore` — the *)
+(* default of `clone` applies when the field is omitted.              *)
 
 use_decl         = "use" ident [ "as" ident ] ";" ;
 

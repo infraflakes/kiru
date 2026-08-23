@@ -5,14 +5,17 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Build Kiru Static Binary via Docker
         run: |
@@ -25,10 +28,25 @@ jobs:
           mv kiru "$NAME"
           sha256sum "$NAME" > "$NAME.sha256"
 
+      - name: Generate release notes from commits
+        run: |
+          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)
+          if [ -z "$PREV" ]; then
+            RANGE="$(git rev-list --max-parents=0 HEAD)..HEAD"
+          else
+            RANGE="$PREV..HEAD"
+          fi
+          {
+            echo "## What's Changed"
+            echo
+            git log "$RANGE" --no-merges --pretty="- %s (%h)"
+          } > notes.md
+          cat notes.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: bin/*
-          generate_release_notes: true
+          body_path: notes.md
           draft: false
           prerelease: false

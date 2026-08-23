@@ -1,7 +1,15 @@
-use clap::{Command, ValueEnum};
+use clap::{CommandFactory, ValueEnum};
 use clap_complete::{Shell, generate_to};
 use std::io::Error;
 use std::path::PathBuf;
+
+// The CLI definition lives only in `src/cli/args.rs`. Reusing the derive here
+// (instead of hand-mirroring the command in this file) keeps the completions
+// generated from the very same definition the binary parses with, so the two
+// can never drift out of sync.
+mod args {
+    include!("src/cli/args.rs");
+}
 
 fn main() -> Result<(), Error> {
     let out_dir = PathBuf::from(
@@ -11,24 +19,7 @@ fn main() -> Result<(), Error> {
     );
     std::fs::create_dir_all(&out_dir)?;
 
-    let mut cmd = Command::new("kiru")
-        .about("kiru is a local project orchestrator CLI")
-        .subcommand_required(true)
-        .subcommand(Command::new("status").about("Show the resolved configuration"))
-        .subcommand(Command::new("sync").about("Clone or update project repositories"))
-        .subcommand(
-            Command::new("run")
-                .about("Execute a run block")
-                .arg(clap::arg!(<NAME> "Run block name"))
-                .arg(clap::arg!(--project <PROJECT> "Project name")),
-        )
-        .subcommand(
-            Command::new("fn")
-                .about("Execute a function")
-                .arg(clap::arg!(<NAME> "Function name"))
-                .arg(clap::arg!(--project <PROJECT> "Project name")),
-        )
-        .subcommand(Command::new("version").about("Print version information"));
+    let mut cmd = args::Cli::command();
 
     for &shell in Shell::value_variants() {
         generate_to(shell, &mut cmd, "kiru", &out_dir)?;

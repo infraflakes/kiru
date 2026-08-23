@@ -9,12 +9,23 @@ pub use args::{Cli, Commands};
 use crate::compiler::CompileError;
 use crate::plan::Plan;
 use clap::Parser;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// Load a plan through the given compiler entry point (full compile or
+/// metadata-only for sync), mapping compiler errors to miette reports once.
+fn load_config_via(
+    config_arg: Option<PathBuf>,
+    load: impl FnOnce(&Path) -> Result<Plan, CompileError>,
+) -> miette::Result<Plan> {
+    let config_path = get_config_path(config_arg);
+    load(&config_path).map_err(compile_error_to_report)
+}
 
 fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Plan> {
-    let config_path = get_config_path(config_arg);
     let force_cwd = crate::runner::kiru_cwd_enabled();
-    crate::compiler::compile_and_resolve(&config_path, force_cwd).map_err(compile_error_to_report)
+    load_config_via(config_arg, |config_path| {
+        crate::compiler::compile_and_resolve(config_path, force_cwd)
+    })
 }
 
 /// Map a compiler error to a miette report for the CLI. Single owner of the
@@ -22,37 +33,21 @@ fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Plan> {
 /// command path (status, sync, run, fn) at once instead of drifting.
 pub(crate) fn compile_error_to_report(e: CompileError) -> miette::Report {
     match e {
-        CompileError::ParseReports(reports) => print_parse_errors(reports),
-        CompileError::ValidationReport(reports) => {
-            for report in &reports {
-                print_diagnostic(report);
-            }
-            miette::miette!("{} validation error(s) found", reports.len())
-        }
+        CompileError::ParseReports(reports) => batch_report(reports, "parse"),
+        CompileError::ValidationReport(reports) => batch_report(reports, "validation"),
         _ => miette::miette!("{}", e),
     }
 }
 
-fn print_parse_errors(reports: Vec<miette::Report>) -> miette::Report {
+/// Print every diagnostic in a batch and return the batch summary error.
+/// Shared by the parse and validation error paths so the print-then-summarize
+/// shape exists in exactly one place.
+fn batch_report(reports: Vec<miette::Report>, what: &str) -> miette::Report {
     let count = reports.len();
     for report in &reports {
-        print_diagnostic(report);
+        crate::error::print_diagnostic(report);
     }
-    miette::miette!("{} parse error(s) found", count)
-}
-
-/// Render a miette diagnostic to stderr using the installed handler.
-///
-/// Centralizes diagnostic printing so callers do not reach for ad-hoc
-/// `eprintln!("{:?}", report)`, which drops the handler's source snippets and
-/// styling. The handler is installed once in `main` via `miette::set_hook`.
-pub(crate) fn print_diagnostic(report: &miette::Report) {
-    use std::io::Write;
-
-    let mut stderr = std::io::stderr();
-    if writeln!(stderr, "{:?}", report).is_err() {
-        std::eprintln!("{:?}", report);
-    }
+    miette::miette!("{} {} error(s) found", count, what)
 }
 
 pub fn run_cli() -> miette::Result<()> {

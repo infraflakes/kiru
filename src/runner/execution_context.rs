@@ -3,9 +3,7 @@ use crate::runner::colors;
 use crate::runner::error::RuntimeError;
 use crate::shell;
 use std::collections::HashMap;
-use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 /// Callback invoked for each emitted output line. This is the only output
@@ -67,6 +65,14 @@ impl<'a> ExecContext<'a> {
         "  ".repeat(self.env_stack.len() + extra)
     }
 
+    /// Emit one output line: `indent`, `prefix`, then `payload`.
+    ///
+    /// Every statement primitive formats its output through this single sink
+    /// so the indent/prefix/payload layout exists in exactly one place.
+    fn emit_line(&mut self, indent: &str, prefix: &str, payload: &str) {
+        (self.output)(format!("{}{}{}", indent, prefix, payload));
+    }
+
     /// Run a sequence of resolved function statements sequentially.
     ///
     /// Every statement primitive (`log`, `exec`, `cd`, `env`, `case`) is
@@ -99,9 +105,7 @@ impl<'a> ExecContext<'a> {
     }
 
     pub(crate) fn exec_log(&mut self, msg: &str) -> Result<(), RuntimeError> {
-        let indent = self.compute_indent_string(0);
-        let line = format!("{}{}{}", indent, colors::LOG_PREFIX, msg);
-        (self.output)(line);
+        self.emit_line(&self.compute_indent_string(0), colors::LOG_PREFIX, msg);
         Ok(())
     }
 
@@ -124,9 +128,7 @@ impl<'a> ExecContext<'a> {
 
         self.work_dir = candidate;
 
-        let indent = self.compute_indent_string(0);
-        let line = format!("{}{}{}", indent, colors::CD_PREFIX, resolved);
-        (self.output)(line);
+        self.emit_line(&self.compute_indent_string(0), colors::CD_PREFIX, resolved);
         Ok(())
     }
 
@@ -141,9 +143,11 @@ impl<'a> ExecContext<'a> {
         }
 
         let keys: Vec<&str> = pairs.iter().map(|p| p.key.as_str()).collect();
-        let indent = self.compute_indent_string(0);
-        let line = format!("{}{}{}", indent, colors::ENV_PREFIX, keys.join(", "));
-        (self.output)(line);
+        self.emit_line(
+            &self.compute_indent_string(0),
+            colors::ENV_PREFIX,
+            &keys.join(", "),
+        );
 
         self.env_stack.push(layer);
         let result = self.exec_stmts(body);
@@ -152,36 +156,34 @@ impl<'a> ExecContext<'a> {
     }
 
     pub(crate) fn exec_command(&mut self, cmd_str: &str) -> Result<(), RuntimeError> {
-        let indent = self.compute_indent_string(0);
-        let line = format!("{}{}{}", indent, colors::EXEC_PREFIX, cmd_str);
-        (self.output)(line);
+        self.emit_line(&self.compute_indent_string(0), colors::EXEC_PREFIX, cmd_str);
 
-        let shell = shell::get_current_shell_path();
-        let mut child = Command::new(&shell)
-            .arg("-c")
-            .arg(format!("{} 2>&1", cmd_str))
-            .current_dir(&self.work_dir)
-            .envs(self.build_env_iter())
-            .stdout(Stdio::piped())
-            .spawn()
-            .map_err(|e| RuntimeError::exec_io_error(cmd_str, e))?;
-
+        let work_dir = self.work_dir.clone();
+        let env_overrides: HashMap<String, String> = self.build_env_iter().collect();
         let indent_str = self.compute_indent_string(1);
-        if let Some(stdout) = child.stdout.take() {
-            for line_result in io::BufReader::new(stdout).lines() {
-                match line_result {
-                    Ok(text) => (self.output)(format!("{}{}", indent_str, text)),
-                    Err(_) => break,
-                }
-            }
-        }
-
-        let status = child
-            .wait()
-            .map_err(|e| RuntimeError::exec_io_error(cmd_str, e))?;
+        let shell_path = shell::get_current_shell_path();
+        let status = shell::run_subprocess(
+            cmd_str,
+            &[&shell_path, "-c", cmd_str],
+            Some(&work_dir),
+            Some(&env_overrides),
+            None,
+            &mut |line| {
+                let text = match line {
+                    shell::SubprocessLine::Stdout(text) | shell::SubprocessLine::Stderr(text) => {
+                        text
+                    }
+                };
+                self.emit_line(&indent_str, "", &text);
+            },
+        )
+        .map_err(|e| RuntimeError::exec_io_error(cmd_str, e))?;
 
         if !status.success() {
-            return Err(RuntimeError::exec_exit_code(cmd_str, status.code()));
+            return Err(RuntimeError::exec_io_error(
+                cmd_str,
+                shell::describe_exit_failure(&status),
+            ));
         }
 
         Ok(())

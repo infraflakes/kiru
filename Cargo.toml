@@ -11,7 +11,7 @@ dirs = "6.0.0"
 miette = { version = "7.6", features = ["fancy"] }
 ratatui = "0.30.2"
 shlex = "2.0.1"
-thiserror = "2.0.19"
+thiserror = "2.0.20"
 tokio = { version = "1.53", default-features = false, features = ["rt-multi-thread", "sync", "time"] }
 
 [build-dependencies]

@@ -35,6 +35,51 @@ impl Lexer {
         self.input.iter().map(|ch| ch.len_utf8()).sum()
     }
 
+    /// The character one position ahead, without consuming it. Used to
+    /// recognize two-character tokens (`=>`, `::`) as match guards so the
+    /// single-character fallbacks stay in the generic arms.
+    fn peek_next(&self) -> Option<char> {
+        self.input.get(self.read_pos).copied()
+    }
+
+    /// Consume the current character and produce a single-character token.
+    fn single_char_token(
+        &mut self,
+        ty: TokenType,
+        start_line: usize,
+        start_col: usize,
+        start_byte_offset: usize,
+    ) -> Token {
+        self.read_char();
+        Token::new(
+            ty,
+            start_line,
+            start_col,
+            start_byte_offset,
+            self.byte_offset - start_byte_offset,
+        )
+    }
+
+    /// Consume the current character plus the peeked one and produce a
+    /// two-character token.
+    fn two_char_token(
+        &mut self,
+        ty: TokenType,
+        start_line: usize,
+        start_col: usize,
+        start_byte_offset: usize,
+    ) -> Token {
+        self.read_char();
+        self.read_char();
+        Token::new(
+            ty,
+            start_line,
+            start_col,
+            start_byte_offset,
+            self.byte_offset - start_byte_offset,
+        )
+    }
+
     /// Returns the next Token from the input.
     pub(crate) fn next_token(&mut self) -> Token {
         loop {
@@ -53,173 +98,68 @@ impl Lexer {
         match ch {
             None => Token::new(TokenType::Eof, start_line, start_col, start_byte_offset, 0),
             Some('{') => {
-                self.read_char();
-                Token::new(
-                    TokenType::LBrace,
-                    start_line,
-                    start_col,
-                    start_byte_offset,
-                    self.byte_offset - start_byte_offset,
-                )
+                self.single_char_token(TokenType::LBrace, start_line, start_col, start_byte_offset)
             }
             Some('}') => {
-                self.read_char();
-                Token::new(
-                    TokenType::RBrace,
-                    start_line,
-                    start_col,
-                    start_byte_offset,
-                    self.byte_offset - start_byte_offset,
-                )
+                self.single_char_token(TokenType::RBrace, start_line, start_col, start_byte_offset)
             }
-            Some('[') => {
-                self.read_char();
-                Token::new(
-                    TokenType::LBracket,
-                    start_line,
-                    start_col,
-                    start_byte_offset,
-                    self.byte_offset - start_byte_offset,
-                )
-            }
-            Some(']') => {
-                self.read_char();
-                Token::new(
-                    TokenType::RBracket,
-                    start_line,
-                    start_col,
-                    start_byte_offset,
-                    self.byte_offset - start_byte_offset,
-                )
-            }
+            Some('[') => self.single_char_token(
+                TokenType::LBracket,
+                start_line,
+                start_col,
+                start_byte_offset,
+            ),
+            Some(']') => self.single_char_token(
+                TokenType::RBracket,
+                start_line,
+                start_col,
+                start_byte_offset,
+            ),
             Some('(') => {
-                self.read_char();
-                Token::new(
-                    TokenType::LParen,
-                    start_line,
-                    start_col,
-                    start_byte_offset,
-                    self.byte_offset - start_byte_offset,
-                )
+                self.single_char_token(TokenType::LParen, start_line, start_col, start_byte_offset)
             }
             Some(')') => {
-                self.read_char();
-                Token::new(
-                    TokenType::RParen,
-                    start_line,
-                    start_col,
-                    start_byte_offset,
-                    self.byte_offset - start_byte_offset,
-                )
+                self.single_char_token(TokenType::RParen, start_line, start_col, start_byte_offset)
             }
-
-            Some('.') => {
-                self.read_char();
-                Token::new(
-                    TokenType::Illegal("unexpected character: .".to_string()),
-                    start_line,
-                    start_col,
-                    start_byte_offset,
-                    self.byte_offset - start_byte_offset,
-                )
-            }
-            Some(';') => {
-                self.read_char();
-                Token::new(
-                    TokenType::Semicolon,
-                    start_line,
-                    start_col,
-                    start_byte_offset,
-                    self.byte_offset - start_byte_offset,
-                )
-            }
+            Some(';') => self.single_char_token(
+                TokenType::Semicolon,
+                start_line,
+                start_col,
+                start_byte_offset,
+            ),
             Some('$') => {
-                self.read_char();
-                Token::new(
-                    TokenType::Dollar,
-                    start_line,
-                    start_col,
-                    start_byte_offset,
-                    self.byte_offset - start_byte_offset,
-                )
+                self.single_char_token(TokenType::Dollar, start_line, start_col, start_byte_offset)
+            }
+            Some('=') if self.peek_next() == Some('>') => {
+                self.two_char_token(TokenType::Arrow, start_line, start_col, start_byte_offset)
             }
             Some('=') => {
-                self.read_char();
-                if self.ch == Some('>') {
-                    self.read_char();
-                    Token::new(
-                        TokenType::Arrow,
-                        start_line,
-                        start_col,
-                        start_byte_offset,
-                        self.byte_offset - start_byte_offset,
-                    )
-                } else {
-                    Token::new(
-                        TokenType::Assign,
-                        start_line,
-                        start_col,
-                        start_byte_offset,
-                        self.byte_offset - start_byte_offset,
-                    )
-                }
+                self.single_char_token(TokenType::Assign, start_line, start_col, start_byte_offset)
             }
-            Some(':') => {
-                self.read_char();
-                if self.ch == Some(':') {
-                    self.read_char();
-                    Token::new(
-                        TokenType::NamespaceSep,
-                        start_line,
-                        start_col,
-                        start_byte_offset,
-                        self.byte_offset - start_byte_offset,
-                    )
-                } else {
-                    Token::new(
-                        TokenType::Illegal("unexpected character: :".to_string()),
-                        start_line,
-                        start_col,
-                        start_byte_offset,
-                        self.byte_offset - start_byte_offset,
-                    )
-                }
-            }
+            Some(':') if self.peek_next() == Some(':') => self.two_char_token(
+                TokenType::NamespaceSep,
+                start_line,
+                start_col,
+                start_byte_offset,
+            ),
             Some('`') => self.read_backtick(),
             Some(ch) if ch.is_alphabetic() || ch == '_' => self.read_ident(),
-            Some(ch) => {
-                self.read_char();
-                Token::new(
-                    TokenType::Illegal(format!("unexpected character: {}", ch)),
-                    start_line,
-                    start_col,
-                    start_byte_offset,
-                    self.byte_offset - start_byte_offset,
-                )
-            }
+            // A bare `:` or `.` (or any other character) falls through here —
+            // the catch-all emits the same `unexpected character` token the
+            // old dedicated arms did.
+            Some(ch) => self.single_char_token(
+                TokenType::Illegal(format!("unexpected character: {}", ch)),
+                start_line,
+                start_col,
+                start_byte_offset,
+            ),
         }
     }
 }
 
 #[cfg(test)]
-fn collect_tokens(input: &str) -> Vec<TokenType> {
-    let mut lexer = Lexer::new(input.to_string());
-    let mut tokens = Vec::new();
-    loop {
-        let tok = lexer.next_token();
-        let is_eof = matches!(tok.ty, TokenType::Eof);
-        if !matches!(tok.ty, TokenType::Eof | TokenType::Illegal(_)) {
-            tokens.push(tok.ty);
-        }
-        if is_eof {
-            break;
-        }
-    }
-    tokens
-}
-
-#[cfg(test)]
-fn collect_all_tokens(input: &str) -> Vec<Token> {
+/// Drive the lexer to EOF, returning every token (including EOF) in order.
+fn drain_tokens(input: &str) -> Vec<Token> {
     let mut lexer = Lexer::new(input.to_string());
     let mut tokens = Vec::new();
     loop {
@@ -234,18 +174,23 @@ fn collect_all_tokens(input: &str) -> Vec<Token> {
 }
 
 #[cfg(test)]
+fn collect_tokens(input: &str) -> Vec<TokenType> {
+    drain_tokens(input)
+        .into_iter()
+        .filter(|tok| !matches!(tok.ty, TokenType::Eof | TokenType::Illegal(_)))
+        .map(|tok| tok.ty)
+        .collect()
+}
+
+#[cfg(test)]
 fn extract_errors(input: &str) -> Vec<String> {
-    let mut lexer = Lexer::new(input.to_string());
-    let mut errors = Vec::new();
-    loop {
-        let tok = lexer.next_token();
-        match tok.ty {
-            TokenType::Eof => break,
-            TokenType::Illegal(msg) => errors.push(msg),
-            _ => {}
-        }
-    }
-    errors
+    drain_tokens(input)
+        .into_iter()
+        .filter_map(|tok| match tok.ty {
+            TokenType::Illegal(msg) => Some(msg),
+            _ => None,
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -436,7 +381,7 @@ mod tests {
     #[test]
     fn test_line_col_tracking() {
         let input = "var string x = `hello`;\nvar string y = `world`;";
-        let tokens = collect_all_tokens(input);
+        let tokens = drain_tokens(input);
         assert_eq!(tokens[0].line, 1);
         assert_eq!(tokens[0].col, 1);
         let second_var = tokens

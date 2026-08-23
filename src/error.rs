@@ -34,6 +34,33 @@ impl<'a> SourceFile<'a> {
     }
 }
 
+/// A source position for a spanned diagnostic: the declaring file name, the
+/// byte span within it, and the registry of file texts used to resolve a
+/// [`SourceFile`].
+///
+/// Replaces the four loose `(sources, source_name, offset, len)` values that
+/// every spanned-error helper otherwise took as separate arguments — bundling
+/// them removes the `clippy::too_many_arguments` suppressions that used to
+/// litter the compiler and keeps call sites passing one value.
+pub(crate) struct Span<'a> {
+    pub source_name: &'a str,
+    pub offset: usize,
+    pub len: usize,
+    pub sources: &'a HashMap<String, String>,
+}
+
+impl<'a> Span<'a> {
+    /// Resolve the registry entry for this span's file into a [`SourceFile`].
+    pub(crate) fn source_file(&self) -> SourceFile<'a> {
+        SourceFile::from_registry(self.sources, self.source_name)
+    }
+
+    /// Build a miette report at this span with `msg` as its message.
+    pub(crate) fn report(&self, msg: impl Into<String>) -> miette::Report {
+        spanned_report(msg.into(), &self.source_file(), self.offset, self.len)
+    }
+}
+
 /// A miette-based validation error with source span information.
 #[derive(Debug, Diagnostic, thiserror::Error)]
 #[error("{message}")]
@@ -96,4 +123,23 @@ fn clamped_span(text: &str, offset: usize, len: usize) -> miette::SourceSpan {
     let available = text_len - safe_offset;
     let safe_len = len.max(1).min(available);
     miette::SourceSpan::new(safe_offset.into(), safe_len)
+}
+
+/// Render a miette diagnostic to stderr using the installed handler.
+///
+/// Centralizes diagnostic printing so callers do not reach for ad-hoc
+/// `eprintln!("{:?}", report)`, which drops the handler's source snippets and
+/// styling. The handler is installed once in `main` via `miette::set_hook`.
+///
+/// Lives at the crate root next to the other miette plumbing because both the
+/// compiler (skip warnings during metadata-only parsing) and the CLI (batch
+/// error reports) emit diagnostics: a single printer keeps every layer
+/// rendering through the same handler.
+pub(crate) fn print_diagnostic(report: &miette::Report) {
+    use std::io::Write;
+
+    let mut stderr = std::io::stderr();
+    if writeln!(stderr, "{:?}", report).is_err() {
+        std::eprintln!("{:?}", report);
+    }
 }

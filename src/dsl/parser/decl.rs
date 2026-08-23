@@ -19,16 +19,13 @@ impl Parser {
         let len = self.current_token().len;
         self.advance();
 
-        let name = self.parse_ident_name("function", "expected function name")?;
+        let name = self.parse_ident_name("function name")?;
 
-        self.expect_with_context(TokenType::LBrace, "after function name")?;
-
-        let mut body = Vec::new();
-        while self.current_token().ty != TokenType::RBrace {
-            body.push(self.parse_fn_stmt()?);
-        }
-
-        self.expect_with_context(TokenType::RBrace, "to close function body")?;
+        let body = self.parse_braced_block(
+            "after function name",
+            "to close function body",
+            Self::parse_fn_stmt,
+        )?;
 
         Ok(Stmt::Fn {
             name,
@@ -43,22 +40,13 @@ impl Parser {
         let len = self.current_token().len;
         self.advance();
 
-        let name = self.parse_ident_name("run block", "expected run block name")?;
+        let name = self.parse_ident_name("run block name")?;
 
-        self.expect_with_context(TokenType::LBrace, "after run block name")?;
-
-        let mut chains = Vec::new();
-        while self.current_token().ty != TokenType::RBrace {
-            if self.current_token().ty == TokenType::Eof {
-                return Err(ParseError::new(
-                    self.eof_aware_span(),
-                    "unexpected end of file in run declaration (expected '}')".to_string(),
-                ));
-            }
-            chains.push(self.parse_chain()?);
-        }
-
-        self.expect_with_context(TokenType::RBrace, "to close run block body")?;
+        let chains = self.parse_braced_block(
+            "after run block name",
+            "to close run block body",
+            Self::parse_chain,
+        )?;
 
         Ok(Stmt::Run {
             name,

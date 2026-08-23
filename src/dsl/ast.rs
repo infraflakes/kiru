@@ -1,4 +1,7 @@
+use std::str::FromStr;
+
 use crate::dsl::{Expr, FnStmt, VarType};
+use crate::plan::QualifiedFnRef;
 
 /// The key of a project block field (e.g., `url`, `dir`, `sync`, `branch`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -9,18 +12,30 @@ pub enum ProjectField {
     Branch,
 }
 
-/// A function reference qualified by a project namespace.
-///
-/// Every run-chain reference is written `project::function` (the parser
-/// requires the `project::` prefix), so `project` is always present. A
-/// reference like `nix::build` is executed under `nix`'s `cwd` at runtime.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct QualifiedFnRef {
-    pub project: String,
-    pub function: String,
-    pub offset: usize,
-    pub len: usize,
-    pub source_name: String,
+impl ProjectField {
+    /// The source spelling of the field key, used in diagnostics.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProjectField::Url => "url",
+            ProjectField::Dir => "dir",
+            ProjectField::Sync => "sync",
+            ProjectField::Branch => "branch",
+        }
+    }
+}
+
+impl FromStr for ProjectField {
+    type Err = ();
+
+    fn from_str(key: &str) -> Result<Self, Self::Err> {
+        match key {
+            "url" => Ok(ProjectField::Url),
+            "dir" => Ok(ProjectField::Dir),
+            "sync" => Ok(ProjectField::Sync),
+            "branch" => Ok(ProjectField::Branch),
+            _ => Err(()),
+        }
+    }
 }
 
 /// A parsed statement node in the kiru DSL.
@@ -37,13 +52,10 @@ pub enum Stmt {
     /// A project block: `pr name [ field = value ... ] { fn/run/var ... }`.
     /// Fields (`url`, `dir`, `sync`, `branch`) are in `fields`; function,
     /// run, and var declarations are in `body`.
-    #[allow(dead_code)]
     Project {
         name: String,
         fields: Vec<Stmt>,
         body: Vec<Stmt>,
-        offset: usize,
-        len: usize,
     },
     /// A named field inside a project block (url, dir, sync, branch).
     Field {

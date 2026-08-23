@@ -114,7 +114,7 @@ pub async fn run_tui_event_loop(
     mut event_receiver: mpsc::UnboundedReceiver<TuiEvent>,
     height: u16,
     render_fn: fn(&mut Frame, &Model, usize),
-    format_fn: fn(&Model) -> String,
+    format_fn: Option<fn(&Model) -> String>,
 ) -> Result<bool, io::Error> {
     let raw = RawMode::try_enable();
 
@@ -160,22 +160,23 @@ pub async fn run_tui_event_loop(
     drop(raw);
 
     let guard = model.lock().unwrap();
-    let dump = format_fn(&guard);
+    let dump = format_fn.map(|format_fn| format_fn(&guard));
     drop(guard);
 
-    if !dump.is_empty() {
+    if let Some(dump) = dump {
         dump_final_output(height, &dump)?;
     }
     Ok(cancelled)
 }
 
 /// Set up the tokio runtime, build the model from chains, and run the TUI
-/// alongside the given worker future.
+/// alongside the given worker future. `format_fn` produces the final text
+/// dump after the TUI closes; `None` skips the dump entirely (e.g. sync).
 pub(crate) fn run_tui_with<F, Fut>(
     chains: Vec<(String, Vec<String>)>,
     worker: F,
     render_fn: fn(&mut Frame, &Model, usize),
-    format_fn: fn(&Model) -> String,
+    format_fn: Option<fn(&Model) -> String>,
 ) -> miette::Result<()>
 where
     F: FnOnce(mpsc::UnboundedSender<TuiEvent>) -> Fut + Send + 'static,
@@ -236,11 +237,12 @@ where
         chains,
         worker,
         run::render_run_output,
-        run::format_final_output,
+        Some(run::format_final_output),
     )
 }
 
-/// Run the TUI with sync-specific render and format functions.
+/// Run the TUI with the sync-specific render function. Sync produces no
+/// final text dump, so the format function is omitted.
 pub(crate) fn run_tui_with_sync<F, Fut>(
     chains: Vec<(String, Vec<String>)>,
     worker: F,
@@ -249,5 +251,5 @@ where
     F: FnOnce(mpsc::UnboundedSender<TuiEvent>) -> Fut + Send + 'static,
     Fut: Future<Output = miette::Result<()>> + Send + 'static,
 {
-    run_tui_with(chains, worker, sync::render_sync_output, |_| String::new())
+    run_tui_with(chains, worker, sync::render_sync_output, None)
 }

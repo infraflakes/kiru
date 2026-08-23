@@ -1,6 +1,5 @@
 #[cfg(test)]
 use crate::dsl::Program;
-use crate::dsl::ast::QualifiedFnRef;
 use crate::dsl::error::ParseError;
 use crate::dsl::lexer::Lexer;
 use crate::dsl::token::{Token, TokenType, format_token, format_token_type, is_keyword_token};
@@ -8,6 +7,7 @@ use crate::dsl::{
     CaseArm, CasePattern, EnvPair, Expr, FnStmt, InterpolationPart, ProjectField, Stmt, TopLevel,
     VarType,
 };
+use crate::plan::QualifiedFnRef;
 use miette::SourceSpan;
 
 mod body;
@@ -98,29 +98,78 @@ impl Parser {
     /// Reads an identifier as a named declaration target (variable, function,
     /// project, run, or field name) and advances past it. Reserved keywords
     /// and non-identifier tokens are rejected with a context-aware message.
-    fn parse_ident_name(
-        &mut self,
-        kind: &'static str,
-        fallback: &'static str,
-    ) -> Result<String, ParseError> {
+    fn parse_ident_name(&mut self, expected: &'static str) -> Result<String, ParseError> {
         let name = match &self.current_token().ty {
             TokenType::Ident(name_str) => name_str.clone(),
             ty if is_keyword_token(ty) => {
                 return Err(ParseError::new(
                     self.eof_aware_span(),
                     format!(
-                        "expected {} name, found {} (reserved keyword)",
-                        kind,
+                        "expected {}, found {} (reserved keyword)",
+                        expected,
                         format_token(self.current_token())
                     ),
                 ));
             }
             _ => {
-                return Err(ParseError::new(self.eof_aware_span(), fallback.to_string()));
+                return Err(ParseError::new(
+                    self.eof_aware_span(),
+                    format!(
+                        "expected {}, found {}",
+                        expected,
+                        format_token(self.current_token())
+                    ),
+                ));
             }
         };
         self.advance();
         Ok(name)
+    }
+
+    /// Reads one identifier part of a qualified `namespace::name` reference,
+    /// rejecting reserved keywords, and advances past it.
+    fn parse_ident_part(&mut self, expected: &'static str) -> Result<String, ParseError> {
+        match &self.current_token().ty {
+            TokenType::Ident(part) => {
+                let part = part.clone();
+                self.advance();
+                Ok(part)
+            }
+            ty if is_keyword_token(ty) => Err(ParseError::new(
+                self.eof_aware_span(),
+                format!(
+                    "{}, found {} (reserved keyword)",
+                    expected,
+                    format_token(self.current_token())
+                ),
+            )),
+            _ => Err(ParseError::new(self.eof_aware_span(), expected.to_string())),
+        }
+    }
+
+    /// Parses a `namespace::name` reference at the current token. Both parts
+    /// must be plain identifiers — reserved keywords are rejected. Shared by
+    /// `$namespace::name` variable references, case patterns, and run-block
+    /// function references; each caller supplies its own error wording.
+    /// Returns the namespace, the name, and the name's end offset (for span
+    /// construction, since the helper advances past the name).
+    fn parse_qualified_ref(
+        &mut self,
+        expected_namespace: &'static str,
+        expected_name: &'static str,
+        separator_error: &'static str,
+    ) -> Result<(String, String, usize), ParseError> {
+        let namespace = self.parse_ident_part(expected_namespace)?;
+        if self.current_token().ty != TokenType::NamespaceSep {
+            return Err(ParseError::new(
+                self.eof_aware_span(),
+                separator_error.to_string(),
+            ));
+        }
+        self.advance();
+        let name = self.parse_ident_part(expected_name)?;
+        let name_end = self.current_token().offset + self.current_token().len;
+        Ok((namespace, name, name_end))
     }
 
     /// Returns an error if the current token is an illegal (lexer-error) token,
@@ -153,59 +202,20 @@ impl Parser {
     }
 
     /// Parses a `$ns::name` variable reference after the caller has recorded the
-    /// starting offset: advances past `$`, reads the namespace identifier
-    /// (rejecting keywords), the `::` separator, and the name identifier
-    /// (rejecting keywords), returning the namespace, the name, and its end
-    /// offset. A `::` after the name (nested qualifier) is rejected. Shared by
+    /// starting offset: advances past `$`, reads the namespaced reference
+    /// (rejecting keywords in both parts), and rejects a nested qualifier after
+    /// the name. Returns the namespace, the name, and its end offset. Shared by
     /// expression and case-pattern parsing.
     fn parse_dollar_var_name(
         &mut self,
         expected: &'static str,
-        fallback: &'static str,
     ) -> Result<(String, String, usize), ParseError> {
         self.advance();
-        let namespace = match &self.current_token().ty {
-            TokenType::Ident(name_str) => name_str.clone(),
-            ty if is_keyword_token(ty) => {
-                return Err(ParseError::new(
-                    self.eof_aware_span(),
-                    format!(
-                        "{}, found {} (reserved keyword)",
-                        expected,
-                        format_token(self.current_token())
-                    ),
-                ));
-            }
-            _ => {
-                return Err(ParseError::new(self.eof_aware_span(), fallback.to_string()));
-            }
-        };
-        self.advance();
-        if self.current_token().ty != TokenType::NamespaceSep {
-            return Err(ParseError::new(
-                self.eof_aware_span(),
-                "variable reference must be namespaced as `namespace::name`".to_string(),
-            ));
-        }
-        self.advance();
-        let name = match &self.current_token().ty {
-            TokenType::Ident(name_str) => name_str.clone(),
-            ty if is_keyword_token(ty) => {
-                return Err(ParseError::new(
-                    self.eof_aware_span(),
-                    format!(
-                        "{}, found {} (reserved keyword)",
-                        expected,
-                        format_token(self.current_token())
-                    ),
-                ));
-            }
-            _ => {
-                return Err(ParseError::new(self.eof_aware_span(), fallback.to_string()));
-            }
-        };
-        let name_end = self.current_token().offset + self.current_token().len;
-        self.advance();
+        let (namespace, name, name_end) = self.parse_qualified_ref(
+            expected,
+            expected,
+            "variable reference must be namespaced as `namespace::name`",
+        )?;
         if self.current_token().ty == TokenType::NamespaceSep {
             return Err(ParseError::new(
                 self.eof_aware_span(),
@@ -213,6 +223,24 @@ impl Parser {
             ));
         }
         Ok((namespace, name, name_end))
+    }
+
+    /// Parses a `{ item* }` block with the given item parser: expects the
+    /// opening brace, parses items until the closing brace, and expects it.
+    /// Shared by function bodies, run chains, env blocks, and case arms.
+    fn parse_braced_block<T>(
+        &mut self,
+        open_context: &'static str,
+        close_context: &'static str,
+        mut item: impl FnMut(&mut Self) -> Result<T, ParseError>,
+    ) -> Result<Vec<T>, ParseError> {
+        self.expect_with_context(TokenType::LBrace, open_context)?;
+        let mut items = Vec::new();
+        while self.current_token().ty != TokenType::RBrace {
+            items.push(item(self)?);
+        }
+        self.expect_with_context(TokenType::RBrace, close_context)?;
+        Ok(items)
     }
 
     /// Parses one top-level item, returning None on EOF.
@@ -305,7 +333,7 @@ impl Parser {
             }
         };
 
-        let name = self.parse_ident_name("variable", "expected variable name")?;
+        let name = self.parse_ident_name("variable name")?;
 
         self.expect_with_context(TokenType::Assign, "in variable declaration")?;
 

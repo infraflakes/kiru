@@ -7,10 +7,8 @@ impl Parser {
             TokenType::Backtick(_) => self.parse_backtick_expr(),
             TokenType::Dollar => {
                 let start_offset = self.current_token().offset;
-                let (namespace, name, name_end) = self.parse_dollar_var_name(
-                    "expected identifier after `$`",
-                    "expected identifier after `$`",
-                )?;
+                let (namespace, name, name_end) =
+                    self.parse_dollar_var_name("expected identifier after `$`")?;
                 Ok(Expr::VarRef {
                     namespace,
                     name,

@@ -1,9 +1,7 @@
-use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
 
-use crate::dsl::Expr;
-use crate::error::{SourceFile, spanned_report};
+use crate::error::{Span, spanned_report};
 
 /// Compilation errors across the parsing, merging, and validation pipeline.
 #[derive(Debug, thiserror::Error)]
@@ -37,41 +35,16 @@ impl fmt::Display for CompileError {
     }
 }
 
-/// Spanned error resolved through the source-text registry by file name. Used
-/// when only the declaring file name is known (rather than a `SourceFile`),
-/// e.g. whole-program or variable-reference resolution errors.
-pub(crate) fn spanned_err_named(
-    msg: impl Into<String>,
-    sources: &HashMap<String, String>,
-    name: &str,
-    offset: usize,
-    len: usize,
-) -> CompileError {
+/// Spanned [`CompileError`] built from a [`Span`]. Centralizes the registry
+/// lookup so the `(sources, source_name, offset, len)` tuple is never passed
+/// loose through the compiler.
+pub(crate) fn spanned_err(span: &Span, msg: impl Into<String>) -> CompileError {
     CompileError::ValidationReport(vec![spanned_report(
         msg.into(),
-        &SourceFile::from_registry(sources, name),
-        offset,
-        len,
+        &span.source_file(),
+        span.offset,
+        span.len,
     )])
-}
-
-/// Spanned error for an optional `Expr` field. When the field is present the
-/// span references the file that defined it; when absent it falls back to
-/// `fallback_name` (the first merged declaration's file) with a zero-length
-/// span. Centralizes the "use the defining file, not the first merged
-/// declaration" rule so it can't be re-introduced per field.
-pub(crate) fn spanned_err_on_field(
-    msg: impl Into<String>,
-    sources: &HashMap<String, String>,
-    field: &Option<Expr>,
-    fallback_name: &str,
-) -> CompileError {
-    let name = field
-        .as_ref()
-        .map(|e| e.source_name())
-        .unwrap_or(fallback_name);
-    let (offset, len) = field.as_ref().map(|e| e.offset_len()).unwrap_or((0, 1));
-    spanned_err_named(msg, sources, name, offset, len)
 }
 
 /// Wrap an [`std::io::Error`] into a [`CompileError::Io`] with a descriptive

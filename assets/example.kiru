@@ -23,7 +23,6 @@ fn test {
 pr todo [
     url  = `git@github.com:yourname/todo.git`
     dir  = `todo`
-    sync = `clone`
 ] {
     var string version = `dev`;
     use build;

@@ -1,3 +1,10 @@
+fn update_kiru {
+  log `Updating dependencies`;
+  exec `cargo update`;
+  exec `cargo upgrade`;
+  exec `nix flake update`;
+}
+
 fn build_kiru {
   log `Building kiru cli!`;
   exec `cargo build --release`;
@@ -52,7 +59,7 @@ fn fail_kiru {
 pr kiru [
   # url = `https://github.com/infraflakes/kiru.git`
   # dir = $global::kiru_dir
-  # sync = `clone`
+  # sync = `ignore`
   # branch = `dev`
 ] {
   use clean_kiru as clean;
@@ -61,6 +68,7 @@ pr kiru [
   use test_kiru as test;
   use fail_kiru as fail;
   use build_kiru_with_container as container;
+  use update_kiru as update;
 }
 # import `${global::kiru_dir}/main.kiru`;
 
