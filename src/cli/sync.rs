@@ -1,22 +1,25 @@
-use crate::plan::PlanProject;
+use crate::plan::Sync;
 use crate::runner;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 /// Sync all projects via the TUI.
 pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
-    let config = super::load_config_via(config_arg, crate::compiler::parse_projects_metadata)?;
+    let config = super::load_config(config_arg)?;
 
-    let total_project_count = config.projects.len();
+    let total_project_count = config.syncs.len();
 
-    let projects: Vec<(String, PlanProject)> = config
-        .projects
+    let syncs: BTreeMap<String, Sync> = config
+        .syncs
         .into_iter()
-        .filter(|(name, proj)| {
-            let skip_reason = if proj.url.is_empty() && proj.dir.is_empty() {
+        .filter(|(name, sync)| {
+            let url = &sync.url;
+            let dir = &sync.dir;
+            let skip_reason = if url.parts.is_empty() && dir.parts.is_empty() {
                 Some("missing url and dir")
-            } else if proj.url.is_empty() {
+            } else if url.parts.is_empty() {
                 Some("missing url")
-            } else if proj.dir.is_empty() {
+            } else if dir.parts.is_empty() {
                 Some("missing dir")
             } else {
                 None
@@ -34,7 +37,7 @@ pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
         })
         .collect();
 
-    if projects.is_empty() {
+    if syncs.is_empty() {
         if total_project_count == 0 {
             crate::error::print_diagnostic(&miette::miette!("no projects to sync"));
             return Ok(());
@@ -44,6 +47,5 @@ pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
         ));
     }
 
-    let projects: std::collections::BTreeMap<String, PlanProject> = projects.into_iter().collect();
-    runner::sync::run_sync_for_projects(projects)
+    runner::sync::run_sync_for_projects(syncs, &config.shell)
 }

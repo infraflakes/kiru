@@ -1,5 +1,4 @@
 <h1 align="center">kiru</h1>
-<p align="center">Infrastructure as Code meets local task runner.</p>
 <p align="center">
     <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
     <a href="https://github.com/infraflakes/kiru/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/infraflakes/kiru?logo=github"></a>

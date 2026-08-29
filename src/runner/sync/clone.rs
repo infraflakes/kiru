@@ -1,44 +1,77 @@
-use crate::plan::{PlanProject, SyncMode};
+use crate::plan::{Sync, Template};
 use crate::runner::colors;
 use crate::runner::error::RuntimeError;
 use crate::runner::{
     self, TaskOutcome, TaskStatus, TuiEvent, await_tasks_and_report, report_task_outcome,
 };
-use crate::shell;
+use crate::subprocess;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-/// Dispatch sync for a single project into `proj.dir` by its `SyncMode`.
-/// The `match` is the only place that enumerates every strategy, so the
-/// compiler forces a new variant to be handled here. Per-strategy
-/// behavior lives in the co-located `run_sync_*` functions below.
-fn sync_project_inner(
-    proj_name: &str,
-    proj: &PlanProject,
-    output: &mut dyn FnMut(&str),
-) -> Result<(), RuntimeError> {
-    match proj.sync {
-        SyncMode::Ignore => {
-            output(&format!(
-                "{} {} (sync=ignore)",
-                colors::SYNC_PREFIXES[0],
-                proj_name
-            ));
-            Ok(())
+/// Resolve a sync `Template` to a concrete string at runtime: literals are
+/// concatenated verbatim and `$(command)` parts are run through `shell -c`,
+/// with their stdout spliced in. Used for sync `url`/`dir`/`branch`/`strategy`,
+/// which may contain runtime commands.
+fn resolve_sync_value(tmpl: &Template, shell: &str) -> String {
+    let mut out = String::new();
+    for part in &tmpl.parts {
+        match part {
+            crate::plan::Part::Lit(s) => out.push_str(s),
+            crate::plan::Part::Cmd(inner) => {
+                let cmd = resolve_sync_value(inner, shell);
+                out.push_str(&run_sync_capture(&cmd, shell));
+            }
         }
-        SyncMode::Clone => run_sync_clone_or_update(proj_name, proj, output),
     }
+    out
 }
 
-/// Git-clone a single project's repo into `proj.dir`, or fast-forward it to
-/// its remote when the repo already exists. Progress is reported through the
-/// `output` callback.
+/// Run `cmd` via `shell -c` and return its trimmed stdout (non-fatal on error).
+fn run_sync_capture(cmd: &str, shell: &str) -> String {
+    let mut captured = String::new();
+    let _ = subprocess::run_subprocess(cmd, &[shell, "-c", cmd], None, None, None, &mut |line| {
+        match line {
+            subprocess::SubprocessLine::Stdout(text) => captured.push_str(&text),
+            subprocess::SubprocessLine::Stderr(_) => {}
+        }
+    });
+    captured.trim_end().to_string()
+}
+
+/// Dispatch sync for a single project into `sync.dir` by its strategy. A
+/// `sync = ignore` strategy is a no-op; anything else clones/pulls the repo.
+/// The `if` is the only place that branches on the strategy, so a new strategy
+/// is handled here. Per-strategy behavior lives in `run_sync_clone_or_update`.
+fn sync_project_inner(
+    proj_name: &str,
+    sync: &Sync,
+    output: &mut dyn FnMut(&str),
+    shell: &str,
+) -> Result<(), RuntimeError> {
+    let strategy = resolve_sync_value(&sync.strategy, shell);
+    if strategy.trim().eq_ignore_ascii_case("ignore") {
+        output(&format!(
+            "{} {} (sync=ignore)",
+            colors::SYNC_PREFIXES[0],
+            proj_name
+        ));
+        return Ok(());
+    }
+    run_sync_clone_or_update(proj_name, sync, output, shell)
+}
+
+/// Git-clone a single project's repo into `sync.dir`, or fast-forward it to its
+/// remote when the repo already exists. Progress is reported through `output`.
 fn run_sync_clone_or_update(
     proj_name: &str,
-    proj: &PlanProject,
+    sync: &Sync,
     output: &mut dyn FnMut(&str),
+    shell: &str,
 ) -> Result<(), RuntimeError> {
-    let target_dir = PathBuf::from(&proj.dir);
+    let url = resolve_sync_value(&sync.url, shell);
+    let dir = resolve_sync_value(&sync.dir, shell);
+    let branch = resolve_sync_value(&sync.branch, shell);
+    let target_dir = PathBuf::from(&dir);
     let target_dir_str = target_dir.to_string_lossy().to_string();
 
     if target_dir.join(".git").exists() {
@@ -48,9 +81,17 @@ fn run_sync_clone_or_update(
             proj_name,
             target_dir.display()
         ));
-        let args: Vec<&str> = match &proj.branch {
-            Some(branch) => vec!["-C", &target_dir_str, "pull", "--ff-only", "origin", branch],
-            None => vec!["-C", &target_dir_str, "pull", "--ff-only"],
+        let args: Vec<&str> = if branch.is_empty() {
+            vec!["-C", &target_dir_str, "pull", "--ff-only"]
+        } else {
+            vec![
+                "-C",
+                &target_dir_str,
+                "pull",
+                "--ff-only",
+                "origin",
+                &branch,
+            ]
         };
         return run_git_with_output("git pull", &args, proj_name, output);
     }
@@ -61,17 +102,17 @@ fn run_sync_clone_or_update(
         proj_name,
         target_dir.display()
     ));
-    let args: Vec<&str> = match &proj.branch {
-        Some(branch) => vec!["clone", "-b", branch, &proj.url, &target_dir_str],
-        None => vec!["clone", &proj.url, &target_dir_str],
+    let args: Vec<&str> = if branch.is_empty() {
+        vec!["clone", &url, &target_dir_str]
+    } else {
+        vec!["clone", "-b", &branch, &url, &target_dir_str]
     };
     run_git_with_output("git clone", &args, proj_name, output)
 }
 
-/// Spawn a `git` invocation through the shared subprocess runner, forward
-/// its stdout/stderr lines through `output` (stdout indented like the
-/// exec-statement output), and surface any failure as a `RuntimeError`
-/// labelled with the built-once `full_cmd` description.
+/// Spawn a `git` invocation through the shared subprocess runner, forward its
+/// stdout/stderr lines through `output`, and surface any failure as a
+/// `RuntimeError` labelled with the built-once `full_cmd` description.
 fn run_git_with_output(
     cmd_desc: &str,
     args: &[&str],
@@ -81,41 +122,43 @@ fn run_git_with_output(
     let full_cmd = format!("{} {}", cmd_desc, proj_name);
     let argv: Vec<&str> = std::iter::once("git").chain(args.iter().copied()).collect();
     let status =
-        shell::run_subprocess(&full_cmd, &argv, None, None, None, &mut |line| match line {
-            shell::SubprocessLine::Stdout(line) => output(&format!("    {}", line)),
-            shell::SubprocessLine::Stderr(line) => output(&line),
+        subprocess::run_subprocess(&full_cmd, &argv, None, None, None, &mut |line| match line {
+            subprocess::SubprocessLine::Stdout(line) => output(&format!("    {}", line)),
+            subprocess::SubprocessLine::Stderr(line) => output(&line),
         })
         .map_err(|e| RuntimeError::exec_io_error(&full_cmd, e))?;
 
     if !status.success() {
         return Err(RuntimeError::exec_io_error(
             &full_cmd,
-            shell::describe_exit_failure(&status),
+            subprocess::describe_exit_failure(&status),
         ));
     }
     Ok(())
 }
 
-/// Synchronize a single project into `proj.dir`.
+/// Synchronize a single project into `sync.dir`.
 /// Accepts an output callback that receives progress lines for display or forwarding.
 pub fn sync_project_with_callback(
     proj_name: &str,
-    proj: &PlanProject,
+    sync: &Sync,
     mut output_cb: impl FnMut(&str),
+    shell: &str,
 ) -> Result<(), RuntimeError> {
-    sync_project_inner(proj_name, proj, &mut output_cb)
+    sync_project_inner(proj_name, sync, &mut output_cb, shell)
 }
 
 /// Run sync for all projects through the TUI.
 ///
-/// The sync chain list is derived from the project map itself: every project
-/// is its own single-step chain labelled by its name, so the CLI cannot pass
-/// a chain list that disagrees with the projects being synced. Each project
-/// runs in its own blocking task that reports its own outcome, and
+/// The sync chain list is derived from the sync map itself: every project is
+/// its own single-step chain labelled by its name, so the CLI cannot pass a
+/// chain list that disagrees with the projects being synced. Each project runs
+/// in its own blocking task that reports its own outcome, and
 /// `await_tasks_and_report` reduces the results to a single aggregate error
 /// (also surfacing any task panic).
-pub fn run_sync_for_projects(mut projects: BTreeMap<String, PlanProject>) -> miette::Result<()> {
-    let name_indices: Vec<(String, usize)> = projects
+pub fn run_sync_for_projects(syncs: BTreeMap<String, Sync>, shell: &str) -> miette::Result<()> {
+    let shell = shell.to_string();
+    let name_indices: Vec<(String, usize)> = syncs
         .iter()
         .enumerate()
         .map(|(index, (name, _))| (name.clone(), index))
@@ -125,46 +168,53 @@ pub fn run_sync_for_projects(mut projects: BTreeMap<String, PlanProject>) -> mie
         .map(|(name, _)| (name.clone(), vec![name.clone()]))
         .collect();
 
-    runner::run_tui_with_sync(chain_pairs, move |tx| async move {
-        let mut task_handles = Vec::new();
+    runner::run_tui_with_sync(chain_pairs, move |tx| {
+        let syncs = syncs;
+        let shell = shell;
+        async move {
+            let mut task_handles = Vec::new();
 
-        for (project_name, project_index) in name_indices {
-            let Some(project) = projects.remove(&project_name) else {
-                continue;
-            };
-            let tx_cb = tx.clone();
-            let project_name_clone = project_name.clone();
+            for (project_name, project_index) in name_indices {
+                let sync = match syncs.get(&project_name) {
+                    Some(s) => s.clone(),
+                    None => continue,
+                };
+                let tx_cb = tx.clone();
+                let project_name_clone = project_name.clone();
+                let shell = shell.clone();
 
-            let handle = tokio::task::spawn_blocking(move || {
-                runner::send_tui_event(
-                    &tx_cb,
-                    TuiEvent::UpdateStatus(project_index, TaskStatus::Running),
-                );
-                let result = crate::runner::sync::sync_project_with_callback(
-                    &project_name_clone,
-                    &project,
-                    |line: &str| {
-                        runner::send_tui_event(
-                            &tx_cb,
-                            TuiEvent::AppendOutput(project_index, line.to_string()),
-                        );
-                    },
-                );
-                report_task_outcome(
-                    &tx_cb,
-                    project_index,
-                    match &result {
-                        Ok(()) => TaskOutcome::Success,
-                        Err(error) => TaskOutcome::Error(error),
-                    },
-                );
-                result
-            });
+                let handle = tokio::task::spawn_blocking(move || {
+                    runner::send_tui_event(
+                        &tx_cb,
+                        TuiEvent::UpdateStatus(project_index, TaskStatus::Running),
+                    );
+                    let result = crate::runner::sync::sync_project_with_callback(
+                        &project_name_clone,
+                        &sync,
+                        |line: &str| {
+                            runner::send_tui_event(
+                                &tx_cb,
+                                TuiEvent::AppendOutput(project_index, line.to_string()),
+                            );
+                        },
+                        &shell,
+                    );
+                    report_task_outcome(
+                        &tx_cb,
+                        project_index,
+                        match &result {
+                            Ok(()) => TaskOutcome::Success,
+                            Err(error) => TaskOutcome::Error(error),
+                        },
+                    );
+                    result
+                });
 
-            task_handles.push((project_index, handle));
+                task_handles.push((project_index, handle));
+            }
+
+            await_tasks_and_report(&tx, task_handles, "One or more projects failed to sync").await
         }
-
-        await_tasks_and_report(&tx, task_handles, "One or more projects failed to sync").await
     })?;
     Ok(())
 }

@@ -1,8 +1,8 @@
-use crate::plan::{PlanEnvPair, PlanProject, PlanStmt, match_case_pattern};
+use crate::plan::{ArmPattern, EnvPair, Instruction, Part, Template};
 use crate::runner::colors;
 use crate::runner::error::RuntimeError;
-use crate::shell;
-use std::collections::HashMap;
+use crate::subprocess;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -13,89 +13,155 @@ pub type OutputCallback = Arc<dyn Fn(String) + Send + Sync>;
 
 /// Runtime execution context for a resolved function body.
 ///
-/// All variable references have been substituted at compile time, so this
-/// context has no variable lookup or scope-tracking logic — it only manages
-/// the working directory, environment variable layers, and output.
+/// Variables are fully inlined at compile time, so there is no runtime scope
+/// stack: every template here is literal text and `$(command)` substitutions.
 pub(crate) struct ExecContext<'a> {
-    pub(super) output: &'a mut OutputCallback,
-    pub(super) env_stack: Vec<HashMap<String, String>>,
-    pub(super) work_dir: PathBuf,
-    pub(super) env_vars: Vec<(String, String)>,
+    output: &'a mut OutputCallback,
+    cwd: PathBuf,
+    env_layers: Vec<BTreeMap<String, String>>,
+    system_env: Vec<(String, String)>,
+    shell: String,
 }
 
 impl<'a> ExecContext<'a> {
-    /// Create a new execution context. The working directory is set to
-    /// `project.dir` if a project is provided, falling back to the current
-    /// directory otherwise. When `KIRU_CWD=1` is set, the current working
-    /// directory is always used (useful for CI/CD workflows where the caller
-    /// has already positioned the process in the correct directory).
-    pub(crate) fn new(project: Option<&'a PlanProject>, output: &'a mut OutputCallback) -> Self {
-        let use_cwd = crate::runner::kiru_cwd_enabled();
-        let work_dir = if use_cwd {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
-        } else {
-            project
-                .map(|p| PathBuf::from(&p.dir))
-                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")))
-        };
+    /// Create a new execution context. The working directory starts at the
+    /// process current directory.
+    pub(crate) fn new(output: &'a mut OutputCallback, shell: String) -> Self {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
         ExecContext {
             output,
-            env_stack: Vec::new(),
-            work_dir,
-            env_vars: std::env::vars().collect(),
+            cwd,
+            env_layers: Vec::new(),
+            system_env: std::env::vars().collect(),
+            shell,
         }
     }
 
-    /// Chain system env vars with per-layer overrides for subprocess execution.
-    pub(super) fn build_env_iter(&self) -> impl Iterator<Item = (String, String)> + '_ {
-        let system_env_vars = self
-            .env_vars
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone()));
-        let layer_overrides = self.env_stack.iter().flat_map(|layer| {
-            layer
-                .iter()
-                .map(|(key, value)| (key.clone(), value.clone()))
-        });
-        system_env_vars.chain(layer_overrides)
+    /// Resolve a template to a string. When `live` is true, `$(cmd)` parts are
+    /// executed and streamed to output (no captured text is appended);
+    /// otherwise their stdout is captured and inlined.
+    fn resolve(&self, tmpl: &Template, live: bool) -> Result<String, RuntimeError> {
+        let mut out = String::new();
+        for part in &tmpl.parts {
+            match part {
+                Part::Lit(s) => out.push_str(s),
+                Part::Cmd(inner) => {
+                    let cmd = self.resolve(inner, false)?;
+                    if live {
+                        self.run_live(&cmd)?;
+                    } else {
+                        out.push_str(&self.capture(&cmd));
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 
-    /// Compute indentation string based on current env block nesting depth.
-    pub(super) fn compute_indent_string(&self, extra: usize) -> String {
-        "  ".repeat(self.env_stack.len() + extra)
+    /// Run a command and stream its output live (non-fatal on non-zero exit).
+    fn run_live(&self, cmd: &str) -> Result<(), RuntimeError> {
+        let work_dir = self.cwd.clone();
+        let env_overrides: HashMap<String, String> = self.env_overrides();
+        let indent = "  ".repeat(self.env_layers.len() + 1);
+        let shell = self.shell.clone();
+        let status = subprocess::run_subprocess(
+            cmd,
+            &[&shell, "-c", cmd],
+            Some(&work_dir),
+            Some(&env_overrides),
+            None,
+            &mut |line| match line {
+                subprocess::SubprocessLine::Stdout(text) => {
+                    (self.output)(format!("{}{}", indent, text));
+                }
+                subprocess::SubprocessLine::Stderr(text) => {
+                    (self.output)(format!("{}{}", indent, text));
+                }
+            },
+        )
+        .map_err(|e| RuntimeError::exec_io_error(cmd, e))?;
+        if !status.success() {
+            return Err(RuntimeError::exec_io_error(
+                cmd,
+                subprocess::describe_exit_failure(&status),
+            ));
+        }
+        Ok(())
     }
 
-    /// Emit one output line: `indent`, `prefix`, then `payload`.
-    ///
-    /// Every statement primitive formats its output through this single sink
-    /// so the indent/prefix/payload layout exists in exactly one place.
-    fn emit_line(&mut self, indent: &str, prefix: &str, payload: &str) {
+    /// Run a command and capture its stdout (trimmed). Non-zero exit is
+    /// non-fatal: whatever stdout was produced is returned.
+    fn capture(&self, cmd: &str) -> String {
+        let work_dir = self.cwd.clone();
+        let env_overrides: HashMap<String, String> = self.env_overrides();
+        let shell = self.shell.clone();
+        let mut captured = String::new();
+        let _ = subprocess::run_subprocess(
+            cmd,
+            &[&shell, "-c", cmd],
+            Some(&work_dir),
+            Some(&env_overrides),
+            None,
+            &mut |line| match line {
+                subprocess::SubprocessLine::Stdout(text) => {
+                    captured.push_str(&text);
+                    captured.push('\n');
+                }
+                subprocess::SubprocessLine::Stderr(_) => {}
+            },
+        );
+        captured.trim_end().to_string()
+    }
+
+    /// Combine system env vars with every active env-block layer.
+    fn env_overrides(&self) -> HashMap<String, String> {
+        let mut env: HashMap<String, String> = self.system_env.iter().cloned().collect();
+        for layer in &self.env_layers {
+            for (k, v) in layer {
+                env.insert(k.clone(), v.clone());
+            }
+        }
+        env
+    }
+
+    /// Emit one output line: indent, prefix, then payload.
+    fn emit(&mut self, indent_extra: usize, prefix: &str, payload: &str) {
+        let indent = "  ".repeat(self.env_layers.len() + indent_extra);
         (self.output)(format!("{}{}{}", indent, prefix, payload));
     }
 
-    /// Run a sequence of resolved function statements sequentially.
-    ///
-    /// Every statement primitive (`log`, `exec`, `cd`, `env`, `case`) is
-    /// dispatched to its dedicated handler.  The function is re-entrant:
-    /// `case` arms and `env` blocks call back into `exec_stmts` for their
-    /// inner bodies.  The caller is responsible for saving and restoring
-    /// `work_dir` if `cd` isolation is needed — `exec_stmts` itself never
-    /// resets state.
-    ///
-    /// This is the single execution entry point used both by direct function
-    /// calls (`Runner::execute_fn_call`) and by internal constructs (`env`,
-    /// `case`).
-    pub(crate) fn exec_stmts(&mut self, body: &[PlanStmt]) -> Result<(), RuntimeError> {
+    /// Run a sequence of resolved instructions sequentially. This is the single
+    /// execution entry point used by both `Runner::execute_fn_call` and the
+    /// internal `env`/`switch` constructs (which recurse here for their bodies).
+    pub(crate) fn exec_stmts(&mut self, body: &[Instruction]) -> Result<(), RuntimeError> {
         for stmt in body {
             match stmt {
-                PlanStmt::Log(s) => self.exec_log(s)?,
-                PlanStmt::Exec(s) => self.exec_command(s)?,
-                PlanStmt::Cd(s) => self.exec_cd(s)?,
-                PlanStmt::EnvBlock(s) => self.exec_resolved_env_block(&s.pairs, &s.body)?,
-                PlanStmt::Case(s) => {
-                    for arm in &s.scopes {
-                        if match_case_pattern(&arm.pattern, &s.condition) {
+                Instruction::Log(t) => {
+                    let resolved = self.resolve(t, false)?;
+                    self.emit(0, colors::LOG_PREFIX, &resolved);
+                }
+                Instruction::Bind { value } => {
+                    // Bare `$(cmd);` from a lowered `bind` — execute for side
+                    // effects only; the variable is already inlined everywhere.
+                    self.resolve(value, true)?;
+                }
+                Instruction::Cd(t) => {
+                    let target = self.resolve(t, false)?;
+                    self.exec_cd(&target)?;
+                }
+                Instruction::Env { pairs, body } => {
+                    self.exec_env_block(pairs, body)?;
+                }
+                Instruction::Switch { subject, arms } => {
+                    let condition = self.resolve(subject, false)?;
+                    for arm in arms {
+                        let matched = match &arm.pattern {
+                            ArmPattern::Lit(s) => s == &condition,
+                            ArmPattern::Default => true,
+                        };
+                        if matched {
                             self.exec_stmts(&arm.body)?;
+                            break;
                         }
                     }
                 }
@@ -104,149 +170,71 @@ impl<'a> ExecContext<'a> {
         Ok(())
     }
 
-    pub(crate) fn exec_log(&mut self, msg: &str) -> Result<(), RuntimeError> {
-        self.emit_line(&self.compute_indent_string(0), colors::LOG_PREFIX, msg);
-        Ok(())
-    }
-
-    pub(crate) fn exec_cd(&mut self, resolved: &str) -> Result<(), RuntimeError> {
-        let candidate = if Path::new(resolved).is_absolute() {
-            PathBuf::from(resolved)
+    fn exec_cd(&mut self, target: &str) -> Result<(), RuntimeError> {
+        let candidate = if Path::new(target).is_absolute() {
+            PathBuf::from(target)
         } else {
-            self.work_dir.join(resolved)
+            self.cwd.join(target)
         };
-
         let candidate = std::fs::canonicalize(&candidate)
-            .map_err(|e| RuntimeError::Lookup(format!("cd {}: {}", resolved, e)))?;
-
+            .map_err(|e| RuntimeError::Lookup(format!("cd {}: {}", target, e)))?;
         if !candidate.is_dir() {
             return Err(RuntimeError::Lookup(format!(
-                "cd {}: target is not a directory",
-                resolved
+                "cd {}: not a directory",
+                target
             )));
         }
-
-        self.work_dir = candidate;
-
-        self.emit_line(&self.compute_indent_string(0), colors::CD_PREFIX, resolved);
+        self.cwd = candidate;
+        self.emit(0, colors::CD_PREFIX, target);
         Ok(())
     }
 
-    pub(crate) fn exec_resolved_env_block(
+    fn exec_env_block(
         &mut self,
-        pairs: &[PlanEnvPair],
-        body: &[PlanStmt],
+        pairs: &[EnvPair],
+        body: &[Instruction],
     ) -> Result<(), RuntimeError> {
-        let mut layer = HashMap::new();
+        let mut layer = BTreeMap::new();
         for pair in pairs {
-            layer.insert(pair.key.clone(), pair.value.clone());
+            layer.insert(pair.key.clone(), self.resolve(&pair.value, false)?);
         }
-
         let keys: Vec<&str> = pairs.iter().map(|p| p.key.as_str()).collect();
-        self.emit_line(
-            &self.compute_indent_string(0),
-            colors::ENV_PREFIX,
-            &keys.join(", "),
-        );
-
-        self.env_stack.push(layer);
+        self.emit(0, colors::ENV_PREFIX, &keys.join(", "));
+        self.env_layers.push(layer);
         let result = self.exec_stmts(body);
-        self.env_stack.pop();
+        self.env_layers.pop();
         result
-    }
-
-    pub(crate) fn exec_command(&mut self, cmd_str: &str) -> Result<(), RuntimeError> {
-        self.emit_line(&self.compute_indent_string(0), colors::EXEC_PREFIX, cmd_str);
-
-        let work_dir = self.work_dir.clone();
-        let env_overrides: HashMap<String, String> = self.build_env_iter().collect();
-        let indent_str = self.compute_indent_string(1);
-        let shell_path = shell::get_current_shell_path();
-        let status = shell::run_subprocess(
-            cmd_str,
-            &[&shell_path, "-c", cmd_str],
-            Some(&work_dir),
-            Some(&env_overrides),
-            None,
-            &mut |line| {
-                let text = match line {
-                    shell::SubprocessLine::Stdout(text) | shell::SubprocessLine::Stderr(text) => {
-                        text
-                    }
-                };
-                self.emit_line(&indent_str, "", &text);
-            },
-        )
-        .map_err(|e| RuntimeError::exec_io_error(cmd_str, e))?;
-
-        if !status.success() {
-            return Err(RuntimeError::exec_io_error(
-                cmd_str,
-                shell::describe_exit_failure(&status),
-            ));
-        }
-
-        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan::{PlanCaseArm, PlanCasePattern, PlanCaseStmt, PlanStmt};
+    use crate::plan::{Arm, Instruction, Template};
 
-    #[test]
-    fn test_match_literal_pattern() {
-        let pattern = PlanCasePattern::Literal("Linux".to_string());
-        assert!(match_case_pattern(&pattern, "Linux"));
-        assert!(!match_case_pattern(&pattern, "Darwin"));
+    fn lit(s: &str) -> Template {
+        Template {
+            parts: vec![Part::Lit(s.to_string())],
+        }
     }
 
     #[test]
-    fn test_match_default_pattern() {
-        let pattern = PlanCasePattern::Default;
-        assert!(match_case_pattern(&pattern, "anything"));
-        assert!(match_case_pattern(&pattern, ""));
-    }
-
-    #[test]
-    fn test_match_empty_string() {
-        let pattern = PlanCasePattern::Literal(String::new());
-        assert!(match_case_pattern(&pattern, ""));
-        assert!(!match_case_pattern(&pattern, "x"));
-    }
-
-    #[test]
-    fn test_case_first_match_wins() {
-        let (_cfg, project, mut output) = crate::runner::test_support::test_context();
-        let mut ctx = ExecContext::new(Some(&project), &mut output);
-        let body: [PlanStmt; 1] = [PlanStmt::Case(PlanCaseStmt {
-            condition: "a".to_string(),
-            scopes: vec![
-                PlanCaseArm {
-                    pattern: PlanCasePattern::Literal("a".to_string()),
-                    body: vec![PlanStmt::Log("first".to_string())],
+    fn test_switch_first_match() {
+        let mut output: OutputCallback = Arc::new(|_| {});
+        let mut ctx = ExecContext::new(&mut output, "sh".to_string());
+        let body: [Instruction; 1] = [Instruction::Switch {
+            subject: lit("a"),
+            arms: vec![
+                Arm {
+                    pattern: ArmPattern::Lit("a".to_string()),
+                    body: vec![Instruction::Log(lit("first"))],
                 },
-                PlanCaseArm {
-                    pattern: PlanCasePattern::Default,
-                    body: vec![PlanStmt::Log("second".to_string())],
+                Arm {
+                    pattern: ArmPattern::Default,
+                    body: vec![Instruction::Log(lit("second"))],
                 },
             ],
-        })];
-        ctx.exec_stmts(&body).unwrap();
-    }
-
-    #[test]
-    fn test_case_no_match_does_nothing() {
-        let (_cfg, project, mut output) = crate::runner::test_support::test_context();
-        let mut ctx = ExecContext::new(Some(&project), &mut output);
-        let body: [PlanStmt; 1] = [PlanStmt::Case(PlanCaseStmt {
-            condition: "no-match".to_string(),
-            scopes: vec![PlanCaseArm {
-                pattern: PlanCasePattern::Literal("a".to_string()),
-                body: vec![PlanStmt::Log("should-not-run".to_string())],
-            }],
-        })];
+        }];
         ctx.exec_stmts(&body).unwrap();
     }
 }

@@ -26,7 +26,7 @@ fn sync_message(line: &str) -> &str {
 
 /// Return the most recent output line of a task, extracted to its
 /// meaningful message via `sync_message`.
-fn current_display(task: &super::Task) -> String {
+fn current_display(task: &super::TaskRow) -> String {
     if task.output.is_empty() {
         return String::new();
     }

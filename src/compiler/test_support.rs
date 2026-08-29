@@ -1,18 +1,20 @@
-use crate::compiler::CompileError;
-use crate::compiler::compile::compile_and_resolve;
+use crate::compiler::compile_and_resolve;
 use crate::plan::Plan;
-use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Compile a `.kiru` file and assert success, resolving project-body
-/// `var shell` commands in the project directory (the default behavior).
-/// Wraps the public [`compile_and_resolve`] API so tests focus on assertions.
-pub(crate) fn compile_full(entry_path: &Path) -> Result<Plan, CompileError> {
-    compile_and_resolve(entry_path, false)
-}
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// Write a `.kiru` config file into a temporary directory.
-pub(crate) fn write_config(dir: &Path, name: &str, content: &str) {
-    let path = dir.join(name);
-    std::fs::write(&path, content)
-        .unwrap_or_else(|e| panic!("failed to write {}: {}", path.display(), e));
+/// Compile a string of kiru source into a `Plan` by writing it to a temp file.
+/// All compiler errors are surfaced via `unwrap` so tests fail loudly.
+pub(crate) fn compile_str(src: &str) -> Plan {
+    let file = std::env::temp_dir().join(format!(
+        "kiru_test_{}_{}.kiru",
+        std::process::id(),
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::write(&file, src).expect("write temp config");
+    let plan =
+        compile_and_resolve(&file, false).unwrap_or_else(|e| panic!("compile failed: {:?}", e));
+    let _ = std::fs::remove_file(&file);
+    plan
 }

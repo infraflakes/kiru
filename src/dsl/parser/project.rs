@@ -1,60 +1,101 @@
 use super::*;
+use crate::dsl::ProjectField;
+use std::str::FromStr;
 
 impl Parser {
     pub(crate) fn parse_project_decl(&mut self) -> Result<Stmt, ParseError> {
-        self.advance(); // skip 'pr'
+        self.advance(); // skip 'pr' or 'sync'
 
         let name = self.parse_ident_name("project name")?;
 
-        // `pr name [ field = value, ... ] { fn/run/var ... }`
-        if self.current_token().ty == TokenType::LBracket {
-            let fields = self.parse_project_fields_section()?;
-            self.expect_with_context(TokenType::LBrace, "after project field list")?;
-            let body = self.parse_project_body()?;
-            return Ok(Stmt::Project { name, fields, body });
-        }
-
-        // `pr name { fn/run/var ... }` — body only, no fields
         self.expect_with_context(TokenType::LBrace, "after project name")?;
-        let body = self.parse_project_body()?;
 
-        Ok(Stmt::Project {
-            name,
-            fields: Vec::new(),
-            body,
-        })
+        if self.is_field_start() {
+            // `sync name { url=(); ... };` — fields only.
+            let fields = self.parse_project_fields_section()?;
+            self.expect_with_context(TokenType::RBrace, "to close project field list")?;
+            if self.current_token().token_type == TokenType::Semicolon {
+                self.advance();
+            }
+            Ok(Stmt::Project {
+                name,
+                fields,
+                body: Vec::new(),
+            })
+        } else {
+            // `pr name { var...; fn...; };` — body only.
+            let body = self.parse_project_body()?;
+            if self.current_token().token_type == TokenType::RBrace {
+                self.advance();
+            }
+            if self.current_token().token_type == TokenType::Semicolon {
+                self.advance();
+            }
+            Ok(Stmt::Project {
+                name,
+                fields: Vec::new(),
+                body,
+            })
+        }
+    }
+
+    /// True when the current token begins a project field (`url`/`dir`/`branch`
+    /// as an identifier, or `sync` as the keyword).
+    fn is_field_start(&self) -> bool {
+        match &self.current_token().token_type {
+            TokenType::Sync => true,
+            TokenType::Ident(s) => matches!(s.as_str(), "url" | "dir" | "branch"),
+            _ => false,
+        }
+    }
+
+    fn parse_field_key(&mut self) -> Result<ProjectField, ParseError> {
+        match &self.current_token().token_type {
+            TokenType::Sync => {
+                self.advance();
+                Ok(ProjectField::Sync)
+            }
+            TokenType::Ident(s) => {
+                let key = s.clone();
+                self.advance();
+                ProjectField::from_str(&key).map_err(|_| {
+                    ParseError::new(
+                        self.eof_aware_span(),
+                        format!("unknown project field: {}", key),
+                    )
+                })
+            }
+            _ => Err(ParseError::new(
+                self.eof_aware_span(),
+                "expected project field name".to_string(),
+            )),
+        }
     }
 
     fn parse_project_fields_section(&mut self) -> Result<Vec<Stmt>, ParseError> {
-        self.advance(); // skip '['
-
         let mut fields = Vec::new();
         let mut seen_fields: std::collections::HashSet<ProjectField> =
             std::collections::HashSet::new();
-        while self.current_token().ty != TokenType::RBracket {
+        while self.current_token().token_type != TokenType::RBrace {
             let type_offset = self.current_token().offset;
-            let key_str = self.parse_ident_name("field name")?;
-
-            let key = match key_str.parse::<ProjectField>() {
-                Ok(key) => key,
-                Err(_) => {
-                    return Err(ParseError::new(
-                        self.eof_aware_span(),
-                        format!("unknown project field: {}", key_str),
-                    ));
-                }
-            };
+            let key = self.parse_field_key()?;
 
             if !seen_fields.insert(key) {
                 return Err(ParseError::new(
                     self.eof_aware_span(),
-                    format!("duplicate project field: {}", key_str),
+                    format!("duplicate project field: {}", key.as_str()),
                 ));
             }
 
             self.expect_with_context(TokenType::Assign, "in project field")?;
 
             let value = self.parse_expr()?;
+
+            // A trailing `;` after a field is optional: fields may also be
+            // separated by newlines, as in `sync name { url = (..) dir = (..) }`.
+            if self.current_token().token_type == TokenType::Semicolon {
+                self.advance();
+            }
 
             let field_len = self.current_token().offset - type_offset;
             fields.push(Stmt::Field {
@@ -64,162 +105,61 @@ impl Parser {
                 len: field_len,
             });
         }
-
-        self.expect_with_context(TokenType::RBracket, "to close project field list")?;
         Ok(fields)
     }
 
     fn parse_project_body(&mut self) -> Result<Vec<Stmt>, ParseError> {
         let mut body = Vec::new();
-        while self.current_token().ty != TokenType::RBrace {
-            match &self.current_token().ty {
+        while self.current_token().token_type != TokenType::RBrace {
+            match &self.current_token().token_type {
                 TokenType::Var => {
                     body.push(self.parse_var_decl()?);
                 }
-                TokenType::Use => {
-                    body.push(self.parse_use_stmt()?);
-                }
                 TokenType::Fn => {
-                    return Err(ParseError::new(
-                        self.eof_aware_span(),
-                        "project-level functions are not allowed; declare the function at the top level and apply it with `use`".to_string(),
-                    ));
+                    body.push(self.parse_fn_decl()?);
                 }
                 _ => {
                     return Err(ParseError::new(
                         self.eof_aware_span(),
-                        "expected `var` or `use` in project body".to_string(),
+                        "expected `var` or `fn` in project body".to_string(),
                     ));
                 }
             }
         }
-        self.expect_with_context(TokenType::RBrace, "to close project body")?;
         Ok(body)
-    }
-
-    /// Parses a function application: `use name;` or `use name as alias;`. The
-    /// shared (global) function `name` is bound into the enclosing project as
-    /// `project::name`, or `project::alias` when `as` is given. The trailing
-    /// `;` closes the statement.
-    fn parse_use_stmt(&mut self) -> Result<Stmt, ParseError> {
-        let offset = self.current_token().offset;
-        let source_name = self.source_name.clone();
-        self.advance(); // skip `use`
-
-        let function = self.parse_ident_name("function name")?;
-
-        let alias = if self.current_token().ty == TokenType::Ident("as".to_string()) {
-            self.advance();
-            Some(self.parse_ident_name("alias name")?)
-        } else {
-            None
-        };
-        let semi_end = self.current_token().offset + self.current_token().len;
-        self.expect_with_context(TokenType::Semicolon, "after `use`")?;
-
-        let len = semi_end - offset;
-        Ok(Stmt::Use {
-            function,
-            alias,
-            offset,
-            len,
-            source_name,
-        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::dsl::parser::test_support::*;
-    use crate::dsl::{ProjectField, Stmt, TopLevel};
+    use crate::dsl::{Stmt, TopLevel};
 
     #[test]
-    fn test_project_with_url_and_dir() {
-        let input = "pr myproj [url = `u` dir = `d`] { use build; }";
+    fn test_sync_with_fields() {
+        let input = "sync myproj { url = (u); dir = (d); branch = (b); sync = (ignore); };";
         let prog = parse_program(input).unwrap();
         assert_eq!(count_stmt_types(&prog), vec!["pr"]);
-        match &prog.items[0] {
+        match &prog.top_level_items[0] {
             TopLevel::Stmt(Stmt::Project {
                 name, fields, body, ..
             }) => {
                 assert_eq!(name, "myproj");
-                assert_eq!(fields.len(), 2);
-                assert!(matches!(
-                    &fields[0],
-                    Stmt::Field {
-                        key: ProjectField::Url,
-                        ..
-                    }
-                ));
-                assert!(matches!(
-                    &fields[1],
-                    Stmt::Field {
-                        key: ProjectField::Dir,
-                        ..
-                    }
-                ));
-                assert_eq!(count_body_stmt_types(body), vec!["use"]);
-            }
-            _ => panic!("expected Project"),
-        }
-    }
-
-    #[test]
-    fn test_project_with_all_fields() {
-        let input = "pr p [url = `u` dir = `d` sync = `s` branch = `b`] { use f; }";
-        let prog = parse_program(input).unwrap();
-        match &prog.items[0] {
-            TopLevel::Stmt(Stmt::Project { fields, .. }) => {
                 assert_eq!(fields.len(), 4);
+                assert!(body.is_empty());
             }
             _ => panic!("expected Project"),
         }
     }
 
     #[test]
-    fn test_project_missing_opening_bracket() {
-        let result = parse_program("pr p url = `u`] { }");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_project_missing_closing_bracket() {
-        let result = parse_program("pr p [url = `u` { }");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_project_empty_fields() {
-        let input = "pr p [] { use b; }";
+    fn test_pr_with_body() {
+        let input = "pr p { var app = (todo); fn build { log (x); } };";
         let prog = parse_program(input).unwrap();
-        match &prog.items[0] {
+        match &prog.top_level_items[0] {
             TopLevel::Stmt(Stmt::Project { fields, body, .. }) => {
                 assert!(fields.is_empty());
-                assert_eq!(count_body_stmt_types(body), vec!["use"]);
-            }
-            _ => panic!("expected Project"),
-        }
-    }
-
-    #[test]
-    fn test_project_without_fields_errors() {
-        let result = parse_program("pr p { use b; ; }");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_project_sync_ignore_value_ok() {
-        let input = "pr p [sync = `ignore`] { use f; }";
-        let prog = parse_program(input).unwrap();
-        match &prog.items[0] {
-            TopLevel::Stmt(Stmt::Project { fields, .. }) => {
-                assert!(matches!(
-                    &fields[0],
-                    Stmt::Field {
-                        key: ProjectField::Sync,
-                        ..
-                    }
-                ));
+                assert_eq!(count_body_stmt_types(body), vec!["var", "fn"]);
             }
             _ => panic!("expected Project"),
         }
@@ -227,19 +167,19 @@ mod tests {
 
     #[test]
     fn test_project_unknown_field_key_errors() {
-        let result = parse_program("pr p [unknown = `v`] { }");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_project_missing_field_value() {
-        let result = parse_program("pr p [url = ] { }");
+        let result = parse_program("sync p { unknown = (v); };");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_project_duplicate_field_errors() {
-        let result = parse_program("pr p [url = `a` url = `b`] { }");
+        let result = parse_program("sync p { url = (a); url = (b); };");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_project_missing_field_value() {
+        let result = parse_program("sync p { url = };");
         assert!(result.is_err());
     }
 }

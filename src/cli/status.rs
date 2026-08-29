@@ -1,7 +1,6 @@
 use super::load_config;
 use super::pager;
-use crate::plan::Plan;
-use crate::plan::PlanProject;
+use crate::plan::{Plan, Project, Sync, render_template};
 use crate::runner::colors::{BOLD, BOLD_CYAN, CYAN, GRAY_ANSI, RESET, YELLOW};
 use std::path::PathBuf;
 
@@ -13,20 +12,20 @@ macro_rules! style {
 
 pub fn run_status_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
     let config = load_config(config_arg)?;
-    let output = format_config_as_tree(&config);
-    pager::display_output_through_pager(&output)?;
+    let rendered_status_tree = format_config_as_tree(&config);
+    pager::display_output_through_pager(&rendered_status_tree)?;
     Ok(())
 }
 
 /// Render the whole config (projects + runs) as an indented tree suitable for
-/// the pager. Each project lists its fields and functions; each run lists its
-/// chains of `namespace::function` references.
+/// the pager. Each project lists its sync fields and functions; each run lists
+/// its chain of `project::function` references.
 fn format_config_as_tree(config: &Plan) -> String {
     let mut formatted_output = String::new();
     formatted_output.push('\n');
 
     let has_projects = !config.projects.is_empty();
-    let has_runs = !config.runs.is_empty();
+    let has_runs = !config.run_blocks.is_empty();
 
     if has_projects {
         formatted_output.push_str(&format!(
@@ -35,17 +34,20 @@ fn format_config_as_tree(config: &Plan) -> String {
             style!(YELLOW, "{}", config.projects.len())
         ));
 
+        let count = config.projects.len();
         for (i, (name, project)) in config.projects.iter().enumerate() {
-            let is_last_project = i == config.projects.len() - 1;
-            draw_project(&mut formatted_output, name, project, is_last_project);
+            let is_last_project = i == count - 1;
+            let sync = config.syncs.get(name);
+            draw_project(&mut formatted_output, name, project, sync, is_last_project);
         }
     }
 
     if has_runs {
         formatted_output.push_str(&format!("\n  {}\n", style!(BOLD, "Runs")));
 
-        for (run_idx, (name, chains)) in config.runs.iter().enumerate() {
-            let is_last_run = run_idx == config.runs.len() - 1;
+        let count = config.run_blocks.len();
+        for (run_idx, (name, calls)) in config.run_blocks.iter().enumerate() {
+            let is_last_run = run_idx == count - 1;
             let run_connector = if is_last_run { "└" } else { "├" };
             formatted_output.push_str(&format!(
                 "  {}── {}\n",
@@ -55,22 +57,28 @@ fn format_config_as_tree(config: &Plan) -> String {
 
             let run_indent = if is_last_run { "   " } else { "│  " };
 
-            for (chain_idx, chain) in chains.iter().enumerate() {
-                let is_last_chain = chain_idx == chains.len() - 1;
-                let chain_connector = if is_last_chain { "└" } else { "├" };
-
-                let chain_str = chain
-                    .iter()
-                    .map(crate::plan::QualifiedFnRef::fqn)
-                    .collect::<Vec<_>>()
-                    .join(" => ");
-
-                formatted_output.push_str(&format!(
-                    "  {}  {}── {}\n",
-                    run_indent,
-                    style!(BOLD, "{}", chain_connector),
-                    chain_str
-                ));
+            let stage_count = calls.len();
+            for (stage_idx, stage) in calls.iter().enumerate() {
+                let is_last_stage = stage_idx == stage_count - 1;
+                if stage_idx > 0 {
+                    formatted_output.push_str(&format!(
+                        "  {}  {}── {}\n",
+                        run_indent,
+                        style!(BOLD, "{}", "│"),
+                        style!(GRAY_ANSI, "=>")
+                    ));
+                }
+                let stage_connector = if is_last_stage { "└" } else { "├" };
+                for (call_idx, call) in stage.iter().enumerate() {
+                    let is_last_call = call_idx == stage.len() - 1;
+                    let call_connector = if is_last_call { stage_connector } else { "├" };
+                    formatted_output.push_str(&format!(
+                        "  {}  {}── {}\n",
+                        run_indent,
+                        style!(BOLD, "{}", call_connector),
+                        call.fqn()
+                    ));
+                }
             }
         }
     }
@@ -80,8 +88,8 @@ fn format_config_as_tree(config: &Plan) -> String {
     formatted_output
 }
 
-/// Render a single project node with its fields and functions/runs.
-fn draw_project(out: &mut String, name: &str, project: &PlanProject, last: bool) {
+/// Render a single project node with its sync fields and functions.
+fn draw_project(out: &mut String, name: &str, project: &Project, sync: Option<&Sync>, last: bool) {
     let branch = if last { "└" } else { "├" };
     out.push_str(&format!(
         "  {}── {}\n",
@@ -91,28 +99,33 @@ fn draw_project(out: &mut String, name: &str, project: &PlanProject, last: bool)
 
     let indent = if last { "   " } else { "│  " };
 
-    let sync_mode = project.sync.to_string();
-    let fields: [(&str, Option<&str>); 4] = [
-        ("url", Some(&project.url)),
-        ("dir", Some(&project.dir)),
-        ("branch", project.branch.as_deref()),
-        ("sync", Some(&sync_mode)),
-    ];
-    for (key, value) in fields {
-        if let Some(value) = value {
-            project_field(out, indent, key, value);
+    if let Some(sync) = sync {
+        if !sync.url.parts.is_empty() {
+            project_field(out, indent, "url", &render_template(&sync.url));
+        }
+        if !sync.dir.parts.is_empty() {
+            project_field(out, indent, "dir", &render_template(&sync.dir));
+        }
+        if !sync.branch.parts.is_empty() {
+            project_field(out, indent, "branch", &render_template(&sync.branch));
+        }
+        if !sync.strategy.parts.is_empty() {
+            project_field(out, indent, "sync", &render_template(&sync.strategy));
         }
     }
 
-    let project_function_names: Vec<&String> = project.functions.keys().collect();
-
-    let items: &[(&str, &[&String])] = &[("fn", &project_function_names)];
-
-    for (i, (label, names)) in items.iter().enumerate() {
-        let last_item = i == items.len() - 1;
-        let connector = if last_item { "└" } else { "├" };
-        draw_item_line(out, indent, connector, label, names);
-    }
+    let function_names: Vec<&String> = project.functions.keys().collect();
+    draw_item_line(
+        out,
+        indent,
+        if function_names.is_empty() {
+            "└"
+        } else {
+            "├"
+        },
+        "fn",
+        &function_names,
+    );
 }
 
 fn project_field(out: &mut String, indent: &str, key: &str, value: &str) {
@@ -157,7 +170,7 @@ fn footer_bar(out: &mut String, config: &Plan) {
         .values()
         .map(|project| project.functions.len())
         .sum();
-    let run_count = config.runs.len();
+    let run_count = config.run_blocks.len();
 
     out.push_str(&style!(
         GRAY_ANSI,

@@ -1,0 +1,39 @@
+# shell declared on top
+shell = (sh);
+
+var home_dir = $(echo $HOME);
+var project_dir = (@(home_dir)/Projects);
+var config_dir = (@(home_dir)/.config);
+
+# sync block, cannot dupe
+sync kiru {
+  url = (https://github.com/infraflakes/kiru.git)
+  dir = (@(project_dir)/kiru)
+  branch = (dev)
+};
+
+sync portfolio {
+  url = (https://github.com/infraflakes/infraflakes.github.io.git)
+  dir = (@(project_dir)/portfolio)
+  sync = (ignore)
+};
+
+sync devenv {
+  url = (https://github.com/infraflakes/devenv.git)
+  dir = (@(project_dir)/kiru)
+};
+
+sync dots {
+  url = (https://github.com/infraflakes/dots.git)
+  dir = (@(home_dir)/dots)
+};
+
+sync nix {
+  url = (https://github.com/infraflakes/nixenv.git)
+  dir = (@(home_dir)/nix)
+};
+
+import (@(project_dir)/kiru/main.kiru);
+import (@(project_dir)/portfolio/main.kiru);
+
+import (kiru/environment.kiru);

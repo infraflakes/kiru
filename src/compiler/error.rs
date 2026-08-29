@@ -1,7 +1,4 @@
 use std::fmt;
-use std::path::Path;
-
-use crate::error::{Span, spanned_report};
 
 /// Compilation errors across the parsing, merging, and validation pipeline.
 #[derive(Debug, thiserror::Error)]
@@ -33,26 +30,4 @@ impl fmt::Display for CompileError {
             }
         }
     }
-}
-
-/// Spanned [`CompileError`] built from a [`Span`]. Centralizes the registry
-/// lookup so the `(sources, source_name, offset, len)` tuple is never passed
-/// loose through the compiler.
-pub(crate) fn spanned_err(span: &Span, msg: impl Into<String>) -> CompileError {
-    CompileError::ValidationReport(vec![spanned_report(
-        msg.into(),
-        &span.source_file(),
-        span.offset,
-        span.len,
-    )])
-}
-
-/// Wrap an [`std::io::Error`] into a [`CompileError::Io`] with a descriptive
-/// message. Centralizes the repeated `CompileError::Io(std::io::Error::new(..))`
-/// construction so callers stay declarative and error wording stays uniform.
-pub(crate) fn io_err(context: &str, path: &Path, source: &std::io::Error) -> CompileError {
-    CompileError::Io(std::io::Error::new(
-        source.kind(),
-        format!("{} {}: {}", context, path.display(), source),
-    ))
 }

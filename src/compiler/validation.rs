@@ -1,247 +1,94 @@
-#[cfg(test)]
-mod tests {
-    use crate::compiler::test_support::*;
-
-    #[test]
-    fn test_undefined_variable() {
-        let dir = tempfile::TempDir::new().unwrap();
-        write_config(
-            dir.path(),
-            "main.kiru",
-            "\
-         var string x = $global::missing;\
-         ",
-        );
-        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(
-            err.to_string().contains("undefined variable"),
-            "got: {}",
-            err
-        );
-    }
-
-    #[test]
-    fn test_invalid_sync_value() {
-        // `clone` is the default sync mode and is not a valid field value —
-        // it falls through the generic invalid-value path like any other
-        // unknown sync value.
-        for value in ["clone", "always"] {
-            let dir = tempfile::TempDir::new().unwrap();
-            write_config(
-                dir.path(),
-                "main.kiru",
-                &format!(
-                    "\
-             pr p [ url = `u` dir = `d` sync = `{}` ] {{ }}\
-             ",
-                    value
-                ),
-            );
-            let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-            assert!(
-                err.to_string()
-                    .contains(&format!("invalid sync value {:?}", value)),
-                "got: {}",
-                err
-            );
+#[test]
+fn test_compile_basic_project() {
+    let plan = crate::compiler::test_support::compile_str(
+        "\
+shell = (sh);
+var home_dir = $(echo /home/user);
+sync nix {
+    url = (git@github.com:nix);
+    dir = (@(home_dir)/nix);
+    branch = (main);
+    sync = (clone);
+};
+pr nix {
+    var channel = (unstable);
+    fn eval { log (evaluating @(channel)); };
+};
+run bootstrap { nix::eval; };
+",
+    );
+    use crate::plan::{Instruction, write_template};
+    assert_eq!(plan.shell, "sh");
+    assert_eq!(plan.projects.len(), 1);
+    let nix = plan.projects.get("nix").expect("nix project");
+    // Function-local `var channel` is fully inlined: `@(channel)` -> `unstable`,
+    // and no `vars` map survives on the project.
+    let eval_body = nix.functions.get("eval").expect("eval fn");
+    assert_eq!(eval_body.len(), 1);
+    match &eval_body[0] {
+        Instruction::Log(t) => {
+            assert_eq!(
+                write_template(t),
+                "(t (lit \"evaluating \") (lit \"unstable\"))"
+            )
         }
+        _ => panic!("expected log"),
     }
+    let sync = plan.syncs.get("nix").expect("nix sync");
+    // `@(home_dir)` is inlined into the dir template as the preserved command;
+    // nothing is executed or frozen at compile time.
+    assert_eq!(
+        write_template(&sync.url),
+        "(t (lit \"git@github.com:nix\"))"
+    );
+    assert_eq!(
+        write_template(&sync.dir),
+        "(t (cmd (t (lit \"echo /home/user\"))) (lit \"/nix\"))"
+    );
+    assert_eq!(write_template(&sync.branch), "(t (lit \"main\"))");
+    assert_eq!(write_template(&sync.strategy), "(t (lit \"clone\"))");
+    let calls = plan.run_blocks.get("bootstrap").expect("bootstrap run");
+    assert_eq!(calls.len(), 1, "single stage");
+    assert_eq!(calls[0].len(), 1, "single call in stage");
+    assert_eq!(calls[0][0].fqn(), "nix::eval");
+}
 
-    #[test]
-    fn test_undefined_var_in_fn_body() {
-        let dir = tempfile::TempDir::new().unwrap();
-        write_config(
-            dir.path(),
-            "main.kiru",
-            "\
-         fn badfn { log $global::undefined; }\n\
-         pr test [\n\
-             url = `u`\n\
-             dir = `d`\n\
-         ] {\n\
-             use badfn;\n\
-         }\
-         ",
-        );
-        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(
-            err.to_string().contains("undefined variable"),
-            "got: {}",
-            err
-        );
-    }
+#[test]
+fn test_compile_unknown_run_reference_fails() {
+    let file = std::env::temp_dir().join(format!("kiru_test_err_{}.kiru", std::process::id()));
+    std::fs::write(
+        &file,
+        "pr nix { fn eval { log (x); }; } run bad { nix::missing; };",
+    )
+    .unwrap();
+    let result = crate::compiler::compile_and_resolve(&file, false);
+    let _ = std::fs::remove_file(&file);
+    assert!(result.is_err());
+}
 
-    #[test]
-    fn test_run_reference_validation() {
-        let dir = tempfile::TempDir::new().unwrap();
-        write_config(
-            dir.path(),
-            "main.kiru",
-            "\
-         fn real { log `hi`; }\n\
-         pr test [\n\
-              url = `u`\n\
-              dir = `d`\n\
-          ] {\n\
-              use real;\n\
-          }\n\
-          run s { test::unknown; }\
-          ",
-        );
-        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-        let err_str = err.to_string();
-        assert!(err_str.contains("function"), "got: {}", err_str);
-    }
-
-    #[test]
-    fn test_valid_run_references() {
-        let dir = tempfile::TempDir::new().unwrap();
-        write_config(
-            dir.path(),
-            "main.kiru",
-            "\
-         fn real { log `hi`; }\n\
-         pr test [\n\
-              url = `u`\n\
-              dir = `d`\n\
-          ] {\n\
-              use real;\n\
-          }\n\
-          run s { test::real; }\
-          ",
-        );
-        let cfg = compile_full(&dir.path().join("main.kiru")).unwrap();
-        assert!(cfg.runs.contains_key("s"));
-    }
-
-    #[test]
-    fn test_undefined_var_in_case_condition() {
-        let dir = tempfile::TempDir::new().unwrap();
-        write_config(
-            dir.path(),
-            "main.kiru",
-            "\
-         fn badfn { case $global::undefined { _ { }; }; }\n\
-         pr test [\n\
-             url = `u`\n\
-             dir = `d`\n\
-         ] {\n\
-             use badfn;\n\
-         }\
-         ",
-        );
-        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(
-            err.to_string().contains("undefined variable"),
-            "got: {}",
-            err
-        );
-    }
-
-    #[test]
-    fn test_undefined_var_in_case_varref_pattern() {
-        let dir = tempfile::TempDir::new().unwrap();
-        write_config(
-            dir.path(),
-            "main.kiru",
-            "\
-         fn badfn { var string x = `ok`; case $self::x { $global::undefined { }; _ { }; }; }\n\
-         pr test [\n\
-             url = `u`\n\
-             dir = `d`\n\
-         ] {\n\
-             use badfn;\n\
-         }\
-         ",
-        );
-        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(
-            err.to_string().contains("undefined variable"),
-            "got: {}",
-            err
-        );
-    }
-
-    #[test]
-    fn test_run_validates_function_refs() {
-        let dir = tempfile::TempDir::new().unwrap();
-        write_config(
-            dir.path(),
-            "main.kiru",
-            "\
-         pr p [ url = `http://x` dir = `x` ] {\n\
-         }\n\
-         run bad { p::nonexistent; }\
-         ",
-        );
-        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(err.to_string().contains("function"), "got: {}", err);
-    }
-
-    #[test]
-    fn test_fn_var_validation() {
-        let dir = tempfile::TempDir::new().unwrap();
-        write_config(
-            dir.path(),
-            "main.kiru",
-            "\
-         fn bad { log $global::undefined; }\n\
-         pr p [ url = `http://x` dir = `x` ] {\n\
-             use bad;\n\
-         }\
-         ",
-        );
-        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-        assert!(
-            err.to_string().contains("undefined variable"),
-            "got: {}",
-            err
-        );
-    }
-
-    #[test]
-    fn test_validation_errors_span_multiple_source_files() {
-        // Two undefined-variable validation errors that originate from DIFFERENT
-        // source files (main.kiru and an imported build.kiru). The aggregate
-        // must preserve each child report's own source/span, so both surface
-        // with their correct file instead of being collapsed into one
-        // stringified blob.
-        let dir = tempfile::TempDir::new().unwrap();
-        write_config(
-            dir.path(),
-            "main.kiru",
-            "\
- fn f1 { log $global::missing_main; }
- pr p [ url = `u` dir = `d` ] {
-     use f1;
- }
- import `build.kiru`;
-            ",
-        );
-        write_config(
-            dir.path(),
-            "build.kiru",
-            "\
- fn f2 { log $global::missing_build; }
- pr p {
-     use f2;
- }
-            ",
-        );
-        // With top-down processing, the first error in source order surfaces
-        // immediately. The second file's error is only revealed after the
-        // first is fixed.
-        let err = compile_full(&dir.path().join("main.kiru")).unwrap_err();
-        let err_str = err.to_string();
-        assert!(
-            err_str.contains("undefined variable") && err_str.contains("global::missing_main"),
-            "got: {}",
-            err_str
-        );
-        assert!(
-            !err_str.contains("validation error(s) found"),
-            "aggregate must keep original diagnostics, not stringify-and-wrap, got: {}",
-            err_str
-        );
+#[test]
+fn test_compile_switch_lowering() {
+    let plan = crate::compiler::test_support::compile_str(
+        "\
+pr p {
+    var os = (linux);
+    fn pick {
+        switch @(os) {
+            case (linux) { log (linux-path); };
+            case _ { log (other); };
+        };
+    };
+};
+",
+    );
+    let p = plan.projects.get("p").expect("p project");
+    let body = p.functions.get("pick").expect("pick fn");
+    assert_eq!(body.len(), 1);
+    match &body[0] {
+        crate::plan::Instruction::Switch { arms, .. } => {
+            assert_eq!(arms.len(), 2);
+            assert!(matches!(arms[1].pattern, crate::plan::ArmPattern::Default));
+        }
+        _ => panic!("expected switch"),
     }
 }

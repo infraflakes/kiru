@@ -16,7 +16,7 @@ pub(crate) mod render;
 pub(crate) mod run;
 pub(crate) mod sync;
 
-pub(crate) use model::{Model, Task, TaskStatus};
+pub(crate) use model::{Model, TaskRow, TaskStatus};
 
 use crossterm_backend::SafeBackend;
 

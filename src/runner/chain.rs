@@ -1,5 +1,4 @@
-use crate::plan::Plan;
-use crate::plan::QualifiedFnRef;
+use crate::plan::{Call, Plan};
 use crate::runner::error::RuntimeError;
 use crate::runner::{
     self, Runner, TaskOutcome, TaskStatus, TuiEvent, await_tasks_and_report, report_task_outcome,
@@ -7,21 +6,21 @@ use crate::runner::{
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-/// Execute a single chain of functions sequentially inside a blocking task.
+/// Execute a single chain of calls sequentially inside a blocking task.
 ///
-/// Each step gets its own `Runner` whose output callback captures the step's
-/// task slot directly, so no shared current-task index is needed. Output lines
-/// are forwarded through the TUI event channel and each step's outcome is
-/// reported as it completes. The chain's failing error is propagated so the
+/// Each call gets its own TUI task slot (computed from `start_index`), so the
+/// chain's steps map directly onto contiguous rows in the model. Output lines
+/// are forwarded through the TUI channel and each step's outcome is reported as
+/// it completes; a failing step stops the chain and propagates the error so the
 /// caller keeps the detail.
 fn execute_single_chain(
-    chain: Vec<QualifiedFnRef>,
+    chain: Vec<Call>,
     start_index: usize,
     config: Arc<Plan>,
     tx: mpsc::UnboundedSender<TuiEvent>,
 ) -> Result<(), RuntimeError> {
-    for (fn_idx, qualified) in chain.iter().enumerate() {
-        let task_idx = start_index + fn_idx;
+    for (call_idx, call) in chain.iter().enumerate() {
+        let task_idx = start_index + call_idx;
         let output_callback = {
             let tx = tx.clone();
             move |line: String| runner::send_tui_event(&tx, TuiEvent::AppendOutput(task_idx, line))
@@ -29,7 +28,7 @@ fn execute_single_chain(
         let mut runner = Runner::new(config.clone(), Arc::new(output_callback));
         runner::send_tui_event(&tx, TuiEvent::UpdateStatus(task_idx, TaskStatus::Running));
 
-        let result = runner.execute_fn_call(&qualified.function, &qualified.project);
+        let result = runner.execute_fn_call(&call.function, &call.project);
         report_task_outcome(
             &tx,
             task_idx,
@@ -44,19 +43,22 @@ fn execute_single_chain(
     Ok(())
 }
 
-/// Execute a list of function chains through the TUI.
-pub fn execute_task_chains(
-    config: Arc<Plan>,
-    chains: Vec<Vec<QualifiedFnRef>>,
-) -> miette::Result<()> {
-    let (chain_pairs, chain_tasks): (Vec<_>, Vec<_>) = chains
+/// Execute run-block chains through the TUI.
+///
+/// A run block is an ordered list of chains. Calls joined by `=>` form one
+/// sequential chain (each runs after the previous); `;` separates chains, which
+/// run concurrently with one another. Every chain gets its own grouped header in
+/// the TUI, with its calls listed underneath.
+pub fn execute_task_chains(config: Arc<Plan>, chains: Vec<Vec<Call>>) -> miette::Result<()> {
+    // One TUI chain group per run-block chain, labelled by its joined calls.
+    let chain_pairs: Vec<(String, Vec<String>)> = chains
         .iter()
         .map(|chain| {
-            let task_names: Vec<String> = chain.iter().map(QualifiedFnRef::fqn).collect();
-            let label = task_names.join(" → ");
-            ((label, task_names), chain.clone())
+            let task_names: Vec<String> = chain.iter().map(Call::fqn).collect();
+            let label = task_names.join(" => ");
+            (label, task_names)
         })
-        .unzip();
+        .collect();
 
     runner::run_tui_with_run(chain_pairs, move |tx| {
         let config = Arc::clone(&config);
@@ -64,7 +66,7 @@ pub fn execute_task_chains(
             let mut chain_handles = Vec::new();
             let mut base_index = 0;
 
-            for chain in &chain_tasks {
+            for chain in &chains {
                 let tx = tx.clone();
                 let config = Arc::clone(&config);
                 let chain = chain.clone();
@@ -74,12 +76,7 @@ pub fn execute_task_chains(
                 let handle = tokio::task::spawn_blocking(move || {
                     execute_single_chain(chain, start_index, config, tx)
                 });
-
-                // The chain's final step is the anchor used to surface a
-                // panic: any step that already reported keeps its outcome,
-                // and the last slot is the one most likely still pending.
-                let panic_anchor = start_index + chain_len.saturating_sub(1);
-                chain_handles.push((panic_anchor, handle));
+                chain_handles.push((start_index + chain_len.saturating_sub(1), handle));
                 base_index += chain_len;
             }
 

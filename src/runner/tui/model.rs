@@ -10,7 +10,7 @@ pub enum TaskStatus {
 /// A single task within a chain: tracks its name, current status, and
 /// accumulated output lines.
 #[derive(Debug, Clone)]
-pub(crate) struct Task {
+pub(crate) struct TaskRow {
     pub name: String,
     pub status: TaskStatus,
     pub output: Vec<String>,
@@ -29,7 +29,7 @@ pub(crate) struct Chain {
 /// index structure (chains) that groups them into sequential groups.
 #[derive(Debug, Clone)]
 pub struct Model {
-    pub tasks: Vec<Task>,
+    pub tasks: Vec<TaskRow>,
     pub chains: Vec<Chain>,
 }
 
@@ -48,7 +48,7 @@ impl Model {
         let task_start = self.tasks.len();
         let task_count = task_names.len();
         for name in task_names {
-            self.tasks.push(Task {
+            self.tasks.push(TaskRow {
                 name,
                 status: TaskStatus::Pending,
                 output: Vec::new(),

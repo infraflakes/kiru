@@ -1,86 +1,72 @@
-fn update_kiru {
-  log `Updating dependencies`;
-  exec `cargo update`;
-  exec `cargo upgrade`;
-  exec `nix flake update`;
-}
+pr kiru {
+  fn update {
+    log (Updating dependencies);
+    $(cargo update);
+    $(cargo upgrade);
+    $(nix flake update);
+  }
 
-fn build_kiru {
-  log `Building kiru cli!`;
-  exec `cargo build --release`;
-}
+  fn build {
+    log (Building kiru cli!);
+    $(cargo build --release);
+  }
 
-var shell docker_bin = `command -v docker >/dev/null 2>&1 && echo "docker" || { command -v podman >/dev/null 2>&1 && echo "podman"; }`;
-fn build_kiru_with_container {
-  case $global::docker_bin {
-    `` {
-      log `no container runtime found`;
-      exec `exit 1`;
+  fn container {
+    $(command -v docker >/dev/null 2>&1 && echo "docker" || { command -v podman >/dev/null 2>&1 && echo "podman"; }) -> docker_bin;
+    switch @(docker_bin) {
+      case () {
+        log (no container runtime found);
+        $(exit 1);
+      };
+      case _ {
+        log (building kiru with @(docker_bin));
+        $(@(docker_bin) build --output type=local,dest=bin .);
+      };
     };
-    _  {
-      log `building kiru with ${global::docker_bin}`;
-      exec `${global::docker_bin} build --output type=local,dest=bin .`;
+  }
+
+  fn clean {
+    log (Cleaning up artifacts...);
+    $(rm -rf bin);
+    $(rm -rf result);
+  }
+
+  fn fmt {
+    log (Formatting the codebase...);
+    $(cargo clippy --fix --allow-dirty);
+    $(cargo fmt);
+  }
+
+  fn test {
+    log (Testing the codebase!);
+    $(cargo test);
+    $(cargo clippy -- -D warnings);
+    $(cargo fmt --check);
+  }
+
+  fn fail {
+    log (Failing the task!);
+    env {
+      CGO_ENABLED = (0);
+      GOPATH = (@(home_dir)/.local/share/go);
+    } {
+      $(go build ./...);
     };
-  };
-}
-
-fn clean_kiru {
-  log `Cleaning up artifacts...`;
-  exec `rm -rf bin`;
-  exec `rm -rf result`;
-}
-
-fn fmt_kiru {
-  log `Formatting the codebase...`;
-  exec `cargo clippy --fix --allow-dirty`;
-  exec `cargo fmt`;
-}
-
-fn test_kiru {
-  log `Testing the codebase!`;
-  exec `cargo test`;
-  exec `cargo clippy -- -D warnings`;
-  exec `cargo fmt --check`;
-}
-
-fn fail_kiru {
-  log `Failing the task!`;
-  env [
-    CGO_ENABLED = `0`
-    GOPATH = `$HOME/.local/share/go`
-  ] {
-    exec `go build ./...`;
-  };
-}
-
-# var shell workdir = `echo $HOME/Projects`;
-
-# var string kiru_dir = `${global::workdir}/kiru`;
-pr kiru [
-  # url = `https://github.com/infraflakes/kiru.git`
-  # dir = $global::kiru_dir
-  # sync = `ignore`
-  # branch = `dev`
-] {
-  use clean_kiru as clean;
-  use build_kiru as build;
-  use fmt_kiru as fmt;
-  use test_kiru as test;
-  use fail_kiru as fail;
-  use build_kiru_with_container as container;
-  use update_kiru as update;
-}
-# import `${global::kiru_dir}/main.kiru`;
+  }
+};
 
 run all_kiru {
-  kiru::test => kiru::build;
-  kiru::fmt => kiru::test;
-  kiru::fail => kiru::fmt;
-}
+  kiru::test;
+  kiru::build;
+  kiru::fmt;
+};
+
 run test_kiru {
   kiru::fmt => kiru::test;
   kiru::build;
-}
+};
+
 run ci_kiru {
-  kiru::test => kiru::build;
-}
+  kiru::test;
+  kiru::build;
+};

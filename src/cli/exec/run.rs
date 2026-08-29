@@ -1,16 +1,15 @@
 use super::super::load_config;
-use crate::plan::QualifiedFnRef;
 use crate::runner;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Entry point for the run CLI command, executes a global run block by name.
-/// Each chain reference is `namespace::function`; the namespace is the project name.
+/// Each chain reference is `project::function`; the project is the namespace.
 pub fn execute_run_block(config_arg: Option<PathBuf>, name: String) -> miette::Result<()> {
     let config = load_config(config_arg)?;
 
-    let chains: Vec<Vec<QualifiedFnRef>> = match config.runs.get(&name) {
-        Some(chain_list) => chain_list.clone(),
+    let chains = match config.run_blocks.get(&name) {
+        Some(stages) => stages.clone(),
         None => {
             return Err(miette::miette!("unknown run block '{}'", name));
         }

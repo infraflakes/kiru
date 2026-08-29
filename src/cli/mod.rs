@@ -11,20 +11,29 @@ use crate::plan::Plan;
 use clap::Parser;
 use std::path::{Path, PathBuf};
 
-/// Load a plan through the given compiler entry point (full compile or
-/// metadata-only for sync), mapping compiler errors to miette reports once.
+pub(crate) mod compile;
+
+/// Load a plan through the given loader, mapping compiler errors to miette
+/// reports once.
 fn load_config_via(
     config_arg: Option<PathBuf>,
-    load: impl FnOnce(&Path) -> Result<Plan, CompileError>,
+    load: impl FnOnce(&Path) -> miette::Result<Plan>,
 ) -> miette::Result<Plan> {
     let config_path = get_config_path(config_arg);
-    load(&config_path).map_err(compile_error_to_report)
+    load(&config_path)
 }
 
+/// Load a resolved plan by reading and parsing a `kirufile` artifact directly.
+/// Every runtime command (`run`/`status`/`sync`/`fn`) operates on the compiled
+/// `kirufile` rather than the `.kiru` DSL source.
 fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Plan> {
-    let force_cwd = crate::runner::kiru_cwd_enabled();
     load_config_via(config_arg, |config_path| {
-        crate::compiler::compile_and_resolve(config_path, force_cwd)
+        let text = std::fs::read_to_string(config_path).map_err(|e| {
+            miette::miette!("failed to read kirufile {}: {}", config_path.display(), e)
+        })?;
+        Plan::from_kirufile(&text).map_err(|e| {
+            miette::miette!("failed to parse kirufile {}: {}", config_path.display(), e)
+        })
     })
 }
 
@@ -58,6 +67,9 @@ pub fn run_cli() -> miette::Result<()> {
         Commands::Sync => sync::run_sync_command(parsed_cli.config),
         Commands::Run { name } => exec::execute_run_block(parsed_cli.config, name),
         Commands::Fn { name, project } => exec::execute_function(parsed_cli.config, name, project),
+        Commands::Compile { input, output } => {
+            compile::run_compile_command(input.or(parsed_cli.config), output)
+        }
         Commands::Version => run_version(),
     }
 }
@@ -67,17 +79,9 @@ fn get_config_path(config_arg: Option<PathBuf>) -> PathBuf {
         return path;
     }
 
-    // In CI/CD (or any invocation where `KIRU_CWD=1` is set) the caller is
-    // already inside the project, so resolve the config to `main.kiru` in the
-    // current directory rather than the global `~/.config/kiru/main.kiru`.
-    if crate::runner::kiru_cwd_enabled() {
-        return PathBuf::from("main.kiru");
-    }
-
-    if let Some(config_dir) = dirs::config_dir() {
-        return config_dir.join("kiru").join("main.kiru");
-    }
-    PathBuf::from("main.kiru")
+    // Without an explicit path, commands operate on a compiled `kirufile`
+    // artifact in the current directory (produced earlier by `kiru compile`).
+    PathBuf::from("kirufile")
 }
 
 fn run_version() -> miette::Result<()> {

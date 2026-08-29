@@ -3,11 +3,8 @@ use crate::dsl::Program;
 use crate::dsl::error::ParseError;
 use crate::dsl::lexer::Lexer;
 use crate::dsl::token::{Token, TokenType, format_token, format_token_type, is_keyword_token};
-use crate::dsl::{
-    CaseArm, CasePattern, EnvPair, Expr, FnStmt, InterpolationPart, ProjectField, Stmt, TopLevel,
-    VarType,
-};
-use crate::plan::QualifiedFnRef;
+use crate::dsl::{FnStmt, Stmt, Template, TopLevel};
+use crate::plan::Call;
 use miette::SourceSpan;
 
 mod body;
@@ -24,8 +21,8 @@ pub(crate) mod test_support;
 pub(crate) struct Parser {
     lexer: Lexer,
     current: Token,
-    /// One token of lookahead, used to disambiguate `namespace::name` forms
-    /// (e.g. a function copy) from a bare identifier in a project body.
+    /// One token of lookahead, used to disambiguate `pr::fn` references in run
+    /// blocks from a bare identifier in a function body.
     next: Token,
     source_len: usize,
     source_name: String,
@@ -81,7 +78,7 @@ impl Parser {
 
     /// Expects a specific token type and advances past it, returning an error with context on mismatch.
     fn expect_with_context(&mut self, ty: TokenType, context: &str) -> Result<(), ParseError> {
-        if self.current_token().ty == ty {
+        if self.current_token().token_type == ty {
             self.advance();
             Ok(())
         } else {
@@ -99,7 +96,7 @@ impl Parser {
     /// project, run, or field name) and advances past it. Reserved keywords
     /// and non-identifier tokens are rejected with a context-aware message.
     fn parse_ident_name(&mut self, expected: &'static str) -> Result<String, ParseError> {
-        let name = match &self.current_token().ty {
+        let name = match &self.current_token().token_type {
             TokenType::Ident(name_str) => name_str.clone(),
             ty if is_keyword_token(ty) => {
                 return Err(ParseError::new(
@@ -126,10 +123,10 @@ impl Parser {
         Ok(name)
     }
 
-    /// Reads one identifier part of a qualified `namespace::name` reference,
+    /// Reads one identifier part of a qualified `project::function` reference,
     /// rejecting reserved keywords, and advances past it.
     fn parse_ident_part(&mut self, expected: &'static str) -> Result<String, ParseError> {
-        match &self.current_token().ty {
+        match &self.current_token().token_type {
             TokenType::Ident(part) => {
                 let part = part.clone();
                 self.advance();
@@ -147,45 +144,39 @@ impl Parser {
         }
     }
 
-    /// Parses a `namespace::name` reference at the current token. Both parts
-    /// must be plain identifiers — reserved keywords are rejected. Shared by
-    /// `$namespace::name` variable references, case patterns, and run-block
-    /// function references; each caller supplies its own error wording.
-    /// Returns the namespace, the name, and the name's end offset (for span
-    /// construction, since the helper advances past the name).
+    /// Parses a `project::function` reference at the current token. Both parts
+    /// must be plain identifiers. Returns the project, the function, and the
+    /// function's end offset (for span construction).
     fn parse_qualified_ref(
         &mut self,
-        expected_namespace: &'static str,
-        expected_name: &'static str,
-        separator_error: &'static str,
+        expected_project: &'static str,
+        expected_function: &'static str,
     ) -> Result<(String, String, usize), ParseError> {
-        let namespace = self.parse_ident_part(expected_namespace)?;
-        if self.current_token().ty != TokenType::NamespaceSep {
+        let project = self.parse_ident_part(expected_project)?;
+        if self.current_token().token_type != TokenType::NamespaceSep {
             return Err(ParseError::new(
                 self.eof_aware_span(),
-                separator_error.to_string(),
+                "run reference must be `project::function`".to_string(),
             ));
         }
         self.advance();
-        let name = self.parse_ident_part(expected_name)?;
-        let name_end = self.current_token().offset + self.current_token().len;
-        Ok((namespace, name, name_end))
+        let function = self.parse_ident_part(expected_function)?;
+        let function_end = self.current_token().offset + self.current_token().len;
+        Ok((project, function, function_end))
     }
 
     /// Returns an error if the current token is an illegal (lexer-error) token,
-    /// otherwise `Ok(())`. Centralizes the identical illegal-token guard
-    /// repeated at every parse entry point.
+    /// otherwise `Ok(())`.
     fn err_on_illegal_token(&self) -> Result<(), ParseError> {
-        if let TokenType::Illegal(msg) = &self.current_token().ty {
+        if let TokenType::Illegal(msg) = &self.current_token().token_type {
             return Err(ParseError::new(self.eof_aware_span(), msg.clone()));
         }
         Ok(())
     }
 
-    /// Builds the error for an unexpected statement-start token: `_` is only
-    /// valid as a case pattern, otherwise the expected set is reported.
+    /// Builds the error for an unexpected statement-start token.
     fn unexpected_stmt_start_error(&self, expected: &'static str) -> ParseError {
-        if matches!(&self.current_token().ty, TokenType::Ident(i) if i == "_") {
+        if matches!(&self.current_token().token_type, TokenType::Ident(i) if i == "_") {
             return ParseError::new(
                 self.eof_aware_span(),
                 "`_` is only valid as a case pattern".to_string(),
@@ -201,55 +192,13 @@ impl Parser {
         )
     }
 
-    /// Parses a `$ns::name` variable reference after the caller has recorded the
-    /// starting offset: advances past `$`, reads the namespaced reference
-    /// (rejecting keywords in both parts), and rejects a nested qualifier after
-    /// the name. Returns the namespace, the name, and its end offset. Shared by
-    /// expression and case-pattern parsing.
-    fn parse_dollar_var_name(
-        &mut self,
-        expected: &'static str,
-    ) -> Result<(String, String, usize), ParseError> {
-        self.advance();
-        let (namespace, name, name_end) = self.parse_qualified_ref(
-            expected,
-            expected,
-            "variable reference must be namespaced as `namespace::name`",
-        )?;
-        if self.current_token().ty == TokenType::NamespaceSep {
-            return Err(ParseError::new(
-                self.eof_aware_span(),
-                "nested namespace qualifier `::` is not allowed".to_string(),
-            ));
-        }
-        Ok((namespace, name, name_end))
-    }
-
-    /// Parses a `{ item* }` block with the given item parser: expects the
-    /// opening brace, parses items until the closing brace, and expects it.
-    /// Shared by function bodies, run chains, env blocks, and case arms.
-    fn parse_braced_block<T>(
-        &mut self,
-        open_context: &'static str,
-        close_context: &'static str,
-        mut item: impl FnMut(&mut Self) -> Result<T, ParseError>,
-    ) -> Result<Vec<T>, ParseError> {
-        self.expect_with_context(TokenType::LBrace, open_context)?;
-        let mut items = Vec::new();
-        while self.current_token().ty != TokenType::RBrace {
-            items.push(item(self)?);
-        }
-        self.expect_with_context(TokenType::RBrace, close_context)?;
-        Ok(items)
-    }
-
     /// Parses one top-level item, returning None on EOF.
     pub(crate) fn parse_toplevel(&mut self) -> Result<Option<TopLevel>, ParseError> {
-        if self.current_token().ty == TokenType::Eof {
+        if self.current_token().token_type == TokenType::Eof {
             return Ok(None);
         }
         self.err_on_illegal_token()?;
-        match &self.current_token().ty {
+        match &self.current_token().token_type {
             TokenType::Import => {
                 self.advance();
                 let path = self.parse_expr()?;
@@ -264,12 +213,12 @@ impl Parser {
 
     #[cfg(test)]
     pub(crate) fn parse(&mut self) -> Result<Program, Vec<ParseError>> {
-        let mut program = Program::new();
+        let mut program = Program::new_with_source(String::new(), String::new());
         let mut errors = Vec::new();
 
-        while self.current_token().ty != TokenType::Eof {
+        while self.current_token().token_type != TokenType::Eof {
             match self.parse_toplevel() {
-                Ok(Some(item)) => program.items.push(item),
+                Ok(Some(item)) => program.top_level_items.push(item),
                 Ok(None) => break,
                 Err(e) => {
                     errors.push(e);
@@ -288,50 +237,51 @@ impl Parser {
     /// Dispatches to the correct parser based on the current token for top-level statements.
     fn parse_top_level_stmt(&mut self) -> Result<Stmt, ParseError> {
         self.err_on_illegal_token()?;
-        match self.current_token().ty {
+        match self.current_token().token_type {
             TokenType::Var => self.parse_var_decl(),
-            TokenType::Pr => self.parse_project_decl(),
+            TokenType::Pr | TokenType::Sync => self.parse_project_decl(),
             TokenType::Fn => self.parse_fn_decl(),
             TokenType::Run => self.parse_run_decl(),
-            _ => Err(self.unexpected_stmt_start_error("var, pr, fn, or run")),
+            TokenType::Shell => self.parse_shell_decl(),
+            _ => Err(self.unexpected_stmt_start_error("var, pr, sync, fn, run, or shell")),
         }
+    }
+
+    fn parse_shell_decl(&mut self) -> Result<Stmt, ParseError> {
+        let offset = self.current_token().offset;
+        let source_name = self.source_name.clone();
+        self.advance(); // skip 'shell'
+        self.expect_with_context(TokenType::Assign, "in shell declaration")?;
+        let value = self.parse_expr()?;
+        let semi_end = self.current_token().offset + self.current_token().len;
+        self.expect_with_context(TokenType::Semicolon, "after shell declaration")?;
+        let len = semi_end - offset;
+        Ok(Stmt::Shell {
+            value,
+            offset,
+            len,
+            source_name,
+        })
     }
 
     #[cfg(test)]
     fn skip_to_stmt_boundary(&mut self) {
         use TokenType::*;
         loop {
-            match &self.current_token().ty {
+            match &self.current_token().token_type {
                 Eof => break,
                 Semicolon | RBrace => {
                     self.advance();
                 }
-                Var | Pr | Fn | Run => break,
+                Var | Pr | Fn | Run | Sync | Shell => break,
                 _ => self.advance(),
             }
         }
     }
 
-    /// Parses `var string/shell name = expr` and returns the type, name, and value.
-    pub(crate) fn parse_var_decl_common(&mut self) -> Result<(VarType, String, Expr), ParseError> {
+    /// Parses `var name = expr;` (no type annotation). Returns the name and value.
+    pub(crate) fn parse_var_decl_common(&mut self) -> Result<(String, Template), ParseError> {
         self.advance();
-
-        let var_type = match &self.current_token().ty {
-            TokenType::StringKw => {
-                self.advance();
-                VarType::String
-            }
-            TokenType::Shell => {
-                self.advance();
-                VarType::Shell
-            }
-            _ => {
-                return Err(ParseError::new(
-                    self.eof_aware_span(),
-                    "expected 'string' or 'shell'".to_string(),
-                ));
-            }
-        };
 
         let name = self.parse_ident_name("variable name")?;
 
@@ -340,25 +290,49 @@ impl Parser {
         let value = self.parse_expr()?;
         self.expect_with_context(TokenType::Semicolon, "after variable declaration")?;
 
-        Ok((var_type, name, value))
+        Ok((name, value))
     }
 
     /// Dispatches to the correct statement parser for statements inside a function body.
     pub(crate) fn parse_fn_stmt(&mut self) -> Result<FnStmt, ParseError> {
         self.err_on_illegal_token()?;
-        match &self.current_token().ty {
+        match &self.current_token().token_type {
             TokenType::Log => self.parse_log_stmt(),
-            TokenType::Exec => self.parse_exec_stmt(),
             TokenType::Cd => self.parse_cd_stmt(),
             TokenType::Var => self.parse_fn_var_decl(),
             TokenType::Env => self.parse_env_block(),
-            TokenType::Case => self.parse_case_stmt(),
+            TokenType::Switch | TokenType::Case => self.parse_switch_stmt(),
+            TokenType::Template(_) => self.parse_exec_or_capture_stmt(),
             TokenType::Semicolon => Err(ParseError::new(
                 self.eof_aware_span(),
                 "unexpected `;` (empty statement)".to_string(),
             )),
-            _ => Err(self.unexpected_stmt_start_error("log, exec, cd, var, env, or case")),
+            _ => Err(self.unexpected_stmt_start_error("log, cd, var, env, switch, or $(cmd)")),
         }
+    }
+
+    /// Parse a `{ ... }` block, invoking `parse_item` for each statement until
+    /// the closing `}`. Shared by function bodies, `env` bodies, and `switch`
+    /// arms so the open/close brace handling lives in one place.
+    fn parse_braced_block<T>(
+        &mut self,
+        open_ctx: &str,
+        close_ctx: &str,
+        mut parse_item: impl FnMut(&mut Self) -> Result<T, ParseError>,
+    ) -> Result<Vec<T>, ParseError> {
+        self.expect_with_context(TokenType::LBrace, open_ctx)?;
+        let mut items = Vec::new();
+        while self.current_token().token_type != TokenType::RBrace {
+            if self.current_token().token_type == TokenType::Eof {
+                return Err(ParseError::new(
+                    self.eof_aware_span(),
+                    format!("expected `}}` {}, found end of file", close_ctx),
+                ));
+            }
+            items.push(parse_item(self)?);
+        }
+        self.expect_with_context(TokenType::RBrace, close_ctx)?;
+        Ok(items)
     }
 }
 
@@ -368,41 +342,28 @@ mod tests {
 
     #[test]
     fn test_multiple_top_level_statements() {
-        let input = "var string x = `hello`;\n\
-                      fn f { log `hi`; }\n\
-                      pr p [url = `u` dir = `d`] { use f; }\n\
-                      run s { p::f; }";
+        let input = "var x = (hello);\n\
+                      fn f { log (hi); }\n\
+                      pr p { fn b { log (x); } }\n\
+                      run s { p::b; }";
         let prog = parse_program(input).unwrap();
         assert_eq!(count_stmt_types(&prog), vec!["var", "fn", "pr", "run"]);
     }
 
     #[test]
     fn test_unexpected_token_at_top_level() {
-        let result = parse_program("fooobar = `bar`;");
+        let result = parse_program("fooobar = (bar);");
         assert!(result.is_err());
         let errs = result.unwrap_err();
-        assert!(
-            errs.iter()
-                .any(|e| e.to_string().contains("expected var, pr, fn, or run"))
-        );
-    }
-
-    #[test]
-    fn test_error_recovery_skips_bad_stmt() {
-        let result = parse_program("var string x = `hello`;\nfn bad { unknown }");
-        match result {
-            Ok(prog) => {
-                assert_eq!(prog.items.len(), 1);
-            }
-            Err(errs) => {
-                assert!(errs.iter().any(|e| e.to_string().contains("expected log")));
-            }
-        }
+        assert!(errs.iter().any(|e| {
+            e.to_string()
+                .contains("expected var, pr, sync, fn, run, or shell")
+        }));
     }
 
     #[test]
     fn test_underscore_outside_case_pattern() {
-        let result = parse_program("fn test { log `_`; _; }");
+        let result = parse_program("fn test { log (hi); _; }");
         let errs = result.unwrap_err();
         assert!(
             errs.iter().any(|e| e

@@ -1,5 +1,5 @@
 use super::render::{self, status_color, status_glyph, status_label};
-use super::{MAX_PANEL_HEIGHT, Model, Task, TaskStatus};
+use super::{MAX_PANEL_HEIGHT, Model, TaskRow, TaskStatus};
 use crate::runner::colors;
 use ratatui::{
     Frame,
@@ -66,7 +66,7 @@ pub fn render_run_output(frame: &mut Frame, model: &Model, spinner_idx: usize) {
 
 /// Append a single task's final output (status marker, name, and output lines)
 /// to the buffer.
-fn format_task_output(buf: &mut String, task: &Task) {
+fn format_task_output(buf: &mut String, task: &TaskRow) {
     let color = match task.status {
         TaskStatus::Success => colors::OK_ANSI,
         TaskStatus::Running => colors::BRIGHT_YELLOW_ANSI,

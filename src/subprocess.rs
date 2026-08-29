@@ -6,9 +6,6 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-/// The maximum time a `var shell` capture may run before it is killed.
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
-
 /// A line of subprocess output, tagged by the stream it arrived on.
 #[derive(Debug)]
 pub(crate) enum SubprocessLine {
@@ -176,55 +173,4 @@ pub(crate) fn run_subprocess(
     }
 
     child.wait().map_err(SubprocessError::Spawn)
-}
-
-/// Execute a shell command for a `var shell` statement.
-///
-/// Semantics match the shell's `$(...)`: a command that runs but exits
-/// non-zero (e.g. a probe like `` `test -f x && echo yes` `` that fails its
-/// condition) yields an empty string — this is the intended probe/boolean
-/// idiom and must NOT be an error. Only a genuine environment failure is
-/// fatal: a spawn failure (the shell could not be started at all) and a
-/// timeout (the command hung) are surfaced to the caller as a
-/// `SubprocessError`. The caller owns the variable's span, so it is
-/// responsible for wrapping that error in a `CompileError` with source
-/// position — `shell` stays free of any compile-time type.
-///
-/// This is the single funnel for every `var shell` command. There is no
-/// memoization: each `var shell` is executed live at the point it is resolved
-/// (globals during the linear pass, project/function vars during the resolve
-/// pass), so the same command declared twice runs twice.
-///
-/// `working_dir` — when `Some`, runs the command in that directory;
-/// when `None`, runs in the current process directory.
-pub(crate) fn execute_shell_variable(
-    resolved_command: &str,
-    working_dir: Option<&Path>,
-) -> Result<String, SubprocessError> {
-    let mut captured_stdout = String::new();
-    let shell_path = get_current_shell_path();
-    let result = run_subprocess(
-        resolved_command,
-        &[&shell_path, "-c", resolved_command],
-        working_dir,
-        None,
-        Some(COMMAND_TIMEOUT),
-        &mut |line| {
-            if let SubprocessLine::Stdout(line) = line {
-                captured_stdout.push_str(&line);
-                captured_stdout.push('\n');
-            }
-        },
-    );
-    match result {
-        // Non-zero exit is not an error — empty string is the probe idiom.
-        Ok(status) if !status.success() => Ok(String::new()),
-        Ok(_) => Ok(captured_stdout.trim_end().to_string()),
-        Err(e) => Err(e),
-    }
-}
-
-/// Return the user's shell from `$SHELL`, defaulting to `"sh"`.
-pub(crate) fn get_current_shell_path() -> String {
-    std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string())
 }

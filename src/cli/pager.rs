@@ -57,7 +57,7 @@ fn pipe_to_pager(output: &str) -> miette::Result<()> {
         return Err(miette::miette!(
             "pager '{}' {}",
             pager,
-            crate::shell::describe_exit_failure(&status)
+            crate::subprocess::describe_exit_failure(&status)
         ));
     }
 

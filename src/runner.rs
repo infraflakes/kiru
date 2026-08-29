@@ -15,7 +15,7 @@ pub(crate) use tui::{TaskStatus, TuiEvent, run_tui_with_run, run_tui_with_sync, 
 
 /// Whether the current invocation was started with `KIRU_CWD=1`.
 ///
-/// When this is set, project-body `var shell` commands run in the process's
+/// When this is set, project-body `exec` commands run in the process's
 /// current working directory (the assumption is the caller already `cd`'d
 /// into the project, e.g. in CI). When unset, they run in the project's own
 /// directory[^1] instead.

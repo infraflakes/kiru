@@ -1,15 +1,14 @@
+use crate::dsl::{FnStmt, Template};
+use crate::plan::Call;
 use std::str::FromStr;
-
-use crate::dsl::{Expr, FnStmt, VarType};
-use crate::plan::QualifiedFnRef;
 
 /// The key of a project block field (e.g., `url`, `dir`, `sync`, `branch`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProjectField {
     Url,
     Dir,
-    Sync,
     Branch,
+    Sync,
 }
 
 impl ProjectField {
@@ -18,8 +17,8 @@ impl ProjectField {
         match self {
             ProjectField::Url => "url",
             ProjectField::Dir => "dir",
-            ProjectField::Sync => "sync",
             ProjectField::Branch => "branch",
+            ProjectField::Sync => "sync",
         }
     }
 }
@@ -31,8 +30,8 @@ impl FromStr for ProjectField {
         match key {
             "url" => Ok(ProjectField::Url),
             "dir" => Ok(ProjectField::Dir),
-            "sync" => Ok(ProjectField::Sync),
             "branch" => Ok(ProjectField::Branch),
+            "sync" => Ok(ProjectField::Sync),
             _ => Err(()),
         }
     }
@@ -41,55 +40,52 @@ impl FromStr for ProjectField {
 /// A parsed statement node in the kiru DSL.
 #[derive(Debug, Clone)]
 pub enum Stmt {
-    /// A variable declaration (`var` or `var shell`).
+    /// A variable declaration (`var name = value`). Frozen at compile time
+    /// when it contains no `$(command)` part; otherwise resolved at runtime.
     Var {
-        var_type: VarType,
         name: String,
-        value: Expr,
+        value: Template,
         offset: usize,
         len: usize,
     },
-    /// A project block: `pr name [ field = value ... ] { fn/run/var ... }`.
-    /// Fields (`url`, `dir`, `sync`, `branch`) are in `fields`; function,
-    /// run, and var declarations are in `body`.
+    /// A project declaration. `sync name { ... }` declares a repo (fields only);
+    /// `pr name { ... }` declares behavior (var + fn only). The compiler merges
+    /// a `sync` and a `pr` of the same name into one project.
     Project {
         name: String,
         fields: Vec<Stmt>,
         body: Vec<Stmt>,
     },
-    /// A named field inside a project block (url, dir, sync, branch).
+    /// A field inside a `sync` block (url, dir, branch, sync).
     Field {
         key: ProjectField,
-        value: Expr,
+        value: Template,
         offset: usize,
         len: usize,
     },
-    /// A function definition (`fn ... { ... }`).
+    /// A function definition (`fn name { ... }`). Inside a `pr` it belongs to
+    /// that project; at the top level it is a global function template.
     Fn {
         name: String,
         body: Vec<FnStmt>,
         offset: usize,
         len: usize,
     },
-    /// A run block definition (`run ... { ... }`).
+    /// A run block definition: `run name { pr::fn => pr::fn; pr::fn; }`.
+    ///
+    /// `calls` is an ordered list of chains. Calls joined by `=>` form one
+    /// sequential chain (each runs after the previous); `;` separates chains,
+    /// and the chains run concurrently with one another.
     Run {
         name: String,
-        chains: Vec<Vec<QualifiedFnRef>>,
+        calls: Vec<Vec<Call>>,
         offset: usize,
         len: usize,
     },
-    /// Applies a shared (global) function to the enclosing project. Written
-    /// `use name;` (or `use name as alias;`) inside a project body, it binds the
-    /// global function `name` into the project as `project::name` (or
-    /// `project::alias`). The project's own `var`s become the function's
-    /// "metadata": `self::` inside the function resolves to the project, and the
-    /// function runs with the project's `cwd`. A project may apply the same
-    /// global function under several aliases, but re-applying an already-bound
-    /// name is a duplicate-function error. Projects no longer declare functions
-    /// inline — every function is global and applied with `use`.
-    Use {
-        function: String,
-        alias: Option<String>,
+    /// Shell configuration: `shell = (sh);` — the shell used for command
+    /// substitution and `exec` statements. Declared at the top level.
+    Shell {
+        value: Template,
         offset: usize,
         len: usize,
         source_name: String,
@@ -100,7 +96,7 @@ pub enum Stmt {
 #[derive(Debug, Clone)]
 pub enum TopLevel {
     Stmt(Stmt),
-    Import(Expr),
+    Import(Template),
 }
 
 /// A set of parsed top-level items from a single source file, with source tracking
@@ -108,23 +104,15 @@ pub enum TopLevel {
 /// and import directives.
 #[derive(Debug, Clone)]
 pub struct Program {
-    pub items: Vec<TopLevel>,
+    pub top_level_items: Vec<TopLevel>,
     pub source_name: String,
     pub source_text: String,
 }
 
 impl Program {
-    pub fn new() -> Self {
-        Self {
-            items: Vec::new(),
-            source_name: String::new(),
-            source_text: String::new(),
-        }
-    }
-
     pub fn new_with_source(name: String, text: String) -> Self {
         Self {
-            items: Vec::new(),
+            top_level_items: Vec::new(),
             source_name: name,
             source_text: text,
         }

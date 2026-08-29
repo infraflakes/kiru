@@ -4,7 +4,7 @@ mod dsl;
 mod error;
 mod plan;
 mod runner;
-mod shell;
+mod subprocess;
 
 fn main() {
     let _ = miette::set_hook(Box::new(|_| {

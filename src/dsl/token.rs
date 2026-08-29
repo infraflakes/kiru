@@ -4,37 +4,41 @@ pub enum TokenType {
     Eof,
     Illegal(String),
     Ident(String),
-    NamespaceSep,
-    Backtick(String),
+    /// A parsed template expression `( ... )`, `$( ... )`, or `@( ... )`.
+    /// The template carries its resolved parts (literal / var / command).
+    Template(crate::dsl::syntax::Template),
+    RParen,
     LBrace,
     RBrace,
     LBracket,
     RBracket,
-    LParen,
-    RParen,
     Semicolon,
     Assign,
-    Dollar,
+    Arrow,
+    /// `=>` separator inside run blocks: starts a new sequential stage. Calls
+    /// separated by `;` run concurrently in the same stage; `=>` runs the next
+    /// stage only after the current one finishes.
+    ChainArrow,
     Import,
     Shell,
     Var,
-    StringKw,
     Fn,
     Run,
-    Arrow,
-    Pr,
-    Log,
-    Exec,
-    Cd,
     Env,
+    Log,
+    Cd,
+    Pr,
+    Sync,
+    Switch,
     Case,
-    Use,
+    /// `::` separator used in run-block references (`pr::fn`).
+    NamespaceSep,
 }
 
 /// A lexical token with source position tracking.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
-    pub ty: TokenType,
+    pub token_type: TokenType,
     pub line: usize,
     pub col: usize,
     pub offset: usize,
@@ -44,7 +48,7 @@ pub struct Token {
 impl Token {
     pub fn new(ty: TokenType, line: usize, col: usize, offset: usize, len: usize) -> Self {
         Self {
-            ty,
+            token_type: ty,
             line,
             col,
             offset,
@@ -58,17 +62,16 @@ impl Token {
 const KEYWORDS: &[(&str, TokenType)] = &[
     ("import", TokenType::Import),
     ("var", TokenType::Var),
-    ("string", TokenType::StringKw),
     ("pr", TokenType::Pr),
+    ("sync", TokenType::Sync),
     ("fn", TokenType::Fn),
     ("run", TokenType::Run),
     ("env", TokenType::Env),
     ("log", TokenType::Log),
-    ("exec", TokenType::Exec),
     ("cd", TokenType::Cd),
     ("shell", TokenType::Shell),
     ("case", TokenType::Case),
-    ("use", TokenType::Use),
+    ("switch", TokenType::Switch),
 ];
 
 /// Convert a keyword string to its corresponding token type,
@@ -93,42 +96,37 @@ pub fn format_token_type(ty: &TokenType) -> String {
         TokenType::RBrace => "`}`".to_string(),
         TokenType::LBracket => "`[`".to_string(),
         TokenType::RBracket => "`]`".to_string(),
-        TokenType::LParen => "`(`".to_string(),
         TokenType::RParen => "`)`".to_string(),
         TokenType::Semicolon => "`;`".to_string(),
         TokenType::Assign => "`=`".to_string(),
-        TokenType::Dollar => "`$`".to_string(),
-        TokenType::Arrow => "`=>`".to_string(),
+        TokenType::Arrow => "`->`".to_string(),
+        TokenType::ChainArrow => "`=>`".to_string(),
         TokenType::Ident(_) => "identifier".to_string(),
         TokenType::NamespaceSep => "`::`".to_string(),
-        TokenType::Backtick(_) => "backtick string".to_string(),
+        TokenType::Template(_) => "template".to_string(),
         TokenType::Illegal(_) => "illegal token".to_string(),
         TokenType::Eof => "end of file".to_string(),
-        // Keywords are named by the keyword table above; this grouped arm
-        // forces the compiler to keep the enum, the table, and this match
-        // in sync when a new keyword is added.
         TokenType::Import
         | TokenType::Shell
         | TokenType::Var
-        | TokenType::StringKw
         | TokenType::Fn
         | TokenType::Run
         | TokenType::Pr
+        | TokenType::Sync
         | TokenType::Log
-        | TokenType::Exec
+        | TokenType::Env
         | TokenType::Cd
         | TokenType::Case
-        | TokenType::Use
-        | TokenType::Env => unreachable!("keyword tokens are named by the keyword table"),
+        | TokenType::Switch => unreachable!("keyword tokens are named by the keyword table"),
     }
 }
 
 pub fn format_token(token: &Token) -> String {
-    match &token.ty {
+    match &token.token_type {
         TokenType::Ident(s) => format!("`{}`", s),
-        TokenType::Backtick(s) => format!("`{}`", s),
+        TokenType::Template(_) => "template".to_string(),
         TokenType::Illegal(s) => format!("`{}`", s),
-        _ => format_token_type(&token.ty),
+        _ => format_token_type(&token.token_type),
     }
 }
 
