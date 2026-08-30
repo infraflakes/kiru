@@ -14,7 +14,6 @@ pub enum TokenType {
     RBracket,
     Semicolon,
     Assign,
-    Arrow,
     /// `=>` separator inside run blocks: starts a new sequential stage. Calls
     /// separated by `;` run concurrently in the same stage; `=>` runs the next
     /// stage only after the current one finishes.
@@ -99,7 +98,6 @@ pub fn format_token_type(ty: &TokenType) -> String {
         TokenType::RParen => "`)`".to_string(),
         TokenType::Semicolon => "`;`".to_string(),
         TokenType::Assign => "`=`".to_string(),
-        TokenType::Arrow => "`->`".to_string(),
         TokenType::ChainArrow => "`=>`".to_string(),
         TokenType::Ident(_) => "identifier".to_string(),
         TokenType::NamespaceSep => "`::`".to_string(),

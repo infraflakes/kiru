@@ -132,9 +132,6 @@ impl Lexer {
             Some('=') => {
                 self.single_char_token(TokenType::Assign, start_line, start_col, start_byte_offset)
             }
-            Some('-') if self.peek_next() == Some('>') => {
-                self.two_char_token(TokenType::Arrow, start_line, start_col, start_byte_offset)
-            }
             Some(':') if self.peek_next() == Some(':') => self.two_char_token(
                 TokenType::NamespaceSep,
                 start_line,

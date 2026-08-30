@@ -46,7 +46,7 @@ pr dots {
   };
 
   fn init {
-    $(test -f ~/.config/fish/config.fish && echo "1") -> fish_exist;
+    var fish_exist = $(test -f ~/.config/fish/config.fish && echo "1");
     switch fish_exist {
       case (1) {
         log (Symlinking with stow...);

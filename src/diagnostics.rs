@@ -32,7 +32,12 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
-    pub fn new(file: impl Into<String>, span: Span, msg: impl Into<String>, source: impl Into<String>) -> Self {
+    pub fn new(
+        file: impl Into<String>,
+        span: Span,
+        msg: impl Into<String>,
+        source: impl Into<String>,
+    ) -> Self {
         Self {
             file: file.into(),
             primary: span,
@@ -92,7 +97,9 @@ pub fn render_diagnostic(diag: &Diagnostic) -> String {
     // Rebase span ranges relative to the windowed slice.
     let rebase = |s: Span| -> std::ops::Range<usize> {
         let start = s.offset.saturating_sub(window_start).min(windowed.len());
-        let end = (s.offset + s.len).saturating_sub(window_start).min(windowed.len());
+        let end = (s.offset + s.len)
+            .saturating_sub(window_start)
+            .min(windowed.len());
         start..end
     };
 

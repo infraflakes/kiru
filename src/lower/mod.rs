@@ -85,7 +85,11 @@ impl LoweringState {
         offset: usize,
         len: usize,
     ) -> CompileError {
-        let src = self.source_texts.get(source_name).cloned().unwrap_or_default();
+        let src = self
+            .source_texts
+            .get(source_name)
+            .cloned()
+            .unwrap_or_default();
         CompileError::Validation(vec![Diagnostic::new(
             source_name.to_string(),
             Span::new(offset, len),

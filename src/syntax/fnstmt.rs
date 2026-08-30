@@ -12,10 +12,13 @@ use crate::syntax::source::{ArmPattern, EnvPair};
 pub enum FnStmt {
     /// `log (template);` — emit the resolved template to the output log.
     Log(Template),
-    /// A binding statement. Created from `var name = (tmpl);`,
-    /// `$(cmd) -> name;` (capture), and bare `$(cmd);` (exec statement).
-    /// `target == None` means a bare `$(cmd);` exec statement: the resolved
-    /// template is run and its stdout logged.
+    /// A binding statement. Created from `var name = (tmpl);` and bare
+    /// `$(cmd);` (exec statement).
+    /// `target == None` is always a command template (must contain ≥1 `Cmd`
+    /// segment — bare `()` / `@()` as standalone is a parse error). The
+    /// resolved template is run strictly (non-zero aborts).
+    /// `target == Some(name)` means a variable binding: fully inlined at
+    /// compile time, no `Instruction` emitted; execution deferred to use sites.
     Bind {
         target: Option<String>,
         value: Template,

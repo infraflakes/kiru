@@ -98,9 +98,10 @@ pub(super) fn lower_template(tmpl: &Template) -> IrTemplate {
 /// Lower a function body into IR `Instruction`s, inlining every `@(var)`
 /// reference (against `static_scope` plus function-local `bind`s) as it goes.
 ///
-/// Function-local `bind x = T` adds `x -> T` to the local scope so later
-/// references resolve to `T`; the `bind` itself becomes a plain command
-/// execution (no `target`) since the variable is fully inlined at compile time.
+/// Function-local `var x = T` maps name `x` to template `T` in the local
+/// scope so later references resolve to `T`. The bind itself does NOT
+/// emit an `Instruction`: execution is deferred to each use site via tolerant
+/// `capture`. Only bare `$(cmd);` (no target) emits strict `Instruction::Exec`.
 /// Nested `env`/`switch` bodies get a *copy* of the local scope so their binds
 /// do not leak into the surrounding body.
 pub(super) fn lower_function_body(
@@ -134,10 +135,27 @@ fn lower_fn_stmts(
                 let inlined = inline_dsl_template(value, scope, sources, source_name)?;
                 if let Some(name) = target {
                     scope.insert(name.clone(), inlined.clone());
+                    // Assignment bindings are fully inlined into scope.
+                    // No runtime Exec emitted: execution happens lazily at each
+                    // use site via tolerant capture (e.g. Switch/Log/Cd/Env).
+                } else {
+                    let ir = lower_template(&inlined);
+                    let has_cmd = ir
+                        .segments
+                        .iter()
+                        .any(|s| matches!(s, crate::ir::Segment::Command(_)));
+                    if !has_cmd {
+                        return Err(crate::lower::CompileError::Validation(vec![
+                            Diagnostic::new(
+                                source_name.to_string(),
+                                Span::new(value.offset, value.len.max(1)),
+                                "bare template is not a statement — wrap the command in $(...) or prefix with log, cd, var, env or switch",
+                                sources.get(source_name).cloned().unwrap_or_default(),
+                            ),
+                        ]));
+                    }
+                    out.push(Instruction::Exec { value: ir });
                 }
-                out.push(Instruction::Exec {
-                    value: lower_template(&inlined),
-                });
             }
             crate::syntax::FnStmt::Cd(t) => {
                 out.push(Instruction::Cd(lower_template(&inline_dsl_template(

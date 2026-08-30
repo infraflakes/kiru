@@ -58,7 +58,7 @@ impl<'a> ExecContext<'a> {
         Ok(out)
     }
 
-    /// Run a command and stream its output live (non-fatal on non-zero exit).
+    /// Run a command and stream its output live (fatal on non-zero exit).
     fn run_live(&self, cmd: &str) -> Result<(), RuntimeError> {
         let work_dir = self.cwd.clone();
         let env_overrides: HashMap<String, String> = self.env_overrides();

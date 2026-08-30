@@ -302,7 +302,7 @@ impl Parser {
             TokenType::Var => self.parse_fn_var_decl(),
             TokenType::Env => self.parse_env_block(),
             TokenType::Switch | TokenType::Case => self.parse_switch_stmt(),
-            TokenType::Template(_) => self.parse_exec_or_capture_stmt(),
+            TokenType::Template(_) => self.parse_exec_stmt(),
             TokenType::Semicolon => Err(ParseError::new(
                 self.eof_aware_span(),
                 "unexpected `;` (empty statement)".to_string(),

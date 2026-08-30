@@ -20,26 +20,28 @@ impl Parser {
         Ok(FnStmt::Cd(self.parse_expr_stmt("after `cd`")?))
     }
 
-    /// Parses a `$(cmd);` exec statement or a `$(cmd) -> name;` capture. The
-    /// current token is a template token; if it is followed by `->` it is a
-    /// capture, otherwise a bare exec.
-    pub(crate) fn parse_exec_or_capture_stmt(&mut self) -> Result<FnStmt, ParseError> {
+    /// Parses a bare `$(cmd);` exec statement. The current token is a template
+    /// token; it is consumed and must contain at least one `$(...)` command.
+    /// Bare `()` or `@()` values are rejected (use `log`, `cd`, `var`, `env`,
+    /// or `switch` instead).
+    pub(crate) fn parse_exec_stmt(&mut self) -> Result<FnStmt, ParseError> {
         let value = self.parse_expr()?;
-        if self.current_token().token_type == TokenType::Arrow {
-            self.advance();
-            let target = self.parse_ident_name("captured variable name")?;
-            self.expect_with_context(TokenType::Semicolon, "after capture")?;
-            Ok(FnStmt::Bind {
-                target: Some(target),
-                value,
-            })
-        } else {
-            self.expect_with_context(TokenType::Semicolon, "after exec statement")?;
-            Ok(FnStmt::Bind {
-                target: None,
-                value,
-            })
+        let has_cmd = value
+            .parts
+            .iter()
+            .any(|p| matches!(p, crate::syntax::source::Part::Cmd(_)));
+        if !has_cmd {
+            return Err(ParseError::new(
+                crate::diagnostics::Span::new(value.offset, value.len.max(1)),
+                "bare template is not a statement — wrap the command in $(...) or prefix with log, cd, var, env or switch"
+                    .to_string(),
+            ));
         }
+        self.expect_with_context(TokenType::Semicolon, "after exec statement")?;
+        Ok(FnStmt::Bind {
+            target: None,
+            value,
+        })
     }
 
     pub(crate) fn parse_fn_var_decl(&mut self) -> Result<FnStmt, ParseError> {
@@ -224,19 +226,6 @@ mod tests {
                 assert!(matches!(body[0], FnStmt::Cd(_)));
             }
             _ => panic!("expected FnDecl"),
-        }
-    }
-
-    #[test]
-    fn test_exec_capture() {
-        let input = "fn f { $(echo hello) -> x; }";
-        let prog = parse_program(input).unwrap();
-        match &prog.top_level_items[0] {
-            TopLevel::Stmt(Stmt::Fn { body, .. }) => match &body[0] {
-                FnStmt::Bind { target, .. } => assert_eq!(target.as_deref(), Some("x")),
-                other => panic!("expected Bind, got {:?}", other),
-            },
-            _ => panic!("expected Fn"),
         }
     }
 

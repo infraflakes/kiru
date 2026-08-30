@@ -78,7 +78,11 @@ pub(super) fn load_import(
         program.source_name.to_string(),
         Span::new(path.offset, path.len.max(1)),
         format!("import target '{}' does not exist, skipping", path_str),
-        state.source_texts.get(&program.source_name).cloned().unwrap_or_default(),
+        state
+            .source_texts
+            .get(&program.source_name)
+            .cloned()
+            .unwrap_or_default(),
     );
     crate::diagnostics::print_diagnostic(&diag);
     Ok(())

@@ -12,8 +12,8 @@ pr kiru {
   }
 
   fn container {
-    $(command -v docker >/dev/null 2>&1 && echo "docker" || { command -v podman >/dev/null 2>&1 && echo "podman"; }) -> docker_bin;
-    switch @(docker_bin) {
+    var docker_bin = $(command -v docker >/dev/null 2>&1 && echo "docker" || { command -v podman >/dev/null 2>&1 && echo "podman"; });
+    switch docker_bin {
       case () {
         log (no container runtime found);
         $(exit 1);
