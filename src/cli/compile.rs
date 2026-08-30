@@ -10,10 +10,10 @@ pub fn run_compile_command(input: Option<PathBuf>, output: Option<PathBuf>) -> m
     let input = input.unwrap_or_else(|| PathBuf::from("main.kiru"));
     let output = output.unwrap_or_else(|| PathBuf::from("kirufile"));
 
-    let plan = crate::compiler::compile_and_resolve(&input, crate::runner::kiru_cwd_enabled())
+    let ir = crate::lower::lower_and_resolve(&input, crate::exec::kiru_cwd_enabled())
         .map_err(super::compile_error_to_report)?;
 
-    let text = plan.to_kirufile();
+    let text = ir.serialize();
     std::fs::write(&output, text)
         .map_err(|e| miette::miette!("failed to write kirufile {}: {}", output.display(), e))?;
 

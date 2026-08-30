@@ -1,5 +1,5 @@
-use crate::plan::Sync;
-use crate::runner;
+use crate::exec;
+use crate::ir::Sync;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -7,19 +7,19 @@ use std::path::PathBuf;
 pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
     let config = super::load_config(config_arg)?;
 
-    let total_project_count = config.syncs.len();
+    let total_project_count = config.repositories.len();
 
     let syncs: BTreeMap<String, Sync> = config
-        .syncs
+        .repositories
         .into_iter()
         .filter(|(name, sync)| {
             let url = &sync.url;
             let dir = &sync.dir;
-            let skip_reason = if url.parts.is_empty() && dir.parts.is_empty() {
+            let skip_reason = if url.segments.is_empty() && dir.segments.is_empty() {
                 Some("missing url and dir")
-            } else if url.parts.is_empty() {
+            } else if url.segments.is_empty() {
                 Some("missing url")
-            } else if dir.parts.is_empty() {
+            } else if dir.segments.is_empty() {
                 Some("missing dir")
             } else {
                 None
@@ -47,5 +47,5 @@ pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
         ));
     }
 
-    runner::sync::run_sync_for_projects(syncs, &config.shell)
+    exec::sync::run_sync_for_projects(syncs, &config.shell)
 }

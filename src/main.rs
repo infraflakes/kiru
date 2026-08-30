@@ -1,10 +1,10 @@
 mod cli;
-mod compiler;
-mod dsl;
 mod error;
-mod plan;
-mod runner;
+mod exec;
+mod ir;
+mod lower;
 mod subprocess;
+mod syntax;
 
 fn main() {
     let _ = miette::set_hook(Box::new(|_| {

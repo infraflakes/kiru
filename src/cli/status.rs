@@ -1,7 +1,7 @@
 use super::load_config;
 use super::pager;
-use crate::plan::{Plan, Project, Sync, render_template};
-use crate::runner::colors::{BOLD, BOLD_CYAN, CYAN, GRAY_ANSI, RESET, YELLOW};
+use crate::exec::colors::{BOLD, BOLD_CYAN, CYAN, GRAY_ANSI, RESET, YELLOW};
+use crate::ir::{Ir, Project, Sync, render_ir_literal};
 use std::path::PathBuf;
 
 macro_rules! style {
@@ -20,12 +20,12 @@ pub fn run_status_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
 /// Render the whole config (projects + runs) as an indented tree suitable for
 /// the pager. Each project lists its sync fields and functions; each run lists
 /// its chain of `project::function` references.
-fn format_config_as_tree(config: &Plan) -> String {
+fn format_config_as_tree(config: &Ir) -> String {
     let mut formatted_output = String::new();
     formatted_output.push('\n');
 
     let has_projects = !config.projects.is_empty();
-    let has_runs = !config.run_blocks.is_empty();
+    let has_runs = !config.execution_chains.is_empty();
 
     if has_projects {
         formatted_output.push_str(&format!(
@@ -37,7 +37,7 @@ fn format_config_as_tree(config: &Plan) -> String {
         let count = config.projects.len();
         for (i, (name, project)) in config.projects.iter().enumerate() {
             let is_last_project = i == count - 1;
-            let sync = config.syncs.get(name);
+            let sync = config.repositories.get(name);
             draw_project(&mut formatted_output, name, project, sync, is_last_project);
         }
     }
@@ -45,8 +45,8 @@ fn format_config_as_tree(config: &Plan) -> String {
     if has_runs {
         formatted_output.push_str(&format!("\n  {}\n", style!(BOLD, "Runs")));
 
-        let count = config.run_blocks.len();
-        for (run_idx, (name, calls)) in config.run_blocks.iter().enumerate() {
+        let count = config.execution_chains.len();
+        for (run_idx, (name, calls)) in config.execution_chains.iter().enumerate() {
             let is_last_run = run_idx == count - 1;
             let run_connector = if is_last_run { "└" } else { "├" };
             formatted_output.push_str(&format!(
@@ -100,17 +100,17 @@ fn draw_project(out: &mut String, name: &str, project: &Project, sync: Option<&S
     let indent = if last { "   " } else { "│  " };
 
     if let Some(sync) = sync {
-        if !sync.url.parts.is_empty() {
-            project_field(out, indent, "url", &render_template(&sync.url));
+        if !sync.url.segments.is_empty() {
+            project_field(out, indent, "url", &render_ir_literal(&sync.url));
         }
-        if !sync.dir.parts.is_empty() {
-            project_field(out, indent, "dir", &render_template(&sync.dir));
+        if !sync.dir.segments.is_empty() {
+            project_field(out, indent, "dir", &render_ir_literal(&sync.dir));
         }
-        if !sync.branch.parts.is_empty() {
-            project_field(out, indent, "branch", &render_template(&sync.branch));
+        if !sync.branch.segments.is_empty() {
+            project_field(out, indent, "branch", &render_ir_literal(&sync.branch));
         }
-        if !sync.strategy.parts.is_empty() {
-            project_field(out, indent, "sync", &render_template(&sync.strategy));
+        if !sync.strategy.segments.is_empty() {
+            project_field(out, indent, "sync", &render_ir_literal(&sync.strategy));
         }
     }
 
@@ -164,13 +164,13 @@ fn draw_item_line(out: &mut String, indent: &str, connector: &str, label: &str, 
     }
 }
 
-fn footer_bar(out: &mut String, config: &Plan) {
+fn footer_bar(out: &mut String, config: &Ir) {
     let fn_count: usize = config
         .projects
         .values()
         .map(|project| project.functions.len())
         .sum();
-    let run_count = config.run_blocks.len();
+    let run_count = config.execution_chains.len();
 
     out.push_str(&style!(
         GRAY_ANSI,

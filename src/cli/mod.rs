@@ -6,32 +6,32 @@ mod sync;
 
 pub use args::{Cli, Commands};
 
-use crate::compiler::CompileError;
-use crate::plan::Plan;
+use crate::ir::Ir;
+use crate::lower::CompileError;
 use clap::Parser;
 use std::path::{Path, PathBuf};
 
 pub(crate) mod compile;
 
-/// Load a plan through the given loader, mapping compiler errors to miette
+/// Load an IR through the given loader, mapping compiler errors to miette
 /// reports once.
 fn load_config_via(
     config_arg: Option<PathBuf>,
-    load: impl FnOnce(&Path) -> miette::Result<Plan>,
-) -> miette::Result<Plan> {
+    load: impl FnOnce(&Path) -> miette::Result<Ir>,
+) -> miette::Result<Ir> {
     let config_path = get_config_path(config_arg);
     load(&config_path)
 }
 
-/// Load a resolved plan by reading and parsing a `kirufile` artifact directly.
+/// Load a resolved IR by reading and parsing a `kirufile` artifact directly.
 /// Every runtime command (`run`/`status`/`sync`/`fn`) operates on the compiled
 /// `kirufile` rather than the `.kiru` DSL source.
-fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Plan> {
+fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Ir> {
     load_config_via(config_arg, |config_path| {
         let text = std::fs::read_to_string(config_path).map_err(|e| {
             miette::miette!("failed to read kirufile {}: {}", config_path.display(), e)
         })?;
-        Plan::from_kirufile(&text).map_err(|e| {
+        Ir::deserialize(&text).map_err(|e| {
             miette::miette!("failed to parse kirufile {}: {}", config_path.display(), e)
         })
     })

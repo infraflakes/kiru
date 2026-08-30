@@ -1,6 +1,6 @@
 use super::super::load_config;
-use crate::runner::colors;
-use crate::runner::{OutputCallback, Runner};
+use crate::exec::colors;
+use crate::exec::{Executor, OutputCallback};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -22,8 +22,8 @@ pub fn execute_function(
 
     match project {
         Some(project_name) => {
-            let mut runner = Runner::new(Arc::new(config), callback);
-            runner.execute_fn_call(&name, &project_name)?;
+            let mut executor = Executor::new(Arc::new(config), callback);
+            executor.execute_fn_call(&name, &project_name)?;
             Ok(())
         }
         None => Err(miette::miette!(

@@ -1,5 +1,5 @@
 use super::super::load_config;
-use crate::runner;
+use crate::exec;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -8,12 +8,12 @@ use std::sync::Arc;
 pub fn execute_run_block(config_arg: Option<PathBuf>, name: String) -> miette::Result<()> {
     let config = load_config(config_arg)?;
 
-    let chains = match config.run_blocks.get(&name) {
+    let chains = match config.execution_chains.get(&name) {
         Some(stages) => stages.clone(),
         None => {
             return Err(miette::miette!("unknown run block '{}'", name));
         }
     };
 
-    runner::chain::execute_task_chains(Arc::new(config), chains)
+    exec::chain::execute_task_chains(Arc::new(config), chains)
 }
