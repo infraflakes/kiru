@@ -3,8 +3,7 @@ use crate::ir::Sync;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-/// Sync all projects via the TUI.
-pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
+pub fn run_sync_command(config_arg: Option<PathBuf>) -> Result<(), String> {
     let config = super::load_config(config_arg)?;
 
     let total_project_count = config.repositories.len();
@@ -25,11 +24,7 @@ pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
                 None
             };
             if let Some(reason) = skip_reason {
-                crate::error::print_diagnostic(&miette::miette!(
-                    "project {:?}: {}, skipping sync",
-                    name,
-                    reason
-                ));
+                eprintln!("Warning: project {:?}: {}, skipping sync", name, reason);
                 false
             } else {
                 true
@@ -39,12 +34,10 @@ pub fn run_sync_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
 
     if syncs.is_empty() {
         if total_project_count == 0 {
-            crate::error::print_diagnostic(&miette::miette!("no projects to sync"));
+            eprintln!("Warning: no projects to sync");
             return Ok(());
         }
-        return Err(miette::miette!(
-            "all projects were skipped due to missing url or dir"
-        ));
+        return Err("all projects were skipped due to missing url or dir".to_string());
     }
 
     exec::sync::run_sync_for_projects(syncs, &config.shell)

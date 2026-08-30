@@ -48,7 +48,7 @@ pr kiru {
     log (Failing the task!);
     env {
       CGO_ENABLED = (0);
-      GOPATH = (@(home_dir)/.local/share/go);
+      GOOS = (linux);
     } {
       $(go build ./...);
     };

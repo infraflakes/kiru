@@ -1,4 +1,4 @@
-use crate::error::spanned_report_on;
+use crate::diagnostics::{Diagnostic, Span};
 use crate::exec::subprocess;
 use crate::syntax::lexer::Lexer;
 use crate::syntax::{Part as DslPart, Program, Template};
@@ -18,8 +18,11 @@ pub(super) fn parse_file(canon_path: &Path) -> Result<Program, CompileError> {
         .with_source_name(source_name.clone());
     let mut program = Program::new_with_source(source_name, source_text);
     while let Some(toplevel) = parser.parse_toplevel().map_err(|e| {
-        CompileError::ParseReports(vec![miette::Report::new(e).with_source_code(
-            miette::NamedSource::new(program.source_name.clone(), program.source_text.clone()),
+        CompileError::Parse(vec![Diagnostic::new(
+            program.source_name.clone(),
+            e.span,
+            e.msg,
+            program.source_text.clone(),
         )])
     })? {
         program.top_level_items.push(toplevel);
@@ -71,14 +74,13 @@ pub(super) fn load_import(
 
     // Missing import: non-fatal. Report and continue so `status` works even
     // when optional imports are absent.
-    let report = spanned_report_on(
+    let diag = Diagnostic::new(
+        program.source_name.to_string(),
+        Span::new(path.offset, path.len.max(1)),
         format!("import target '{}' does not exist, skipping", path_str),
-        &state.source_texts,
-        &program.source_name,
-        path.offset,
-        path.len.max(1),
+        state.source_texts.get(&program.source_name).cloned().unwrap_or_default(),
     );
-    crate::error::print_diagnostic(&report);
+    crate::diagnostics::print_diagnostic(&diag);
     Ok(())
 }
 
@@ -116,7 +118,7 @@ fn resolve_import_candidates(base_dir: &Path, path_str: &str) -> Vec<PathBuf> {
 
 /// Resolve an import path at compile time. Imports are a structural file-system
 /// operation, so any `$(command)` part here is executed to obtain a concrete
-/// path — this is the one place commands run at compile time, and the result is
+/// path -- this is the one place commands run at compile time, and the result is
 /// used only to locate the file (it is never frozen into the IR).
 pub(super) fn eval_path_template(tmpl: &Template, shell: &str) -> String {
     let mut out = String::new();

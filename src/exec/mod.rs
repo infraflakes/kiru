@@ -86,7 +86,7 @@ pub(crate) async fn await_tasks_and_report(
     tx: &mpsc::UnboundedSender<TuiEvent>,
     task_handles: Vec<(usize, JoinHandle<Result<(), RuntimeError>>)>,
     failure_message: &str,
-) -> miette::Result<()> {
+) -> Result<(), String> {
     let mut any_failed = false;
     for (task_index, handle) in task_handles {
         match handle.await {
@@ -104,7 +104,7 @@ pub(crate) async fn await_tasks_and_report(
         }
     }
     if any_failed {
-        Err(miette::miette!("{}", failure_message))
+        Err(failure_message.to_string())
     } else {
         Ok(())
     }

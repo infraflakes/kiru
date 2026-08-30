@@ -51,7 +51,7 @@ fn execute_single_chain(
 /// sequential chain (each runs after the previous); `;` separates chains, which
 /// run concurrently with one another. Every chain gets its own grouped header in
 /// the TUI, with its calls listed underneath.
-pub fn execute_task_chains(config: Arc<Ir>, chains: Vec<Vec<Call>>) -> miette::Result<()> {
+pub fn execute_task_chains(config: Arc<Ir>, chains: Vec<Vec<Call>>) -> Result<(), String> {
     // One TUI chain group per run-block chain, labelled by its joined calls.
     let chain_pairs: Vec<(String, Vec<String>)> = chains
         .iter()

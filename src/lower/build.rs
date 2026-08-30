@@ -1,3 +1,4 @@
+use crate::diagnostics::{Diagnostic, Span};
 use crate::ir::{Ir, Project, Sync};
 use crate::syntax::Template;
 use std::collections::BTreeMap;
@@ -44,19 +45,23 @@ pub(super) fn build_ir(state: LoweringState) -> Result<Ir, CompileError> {
                 match projects.get(&call.project) {
                     Some(project) => {
                         if !project.functions.contains_key(&call.function) {
-                            return Err(CompileError::ValidationReport(vec![miette::miette!(
-                                "run `{}`: function `{}` not found in project `{}`",
-                                run_name,
-                                call.function,
-                                call.project
+                            return Err(CompileError::Validation(vec![Diagnostic::new(
+                                "<run>".to_string(),
+                                Span::new(0, 0),
+                                format!(
+                                    "run `{}`: function `{}` not found in project `{}`",
+                                    run_name, call.function, call.project
+                                ),
+                                String::new(),
                             )]));
                         }
                     }
                     None => {
-                        return Err(CompileError::ValidationReport(vec![miette::miette!(
-                            "run `{}`: unknown project `{}`",
-                            run_name,
-                            call.project
+                        return Err(CompileError::Validation(vec![Diagnostic::new(
+                            "<run>".to_string(),
+                            Span::new(0, 0),
+                            format!("run `{}`: unknown project `{}`", run_name, call.project),
+                            String::new(),
                         )]));
                     }
                 }

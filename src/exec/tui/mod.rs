@@ -177,13 +177,13 @@ pub(crate) fn run_tui_with<F, Fut>(
     worker: F,
     render_fn: fn(&mut Frame, &Model, usize),
     format_fn: Option<fn(&Model) -> String>,
-) -> miette::Result<()>
+) -> Result<(), String>
 where
     F: FnOnce(mpsc::UnboundedSender<TuiEvent>) -> Fut + Send + 'static,
-    Fut: Future<Output = miette::Result<()>> + Send + 'static,
+    Fut: Future<Output = Result<(), String>> + Send + 'static,
 {
-    let tokio_runtime = tokio::runtime::Runtime::new().map_err(|e| miette::miette!("{}", e))?;
-    let result: miette::Result<()> = tokio_runtime.block_on(async {
+    let tokio_runtime = tokio::runtime::Runtime::new().map_err(|e| format!("{}", e))?;
+    let result: Result<(), String> = tokio_runtime.block_on(async {
         let mut model = Model::new();
         for (label, task_names) in chains {
             model.add_chain(label, task_names);
@@ -207,8 +207,8 @@ where
 
         let cancelled = tui
             .await
-            .map_err(|e| miette::miette!("TUI panicked: {}", e))?
-            .map_err(|e| miette::miette!("TUI error: {}", e))?;
+            .map_err(|e| format!("TUI panicked: {}", e))?
+            .map_err(|e| format!("TUI error: {}", e))?;
 
         if cancelled {
             // Kill everything immediately — running shell commands included.
@@ -216,9 +216,9 @@ where
             std::process::exit(130);
         }
 
-        let worker_result: miette::Result<()> = worker
+        let worker_result: Result<(), String> = worker
             .await
-            .map_err(|e| miette::miette!("worker panicked: {}", e))?;
+            .map_err(|e| format!("worker panicked: {}", e))?;
         worker_result
     });
     result
@@ -228,10 +228,10 @@ where
 pub(crate) fn run_tui_with_run<F, Fut>(
     chains: Vec<(String, Vec<String>)>,
     worker: F,
-) -> miette::Result<()>
+) -> Result<(), String>
 where
     F: FnOnce(mpsc::UnboundedSender<TuiEvent>) -> Fut + Send + 'static,
-    Fut: Future<Output = miette::Result<()>> + Send + 'static,
+    Fut: Future<Output = Result<(), String>> + Send + 'static,
 {
     run_tui_with(
         chains,
@@ -246,10 +246,10 @@ where
 pub(crate) fn run_tui_with_sync<F, Fut>(
     chains: Vec<(String, Vec<String>)>,
     worker: F,
-) -> miette::Result<()>
+) -> Result<(), String>
 where
     F: FnOnce(mpsc::UnboundedSender<TuiEvent>) -> Fut + Send + 'static,
-    Fut: Future<Output = miette::Result<()>> + Send + 'static,
+    Fut: Future<Output = Result<(), String>> + Send + 'static,
 {
     run_tui_with(chains, worker, sync::render_sync_output, None)
 }

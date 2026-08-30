@@ -154,7 +154,7 @@ pub fn sync_project_with_callback(
 /// in its own blocking task that reports its own outcome, and
 /// `await_tasks_and_report` reduces the results to a single aggregate error
 /// (also surfacing any task panic).
-pub fn run_sync_for_projects(syncs: BTreeMap<String, Sync>, shell: &str) -> miette::Result<()> {
+pub fn run_sync_for_projects(syncs: BTreeMap<String, Sync>, shell: &str) -> Result<(), String> {
     let shell = shell.to_string();
     let name_indices: Vec<(String, usize)> = syncs
         .iter()

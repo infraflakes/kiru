@@ -5,13 +5,11 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Execute a single function, optionally scoped to a project, and print its
-/// output to stdout.
 pub fn execute_function(
     config_arg: Option<PathBuf>,
     name: String,
     project: Option<String>,
-) -> miette::Result<()> {
+) -> Result<(), String> {
     let config = load_config(config_arg)?;
 
     let callback: OutputCallback = Arc::new(|line| {
@@ -23,10 +21,12 @@ pub fn execute_function(
     match project {
         Some(project_name) => {
             let mut executor = Executor::new(Arc::new(config), callback);
-            executor.execute_fn_call(&name, &project_name)?;
+            executor
+                .execute_fn_call(&name, &project_name)
+                .map_err(|e| e.to_string())?;
             Ok(())
         }
-        None => Err(miette::miette!(
+        None => Err(format!(
             "must specify a project to run function '{}' in",
             name
         )),

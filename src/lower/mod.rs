@@ -1,4 +1,4 @@
-use crate::error::spanned_report_on;
+use crate::diagnostics::{Diagnostic, Span};
 use crate::ir::{Call, Instruction, Ir};
 use crate::syntax::{Program, ProjectField, Stmt, Template, TopLevel};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -85,8 +85,13 @@ impl LoweringState {
         offset: usize,
         len: usize,
     ) -> CompileError {
-        let report = spanned_report_on(msg.into(), &self.source_texts, source_name, offset, len);
-        CompileError::ValidationReport(vec![report])
+        let src = self.source_texts.get(source_name).cloned().unwrap_or_default();
+        CompileError::Validation(vec![Diagnostic::new(
+            source_name.to_string(),
+            Span::new(offset, len),
+            msg,
+            src,
+        )])
     }
 }
 

@@ -1,4 +1,5 @@
 mod cli;
+mod diagnostics;
 mod error;
 mod exec;
 mod ir;
@@ -6,12 +7,10 @@ mod lower;
 mod syntax;
 
 fn main() {
-    let _ = miette::set_hook(Box::new(|_| {
-        Box::new(miette::MietteHandlerOpts::new().build())
-    }));
-
-    if let Err(report) = cli::run_cli() {
-        error::print_diagnostic(&report);
+    if let Err(e) = cli::run_cli() {
+        if !e.is_empty() {
+            eprintln!("Error: {}", e);
+        }
         std::process::exit(1);
     }
 }

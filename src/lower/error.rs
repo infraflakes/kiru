@@ -1,14 +1,14 @@
-use miette::Diagnostic;
+use crate::diagnostics::Diagnostic;
 use thiserror::Error;
 
-#[derive(Debug, Error, Diagnostic)]
+#[derive(Debug, Error)]
 pub enum CompileError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
     #[error("parse error")]
-    ParseReports(Vec<miette::Report>),
+    Parse(Vec<Diagnostic>),
 
     #[error("validation error")]
-    ValidationReport(Vec<miette::Report>),
+    Validation(Vec<Diagnostic>),
 }

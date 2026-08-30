@@ -10,7 +10,7 @@ macro_rules! style {
     };
 }
 
-pub fn run_status_command(config_arg: Option<PathBuf>) -> miette::Result<()> {
+pub fn run_status_command(config_arg: Option<PathBuf>) -> Result<(), String> {
     let config = load_config(config_arg)?;
     let rendered_status_tree = format_config_as_tree(&config);
     pager::display_output_through_pager(&rendered_status_tree)?;
@@ -63,10 +63,7 @@ fn format_config_as_tree(config: &Ir) -> String {
                 let stage_connector = if is_last_stage { "└" } else { "├" };
 
                 // Join multiple calls in a chain with " => " on a single line.
-                let chain_display: Vec<String> = stage
-                    .iter()
-                    .map(|call| call.fqn())
-                    .collect();
+                let chain_display: Vec<String> = stage.iter().map(|call| call.fqn()).collect();
                 let chain_line = chain_display.join(&style!(GRAY_ANSI, " => "));
 
                 formatted_output.push_str(&format!(

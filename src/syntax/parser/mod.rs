@@ -1,3 +1,4 @@
+use crate::diagnostics::Span;
 use crate::syntax::ast::Call;
 #[cfg(test)]
 use crate::syntax::ast::Program;
@@ -5,7 +6,6 @@ use crate::syntax::error::ParseError;
 use crate::syntax::lexer::Lexer;
 use crate::syntax::token::{Token, TokenType, format_token, format_token_type, is_keyword_token};
 use crate::syntax::{FnStmt, Stmt, Template, TopLevel};
-use miette::SourceSpan;
 
 mod body;
 mod chain;
@@ -61,19 +61,19 @@ impl Parser {
         self.current = std::mem::replace(&mut self.next, self.lexer.next_token());
     }
 
-    /// Returns a SourceSpan that safely handles EOF by pointing at the last byte.
-    fn eof_aware_span(&self) -> SourceSpan {
+    /// Returns a Span that safely handles EOF by pointing at the last byte.
+    fn eof_aware_span(&self) -> Span {
         let tok = &self.current;
         if tok.len == 0 && tok.offset >= self.source_len && self.source_len > 0 {
             let start = self.source_len.saturating_sub(1);
-            return SourceSpan::new(start.into(), 1);
+            return Span::new(start, 1);
         }
         let len = if tok.len == 0 {
             1.min(self.source_len.saturating_sub(tok.offset))
         } else {
             tok.len
         };
-        SourceSpan::new(tok.offset.into(), len)
+        Span::new(tok.offset, len)
     }
 
     /// Expects a specific token type and advances past it, returning an error with context on mismatch.

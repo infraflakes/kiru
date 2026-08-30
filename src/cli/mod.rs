@@ -9,57 +9,35 @@ pub use args::{Cli, Commands};
 use crate::ir::Ir;
 use crate::lower::CompileError;
 use clap::Parser;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub(crate) mod compile;
 
-/// Load an IR through the given loader, mapping compiler errors to miette
-/// reports once.
-fn load_config_via(
-    config_arg: Option<PathBuf>,
-    load: impl FnOnce(&Path) -> miette::Result<Ir>,
-) -> miette::Result<Ir> {
-    let config_path = get_config_path(config_arg);
-    load(&config_path)
-}
-
-/// Load a resolved IR by reading and parsing a `kirufile` artifact directly.
-/// Every runtime command (`run`/`status`/`sync`/`fn`) operates on the compiled
-/// `kirufile` rather than the `.kiru` DSL source.
-pub(crate) fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Ir> {
-    load_config_via(config_arg, |config_path| {
-        let text = std::fs::read_to_string(config_path).map_err(|e| {
-            miette::miette!("failed to read kirufile {}: {}", config_path.display(), e)
-        })?;
-        Ir::deserialize(&text).map_err(|e| {
-            miette::miette!("failed to parse kirufile {}: {}", config_path.display(), e)
-        })
-    })
-}
-
-/// Map a compiler error to a miette report for the CLI. Single owner of the
-/// `CompileError` → diagnostic mapping so adding a variant updates every
-/// command path (status, sync, run, fn) at once instead of drifting.
-pub(crate) fn compile_error_to_report(e: CompileError) -> miette::Report {
+/// Print compile errors to stderr (snippets rendered via annotate-snippets)
+/// and return empty string to signal "already printed". Non-empty return is
+/// only for non-diagnostic errors (I/O) where main.rs should add prefix.
+pub(crate) fn compile_error_to_string(e: CompileError) -> String {
     match e {
-        CompileError::ParseReports(reports) => batch_report(reports, "parse"),
-        CompileError::ValidationReport(reports) => batch_report(reports, "validation"),
-        _ => miette::miette!("{}", e),
+        CompileError::Io(e) => format!("I/O error: {}", e),
+        CompileError::Parse(diags) | CompileError::Validation(diags) => {
+            for d in &diags {
+                crate::diagnostics::print_diagnostic(d);
+            }
+            String::new() // already printed
+        }
     }
 }
 
-/// Print every diagnostic in a batch and return the batch summary error.
-/// Shared by the parse and validation error paths so the print-then-summarize
-/// shape exists in exactly one place.
-fn batch_report(reports: Vec<miette::Report>, what: &str) -> miette::Report {
-    let count = reports.len();
-    for report in &reports {
-        crate::error::print_diagnostic(report);
-    }
-    miette::miette!("{} {} error(s) found", count, what)
+/// Load an IR by reading and parsing a `kirufile` artifact directly.
+pub(crate) fn load_config(config_arg: Option<PathBuf>) -> Result<Ir, String> {
+    let config_path = get_config_path(config_arg);
+    let text = std::fs::read_to_string(&config_path)
+        .map_err(|e| format!("failed to read kirufile {}: {}", config_path.display(), e))?;
+    Ir::deserialize(&text)
+        .map_err(|e| format!("failed to parse kirufile {}: {}", config_path.display(), e))
 }
 
-pub fn run_cli() -> miette::Result<()> {
+pub fn run_cli() -> Result<(), String> {
     let parsed_cli = Cli::parse();
 
     match parsed_cli.command {
@@ -72,12 +50,15 @@ pub fn run_cli() -> miette::Result<()> {
             config,
         } => commands::execute_function(config, name, project),
         Commands::Compile { input, output } => compile::run_compile_command(input, output),
-        Commands::Version => run_version(),
+        Commands::Version => {
+            println!("kiru {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
     }
 }
 
 /// Default configuration directory: `~/.config/kiru/`.
-fn kiru_config_dir() -> PathBuf {
+pub(crate) fn kiru_config_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".config")
@@ -85,24 +66,12 @@ fn kiru_config_dir() -> PathBuf {
 }
 
 /// Resolve the path to the kirufile artifact.
-///
-/// Resolution order:
-/// 1. Explicit `-c` path → use it directly.
-/// 2. `KIRU_CWD=1` → `kirufile` in the current directory (CI / in-repo mode).
-/// 3. Default → `~/.config/kiru/kirufile`.
 fn get_config_path(config_arg: Option<PathBuf>) -> PathBuf {
     if let Some(path) = config_arg {
         return path;
     }
-
     if crate::exec::kiru_cwd_enabled() {
         return PathBuf::from("kirufile");
     }
-
     kiru_config_dir().join("kirufile")
-}
-
-fn run_version() -> miette::Result<()> {
-    println!("kiru {}", env!("CARGO_PKG_VERSION"));
-    Ok(())
 }

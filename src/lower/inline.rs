@@ -1,4 +1,4 @@
-use crate::error::spanned_report_on;
+use crate::diagnostics::{Diagnostic, Span};
 use crate::ir::{Arm, ArmPattern, EnvPair, Instruction, Segment, Template as IrTemplate};
 use crate::syntax::source::ArmPattern as DslArmPattern;
 use crate::syntax::{Part as DslPart, Template};
@@ -8,7 +8,7 @@ use super::CompileError;
 
 /// Inline every `@(var)` reference in `tmpl` against `scope`, replacing each
 /// with the (already-inlined) template it names. Commands are preserved as
-/// `Cmd` parts — they are never executed here. Returns the flattened list of
+/// `Cmd` parts -- they are never executed here. Returns the flattened list of
 /// parts (a var that resolves to several parts is spliced in directly).
 ///
 /// `stack` tracks the variable-resolution chain so a self- or mutually-referential
@@ -26,21 +26,19 @@ pub(super) fn inline_dsl_parts(
             DslPart::Lit(s) => out.push(DslPart::Lit(s.clone())),
             DslPart::Var(name) => {
                 if stack.contains(name) {
-                    return Err(CompileError::ValidationReport(vec![spanned_report_on(
+                    return Err(CompileError::Validation(vec![Diagnostic::new(
+                        source_name.to_string(),
+                        Span::new(tmpl.offset, tmpl.len.max(1)),
                         format!("circular variable reference: {}", name),
-                        sources,
-                        source_name,
-                        tmpl.offset,
-                        tmpl.len.max(1),
+                        sources.get(source_name).cloned().unwrap_or_default(),
                     )]));
                 }
                 let var_tmpl = scope.get(name).ok_or_else(|| {
-                    CompileError::ValidationReport(vec![spanned_report_on(
+                    CompileError::Validation(vec![Diagnostic::new(
+                        source_name.to_string(),
+                        Span::new(tmpl.offset, tmpl.len.max(1)),
                         format!("undefined variable: {}", name),
-                        sources,
-                        source_name,
-                        tmpl.offset,
-                        tmpl.len.max(1),
+                        sources.get(source_name).cloned().unwrap_or_default(),
                     )])
                 })?;
                 stack.push(name.clone());
