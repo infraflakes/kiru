@@ -1,8 +1,8 @@
 use crate::exec::colors;
 use crate::exec::error::RuntimeError;
+use crate::exec::subprocess;
 use crate::exec::{TaskOutcome, TaskStatus, TuiEvent, await_tasks_and_report, report_task_outcome};
 use crate::ir::{Segment, Sync, Template};
-use crate::subprocess;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -14,8 +14,8 @@ fn resolve_sync_value(tmpl: &Template, shell: &str) -> String {
     let mut out = String::new();
     for segment in &tmpl.segments {
         match segment {
-            Segment::Lit(s) => out.push_str(s),
-            Segment::Cmd(inner) => {
+            Segment::Literal(s) => out.push_str(s),
+            Segment::Command(inner) => {
                 let cmd = resolve_sync_value(inner, shell);
                 out.push_str(&run_sync_capture(&cmd, shell));
             }

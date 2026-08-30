@@ -3,6 +3,7 @@ pub(crate) mod colors;
 pub(crate) mod context;
 pub(crate) mod error;
 pub(crate) mod executor;
+pub(crate) mod subprocess;
 pub(crate) mod sync;
 pub(crate) mod tui;
 

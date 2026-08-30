@@ -1,7 +1,7 @@
+use super::subprocess;
 use crate::exec::colors;
 use crate::exec::error::RuntimeError;
 use crate::ir::{ArmPattern, EnvPair, Instruction, Segment, Template};
-use crate::subprocess;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -44,8 +44,8 @@ impl<'a> ExecContext<'a> {
         let mut out = String::new();
         for segment in &tmpl.segments {
             match segment {
-                Segment::Lit(s) => out.push_str(s),
-                Segment::Cmd(inner) => {
+                Segment::Literal(s) => out.push_str(s),
+                Segment::Command(inner) => {
                     let cmd = self.resolve(inner, false)?;
                     if live {
                         self.run_live(&cmd)?;
@@ -214,7 +214,7 @@ mod tests {
 
     fn lit(s: &str) -> Template {
         Template {
-            segments: vec![Segment::Lit(s.to_string())],
+            segments: vec![Segment::Literal(s.to_string())],
         }
     }
 

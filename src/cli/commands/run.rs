@@ -1,4 +1,4 @@
-use super::super::load_config;
+use crate::cli::load_config;
 use crate::exec;
 use std::path::PathBuf;
 use std::sync::Arc;

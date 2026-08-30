@@ -1,5 +1,5 @@
 mod args;
-mod exec;
+mod commands;
 mod pager;
 mod status;
 mod sync;
@@ -26,7 +26,7 @@ fn load_config_via(
 /// Load a resolved IR by reading and parsing a `kirufile` artifact directly.
 /// Every runtime command (`run`/`status`/`sync`/`fn`) operates on the compiled
 /// `kirufile` rather than the `.kiru` DSL source.
-fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Ir> {
+pub(crate) fn load_config(config_arg: Option<PathBuf>) -> miette::Result<Ir> {
     load_config_via(config_arg, |config_path| {
         let text = std::fs::read_to_string(config_path).map_err(|e| {
             miette::miette!("failed to read kirufile {}: {}", config_path.display(), e)
@@ -63,25 +63,43 @@ pub fn run_cli() -> miette::Result<()> {
     let parsed_cli = Cli::parse();
 
     match parsed_cli.command {
-        Commands::Status => status::run_status_command(parsed_cli.config),
-        Commands::Sync => sync::run_sync_command(parsed_cli.config),
-        Commands::Run { name } => exec::execute_run_block(parsed_cli.config, name),
-        Commands::Fn { name, project } => exec::execute_function(parsed_cli.config, name, project),
-        Commands::Compile { input, output } => {
-            compile::run_compile_command(input.or(parsed_cli.config), output)
-        }
+        Commands::Status { config } => status::run_status_command(config),
+        Commands::Sync { config } => sync::run_sync_command(config),
+        Commands::Run { name, config } => commands::execute_run_block(config, name),
+        Commands::Fn {
+            name,
+            project,
+            config,
+        } => commands::execute_function(config, name, project),
+        Commands::Compile { input, output } => compile::run_compile_command(input, output),
         Commands::Version => run_version(),
     }
 }
 
+/// Default configuration directory: `~/.config/kiru/`.
+fn kiru_config_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".config")
+        .join("kiru")
+}
+
+/// Resolve the path to the kirufile artifact.
+///
+/// Resolution order:
+/// 1. Explicit `-c` path → use it directly.
+/// 2. `KIRU_CWD=1` → `kirufile` in the current directory (CI / in-repo mode).
+/// 3. Default → `~/.config/kiru/kirufile`.
 fn get_config_path(config_arg: Option<PathBuf>) -> PathBuf {
     if let Some(path) = config_arg {
         return path;
     }
 
-    // Without an explicit path, commands operate on a compiled `kirufile`
-    // artifact in the current directory (produced earlier by `kiru compile`).
-    PathBuf::from("kirufile")
+    if crate::exec::kiru_cwd_enabled() {
+        return PathBuf::from("kirufile");
+    }
+
+    kiru_config_dir().join("kirufile")
 }
 
 fn run_version() -> miette::Result<()> {

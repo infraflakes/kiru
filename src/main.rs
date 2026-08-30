@@ -3,7 +3,6 @@ mod error;
 mod exec;
 mod ir;
 mod lower;
-mod subprocess;
 mod syntax;
 
 fn main() {

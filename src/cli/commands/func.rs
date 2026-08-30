@@ -1,4 +1,4 @@
-use super::super::load_config;
+use crate::cli::load_config;
 use crate::exec::colors;
 use crate::exec::{Executor, OutputCallback};
 use std::io::{self, Write};

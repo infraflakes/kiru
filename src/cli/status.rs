@@ -60,25 +60,21 @@ fn format_config_as_tree(config: &Ir) -> String {
             let stage_count = calls.len();
             for (stage_idx, stage) in calls.iter().enumerate() {
                 let is_last_stage = stage_idx == stage_count - 1;
-                if stage_idx > 0 {
-                    formatted_output.push_str(&format!(
-                        "  {}  {}── {}\n",
-                        run_indent,
-                        style!(BOLD, "{}", "│"),
-                        style!(GRAY_ANSI, "=>")
-                    ));
-                }
                 let stage_connector = if is_last_stage { "└" } else { "├" };
-                for (call_idx, call) in stage.iter().enumerate() {
-                    let is_last_call = call_idx == stage.len() - 1;
-                    let call_connector = if is_last_call { stage_connector } else { "├" };
-                    formatted_output.push_str(&format!(
-                        "  {}  {}── {}\n",
-                        run_indent,
-                        style!(BOLD, "{}", call_connector),
-                        call.fqn()
-                    ));
-                }
+
+                // Join multiple calls in a chain with " => " on a single line.
+                let chain_display: Vec<String> = stage
+                    .iter()
+                    .map(|call| call.fqn())
+                    .collect();
+                let chain_line = chain_display.join(&style!(GRAY_ANSI, " => "));
+
+                formatted_output.push_str(&format!(
+                    "  {}  {}── {}\n",
+                    run_indent,
+                    style!(BOLD, "{}", stage_connector),
+                    chain_line
+                ));
             }
         }
     }
