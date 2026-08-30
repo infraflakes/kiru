@@ -3,6 +3,7 @@ fn test_compile_basic_project() {
     let ir = crate::lower::test_support::compile_str(
         "\
 shell = (sh);
+timeout = (30);
 var home_dir = $(echo /home/user);
 sync nix {
     url = (git@github.com:nix);
@@ -43,7 +44,7 @@ run bootstrap { nix::eval; };
     );
     assert_eq!(
         write_template(&sync.dir),
-        "(t (cmd (t (lit \"echo /home/user\"))) (lit \"/nix\"))"
+        "(t (cmd 45 18 \"<sync>\" (t (lit \"echo /home/user\"))) (lit \"/nix\"))"
     );
     assert_eq!(write_template(&sync.branch), "(t (lit \"main\"))");
     assert_eq!(write_template(&sync.strategy), "(t (lit \"clone\"))");
@@ -70,6 +71,7 @@ fn test_compile_unknown_run_reference_fails() {
 fn test_compile_switch_lowering() {
     let ir = crate::lower::test_support::compile_str(
         "\
+timeout = (30);
 pr p {
     var os = (linux);
     fn pick {

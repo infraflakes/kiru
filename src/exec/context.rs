@@ -1,10 +1,12 @@
 use super::subprocess;
+use crate::diagnostics::{Diagnostic, Span};
 use crate::exec::colors;
 use crate::exec::error::RuntimeError;
 use crate::ir::{ArmPattern, EnvPair, Instruction, Segment, Template};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Callback invoked for each emitted output line. This is the only output
 /// sink: every execution path (the `run`/`sync` TUI, the direct `fn` command)
@@ -21,12 +23,20 @@ pub(crate) struct ExecContext<'a> {
     env_layers: Vec<BTreeMap<String, String>>,
     system_env: Vec<(String, String)>,
     shell: String,
+    timeout: Duration,
+    #[allow(dead_code)]
+    sources: &'a BTreeMap<String, String>,
 }
 
 impl<'a> ExecContext<'a> {
     /// Create a new execution context. The working directory starts at the
     /// process current directory.
-    pub(crate) fn new(output: &'a mut OutputCallback, shell: String) -> Self {
+    pub(crate) fn new(
+        output: &'a mut OutputCallback,
+        shell: String,
+        timeout: Duration,
+        sources: &'a BTreeMap<String, String>,
+    ) -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
         ExecContext {
             output,
@@ -34,23 +44,31 @@ impl<'a> ExecContext<'a> {
             env_layers: Vec::new(),
             system_env: std::env::vars().collect(),
             shell,
+            timeout,
+            sources,
         }
     }
 
     /// Resolve a template to a string. When `live` is true, `$(cmd)` parts are
     /// executed and streamed to output (no captured text is appended);
     /// otherwise their stdout is captured and inlined.
-    fn resolve(&self, tmpl: &Template, live: bool) -> Result<String, RuntimeError> {
+    fn resolve(&self, tmpl: &Template, strict: bool) -> Result<String, RuntimeError> {
         let mut out = String::new();
         for segment in &tmpl.segments {
             match segment {
                 Segment::Literal(s) => out.push_str(s),
-                Segment::Command(inner) => {
+                Segment::Command(inner, _span, _source_name) => {
                     let cmd = self.resolve(inner, false)?;
-                    if live {
+                    if strict {
                         self.run_live(&cmd)?;
                     } else {
-                        out.push_str(&self.capture(&cmd));
+                        let captured = self.capture(&cmd).unwrap_or_default();
+                        if !captured.is_empty() {
+                            out.push_str(&captured);
+                        } else {
+                            // Tolerant mode: inner timeout/error silently
+                            // returns empty string — no propagation.
+                        }
                     }
                 }
             }
@@ -89,19 +107,20 @@ impl<'a> ExecContext<'a> {
         Ok(())
     }
 
-    /// Run a command and capture its stdout (trimmed). Non-zero exit is
-    /// non-fatal: whatever stdout was produced is returned.
-    fn capture(&self, cmd: &str) -> String {
+    /// Run a command and capture its stdout (trimmed). Returns `Err(Timeout(..))`
+    /// when the process exceeds the global timeout; in that case the captured
+    /// output so far is discarded. Non-zero exit is non-fatal.
+    fn capture(&self, cmd: &str) -> Result<String, RuntimeError> {
         let work_dir = self.cwd.clone();
         let env_overrides: HashMap<String, String> = self.env_overrides();
         let shell = self.shell.clone();
         let mut captured = String::new();
-        let _ = subprocess::run_subprocess(
+        let result = subprocess::run_subprocess(
             cmd,
             &[&shell, "-c", cmd],
             Some(&work_dir),
             Some(&env_overrides),
-            None,
+            Some(self.timeout),
             &mut |line| match line {
                 subprocess::SubprocessLine::Stdout(text) => {
                     captured.push_str(&text);
@@ -110,7 +129,22 @@ impl<'a> ExecContext<'a> {
                 subprocess::SubprocessLine::Stderr(_) => {}
             },
         );
-        captured.trim_end().to_string()
+        match result {
+            Ok(_) => Ok(captured.trim_end().to_string()),
+            Err(subprocess::SubprocessError::Timeout { command, .. }) => {
+                Err(RuntimeError::Timeout(Diagnostic::new(
+                    String::new(),
+                    Span::new(0, 0),
+                    format!(
+                        "command timed out after {}s: {}",
+                        self.timeout.as_secs(),
+                        command
+                    ),
+                    String::new(),
+                )))
+            }
+            Err(_) => Ok(captured.trim_end().to_string()),
+        }
     }
 
     /// Combine system env vars with every active env-block layer.
@@ -221,7 +255,13 @@ mod tests {
     #[test]
     fn test_switch_first_match() {
         let mut output: OutputCallback = Arc::new(|_| {});
-        let mut ctx = ExecContext::new(&mut output, "sh".to_string());
+        let empty_sources = BTreeMap::new();
+        let mut ctx = ExecContext::new(
+            &mut output,
+            "sh".to_string(),
+            Duration::from_secs(30),
+            &empty_sources,
+        );
         let body: [Instruction; 1] = [Instruction::Switch {
             subject: lit("a"),
             arms: vec![

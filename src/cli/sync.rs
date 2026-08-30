@@ -2,6 +2,7 @@ use crate::exec;
 use crate::ir::Sync;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
 pub fn run_sync_command(config_arg: Option<PathBuf>) -> Result<(), String> {
     let config = super::load_config(config_arg)?;
@@ -40,5 +41,5 @@ pub fn run_sync_command(config_arg: Option<PathBuf>) -> Result<(), String> {
         return Err("all projects were skipped due to missing url or dir".to_string());
     }
 
-    exec::sync::run_sync_for_projects(syncs, &config.shell)
+    exec::sync::run_sync_for_projects(syncs, &config.shell, Duration::from_secs(config.timeout))
 }

@@ -8,16 +8,27 @@ use super::{CompileError, LoweringState};
 
 pub(super) fn build_ir(state: LoweringState) -> Result<Ir, CompileError> {
     let shell = state.shell.clone().unwrap_or_else(|| "sh".to_string());
+    let timeout = state.timeout.ok_or_else(|| {
+        CompileError::Validation(vec![Diagnostic::new(
+            "<config>".to_string(),
+            Span::new(0, 0),
+            "missing mandatory `timeout = (<seconds>);` declaration",
+            String::new(),
+        )])
+    })?;
 
     let mut repositories = BTreeMap::new();
     for (name, s) in &state.syncs {
         repositories.insert(
             name.clone(),
             Sync {
-                url: lower_template(s.url.as_ref().unwrap_or(&Template::default())),
-                dir: lower_template(s.dir.as_ref().unwrap_or(&Template::default())),
-                branch: lower_template(s.branch.as_ref().unwrap_or(&Template::default())),
-                strategy: lower_template(s.strategy.as_ref().unwrap_or(&Template::lit("clone"))),
+                url: lower_template(s.url.as_ref().unwrap_or(&Template::default()), "<sync>"),
+                dir: lower_template(s.dir.as_ref().unwrap_or(&Template::default()), "<sync>"),
+                branch: lower_template(s.branch.as_ref().unwrap_or(&Template::default()), "<sync>"),
+                strategy: lower_template(
+                    s.strategy.as_ref().unwrap_or(&Template::lit("clone")),
+                    "<sync>",
+                ),
             },
         );
     }
@@ -71,6 +82,8 @@ pub(super) fn build_ir(state: LoweringState) -> Result<Ir, CompileError> {
 
     Ok(Ir {
         shell,
+        timeout,
+        sources: state.source_texts.into_iter().collect(),
         repositories,
         projects,
         execution_chains: state.run_blocks,

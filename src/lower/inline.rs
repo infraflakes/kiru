@@ -79,7 +79,9 @@ pub(super) fn inline_dsl_template(
 
 /// Lower an already-inlined DSL `Template` (no `Var` parts) into an IR
 /// `Template`. Commands survive as `Cmd` nodes for the executor to execute.
-pub(super) fn lower_template(tmpl: &Template) -> IrTemplate {
+/// `source_name` is threaded into every `Segment::Command` for runtime
+/// diagnostic underline on timeout or error.
+pub(super) fn lower_template(tmpl: &Template, source_name: &str) -> IrTemplate {
     IrTemplate {
         segments: tmpl
             .parts
@@ -89,7 +91,14 @@ pub(super) fn lower_template(tmpl: &Template) -> IrTemplate {
                 DslPart::Var(_) => {
                     unreachable!("variables are inlined away before lowering")
                 }
-                DslPart::Cmd(inner) => Segment::Command(lower_template(inner)),
+                DslPart::Cmd(inner) => {
+                    let span = crate::diagnostics::Span::new(inner.offset, inner.len.max(1));
+                    Segment::Command(
+                        lower_template(inner, source_name),
+                        span,
+                        source_name.to_string(),
+                    )
+                }
             })
             .collect(),
     }
@@ -124,12 +133,10 @@ fn lower_fn_stmts(
     for stmt in stmts {
         match stmt {
             crate::syntax::FnStmt::Log(t) => {
-                out.push(Instruction::Log(lower_template(&inline_dsl_template(
-                    t,
-                    scope,
-                    sources,
+                out.push(Instruction::Log(lower_template(
+                    &inline_dsl_template(t, scope, sources, source_name)?,
                     source_name,
-                )?)));
+                )));
             }
             crate::syntax::FnStmt::Bind { target, value } => {
                 let inlined = inline_dsl_template(value, scope, sources, source_name)?;
@@ -139,11 +146,11 @@ fn lower_fn_stmts(
                     // No runtime Exec emitted: execution happens lazily at each
                     // use site via tolerant capture (e.g. Switch/Log/Cd/Env).
                 } else {
-                    let ir = lower_template(&inlined);
+                    let ir = lower_template(&inlined, source_name);
                     let has_cmd = ir
                         .segments
                         .iter()
-                        .any(|s| matches!(s, crate::ir::Segment::Command(_)));
+                        .any(|s| matches!(s, crate::ir::Segment::Command(_, _, _)));
                     if !has_cmd {
                         return Err(crate::lower::CompileError::Validation(vec![
                             Diagnostic::new(
@@ -158,12 +165,10 @@ fn lower_fn_stmts(
                 }
             }
             crate::syntax::FnStmt::Cd(t) => {
-                out.push(Instruction::Cd(lower_template(&inline_dsl_template(
-                    t,
-                    scope,
-                    sources,
+                out.push(Instruction::Cd(lower_template(
+                    &inline_dsl_template(t, scope, sources, source_name)?,
                     source_name,
-                )?)));
+                )));
             }
             crate::syntax::FnStmt::EnvBlock { pairs, body } => {
                 let pairs = pairs
@@ -171,12 +176,10 @@ fn lower_fn_stmts(
                     .map(|p| -> Result<EnvPair, CompileError> {
                         Ok(EnvPair {
                             key: p.key.clone(),
-                            value: lower_template(&inline_dsl_template(
-                                &p.value,
-                                scope,
-                                sources,
+                            value: lower_template(
+                                &inline_dsl_template(&p.value, scope, sources, source_name)?,
                                 source_name,
-                            )?),
+                            ),
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
@@ -185,8 +188,10 @@ fn lower_fn_stmts(
                 out.push(Instruction::Env { pairs, body });
             }
             crate::syntax::FnStmt::Switch { subject, arms } => {
-                let subject =
-                    lower_template(&inline_dsl_template(subject, scope, sources, source_name)?);
+                let subject = lower_template(
+                    &inline_dsl_template(subject, scope, sources, source_name)?,
+                    source_name,
+                );
                 let mut arms_out = Vec::new();
                 for arm in arms {
                     let pattern = match &arm.pattern {

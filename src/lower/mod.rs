@@ -36,6 +36,7 @@ struct LoweringState {
     /// as `Cmd` parts — they are never executed or frozen at compile time.
     globals: BTreeMap<String, Template>,
     shell: Option<String>,
+    timeout: Option<u64>,
     syncs: BTreeMap<String, PendingSync>,
     projects: BTreeMap<String, PendingProject>,
     run_blocks: BTreeMap<String, Vec<Vec<Call>>>,
@@ -65,6 +66,7 @@ impl LoweringState {
         Self {
             globals: BTreeMap::new(),
             shell: None,
+            timeout: None,
             syncs: BTreeMap::new(),
             projects: BTreeMap::new(),
             run_blocks: BTreeMap::new(),
@@ -180,6 +182,58 @@ fn compile_stmt(
                 ));
             }
             state.shell = Some(resolved);
+            Ok(())
+        }
+        Stmt::Timeout {
+            value,
+            offset,
+            len,
+            source_name,
+        } => {
+            let inlined =
+                inline_dsl_template(value, &state.globals, &state.source_texts, source_name)?;
+            if inlined
+                .parts
+                .iter()
+                .any(|p| matches!(p, super::syntax::source::Part::Cmd(_)))
+            {
+                return Err(state.spanned(
+                    "timeout value must be a plain integer, not a $(command) expression"
+                        .to_string(),
+                    source_name,
+                    *offset,
+                    *len,
+                ));
+            }
+            let rendered = render_literal(&inlined);
+            let seconds: u64 = rendered.trim().parse().map_err(|_| {
+                state.spanned(
+                    format!(
+                        "timeout value must be a positive integer, got `{}`",
+                        rendered.trim()
+                    ),
+                    source_name,
+                    *offset,
+                    *len,
+                )
+            })?;
+            if seconds == 0 {
+                return Err(state.spanned(
+                    "timeout value must be greater than zero".to_string(),
+                    source_name,
+                    *offset,
+                    *len,
+                ));
+            }
+            if state.timeout.is_some() {
+                return Err(state.spanned(
+                    "duplicate timeout declaration".to_string(),
+                    source_name,
+                    *offset,
+                    *len,
+                ));
+            }
+            state.timeout = Some(seconds);
             Ok(())
         }
         Stmt::Var {

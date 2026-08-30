@@ -30,6 +30,7 @@ pub enum TokenType {
     Sync,
     Switch,
     Case,
+    Timeout,
     /// `::` separator used in run-block references (`pr::fn`).
     NamespaceSep,
 }
@@ -71,6 +72,7 @@ const KEYWORDS: &[(&str, TokenType)] = &[
     ("shell", TokenType::Shell),
     ("case", TokenType::Case),
     ("switch", TokenType::Switch),
+    ("timeout", TokenType::Timeout),
 ];
 
 /// Convert a keyword string to its corresponding token type,
@@ -115,7 +117,8 @@ pub fn format_token_type(ty: &TokenType) -> String {
         | TokenType::Env
         | TokenType::Cd
         | TokenType::Case
-        | TokenType::Switch => unreachable!("keyword tokens are named by the keyword table"),
+        | TokenType::Switch
+        | TokenType::Timeout => unreachable!("keyword tokens are named by the keyword table"),
     }
 }
 

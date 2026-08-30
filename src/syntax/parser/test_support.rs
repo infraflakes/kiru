@@ -34,6 +34,7 @@ pub(crate) fn count_stmt_types(program: &Program) -> Vec<&'static str> {
             TopLevel::Stmt(Stmt::Fn { .. }) => "fn",
             TopLevel::Stmt(Stmt::Run { .. }) => "run",
             TopLevel::Stmt(Stmt::Shell { .. }) => "shell",
+            TopLevel::Stmt(Stmt::Timeout { .. }) => "timeout",
             TopLevel::Import(_) => "import",
         })
         .collect()

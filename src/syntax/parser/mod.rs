@@ -243,7 +243,8 @@ impl Parser {
             TokenType::Fn => self.parse_fn_decl(),
             TokenType::Run => self.parse_run_decl(),
             TokenType::Shell => self.parse_shell_decl(),
-            _ => Err(self.unexpected_stmt_start_error("var, pr, sync, fn, run, or shell")),
+            TokenType::Timeout => self.parse_timeout_decl(),
+            _ => Err(self.unexpected_stmt_start_error("var, pr, sync, fn, run, shell, or timeout")),
         }
     }
 
@@ -264,6 +265,23 @@ impl Parser {
         })
     }
 
+    fn parse_timeout_decl(&mut self) -> Result<Stmt, ParseError> {
+        let offset = self.current_token().offset;
+        let source_name = self.source_name.clone();
+        self.advance(); // skip 'timeout'
+        self.expect_with_context(TokenType::Assign, "in timeout declaration")?;
+        let value = self.parse_expr()?;
+        let semi_end = self.current_token().offset + self.current_token().len;
+        self.expect_with_context(TokenType::Semicolon, "after timeout declaration")?;
+        let len = semi_end - offset;
+        Ok(Stmt::Timeout {
+            value,
+            offset,
+            len,
+            source_name,
+        })
+    }
+
     #[cfg(test)]
     fn skip_to_stmt_boundary(&mut self) {
         use TokenType::*;
@@ -273,7 +291,7 @@ impl Parser {
                 Semicolon | RBrace => {
                     self.advance();
                 }
-                Var | Pr | Fn | Run | Sync | Shell => break,
+                Var | Pr | Fn | Run | Sync | Shell | Timeout => break,
                 _ => self.advance(),
             }
         }
@@ -357,7 +375,7 @@ mod tests {
         let errs = result.unwrap_err();
         assert!(errs.iter().any(|e| {
             e.to_string()
-                .contains("expected var, pr, sync, fn, run, or shell")
+                .contains("expected var, pr, sync, fn, run, shell, or timeout")
         }));
     }
 

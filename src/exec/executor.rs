@@ -3,6 +3,7 @@ use crate::exec::context::ExecContext;
 use crate::exec::error::RuntimeError;
 use crate::ir::{Instruction, Ir, Project};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Executes resolved function bodies against a compiled `Ir`.
 pub(crate) struct Executor {
@@ -51,7 +52,13 @@ impl Executor {
 
         let fn_body = lookup_project_function_body(project, project_name, fn_name)?;
 
-        let mut ctx = ExecContext::new(&mut self.output, self.ir.shell.clone());
+        let timeout = Duration::from_secs(self.ir.timeout);
+        let mut ctx = ExecContext::new(
+            &mut self.output,
+            self.ir.shell.clone(),
+            timeout,
+            &self.ir.sources,
+        );
         ctx.exec_stmts(fn_body)
     }
 }

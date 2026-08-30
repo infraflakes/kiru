@@ -90,6 +90,15 @@ pub enum Stmt {
         len: usize,
         source_name: String,
     },
+    /// Global timeout: `timeout = (30);` — the maximum seconds any single
+    /// `$(cmd)` substitution may run before being aborted. Mandatory at the
+    /// top level alongside `shell`. Declared at the top level.
+    Timeout {
+        value: Template,
+        offset: usize,
+        len: usize,
+        source_name: String,
+    },
 }
 
 /// A top-level item returned by the parser: either a DSL statement or an import directive.

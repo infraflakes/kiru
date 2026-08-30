@@ -1,5 +1,7 @@
 use crate::cli::load_config;
+use crate::diagnostics::print_diagnostic;
 use crate::exec::colors;
+use crate::exec::error::RuntimeError;
 use crate::exec::{Executor, OutputCallback};
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -23,7 +25,13 @@ pub fn execute_function(
             let mut executor = Executor::new(Arc::new(config), callback);
             executor
                 .execute_fn_call(&name, &project_name)
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| match e {
+                    RuntimeError::Timeout(diag) => {
+                        print_diagnostic(&diag);
+                        String::new()
+                    }
+                    other => other.to_string(),
+                })?;
             Ok(())
         }
         None => Err(format!(

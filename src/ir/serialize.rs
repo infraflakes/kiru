@@ -13,8 +13,13 @@ fn append_template(buf: &mut String, tmpl: &Template) {
     for segment in &tmpl.segments {
         match segment {
             Segment::Literal(s) => buf.push_str(&format!(" (lit {})", quote_string(s))),
-            Segment::Command(inner) => {
-                buf.push_str(" (cmd");
+            Segment::Command(inner, span, file) => {
+                buf.push_str(&format!(
+                    " (cmd {} {} {} ",
+                    span.offset,
+                    span.len,
+                    quote_string(file)
+                ));
                 append_template(buf, inner);
                 buf.push(')');
             }
@@ -148,6 +153,15 @@ impl Ir {
         out.push_str("(kirufile\n");
         out.push_str("  (version 1)\n");
         out.push_str(&format!("  (shell {})\n", quote_string(&self.shell)));
+        out.push_str(&format!("  (timeout {})\n", self.timeout));
+
+        if !self.sources.is_empty() {
+            out.push_str("  (sources");
+            for (name, text) in &self.sources {
+                out.push_str(&format!(" ({} {})", quote_string(name), quote_string(text)));
+            }
+            out.push_str(")\n");
+        }
 
         for (id, sync) in &self.repositories {
             out.push_str(&format!("  (sync {} (url ", id));
@@ -195,7 +209,16 @@ pub fn write_template(tmpl: &Template) -> String {
     for segment in &tmpl.segments {
         match segment {
             Segment::Literal(s) => out.push_str(&format!(" (lit {})", quote_string(s))),
-            Segment::Command(inner) => out.push_str(&format!(" (cmd {})", write_template(inner))),
+            Segment::Command(inner, span, file) => {
+                out.push_str(&format!(
+                    " (cmd {} {} {} ",
+                    span.offset,
+                    span.len,
+                    quote_string(file)
+                ));
+                out.push_str(&write_template(inner));
+                out.push(')');
+            }
         }
     }
     out.push(')');
@@ -210,7 +233,7 @@ pub fn render_ir_literal(tmpl: &Template) -> String {
     for segment in &tmpl.segments {
         match segment {
             Segment::Literal(s) => out.push_str(s),
-            Segment::Command(inner) => out.push_str(&render_ir_literal(inner)),
+            Segment::Command(inner, _, _) => out.push_str(&render_ir_literal(inner)),
         }
     }
     out

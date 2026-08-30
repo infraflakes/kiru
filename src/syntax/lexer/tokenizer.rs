@@ -217,13 +217,15 @@ impl Lexer {
                     if !lit.is_empty() {
                         parts.push(Part::Lit(std::mem::take(&mut lit)));
                     }
+                    let cmd_offset = self.pos;
                     self.read_char(); // '$'
                     self.read_char(); // '('
+                    let _inner_start = self.pos;
                     let inner = self.read_template_parts()?;
                     parts.push(Part::Cmd(Template {
                         parts: inner,
-                        offset: 0,
-                        len: 0,
+                        offset: cmd_offset,
+                        len: self.pos - cmd_offset,
                         source_name: String::new(),
                     }));
                 }

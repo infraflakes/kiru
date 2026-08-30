@@ -5,19 +5,20 @@ use crate::exec::{TaskOutcome, TaskStatus, TuiEvent, await_tasks_and_report, rep
 use crate::ir::{Segment, Sync, Template};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
 /// Resolve a sync `Template` to a concrete string at runtime: literals are
 /// concatenated verbatim and `$(command)` parts are run through `shell -c`,
 /// with their stdout spliced in. Used for sync `url`/`dir`/`branch`/`strategy`,
 /// which may contain runtime commands.
-fn resolve_sync_value(tmpl: &Template, shell: &str) -> String {
+fn resolve_sync_value(tmpl: &Template, shell: &str, timeout: Duration) -> String {
     let mut out = String::new();
     for segment in &tmpl.segments {
         match segment {
             Segment::Literal(s) => out.push_str(s),
-            Segment::Command(inner) => {
-                let cmd = resolve_sync_value(inner, shell);
-                out.push_str(&run_sync_capture(&cmd, shell));
+            Segment::Command(inner, _, _) => {
+                let cmd = resolve_sync_value(inner, shell, timeout);
+                out.push_str(&run_sync_capture(&cmd, shell, timeout));
             }
         }
     }
@@ -25,14 +26,19 @@ fn resolve_sync_value(tmpl: &Template, shell: &str) -> String {
 }
 
 /// Run `cmd` via `shell -c` and return its trimmed stdout (non-fatal on error).
-fn run_sync_capture(cmd: &str, shell: &str) -> String {
+fn run_sync_capture(cmd: &str, shell: &str, timeout: Duration) -> String {
     let mut captured = String::new();
-    let _ = subprocess::run_subprocess(cmd, &[shell, "-c", cmd], None, None, None, &mut |line| {
-        match line {
+    let _ = subprocess::run_subprocess(
+        cmd,
+        &[shell, "-c", cmd],
+        None,
+        None,
+        Some(timeout),
+        &mut |line| match line {
             subprocess::SubprocessLine::Stdout(text) => captured.push_str(&text),
             subprocess::SubprocessLine::Stderr(_) => {}
-        }
-    });
+        },
+    );
     captured.trim_end().to_string()
 }
 
@@ -45,8 +51,9 @@ fn sync_project_inner(
     sync: &Sync,
     output: &mut dyn FnMut(&str),
     shell: &str,
+    timeout: Duration,
 ) -> Result<(), RuntimeError> {
-    let strategy = resolve_sync_value(&sync.strategy, shell);
+    let strategy = resolve_sync_value(&sync.strategy, shell, timeout);
     if strategy.trim().eq_ignore_ascii_case("ignore") {
         output(&format!(
             "{} {} (sync=ignore)",
@@ -55,7 +62,7 @@ fn sync_project_inner(
         ));
         return Ok(());
     }
-    run_sync_clone_or_update(proj_name, sync, output, shell)
+    run_sync_clone_or_update(proj_name, sync, output, shell, timeout)
 }
 
 /// Git-clone a single project's repo into `sync.dir`, or fast-forward it to its
@@ -65,10 +72,11 @@ fn run_sync_clone_or_update(
     sync: &Sync,
     output: &mut dyn FnMut(&str),
     shell: &str,
+    timeout: Duration,
 ) -> Result<(), RuntimeError> {
-    let url = resolve_sync_value(&sync.url, shell);
-    let dir = resolve_sync_value(&sync.dir, shell);
-    let branch = resolve_sync_value(&sync.branch, shell);
+    let url = resolve_sync_value(&sync.url, shell, timeout);
+    let dir = resolve_sync_value(&sync.dir, shell, timeout);
+    let branch = resolve_sync_value(&sync.branch, shell, timeout);
     let target_dir = PathBuf::from(&dir);
     let target_dir_str = target_dir.to_string_lossy().to_string();
 
@@ -142,8 +150,9 @@ pub fn sync_project_with_callback(
     sync: &Sync,
     mut output_cb: impl FnMut(&str),
     shell: &str,
+    timeout: Duration,
 ) -> Result<(), RuntimeError> {
-    sync_project_inner(proj_name, sync, &mut output_cb, shell)
+    sync_project_inner(proj_name, sync, &mut output_cb, shell, timeout)
 }
 
 /// Run sync for all projects through the TUI.
@@ -154,7 +163,11 @@ pub fn sync_project_with_callback(
 /// in its own blocking task that reports its own outcome, and
 /// `await_tasks_and_report` reduces the results to a single aggregate error
 /// (also surfacing any task panic).
-pub fn run_sync_for_projects(syncs: BTreeMap<String, Sync>, shell: &str) -> Result<(), String> {
+pub fn run_sync_for_projects(
+    syncs: BTreeMap<String, Sync>,
+    shell: &str,
+    timeout: Duration,
+) -> Result<(), String> {
     let shell = shell.to_string();
     let name_indices: Vec<(String, usize)> = syncs
         .iter()
@@ -180,6 +193,7 @@ pub fn run_sync_for_projects(syncs: BTreeMap<String, Sync>, shell: &str) -> Resu
                 let tx_cb = tx.clone();
                 let project_name_clone = project_name.clone();
                 let shell = shell.clone();
+                let timeout = timeout;
 
                 let handle = tokio::task::spawn_blocking(move || {
                     crate::exec::send_tui_event(
@@ -196,6 +210,7 @@ pub fn run_sync_for_projects(syncs: BTreeMap<String, Sync>, shell: &str) -> Resu
                             );
                         },
                         &shell,
+                        timeout,
                     );
                     report_task_outcome(
                         &tx_cb,
