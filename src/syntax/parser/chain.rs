@@ -1,3 +1,6 @@
+//! Run-block parser: resolves `run name { pr::fn => pr::fn; pr::fn; }`
+//! chain syntax into ordered lists of project-function calls.
+
 use super::*;
 use crate::syntax::token::format_token_type;
 

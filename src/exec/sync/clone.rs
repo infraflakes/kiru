@@ -27,19 +27,8 @@ fn resolve_sync_value(tmpl: &Template, shell: &str, timeout: Duration) -> String
 
 /// Run `cmd` via `shell -c` and return its trimmed stdout (non-fatal on error).
 fn run_sync_capture(cmd: &str, shell: &str, timeout: Duration) -> String {
-    let mut captured = String::new();
-    let _ = subprocess::run_subprocess(
-        cmd,
-        &[shell, "-c", cmd],
-        None,
-        None,
-        Some(timeout),
-        &mut |line| match line {
-            subprocess::SubprocessLine::Stdout(text) => captured.push_str(&text),
-            subprocess::SubprocessLine::Stderr(_) => {}
-        },
-    );
-    captured.trim_end().to_string()
+    crate::exec::subprocess::capture_shell(cmd, shell, None, None, Some(timeout))
+        .unwrap_or_default()
 }
 
 /// Dispatch sync for a single project into `sync.dir` by its strategy. A
@@ -145,7 +134,7 @@ fn run_git_with_output(
 
 /// Synchronize a single project into `sync.dir`.
 /// Accepts an output callback that receives progress lines for display or forwarding.
-pub fn sync_project_with_callback(
+pub(crate) fn sync_project_with_callback(
     proj_name: &str,
     sync: &Sync,
     mut output_cb: impl FnMut(&str),
@@ -163,7 +152,7 @@ pub fn sync_project_with_callback(
 /// in its own blocking task that reports its own outcome, and
 /// `await_tasks_and_report` reduces the results to a single aggregate error
 /// (also surfacing any task panic).
-pub fn run_sync_for_projects(
+pub(crate) fn run_sync_for_projects(
     syncs: BTreeMap<String, Sync>,
     shell: &str,
     timeout: Duration,

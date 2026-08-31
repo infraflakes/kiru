@@ -1,3 +1,6 @@
+//! Function body parser: `log`, `cd`, `var`, `env`, `switch`, and
+//! bare `$(cmd)` statements inside `fn { ... }` blocks.
+
 use super::*;
 use crate::syntax::fnstmt::{Arm, FnStmt};
 use crate::syntax::source::{ArmPattern, EnvPair};
@@ -110,16 +113,12 @@ impl Parser {
     }
 
     fn parse_case_pattern(&mut self) -> Result<ArmPattern, ParseError> {
-        let tok = self.current_token().clone();
-        match &tok.token_type {
-            TokenType::Ident(ident) if ident == "_" => {
-                self.advance();
-                Ok(ArmPattern::Default)
-            }
-            _ => {
-                let template = self.parse_expr()?;
-                Ok(ArmPattern::Lit(template.literal_text()))
-            }
+        if matches!(self.current_token().token_type, TokenType::Ident(ref ident) if ident == "_") {
+            self.advance();
+            Ok(ArmPattern::Default)
+        } else {
+            let template = self.parse_expr()?;
+            Ok(ArmPattern::Lit(template.literal_text()))
         }
     }
 }

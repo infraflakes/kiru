@@ -163,8 +163,8 @@ fn expect_sym(items: &[Sexp], idx: usize, expected: &str) -> Result<(), String> 
     }
 }
 
-fn expect_str(items: &[Sexp], idx: usize, ctx: &str) -> Result<String, String> {
-    match items.get(idx) {
+fn expect_str(items: &[Sexp], item_index: usize, ctx: &str) -> Result<String, String> {
+    match items.get(item_index) {
         Some(Sexp::Str(s)) => Ok(s.clone()),
         other => Err(format!("expected string for {} , found {:?}", ctx, other)),
     }
@@ -259,9 +259,73 @@ fn read_instructions(nodes: &[Sexp]) -> Result<Vec<Instruction>, String> {
     Ok(out)
 }
 
+fn parse_sync_entry(ni: &[Sexp]) -> Result<(String, Sync), String> {
+    let id = expect_sym_arg(ni, 1, "sync id")?;
+    let mut sync = Sync::default();
+    let mut j = 2;
+    while j < ni.len() {
+        let fi = as_list(&ni[j]).ok_or("sync field must be list".to_string())?;
+        let f = sym(fi.first().ok_or("sync field head".to_string())?)
+            .ok_or("sync field head".to_string())?;
+        match f {
+            "url" => sync.url = read_template(&fi[1])?,
+            "dir" => sync.dir = read_template(&fi[1])?,
+            "branch" => sync.branch = read_template(&fi[1])?,
+            "strategy" => sync.strategy = read_template(&fi[1])?,
+            other => return Err(format!("unknown sync field: {}", other)),
+        }
+        j += 1;
+    }
+    Ok((id, sync))
+}
+
+fn parse_project_entry(ni: &[Sexp]) -> Result<(String, Project), String> {
+    let id = expect_sym_arg(ni, 1, "project id")?;
+    let mut project = Project::default();
+    let mut j = 2;
+    while j < ni.len() {
+        let bi = as_list(&ni[j]).ok_or("project entry must be list".to_string())?;
+        let b = sym(bi.first().ok_or("project entry head".to_string())?)
+            .ok_or("project entry head".to_string())?;
+        match b {
+            "fn" => {
+                let fn_name = expect_sym_arg(bi, 1, "fn name")?;
+                let body = read_instructions(&bi[2..])?;
+                project.functions.insert(fn_name, body);
+            }
+            other => return Err(format!("unknown project entry: {}", other)),
+        }
+        j += 1;
+    }
+    Ok((id, project))
+}
+
+fn parse_run_entry(ni: &[Sexp]) -> Result<(String, Vec<Vec<Call>>), String> {
+    let id = expect_sym_arg(ni, 1, "run id")?;
+    let mut stages = Vec::new();
+    let mut j = 2;
+    while j < ni.len() {
+        let stage = as_list(&ni[j]).ok_or("stage must be list".to_string())?;
+        expect_sym(stage, 0, "stage")?;
+        let mut calls = Vec::new();
+        let mut k = 1;
+        while k < stage.len() {
+            let ci = as_list(&stage[k]).ok_or("call must be list".to_string())?;
+            expect_sym(ci, 0, "call")?;
+            let project = expect_sym_arg(ci, 1, "call project")?;
+            let function = expect_sym_arg(ci, 2, "call function")?;
+            calls.push(Call { project, function });
+            k += 1;
+        }
+        stages.push(calls);
+        j += 1;
+    }
+    Ok((id, stages))
+}
+
 impl Ir {
     /// Parse a textual kirufile into an `Ir`.
-    pub fn deserialize(src: &str) -> Result<Ir, String> {
+    pub(crate) fn deserialize(src: &str) -> Result<Ir, String> {
         let tokens = tokenize_kirufile(src)?;
         let mut pos = 0;
         let root = parse_sexp_tokens(&tokens, &mut pos)?;
@@ -285,64 +349,15 @@ impl Ir {
                     ir.timeout = val;
                 }
                 "sync" => {
-                    let id = expect_sym_arg(ni, 1, "sync id")?;
-                    let mut sync = Sync::default();
-                    let mut j = 2;
-                    while j < ni.len() {
-                        let fi = as_list(&ni[j]).ok_or("sync field must be list".to_string())?;
-                        let f = sym(fi.first().ok_or("sync field head".to_string())?)
-                            .ok_or("sync field head".to_string())?;
-                        match f {
-                            "url" => sync.url = read_template(&fi[1])?,
-                            "dir" => sync.dir = read_template(&fi[1])?,
-                            "branch" => sync.branch = read_template(&fi[1])?,
-                            "strategy" => sync.strategy = read_template(&fi[1])?,
-                            other => return Err(format!("unknown sync field: {}", other)),
-                        }
-                        j += 1;
-                    }
+                    let (id, sync) = parse_sync_entry(ni)?;
                     ir.repositories.insert(id, sync);
                 }
                 "project" => {
-                    let id = expect_sym_arg(ni, 1, "project id")?;
-                    let mut project = Project::default();
-                    let mut j = 2;
-                    while j < ni.len() {
-                        let bi = as_list(&ni[j]).ok_or("project entry must be list".to_string())?;
-                        let b = sym(bi.first().ok_or("project entry head".to_string())?)
-                            .ok_or("project entry head".to_string())?;
-                        match b {
-                            "fn" => {
-                                let fn_name = expect_sym_arg(bi, 1, "fn name")?;
-                                let body = read_instructions(&bi[2..])?;
-                                project.functions.insert(fn_name, body);
-                            }
-                            other => return Err(format!("unknown project entry: {}", other)),
-                        }
-                        j += 1;
-                    }
+                    let (id, project) = parse_project_entry(ni)?;
                     ir.projects.insert(id, project);
                 }
                 "run" => {
-                    let id = expect_sym_arg(ni, 1, "run id")?;
-                    let mut stages = Vec::new();
-                    let mut j = 2;
-                    while j < ni.len() {
-                        let stage = as_list(&ni[j]).ok_or("stage must be list".to_string())?;
-                        expect_sym(stage, 0, "stage")?;
-                        let mut calls = Vec::new();
-                        let mut k = 1;
-                        while k < stage.len() {
-                            let ci = as_list(&stage[k]).ok_or("call must be list".to_string())?;
-                            expect_sym(ci, 0, "call")?;
-                            let project = expect_sym_arg(ci, 1, "call project")?;
-                            let function = expect_sym_arg(ci, 2, "call function")?;
-                            calls.push(Call { project, function });
-                            k += 1;
-                        }
-                        stages.push(calls);
-                        j += 1;
-                    }
+                    let (id, stages) = parse_run_entry(ni)?;
                     ir.execution_chains.insert(id, stages);
                 }
                 other => return Err(format!("unknown top-level entry: {}", other)),

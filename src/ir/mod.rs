@@ -4,7 +4,7 @@
 //! the executor consumes directly. The compiler also serializes `Ir` to a
 //! textual "kirufile" s-expression (and parses it back) so the IR is
 //! debuggable and inspectable. Everything is a resolved `String`: there is no
-//! type or operator system — the DSL is an IaC task runner.
+//! type or operator system, the DSL is an IaC task runner.
 
 mod deserialize;
 mod serialize;
@@ -12,5 +12,5 @@ mod serialize;
 mod tests;
 mod types;
 
-pub use serialize::*;
-pub use types::*;
+pub(crate) use serialize::*;
+pub(crate) use types::*;

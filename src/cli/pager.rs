@@ -1,3 +1,6 @@
+//! Pager integration: pipes long output through a terminal pager when
+//! stdout is a TTY, falls back to raw print otherwise.
+
 use std::io::Write;
 use std::process::{Command, Stdio};
 

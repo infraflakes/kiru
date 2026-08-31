@@ -1,6 +1,6 @@
 /// Runtime execution status of a single task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TaskStatus {
+pub(crate) enum TaskStatus {
     Pending,
     Running,
     Success,
@@ -28,14 +28,14 @@ pub(crate) struct Chain {
 /// All state tracked during a TUI session: a flat list of tasks with an
 /// index structure (chains) that groups them into sequential groups.
 #[derive(Debug, Clone)]
-pub struct Model {
+pub(crate) struct Model {
     pub tasks: Vec<TaskRow>,
     pub chains: Vec<Chain>,
 }
 
 impl Model {
     /// Create an empty model with no tasks or chains.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             tasks: Vec::new(),
             chains: Vec::new(),
@@ -44,7 +44,7 @@ impl Model {
 
     /// Register a new chain of sequential tasks by their display names.
     /// Each task starts in `Pending` status.
-    pub fn add_chain(&mut self, label: String, task_names: Vec<String>) {
+    pub(crate) fn add_chain(&mut self, label: String, task_names: Vec<String>) {
         let task_start = self.tasks.len();
         let task_count = task_names.len();
         for name in task_names {
@@ -62,21 +62,21 @@ impl Model {
     }
 
     /// Update the status of the task at `index`.
-    pub fn update_task_status(&mut self, index: usize, status: TaskStatus) {
+    pub(crate) fn update_task_status(&mut self, index: usize, status: TaskStatus) {
         if let Some(task) = self.tasks.get_mut(index) {
             task.status = status;
         }
     }
 
     /// Append a line of output text to the task at `idx`.
-    pub fn append_output(&mut self, idx: usize, line: String) {
+    pub(crate) fn append_output(&mut self, idx: usize, line: String) {
         if idx < self.tasks.len() {
             self.tasks[idx].output.push(line);
         }
     }
 
     /// True when every task has reached a terminal status (Success or Error).
-    pub fn all_done(&self) -> bool {
+    pub(crate) fn all_done(&self) -> bool {
         self.tasks
             .iter()
             .all(|t| matches!(t.status, TaskStatus::Success | TaskStatus::Error))
@@ -85,23 +85,23 @@ impl Model {
     /// Count finalized tasks by outcome. Centralizes the success/error tally
     /// shared by the run and sync renderers so a new terminal status would
     /// propagate to both summaries from one place.
-    pub fn success_and_error_counts(&self) -> (usize, usize) {
-        let mut ok = 0;
-        let mut err = 0;
+    pub(crate) fn success_and_error_counts(&self) -> (usize, usize) {
+        let mut success_count = 0;
+        let mut error_count = 0;
         for task in &self.tasks {
             match task.status {
-                TaskStatus::Success => ok += 1,
-                TaskStatus::Error => err += 1,
+                TaskStatus::Success => success_count += 1,
+                TaskStatus::Error => error_count += 1,
                 _ => {}
             }
         }
-        (ok, err)
+        (success_count, error_count)
     }
 
     /// Aggregate status for an entire chain: Error if any task failed,
     /// Running if any task is still active, Pending if nothing has started,
     /// Success otherwise.
-    pub fn chain_status(&self, chain: &Chain) -> TaskStatus {
+    pub(crate) fn chain_status(&self, chain: &Chain) -> TaskStatus {
         let mut has_error = false;
         let mut has_running = false;
         let mut has_pending = false;

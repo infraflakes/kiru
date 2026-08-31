@@ -31,7 +31,7 @@ pub(crate) struct Parser {
 impl Parser {
     /// Records the canonical path of the source file so every parsed node
     /// carries the name used to resolve its diagnostic span. The compiler sets
-    /// this before parsing — tests that only inspect structure leave it empty.
+    /// this before parsing, tests that only inspect structure leave it empty.
     pub(crate) fn with_source_name(mut self, name: String) -> Self {
         self.source_name = name;
         self
@@ -82,9 +82,8 @@ impl Parser {
             self.advance();
             Ok(())
         } else {
-            let token = self.current_token().clone();
             let expected = format_token_type(&ty);
-            let found = format_token(&token);
+            let found = format_token(self.current_token());
             Err(ParseError::new(
                 self.eof_aware_span(),
                 format!("expected {} {}, found {}", expected, context, found),

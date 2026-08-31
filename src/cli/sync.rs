@@ -1,10 +1,13 @@
+//! `kiru sync` command: resolves repositories from the compiled IR and
+//! clones or fast-forward-pulls each project into its declared directory.
+
 use crate::exec;
 use crate::ir::Sync;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
-pub fn run_sync_command(config_arg: Option<PathBuf>) -> Result<(), String> {
+pub(crate) fn run_sync_command(config_arg: Option<PathBuf>) -> Result<(), String> {
     let config = super::load_config(config_arg)?;
 
     let total_project_count = config.repositories.len();

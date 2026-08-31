@@ -1,3 +1,6 @@
+//! `kiru fn` command: executes a single project function directly,
+//! streaming colored output to stdout (no TUI).
+
 use crate::cli::load_config;
 use crate::exec::colors;
 use crate::exec::error::RuntimeError;
@@ -6,7 +9,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub fn execute_function(
+pub(crate) fn execute_function(
     config_arg: Option<PathBuf>,
     name: String,
     project: Option<String>,
@@ -26,7 +29,7 @@ pub fn execute_function(
                 .execute_fn_call(&name, &project_name)
                 .map_err(|e| match e {
                     // Timeout error already emitted via OutputCallback inside
-                    // ExecContext::run_live — return empty to suppress duplicate.
+                    // ExecContext::run_live, return empty to suppress duplicate.
                     RuntimeError::Timeout { .. } => String::new(),
                     other => other.to_string(),
                 })?;

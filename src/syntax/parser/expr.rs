@@ -1,3 +1,6 @@
+//! Template expression parser: `(literal)`, `$(cmd)`, `@(var)`, and
+//! bare identifiers resolved into `Template` nodes.
+
 use super::*;
 use crate::syntax::source::{Part, Template};
 

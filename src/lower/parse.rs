@@ -1,5 +1,8 @@
+//! Source file parsing and import resolution: reads `.kiru` files, resolves
+//! import candidates (direct, basename, directory glob), and compiles them
+//! into the lowering state.
+
 use crate::diagnostics::{Diagnostic, Span};
-use crate::exec::subprocess;
 use crate::syntax::lexer::Lexer;
 use crate::syntax::{Part as DslPart, Program, Template};
 use std::path::{Path, PathBuf};
@@ -94,8 +97,7 @@ pub(super) fn load_import(
 /// directory glob when the path (without the trailing `.kiru`) is a directory.
 fn resolve_import_candidates(base_dir: &Path, path_str: &str) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
-    let direct = base_dir.join(path_str);
-    candidates.push(direct.clone());
+    candidates.push(base_dir.join(path_str));
 
     if let Some(filename) = Path::new(path_str).file_name() {
         candidates.push(base_dir.join(filename));
@@ -129,7 +131,14 @@ pub(super) fn eval_path_template(tmpl: &Template, shell: &str) -> String {
     for part in &tmpl.parts {
         match part {
             DslPart::Lit(s) => out.push_str(s),
-            DslPart::Var(name) => out.push_str(name),
+            DslPart::Var(name) => {
+                debug_assert!(
+                    false,
+                    "unexpected @(var) in import path template: @({})",
+                    name
+                );
+                out.push_str(name);
+            }
             DslPart::Cmd(inner) => {
                 let cmd = eval_path_template(inner, shell);
                 out.push_str(&run_capture(&cmd, shell));
@@ -143,14 +152,7 @@ pub(super) fn eval_path_template(tmpl: &Template, shell: &str) -> String {
 /// non-fatal: whatever stdout was produced is returned. Used only for resolving
 /// import paths (see `eval_path_template`).
 fn run_capture(cmd: &str, shell: &str) -> String {
-    let mut captured = String::new();
-    let _ = subprocess::run_subprocess(cmd, &[shell, "-c", cmd], None, None, None, &mut |line| {
-        match line {
-            subprocess::SubprocessLine::Stdout(text) => captured.push_str(&text),
-            subprocess::SubprocessLine::Stderr(_) => {}
-        }
-    });
-    captured.trim_end().to_string()
+    crate::exec::subprocess::capture_shell(cmd, shell, None, None, None).unwrap_or_default()
 }
 
 /// Render a template to a plain string for structural compile-time needs

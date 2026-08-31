@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 /// variable into the template that uses it before the IR is built, so there is
 /// no runtime variable scope to resolve against.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Segment {
+pub(crate) enum Segment {
     Literal(String),
     /// A `$(command)` substitution. The inner template is run through `shell -c`
     /// at runtime.
@@ -21,15 +21,14 @@ pub enum Segment {
 
 /// A template: the single string-valued form in the DSL.
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct Template {
-    pub segments: Vec<Segment>,
+pub(crate) struct Template {
+    pub(crate) segments: Vec<Segment>,
 }
 
 impl Template {
-    /// A template consisting of a single literal string. Test-only helper used
-    /// while building round-trip fixtures.
+    /// A template consisting of a single literal string. Test-only helper.
     #[cfg(test)]
-    pub fn lit(s: &str) -> Self {
+    pub(crate) fn lit(s: &str) -> Self {
         Template {
             segments: vec![Segment::Literal(s.to_string())],
         }
@@ -38,14 +37,14 @@ impl Template {
 
 /// A single resolved `env` block pair.
 #[derive(Debug, Clone, PartialEq)]
-pub struct EnvPair {
-    pub key: String,
-    pub value: Template,
+pub(crate) struct EnvPair {
+    pub(crate) key: String,
+    pub(crate) value: Template,
 }
 
 /// A pattern arm inside a `switch` block.
 #[derive(Debug, Clone, PartialEq)]
-pub enum ArmPattern {
+pub(crate) enum ArmPattern {
     /// A literal string to match the resolved subject against.
     Lit(String),
     /// The `_` default arm.
@@ -54,14 +53,14 @@ pub enum ArmPattern {
 
 /// A single arm of a resolved `switch` block.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Arm {
-    pub pattern: ArmPattern,
-    pub body: Vec<Instruction>,
+pub(crate) struct Arm {
+    pub(crate) pattern: ArmPattern,
+    pub(crate) body: Vec<Instruction>,
 }
 
 /// A fully resolved function-body instruction, ready to execute.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Instruction {
+pub(crate) enum Instruction {
     /// Execute `value` for its side effects at runtime. Every `$(command)` part
     /// of the template is run through `shell -c` and streamed to output. There is
     /// no `target`: variable bindings are inlined away at compile time, so an
@@ -84,48 +83,40 @@ pub enum Instruction {
 
 /// A `project::function` reference inside a `run` block.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Call {
-    pub project: String,
-    pub function: String,
+pub(crate) struct Call {
+    pub(crate) project: String,
+    pub(crate) function: String,
 }
 
 impl Call {
     /// Fully-qualified `project::function` name used in labels and rendering.
-    pub fn fqn(&self) -> String {
+    pub(crate) fn fqn(&self) -> String {
         format!("{}::{}", self.project, self.function)
     }
 }
 
 /// A resolved repository/sync declaration.
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct Sync {
-    pub url: Template,
-    pub dir: Template,
-    pub branch: Template,
-    pub strategy: Template,
+pub(crate) struct Sync {
+    pub(crate) url: Template,
+    pub(crate) dir: Template,
+    pub(crate) branch: Template,
+    pub(crate) strategy: Template,
 }
 
 /// A fully compiled project: its functions (variables are inlined into the
 /// templates that use them at compile time, so nothing static lives here).
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct Project {
-    /// Functions belonging to this project, each lowered to `Instruction`s.
-    pub functions: BTreeMap<String, Vec<Instruction>>,
+pub(crate) struct Project {
+    pub(crate) functions: BTreeMap<String, Vec<Instruction>>,
 }
 
 /// The final, fully resolved IR. The executor works exclusively with this type.
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct Ir {
-    /// Shell used for `$(command)` substitution and `exec` statements.
-    pub shell: String,
-    /// Global timeout in seconds for every `$(cmd)` substitution.
-    pub timeout: u64,
-    /// Repositories declared via `sync name { ... }`.
-    pub repositories: BTreeMap<String, Sync>,
-    /// Projects (the merge of a `sync` block and a `pr` block of the same name).
-    pub projects: BTreeMap<String, Project>,
-    /// Run blocks keyed by name. Each block is an ordered list of chains; calls
-    /// joined by `=>` form one sequential chain (each runs after the previous),
-    /// and `;` separates chains which run concurrently with one another.
-    pub execution_chains: BTreeMap<String, Vec<Vec<Call>>>,
+pub(crate) struct Ir {
+    pub(crate) shell: String,
+    pub(crate) timeout: u64,
+    pub(crate) repositories: BTreeMap<String, Sync>,
+    pub(crate) projects: BTreeMap<String, Project>,
+    pub(crate) execution_chains: BTreeMap<String, Vec<Vec<Call>>>,
 }

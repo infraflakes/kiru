@@ -15,6 +15,10 @@ impl RuntimeError {
             detail: detail.to_string(),
         }
     }
+
+    pub(crate) fn is_timeout(&self) -> bool {
+        matches!(self, RuntimeError::Timeout { .. })
+    }
 }
 
 impl fmt::Display for RuntimeError {

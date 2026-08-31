@@ -4,7 +4,7 @@ use std::str::FromStr;
 
 /// The key of a project block field (e.g., `url`, `dir`, `sync`, `branch`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ProjectField {
+pub(crate) enum ProjectField {
     Url,
     Dir,
     Branch,
@@ -13,7 +13,7 @@ pub enum ProjectField {
 
 impl ProjectField {
     /// The source spelling of the field key, used in diagnostics.
-    pub fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             ProjectField::Url => "url",
             ProjectField::Dir => "dir",
@@ -39,7 +39,7 @@ impl FromStr for ProjectField {
 
 /// A parsed statement node in the kiru DSL.
 #[derive(Debug, Clone)]
-pub enum Stmt {
+pub(crate) enum Stmt {
     /// A variable declaration (`var name = value`). Frozen at compile time
     /// when it contains no `$(command)` part; otherwise resolved at runtime.
     Var {
@@ -82,7 +82,7 @@ pub enum Stmt {
         offset: usize,
         len: usize,
     },
-    /// Shell configuration: `shell = (sh);` — the shell used for command
+    /// Shell configuration: `shell = (sh);`, the shell used for command
     /// substitution and `exec` statements. Declared at the top level.
     Shell {
         value: Template,
@@ -90,7 +90,7 @@ pub enum Stmt {
         len: usize,
         source_name: String,
     },
-    /// Global timeout: `timeout = (30);` — the maximum seconds any single
+    /// Global timeout: `timeout = (30);`, the maximum seconds any single
     /// `$(cmd)` substitution may run before being aborted. Mandatory at the
     /// top level alongside `shell`. Declared at the top level.
     Timeout {
@@ -103,7 +103,7 @@ pub enum Stmt {
 
 /// A top-level item returned by the parser: either a DSL statement or an import directive.
 #[derive(Debug, Clone)]
-pub enum TopLevel {
+pub(crate) enum TopLevel {
     Stmt(Stmt),
     Import(Template),
 }
@@ -112,14 +112,14 @@ pub enum TopLevel {
 /// for error reporting. Items preserve source order and include both statements
 /// and import directives.
 #[derive(Debug, Clone)]
-pub struct Program {
-    pub top_level_items: Vec<TopLevel>,
-    pub source_name: String,
-    pub source_text: String,
+pub(crate) struct Program {
+    pub(crate) top_level_items: Vec<TopLevel>,
+    pub(crate) source_name: String,
+    pub(crate) source_text: String,
 }
 
 impl Program {
-    pub fn new_with_source(name: String, text: String) -> Self {
+    pub(crate) fn new_with_source(name: String, text: String) -> Self {
         Self {
             top_level_items: Vec::new(),
             source_name: name,
@@ -130,7 +130,7 @@ impl Program {
 
 /// A `project::function` reference inside a `run` block.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Call {
-    pub project: String,
-    pub function: String,
+pub(crate) struct Call {
+    pub(crate) project: String,
+    pub(crate) function: String,
 }

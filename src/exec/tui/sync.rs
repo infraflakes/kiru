@@ -38,7 +38,7 @@ fn current_display(task: &super::TaskRow) -> String {
 
 /// Render the TUI frame for a `sync` command: a header showing sync
 /// progress and a per-project status line for each entry.
-pub fn render_sync_output(frame: &mut Frame, model: &Model, spinner_idx: usize) {
+pub(crate) fn render_sync_output(frame: &mut Frame, model: &Model, spinner_idx: usize) {
     let area = frame.area();
     frame.render_widget(Clear, area);
     if area.height < 1 {

@@ -1,13 +1,13 @@
 use crate::diagnostics::Span;
 
 #[derive(Debug, Clone)]
-pub struct ParseError {
-    pub span: Span,
-    pub msg: String,
+pub(crate) struct ParseError {
+    pub(crate) span: Span,
+    pub(crate) msg: String,
 }
 
 impl ParseError {
-    pub fn new(span: Span, msg: String) -> Self {
+    pub(crate) fn new(span: Span, msg: String) -> Self {
         Self { span, msg }
     }
 }

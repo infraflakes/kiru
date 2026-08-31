@@ -4,7 +4,7 @@ mod pager;
 mod status;
 mod sync;
 
-pub use args::{Cli, Commands};
+pub(crate) use args::{Cli, Commands};
 
 use crate::ir::Ir;
 use crate::lower::CompileError;
@@ -37,7 +37,7 @@ pub(crate) fn load_config(config_arg: Option<PathBuf>) -> Result<Ir, String> {
         .map_err(|e| format!("failed to parse kirufile {}: {}", config_path.display(), e))
 }
 
-pub fn run_cli() -> Result<(), String> {
+pub(crate) fn run_cli() -> Result<(), String> {
     let parsed_cli = Cli::parse();
 
     match parsed_cli.command {

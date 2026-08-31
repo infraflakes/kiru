@@ -11,7 +11,7 @@ use ratatui::{
 
 /// Render the TUI frame for a `run` command: draw each chain header and
 /// its tasks with status markers and spinner animation.
-pub fn render_run_output(frame: &mut Frame, model: &Model, spinner_idx: usize) {
+pub(crate) fn render_run_output(frame: &mut Frame, model: &Model, spinner_idx: usize) {
     let area = frame.area();
     frame.render_widget(Clear, area);
     if area.height < 1 {
@@ -124,7 +124,7 @@ fn format_summary(buf: &mut String, model: &Model) {
 /// Build the final ANSI-colored text dump after all tasks complete.
 /// Includes per-task status, output lines (truncated to `MAX_PANEL_HEIGHT`),
 /// and a summary line with pass/fail counts.
-pub fn format_final_output(model: &Model) -> String {
+pub(crate) fn format_final_output(model: &Model) -> String {
     let mut buf = String::new();
     buf.push('\n');
 

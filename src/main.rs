@@ -1,6 +1,5 @@
 mod cli;
 mod diagnostics;
-mod error;
 mod exec;
 mod ir;
 mod lower;

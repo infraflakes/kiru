@@ -2,7 +2,7 @@ use crate::diagnostics::Diagnostic;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum CompileError {
+pub(crate) enum CompileError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 

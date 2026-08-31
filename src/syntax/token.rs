@@ -1,6 +1,6 @@
 /// Token types recognized by the kiru DSL lexer.
 #[derive(Debug, Clone, PartialEq)]
-pub enum TokenType {
+pub(crate) enum TokenType {
     Eof,
     Illegal(String),
     Ident(String),
@@ -37,16 +37,16 @@ pub enum TokenType {
 
 /// A lexical token with source position tracking.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Token {
-    pub token_type: TokenType,
-    pub line: usize,
-    pub col: usize,
-    pub offset: usize,
-    pub len: usize,
+pub(crate) struct Token {
+    pub(crate) token_type: TokenType,
+    pub(crate) line: usize,
+    pub(crate) col: usize,
+    pub(crate) offset: usize,
+    pub(crate) len: usize,
 }
 
 impl Token {
-    pub fn new(ty: TokenType, line: usize, col: usize, offset: usize, len: usize) -> Self {
+    pub(crate) fn new(ty: TokenType, line: usize, col: usize, offset: usize, len: usize) -> Self {
         Self {
             token_type: ty,
             line,
@@ -77,7 +77,7 @@ const KEYWORDS: &[(&str, TokenType)] = &[
 
 /// Convert a keyword string to its corresponding token type,
 /// or return `TokenType::Ident` if it is not a keyword.
-pub fn lookup_ident(ident: &str) -> TokenType {
+pub(crate) fn lookup_ident(ident: &str) -> TokenType {
     KEYWORDS
         .iter()
         .find(|(keyword, _)| *keyword == ident)
@@ -88,7 +88,7 @@ pub fn lookup_ident(ident: &str) -> TokenType {
 /// Returns the user-facing name of a token type. Keyword display names are
 /// derived from the keyword table; punctuation and special types keep their
 /// own spelling.
-pub fn format_token_type(ty: &TokenType) -> String {
+pub(crate) fn format_token_type(ty: &TokenType) -> String {
     if let Some((keyword, _)) = KEYWORDS.iter().find(|(_, keyword_ty)| keyword_ty == ty) {
         return format!("`{}`", keyword);
     }
@@ -122,7 +122,7 @@ pub fn format_token_type(ty: &TokenType) -> String {
     }
 }
 
-pub fn format_token(token: &Token) -> String {
+pub(crate) fn format_token(token: &Token) -> String {
     match &token.token_type {
         TokenType::Ident(s) => format!("`{}`", s),
         TokenType::Template(_) => "template".to_string(),
@@ -131,6 +131,6 @@ pub fn format_token(token: &Token) -> String {
     }
 }
 
-pub fn is_keyword_token(ty: &TokenType) -> bool {
+pub(crate) fn is_keyword_token(ty: &TokenType) -> bool {
     KEYWORDS.iter().any(|(_, keyword_ty)| keyword_ty == ty)
 }

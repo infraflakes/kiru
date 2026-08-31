@@ -10,7 +10,7 @@ macro_rules! style {
     };
 }
 
-pub fn run_status_command(config_arg: Option<PathBuf>) -> Result<(), String> {
+pub(crate) fn run_status_command(config_arg: Option<PathBuf>) -> Result<(), String> {
     let config = load_config(config_arg)?;
     let rendered_status_tree = format_config_as_tree(&config);
     pager::display_output_through_pager(&rendered_status_tree)?;

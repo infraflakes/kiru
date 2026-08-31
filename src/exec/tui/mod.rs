@@ -20,8 +20,8 @@ pub(crate) use model::{Model, TaskRow, TaskStatus};
 
 use crossterm_backend::SafeBackend;
 
-/// Send a TuiEvent over the channel. Ok to fail — receiver may have disconnected.
-pub fn send_tui_event(sender: &mpsc::UnboundedSender<TuiEvent>, event: TuiEvent) {
+/// Send a TuiEvent over the channel. Ok to fail, receiver may have disconnected.
+pub(crate) fn send_tui_event(sender: &mpsc::UnboundedSender<TuiEvent>, event: TuiEvent) {
     let _ = sender.send(event);
 }
 
@@ -52,10 +52,10 @@ impl Drop for RawMode {
 
 /// Events sent from worker threads to the TUI event loop.
 ///
-/// - `UpdateStatus(i, s)` — set task at index `i` to status `s`.
-/// - `AppendOutput(i, line)` — append a line of output to task `i`.
+/// - `UpdateStatus(i, s)`, set task at index `i` to status `s`.
+/// - `AppendOutput(i, line)`, append a line of output to task `i`.
 #[derive(Debug, Clone)]
-pub enum TuiEvent {
+pub(crate) enum TuiEvent {
     UpdateStatus(usize, TaskStatus),
     AppendOutput(usize, String),
 }
@@ -69,10 +69,16 @@ fn drain_events(
     loop {
         match event_receiver.try_recv() {
             Ok(TuiEvent::UpdateStatus(idx, status)) => {
-                model.lock().unwrap().update_task_status(idx, status);
+                model
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .update_task_status(idx, status);
             }
             Ok(TuiEvent::AppendOutput(idx, line)) => {
-                model.lock().unwrap().append_output(idx, line);
+                model
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .append_output(idx, line);
             }
             Err(mpsc::error::TryRecvError::Empty) => return false,
             Err(mpsc::error::TryRecvError::Disconnected) => return true,
@@ -109,7 +115,7 @@ fn dump_final_output(height: u16, dump: &str) -> Result<(), io::Error> {
 /// handles keyboard input (q / Ctrl+C to quit).
 /// Returns `true` if the user cancelled via keyboard, `false` if the worker
 /// finished naturally.
-pub async fn run_tui_event_loop(
+pub(crate) async fn run_tui_event_loop(
     model: Arc<Mutex<Model>>,
     mut event_receiver: mpsc::UnboundedReceiver<TuiEvent>,
     height: u16,
@@ -131,9 +137,9 @@ pub async fn run_tui_event_loop(
     loop {
         let disconnected = drain_events(&model, &mut event_receiver);
 
-        if disconnected || model.lock().unwrap().all_done() {
+        if disconnected || model.lock().unwrap_or_else(|e| e.into_inner()).all_done() {
             terminal.draw(|frame| {
-                let guard = model.lock().unwrap();
+                let guard = model.lock().unwrap_or_else(|e| e.into_inner());
                 render_fn(frame, &guard, spinner_idx);
             })?;
             break;
@@ -151,7 +157,7 @@ pub async fn run_tui_event_loop(
 
         spinner_idx = (spinner_idx + 1) % SPINNER_FRAMES.len();
         terminal.draw(|frame| {
-            let guard = model.lock().unwrap();
+            let guard = model.lock().unwrap_or_else(|e| e.into_inner());
             render_fn(frame, &guard, spinner_idx);
         })?;
     }
@@ -159,7 +165,7 @@ pub async fn run_tui_event_loop(
     drop(terminal);
     drop(raw);
 
-    let guard = model.lock().unwrap();
+    let guard = model.lock().unwrap_or_else(|e| e.into_inner());
     let dump = format_fn.map(|format_fn| format_fn(&guard));
     drop(guard);
 
@@ -211,7 +217,7 @@ where
             .map_err(|e| format!("TUI error: {}", e))?;
 
         if cancelled {
-            // Kill everything immediately — running shell commands included.
+            // Kill everything immediately, running shell commands included.
             // The TUI loop already disabled raw mode and dropped the terminal.
             std::process::exit(130);
         }

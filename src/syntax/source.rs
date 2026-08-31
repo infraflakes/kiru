@@ -7,7 +7,7 @@
 ///   (literal / var, never a nested `Cmd` in well-formed input) and is resolved
 ///   to a string, run through `shell -c`, and replaced by its stdout.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Part {
+pub(crate) enum Part {
     Lit(String),
     Var(String),
     Cmd(Template),
@@ -24,17 +24,16 @@ impl Default for Part {
 /// are gone; templates are written as `( ... )` and contain `@(name)` data
 /// references and `$(command)` substitutions.
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct Template {
-    pub parts: Vec<Part>,
-    pub offset: usize,
-    pub len: usize,
-    /// Canonical path of the `.kiru` file this template was parsed from.
-    pub source_name: String,
+pub(crate) struct Template {
+    pub(crate) parts: Vec<Part>,
+    pub(crate) offset: usize,
+    pub(crate) len: usize,
+    pub(crate) source_name: String,
 }
 
 impl Template {
     /// A template consisting of a single literal string.
-    pub fn lit(s: &str) -> Template {
+    pub(crate) fn lit(s: &str) -> Template {
         Template {
             parts: vec![Part::Lit(s.to_string())],
             offset: 0,
@@ -46,7 +45,7 @@ impl Template {
     /// Returns the literal text of the template, concatenating literal parts and
     /// rendering `@(name)`/`$(cmd)` references as their textual spelling. Used for
     /// case-pattern matching where the pattern must be a concrete literal.
-    pub fn literal_text(&self) -> String {
+    pub(crate) fn literal_text(&self) -> String {
         let mut out = String::new();
         for part in &self.parts {
             match part {
@@ -61,15 +60,15 @@ impl Template {
 
 /// A key-value pair for `env` blocks.
 #[derive(Debug, Clone)]
-pub struct EnvPair {
-    pub key: String,
-    pub value: Template,
+pub(crate) struct EnvPair {
+    pub(crate) key: String,
+    pub(crate) value: Template,
 }
 
 /// A pattern arm inside a `switch` block. Patterns are literal `(...)` text or
 /// the `_` default. Only `Default` survives to the runner.
 #[derive(Debug, Clone, PartialEq)]
-pub enum ArmPattern {
+pub(crate) enum ArmPattern {
     Lit(String),
     Default,
 }

@@ -1,3 +1,6 @@
+//! Tokenizer: consumes characters and produces [`Token`]s for the parser.
+//! Handles string escapes, template segment detection, and keyword lookup.
+
 use super::Lexer;
 use crate::syntax::source::{Part, Template};
 use crate::syntax::token::{Token, TokenType, lookup_ident};

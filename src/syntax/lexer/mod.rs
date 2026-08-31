@@ -5,12 +5,20 @@ mod tokenizer;
 /// Character-level lexer that emits tokens from source text.
 #[derive(Debug)]
 pub(crate) struct Lexer {
+    /// Source characters as a Vec<char> for O(1) index access.
     pub(super) input: Vec<char>,
+    /// Current byte index into `input` (points at the next character to read).
     pub(super) pos: usize,
+    /// One past `pos`, used by `read_char` to advance after peeking.
     pub(super) read_pos: usize,
+    /// The current character at `pos`, or `None` at end-of-input.
     pub(super) ch: Option<char>,
+    /// Current 1-indexed line number (for diagnostics).
     pub(super) line: usize,
+    /// Current 1-indexed column number within the line (for diagnostics).
     pub(super) col: usize,
+    /// Byte offset of `pos` in the original source string, used for
+    /// token span computation when characters are multi-byte.
     pub(super) byte_offset: usize,
 }
 

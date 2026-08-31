@@ -4,13 +4,13 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "kiru")]
 #[command(about = "kiru is a local project orchestrator CLI", long_about = None)]
-pub struct Cli {
+pub(crate) struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    pub(crate) command: Commands,
 }
 
 #[derive(Subcommand)]
-pub enum Commands {
+pub(crate) enum Commands {
     /// Show the resolved configuration (parse, resolve, and validate)
     Status {
         /// Path to kirufile (defaults to ~/.config/kiru/kirufile)

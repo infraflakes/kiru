@@ -1,6 +1,6 @@
 use crate::diagnostics::{Diagnostic, Span};
 use crate::ir::{Call, Instruction, Ir};
-use crate::syntax::{Program, ProjectField, Stmt, Template, TopLevel};
+use crate::syntax::{Program, Stmt, Template, TopLevel};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -14,16 +14,16 @@ mod tests;
 mod build;
 mod inline;
 mod parse;
+mod stmt;
 
-pub use error::CompileError;
+pub(crate) use error::CompileError;
 
 use build::build_ir;
-use inline::{inline_dsl_template, lower_function_body};
-use parse::{load_import, render_literal};
+use parse::load_import;
 
 /// Run the full compilation pipeline, always building the complete IR (the
 /// executor/sync both need the resolved projects).
-pub fn lower_and_resolve(entry_path: &Path, _force_cwd: bool) -> Result<Ir, CompileError> {
+pub(crate) fn lower_and_resolve(entry_path: &Path, _force_cwd: bool) -> Result<Ir, CompileError> {
     let abs_entry = canonicalize_entry(entry_path)?;
     let mut state = LoweringState::new();
     compile_source_file(&abs_entry, &mut state)?;
@@ -33,15 +33,31 @@ pub fn lower_and_resolve(entry_path: &Path, _force_cwd: bool) -> Result<Ir, Comp
 struct LoweringState {
     /// Static variables (top-level and `pr`-body), each already inlined to a
     /// template with no `@(var)` references. Commands inside them are preserved
-    /// as `Cmd` parts — they are never executed or frozen at compile time.
+    /// as `Cmd` parts, they are never executed or frozen at compile time.
     globals: BTreeMap<String, Template>,
+    /// Shell command name (e.g. "sh", "fish") from the mandatory
+    /// `shell = (sh);` declaration.
     shell: Option<String>,
+    /// Global timeout in seconds from the mandatory `timeout = (N);`
+    /// declaration. Applied to every `$(cmd)` substitution at runtime.
     timeout: Option<u64>,
+    /// Repository/sync blocks accumulated from `sync name { ... }` syntax.
     syncs: BTreeMap<String, PendingSync>,
+    /// Project blocks accumulated from `pr name { ... }` syntax, each
+    /// containing inlined static vars and lowered function bodies.
     projects: BTreeMap<String, PendingProject>,
+    /// Run blocks accumulated from `run name { ... }` syntax, each being
+    /// an ordered list of sequential chains of project-function calls.
     run_blocks: BTreeMap<String, Vec<Vec<Call>>>,
+    /// Source file text snapshots keyed by source name, used for diagnostic
+    /// span rendering in compile errors.
     source_texts: HashMap<String, String>,
+    /// Files already compiled in this session, preventing duplicate work
+    /// when the same file is imported multiple times.
     loaded_files: HashSet<PathBuf>,
+    /// Active import chain for circular-import detection. A file is pushed
+    /// before compilation and removed after, so re-entry within the same
+    /// chain is an error.
     recursion_stack: HashSet<PathBuf>,
 }
 
@@ -169,288 +185,30 @@ fn compile_stmt(
             offset,
             len,
             source_name,
-        } => {
-            let inlined =
-                inline_dsl_template(value, &state.globals, &state.source_texts, source_name)?;
-            let resolved = render_literal(&inlined);
-            if state.shell.is_some() {
-                return Err(state.spanned(
-                    "duplicate shell declaration".to_string(),
-                    source_name,
-                    *offset,
-                    *len,
-                ));
-            }
-            state.shell = Some(resolved);
-            Ok(())
-        }
+        } => stmt::compile_shell_decl(value, *offset, *len, source_name, state),
         Stmt::Timeout {
             value,
             offset,
             len,
             source_name,
-        } => {
-            let inlined =
-                inline_dsl_template(value, &state.globals, &state.source_texts, source_name)?;
-            if inlined
-                .parts
-                .iter()
-                .any(|p| matches!(p, super::syntax::source::Part::Cmd(_)))
-            {
-                return Err(state.spanned(
-                    "timeout value must be a plain integer, not a $(command) expression"
-                        .to_string(),
-                    source_name,
-                    *offset,
-                    *len,
-                ));
-            }
-            let rendered = render_literal(&inlined);
-            let seconds: u64 = rendered.trim().parse().map_err(|_| {
-                state.spanned(
-                    format!(
-                        "timeout value must be a positive integer, got `{}`",
-                        rendered.trim()
-                    ),
-                    source_name,
-                    *offset,
-                    *len,
-                )
-            })?;
-            if seconds == 0 {
-                return Err(state.spanned(
-                    "timeout value must be greater than zero".to_string(),
-                    source_name,
-                    *offset,
-                    *len,
-                ));
-            }
-            if state.timeout.is_some() {
-                return Err(state.spanned(
-                    "duplicate timeout declaration".to_string(),
-                    source_name,
-                    *offset,
-                    *len,
-                ));
-            }
-            state.timeout = Some(seconds);
-            Ok(())
-        }
+        } => stmt::compile_timeout_decl(value, *offset, *len, source_name, state),
         Stmt::Var {
             name,
             value,
             offset,
             len,
-        } => {
-            let inlined = inline_dsl_template(
-                value,
-                &state.globals,
-                &state.source_texts,
-                &program.source_name,
-            )?;
-            if state.globals.contains_key(name) {
-                return Err(state.spanned(
-                    format!("variable `{}` is already defined", name),
-                    &program.source_name,
-                    *offset,
-                    *len,
-                ));
-            }
-            state.globals.insert(name.clone(), inlined);
-            Ok(())
+        } => stmt::compile_var_decl(name, value, *offset, *len, &program.source_name, state),
+        Stmt::Fn { .. } => Ok(()),
+        Stmt::Project { name, fields, body } => {
+            stmt::compile_project_fields(name, fields, &program.source_name, state)?;
+            stmt::compile_project_body(name, body, &program.source_name, state)
         }
-        Stmt::Fn {
-            name,
-            body,
-            offset,
-            len,
-        } => {
-            // Top-level function: attached to no project. Kept so it can be
-            // referenced, but `kiru` runs functions inside `pr` blocks.
-            let _ = (name, body, offset, len);
-            Ok(())
-        }
-        Stmt::Project { name, fields, body } => compile_project(name, fields, body, state, program),
         Stmt::Run {
             name,
             calls,
             offset,
             len,
-        } => {
-            if state.run_blocks.contains_key(name) {
-                return Err(state.spanned(
-                    format!("duplicate run block: {}", name),
-                    &program.source_name,
-                    *offset,
-                    *len,
-                ));
-            }
-            // Convert from syntax::ast::Call to ir::Call
-            let ir_calls: Vec<Vec<Call>> = calls
-                .iter()
-                .map(|chain| {
-                    chain
-                        .iter()
-                        .map(|c| Call {
-                            project: c.project.clone(),
-                            function: c.function.clone(),
-                        })
-                        .collect()
-                })
-                .collect();
-            state.run_blocks.insert(name.clone(), ir_calls);
-            Ok(())
-        }
+        } => stmt::compile_run_decl(name, calls, *offset, *len, &program.source_name, state),
         Stmt::Field { .. } => Ok(()),
     }
-}
-
-fn compile_project(
-    name: &str,
-    fields: &[Stmt],
-    body: &[Stmt],
-    state: &mut LoweringState,
-    program: &Program,
-) -> Result<(), CompileError> {
-    // Sync fields (if any) accumulate into the syncs map.
-    if !fields.is_empty() {
-        let pending = state
-            .syncs
-            .entry(name.to_string())
-            .or_insert_with(|| PendingSync {
-                url: None,
-                dir: None,
-                branch: None,
-                strategy: None,
-            });
-        for field in fields {
-            if let Stmt::Field {
-                key,
-                value,
-                offset,
-                len,
-            } = field
-            {
-                let resolved = inline_dsl_template(
-                    value,
-                    &state.globals,
-                    &state.source_texts,
-                    &program.source_name,
-                )?;
-                match key {
-                    ProjectField::Url => {
-                        if pending.url.is_some() {
-                            return Err(state.spanned(
-                                "duplicate field 'url'".to_string(),
-                                &program.source_name,
-                                *offset,
-                                *len,
-                            ));
-                        }
-                        pending.url = Some(resolved);
-                    }
-                    ProjectField::Dir => {
-                        if pending.dir.is_some() {
-                            return Err(state.spanned(
-                                "duplicate field 'dir'".to_string(),
-                                &program.source_name,
-                                *offset,
-                                *len,
-                            ));
-                        }
-                        pending.dir = Some(resolved);
-                    }
-                    ProjectField::Branch => {
-                        if pending.branch.is_some() {
-                            return Err(state.spanned(
-                                "duplicate field 'branch'".to_string(),
-                                &program.source_name,
-                                *offset,
-                                *len,
-                            ));
-                        }
-                        pending.branch = Some(resolved);
-                    }
-                    ProjectField::Sync => {
-                        if pending.strategy.is_some() {
-                            return Err(state.spanned(
-                                "duplicate field 'sync'".to_string(),
-                                &program.source_name,
-                                *offset,
-                                *len,
-                            ));
-                        }
-                        pending.strategy = Some(resolved);
-                    }
-                }
-            }
-        }
-    }
-
-    // Project body: `var` (frozen), `fn` (lowered to instructions).
-    let pending = state
-        .projects
-        .entry(name.to_string())
-        .or_insert_with(|| PendingProject {
-            vars: BTreeMap::new(),
-            functions: BTreeMap::new(),
-        });
-
-    // Scope for resolving this project's vars: globals + already-defined vars.
-    let mut scope = state.globals.clone();
-    for (k, v) in &pending.vars {
-        scope.insert(k.clone(), v.clone());
-    }
-
-    for stmt in body {
-        match stmt {
-            Stmt::Var {
-                name: var_name,
-                value,
-                offset,
-                len,
-            } => {
-                let resolved =
-                    inline_dsl_template(value, &scope, &state.source_texts, &program.source_name)?;
-                if pending.vars.contains_key(var_name) {
-                    return Err(state.spanned(
-                        format!(
-                            "variable `{}` is already defined in project `{}`",
-                            var_name, name
-                        ),
-                        &program.source_name,
-                        *offset,
-                        *len,
-                    ));
-                }
-                pending.vars.insert(var_name.clone(), resolved.clone());
-                scope.insert(var_name.clone(), resolved);
-            }
-            Stmt::Fn {
-                name: fn_name,
-                body: fn_body,
-                offset,
-                len,
-            } => {
-                if pending.functions.contains_key(fn_name) {
-                    return Err(state.spanned(
-                        format!("duplicate function `{}` in project `{}`", fn_name, name),
-                        &program.source_name,
-                        *offset,
-                        *len,
-                    ));
-                }
-                let lowered = lower_function_body(
-                    fn_body,
-                    &scope,
-                    &state.source_texts,
-                    &program.source_name,
-                )?;
-                pending.functions.insert(fn_name.clone(), lowered);
-            }
-            _ => {}
-        }
-    }
-
-    Ok(())
 }

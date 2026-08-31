@@ -109,9 +109,12 @@ pub(crate) fn run_subprocess(
     timeout: Option<Duration>,
     on_line: &mut dyn FnMut(SubprocessLine),
 ) -> Result<ExitStatus, SubprocessError> {
-    let (program, args) = argv
-        .split_first()
-        .expect("run_subprocess requires the program as argv[0]");
+    let (program, args) = argv.split_first().ok_or_else(|| {
+        SubprocessError::Spawn(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "run_subprocess requires at least one argument (argv[0])",
+        ))
+    })?;
     let mut command = Command::new(program);
     command
         .args(args)
@@ -173,4 +176,32 @@ pub(crate) fn run_subprocess(
     }
 
     child.wait().map_err(SubprocessError::Spawn)
+}
+
+/// Capture stdout from a shell command. Non-zero exit is tolerated (whatever
+/// stdout was produced is returned). Returns `Err(Timeout { .. })` when the
+/// process exceeds the optional timeout.
+pub(crate) fn capture_shell(
+    cmd: &str,
+    shell: &str,
+    cwd: Option<&Path>,
+    env: Option<&HashMap<String, String>>,
+    timeout: Option<Duration>,
+) -> Result<String, SubprocessError> {
+    let mut captured = String::new();
+    run_subprocess(
+        cmd,
+        &[shell, "-c", cmd],
+        cwd,
+        env,
+        timeout,
+        &mut |line| match line {
+            SubprocessLine::Stdout(text) => {
+                captured.push_str(&text);
+                captured.push('\n');
+            }
+            SubprocessLine::Stderr(_) => {}
+        },
+    )?;
+    Ok(captured.trim_end().to_string())
 }

@@ -1,3 +1,6 @@
+//! Project parser: handles `pr name { ... }` and `sync name { ... }`
+//! declarations including field lists and function bodies.
+
 use super::*;
 use crate::syntax::ast::ProjectField;
 use std::str::FromStr;
@@ -11,7 +14,7 @@ impl Parser {
         self.expect_with_context(TokenType::LBrace, "after project name")?;
 
         if self.is_field_start() {
-            // `sync name { url=(); ... };` — fields only.
+            // `sync name { url=(); ... };`, fields only.
             let fields = self.parse_project_fields_section()?;
             self.expect_with_context(TokenType::RBrace, "to close project field list")?;
             if self.current_token().token_type == TokenType::Semicolon {
@@ -23,7 +26,7 @@ impl Parser {
                 body: Vec::new(),
             })
         } else {
-            // `pr name { var...; fn...; };` — body only.
+            // `pr name { var...; fn...; };`, body only.
             let body = self.parse_project_body()?;
             if self.current_token().token_type == TokenType::RBrace {
                 self.advance();

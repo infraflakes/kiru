@@ -43,15 +43,13 @@ pub(crate) enum TaskOutcome<E> {
 
 /// Emits the TUI events for a finished task and returns whether it failed.
 ///
-/// This removes the duplicated success/error/panic reporting that previously
-/// lived inline in both the chain and sync runners. The emitted output text is
-/// preserved exactly so existing TUI behavior stays unchanged. The error is
-/// borrowed so callers keep ownership of the underlying value and can
+/// Centralizes the success/error/panic status reporting shared by the chain
+/// and sync runners. The error is borrowed so callers keep ownership and can
 /// propagate it further.
-pub(crate) fn report_task_outcome<E: std::fmt::Display>(
+pub(crate) fn report_task_outcome(
     tx: &mpsc::UnboundedSender<TuiEvent>,
     index: usize,
-    outcome: TaskOutcome<&E>,
+    outcome: TaskOutcome<&error::RuntimeError>,
 ) -> bool {
     match outcome {
         TaskOutcome::Success => {
@@ -60,9 +58,9 @@ pub(crate) fn report_task_outcome<E: std::fmt::Display>(
         }
         TaskOutcome::Error(e) => {
             // Timeout errors are already emitted via OutputCallback inside
-            // ExecContext::run_live with correct shell indent — suppress
+            // ExecContext::run_live with correct shell indent, suppress
             // the duplicate "Error:" line here.
-            let is_timeout = format!("{}", e).starts_with("timeout:");
+            let is_timeout = e.is_timeout();
             if !is_timeout {
                 send_tui_event(tx, TuiEvent::AppendOutput(index, format!("Error: {}", e)));
             }
