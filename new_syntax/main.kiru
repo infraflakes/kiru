@@ -1,6 +1,6 @@
 # shell declared on top
 shell = (sh);
-timeout = (120);
+timeout = (300);
 
 var home_dir = $(echo $HOME);
 var project_dir = (@(home_dir)/Projects);

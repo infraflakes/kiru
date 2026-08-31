@@ -44,7 +44,7 @@ run bootstrap { nix::eval; };
     );
     assert_eq!(
         write_template(&sync.dir),
-        "(t (cmd 45 18 \"<sync>\" (t (lit \"echo /home/user\"))) (lit \"/nix\"))"
+        "(t (cmd (t (lit \"echo /home/user\"))) (lit \"/nix\"))"
     );
     assert_eq!(write_template(&sync.branch), "(t (lit \"main\"))");
     assert_eq!(write_template(&sync.strategy), "(t (lit \"clone\"))");

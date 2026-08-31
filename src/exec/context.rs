@@ -1,5 +1,4 @@
 use super::subprocess;
-use crate::diagnostics::{Diagnostic, Span};
 use crate::exec::colors;
 use crate::exec::error::RuntimeError;
 use crate::ir::{ArmPattern, EnvPair, Instruction, Segment, Template};
@@ -24,19 +23,12 @@ pub(crate) struct ExecContext<'a> {
     system_env: Vec<(String, String)>,
     shell: String,
     timeout: Duration,
-    #[allow(dead_code)]
-    sources: &'a BTreeMap<String, String>,
 }
 
 impl<'a> ExecContext<'a> {
     /// Create a new execution context. The working directory starts at the
     /// process current directory.
-    pub(crate) fn new(
-        output: &'a mut OutputCallback,
-        shell: String,
-        timeout: Duration,
-        sources: &'a BTreeMap<String, String>,
-    ) -> Self {
+    pub(crate) fn new(output: &'a mut OutputCallback, shell: String, timeout: Duration) -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
         ExecContext {
             output,
@@ -45,29 +37,34 @@ impl<'a> ExecContext<'a> {
             system_env: std::env::vars().collect(),
             shell,
             timeout,
-            sources,
         }
     }
 
-    /// Resolve a template to a string. When `live` is true, `$(cmd)` parts are
-    /// executed and streamed to output (no captured text is appended);
-    /// otherwise their stdout is captured and inlined.
+    /// Resolve a template to a string. When `strict` is true, `$(cmd)` parts
+    /// are executed live and must succeed (fatal on non-zero exit or timeout);
+    /// otherwise their stdout is captured and inlined, tolerantly returning
+    /// empty string on error.
     fn resolve(&self, tmpl: &Template, strict: bool) -> Result<String, RuntimeError> {
         let mut out = String::new();
         for segment in &tmpl.segments {
             match segment {
                 Segment::Literal(s) => out.push_str(s),
-                Segment::Command(inner, _span, _source_name) => {
+                Segment::Command(inner) => {
                     let cmd = self.resolve(inner, false)?;
                     if strict {
                         self.run_live(&cmd)?;
                     } else {
-                        let captured = self.capture(&cmd).unwrap_or_default();
-                        if !captured.is_empty() {
-                            out.push_str(&captured);
-                        } else {
-                            // Tolerant mode: inner timeout/error silently
-                            // returns empty string — no propagation.
+                        match self.capture(&cmd) {
+                            Ok(captured) => {
+                                if !captured.is_empty() {
+                                    out.push_str(&captured);
+                                }
+                            }
+                            Err(RuntimeError::Timeout { .. }) => {
+                                // Tolerant mode: inner timeout silently returns
+                                // empty string — no propagation.
+                            }
+                            Err(e) => return Err(e),
                         }
                     }
                 }
@@ -76,40 +73,65 @@ impl<'a> ExecContext<'a> {
         Ok(out)
     }
 
-    /// Run a command and stream its output live (fatal on non-zero exit).
+    /// Run a command and stream its output live (fatal on non-zero exit or
+    /// timeout). Emits the shell command echo at `log` indent level (0) in
+    /// blue, streams output at `log + 1` indent level, and emits timeout
+    /// errors via the output callback at the same indent as streaming output.
     fn run_live(&self, cmd: &str) -> Result<(), RuntimeError> {
         let work_dir = self.cwd.clone();
         let env_overrides: HashMap<String, String> = self.env_overrides();
-        let indent = "  ".repeat(self.env_layers.len() + 1);
+        let output_indent = "  ".repeat(self.env_layers.len() + 1);
+        let shell_indent = "  ".repeat(self.env_layers.len());
         let shell = self.shell.clone();
+
+        // Echo: "{shell}  {cmd}" in blue at log indent level.
+        (self.output)(format!(
+            "{shell_indent}{}{shell}  {cmd}{}",
+            colors::EXEC_ANSI,
+            colors::RESET
+        ));
+
         let status = subprocess::run_subprocess(
             cmd,
             &[&shell, "-c", cmd],
             Some(&work_dir),
             Some(&env_overrides),
-            None,
+            Some(self.timeout),
             &mut |line| match line {
-                subprocess::SubprocessLine::Stdout(text) => {
-                    (self.output)(format!("{}{}", indent, text));
-                }
-                subprocess::SubprocessLine::Stderr(text) => {
-                    (self.output)(format!("{}{}", indent, text));
+                subprocess::SubprocessLine::Stdout(text)
+                | subprocess::SubprocessLine::Stderr(text) => {
+                    (self.output)(format!("{output_indent}{}", text.trim_start()));
                 }
             },
-        )
-        .map_err(|e| RuntimeError::exec_io_error(cmd, e))?;
-        if !status.success() {
-            return Err(RuntimeError::exec_io_error(
-                cmd,
-                subprocess::describe_exit_failure(&status),
-            ));
+        );
+        match status {
+            Ok(status) => {
+                if !status.success() {
+                    return Err(RuntimeError::exec_io_error(
+                        cmd,
+                        subprocess::describe_exit_failure(&status),
+                    ));
+                }
+                Ok(())
+            }
+            Err(subprocess::SubprocessError::Timeout { command, .. }) => {
+                let timeout_secs = self.timeout.as_secs();
+                (self.output)(format!(
+                    "{output_indent}Error: timeout: command timed out after {timeout_secs}s: {command}"
+                ));
+                Err(RuntimeError::Timeout {
+                    cmd: command,
+                    secs: timeout_secs,
+                })
+            }
+            Err(e) => Err(RuntimeError::exec_io_error(cmd, e)),
         }
-        Ok(())
     }
 
-    /// Run a command and capture its stdout (trimmed). Returns `Err(Timeout(..))`
-    /// when the process exceeds the global timeout; in that case the captured
-    /// output so far is discarded. Non-zero exit is non-fatal.
+    /// Run a command and capture its stdout (trimmed). Returns
+    /// `Err(Timeout { .. })` when the process exceeds the global timeout; in
+    /// that case the captured output so far is discarded. Non-zero exit is
+    /// non-fatal.
     fn capture(&self, cmd: &str) -> Result<String, RuntimeError> {
         let work_dir = self.cwd.clone();
         let env_overrides: HashMap<String, String> = self.env_overrides();
@@ -130,20 +152,13 @@ impl<'a> ExecContext<'a> {
             },
         );
         match result {
-            Ok(_) => Ok(captured.trim_end().to_string()),
             Err(subprocess::SubprocessError::Timeout { command, .. }) => {
-                Err(RuntimeError::Timeout(Diagnostic::new(
-                    String::new(),
-                    Span::new(0, 0),
-                    format!(
-                        "command timed out after {}s: {}",
-                        self.timeout.as_secs(),
-                        command
-                    ),
-                    String::new(),
-                )))
+                Err(RuntimeError::Timeout {
+                    cmd: command,
+                    secs: self.timeout.as_secs(),
+                })
             }
-            Err(_) => Ok(captured.trim_end().to_string()),
+            Ok(_) | Err(_) => Ok(captured.trim_end().to_string()),
         }
     }
 
@@ -161,7 +176,7 @@ impl<'a> ExecContext<'a> {
     /// Emit one output line: indent, prefix, then payload.
     fn emit(&mut self, indent_extra: usize, prefix: &str, payload: &str) {
         let indent = "  ".repeat(self.env_layers.len() + indent_extra);
-        (self.output)(format!("{}{}{}", indent, prefix, payload));
+        (self.output)(format!("{indent}{prefix}{payload}"));
     }
 
     /// Run a sequence of resolved instructions sequentially. This is the single
@@ -211,11 +226,10 @@ impl<'a> ExecContext<'a> {
             self.cwd.join(target)
         };
         let candidate = std::fs::canonicalize(&candidate)
-            .map_err(|e| RuntimeError::Lookup(format!("cd {}: {}", target, e)))?;
+            .map_err(|e| RuntimeError::Lookup(format!("cd {target}: {e}")))?;
         if !candidate.is_dir() {
             return Err(RuntimeError::Lookup(format!(
-                "cd {}: not a directory",
-                target
+                "cd {target}: not a directory"
             )));
         }
         self.cwd = candidate;
@@ -255,13 +269,7 @@ mod tests {
     #[test]
     fn test_switch_first_match() {
         let mut output: OutputCallback = Arc::new(|_| {});
-        let empty_sources = BTreeMap::new();
-        let mut ctx = ExecContext::new(
-            &mut output,
-            "sh".to_string(),
-            Duration::from_secs(30),
-            &empty_sources,
-        );
+        let mut ctx = ExecContext::new(&mut output, "sh".to_string(), Duration::from_secs(30));
         let body: [Instruction; 1] = [Instruction::Switch {
             subject: lit("a"),
             arms: vec![

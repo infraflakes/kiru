@@ -1,15 +1,10 @@
 use std::collections::BTreeMap;
 
 use super::*;
-use crate::diagnostics::Span;
 
 fn sample_ir() -> Ir {
     let check_cmd = Template {
-        segments: vec![Segment::Command(
-            Template::lit("test -f $HOME"),
-            Span::new(0, 0),
-            String::new(),
-        )],
+        segments: vec![Segment::Command(Template::lit("test -f $HOME"))],
     };
 
     let mut project = Project::default();
@@ -65,7 +60,6 @@ fn sample_ir() -> Ir {
     Ir {
         shell: "sh".to_string(),
         timeout: 30,
-        sources: BTreeMap::new(),
         repositories,
         projects: {
             let mut m = BTreeMap::new();

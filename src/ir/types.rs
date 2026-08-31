@@ -2,8 +2,6 @@
 
 use std::collections::BTreeMap;
 
-use crate::diagnostics::Span;
-
 /// A single piece of a [`Template`].
 ///
 /// - `Literal` is literal text.
@@ -17,10 +15,8 @@ use crate::diagnostics::Span;
 pub enum Segment {
     Literal(String),
     /// A `$(command)` substitution. The inner template is run through `shell -c`
-    /// at runtime. The `Span` and `source_name` record the exact source location
-    /// of this `$(command)` so the executor can underline it in timeout/error
-    /// diagnostics.
-    Command(Template, Span, String),
+    /// at runtime.
+    Command(Template),
 }
 
 /// A template: the single string-valued form in the DSL.
@@ -124,9 +120,6 @@ pub struct Ir {
     pub shell: String,
     /// Global timeout in seconds for every `$(cmd)` substitution.
     pub timeout: u64,
-    /// Source file snapshots keyed by source name, for rendering diagnostics
-    /// at runtime (e.g. timeout underline).
-    pub sources: BTreeMap<String, String>,
     /// Repositories declared via `sync name { ... }`.
     pub repositories: BTreeMap<String, Sync>,
     /// Projects (the merge of a `sync` block and a `pr` block of the same name).

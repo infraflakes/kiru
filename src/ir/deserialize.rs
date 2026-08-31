@@ -1,7 +1,6 @@
 //! Textual kirufile deserialization.
 
 use super::types::*;
-use crate::diagnostics::Span;
 
 /// A parsed s-expression node used while reading the textual kirufile.
 #[derive(Debug, Clone)]
@@ -194,22 +193,8 @@ fn read_template(node: &Sexp) -> Result<Template, String> {
                 segments.push(Segment::Literal(text));
             }
             Some(Sexp::Sym(s)) if s == "cmd" => {
-                // New format: (cmd START LEN FILE INNER_TEMPLATE)
-                if pitems.len() >= 5 {
-                    let start: usize = expect_sym_arg(pitems, 1, "cmd start")?
-                        .parse()
-                        .map_err(|e| format!("cmd start: {}", e))?;
-                    let len: usize = expect_sym_arg(pitems, 2, "cmd len")?
-                        .parse()
-                        .map_err(|e| format!("cmd len: {}", e))?;
-                    let file = expect_str(pitems, 3, "cmd file")?;
-                    let inner = read_template(&pitems[4])?;
-                    segments.push(Segment::Command(inner, Span::new(start, len), file));
-                } else {
-                    // Legacy format fallback: (cmd INNER_TEMPLATE)
-                    let inner = read_template(&pitems[1])?;
-                    segments.push(Segment::Command(inner, Span::new(0, 0), String::new()));
-                }
+                let inner = read_template(&pitems[1])?;
+                segments.push(Segment::Command(inner));
             }
             other => return Err(format!("unknown segment: {:?}", other)),
         }
@@ -298,16 +283,6 @@ impl Ir {
                         .parse()
                         .map_err(|e| format!("timeout value: {}", e))?;
                     ir.timeout = val;
-                }
-                "sources" => {
-                    let mut j = 1;
-                    while j < ni.len() {
-                        let si = as_list(&ni[j]).ok_or("source entry must be list".to_string())?;
-                        let name = expect_str(si, 0, "source name")?;
-                        let text = expect_str(si, 1, "source text")?;
-                        ir.sources.insert(name, text);
-                        j += 1;
-                    }
                 }
                 "sync" => {
                     let id = expect_sym_arg(ni, 1, "sync id")?;

@@ -47,21 +47,6 @@ impl Diagnostic {
             help: None,
         }
     }
-
-    #[allow(dead_code)]
-    pub fn with_label(mut self, span: Span, msg: impl Into<String>) -> Self {
-        self.labels.push(Label {
-            span,
-            message: msg.into(),
-        });
-        self
-    }
-
-    #[allow(dead_code)]
-    pub fn with_help(mut self, h: impl Into<String>) -> Self {
-        self.help = Some(h.into());
-        self
-    }
 }
 
 fn is_terminal() -> bool {

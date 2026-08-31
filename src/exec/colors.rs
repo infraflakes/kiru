@@ -80,6 +80,9 @@ pub(crate) fn colored_line_parts(line: &str) -> (usize, &'static str, &'static s
 /// shared by every sink: the `Write` path (`write_colored_line`) and the
 /// `String` buffer path (`write_colored_line_buf`).
 pub(crate) fn colored_line_string(line: &str) -> String {
+    if line.contains("\x1b[") {
+        return line.to_string();
+    }
     let (indent, prefix, color, rest) = colored_line_parts(line);
     format!("{}{}{}{}{}", &line[..indent], color, prefix, rest, RESET)
 }

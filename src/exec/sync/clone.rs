@@ -16,7 +16,7 @@ fn resolve_sync_value(tmpl: &Template, shell: &str, timeout: Duration) -> String
     for segment in &tmpl.segments {
         match segment {
             Segment::Literal(s) => out.push_str(s),
-            Segment::Command(inner, _, _) => {
+            Segment::Command(inner) => {
                 let cmd = resolve_sync_value(inner, shell, timeout);
                 out.push_str(&run_sync_capture(&cmd, shell, timeout));
             }

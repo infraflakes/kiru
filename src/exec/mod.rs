@@ -59,7 +59,13 @@ pub(crate) fn report_task_outcome<E: std::fmt::Display>(
             false
         }
         TaskOutcome::Error(e) => {
-            send_tui_event(tx, TuiEvent::AppendOutput(index, format!("Error: {}", e)));
+            // Timeout errors are already emitted via OutputCallback inside
+            // ExecContext::run_live with correct shell indent — suppress
+            // the duplicate "Error:" line here.
+            let is_timeout = format!("{}", e).starts_with("timeout:");
+            if !is_timeout {
+                send_tui_event(tx, TuiEvent::AppendOutput(index, format!("Error: {}", e)));
+            }
             send_tui_event(tx, TuiEvent::UpdateStatus(index, TaskStatus::Error));
             true
         }

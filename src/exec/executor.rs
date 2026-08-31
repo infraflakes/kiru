@@ -53,12 +53,7 @@ impl Executor {
         let fn_body = lookup_project_function_body(project, project_name, fn_name)?;
 
         let timeout = Duration::from_secs(self.ir.timeout);
-        let mut ctx = ExecContext::new(
-            &mut self.output,
-            self.ir.shell.clone(),
-            timeout,
-            &self.ir.sources,
-        );
+        let mut ctx = ExecContext::new(&mut self.output, self.ir.shell.clone(), timeout);
         ctx.exec_stmts(fn_body)
     }
 }

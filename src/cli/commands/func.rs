@@ -1,5 +1,4 @@
 use crate::cli::load_config;
-use crate::diagnostics::print_diagnostic;
 use crate::exec::colors;
 use crate::exec::error::RuntimeError;
 use crate::exec::{Executor, OutputCallback};
@@ -26,17 +25,15 @@ pub fn execute_function(
             executor
                 .execute_fn_call(&name, &project_name)
                 .map_err(|e| match e {
-                    RuntimeError::Timeout(diag) => {
-                        print_diagnostic(&diag);
-                        String::new()
-                    }
+                    // Timeout error already emitted via OutputCallback inside
+                    // ExecContext::run_live — return empty to suppress duplicate.
+                    RuntimeError::Timeout { .. } => String::new(),
                     other => other.to_string(),
                 })?;
             Ok(())
         }
         None => Err(format!(
-            "must specify a project to run function '{}' in",
-            name
+            "must specify a project to run function '{name}' in"
         )),
     }
 }

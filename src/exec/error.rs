@@ -1,4 +1,3 @@
-use crate::diagnostics::Diagnostic;
 use std::fmt;
 
 #[derive(Debug, thiserror::Error)]
@@ -6,7 +5,7 @@ pub(crate) enum RuntimeError {
     Lookup(String),
     Io(#[from] std::io::Error),
     Exec { cmd: String, detail: String },
-    Timeout(Diagnostic),
+    Timeout { cmd: String, secs: u64 },
 }
 
 impl RuntimeError {
@@ -21,13 +20,13 @@ impl RuntimeError {
 impl fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RuntimeError::Lookup(s) => write!(f, "lookup error: {}", s),
-            RuntimeError::Io(e) => write!(f, "IO error: {}", e),
+            RuntimeError::Lookup(s) => write!(f, "lookup error: {s}"),
+            RuntimeError::Io(e) => write!(f, "IO error: {e}"),
             RuntimeError::Exec { cmd, detail } => {
-                write!(f, "execution failed: {}: {}", cmd, detail)
+                write!(f, "execution failed: {cmd}: {detail}")
             }
-            RuntimeError::Timeout(diag) => {
-                write!(f, "timeout: {}", diag.message)
+            RuntimeError::Timeout { cmd, secs } => {
+                write!(f, "timeout: command timed out after {secs}s: {cmd}")
             }
         }
     }
