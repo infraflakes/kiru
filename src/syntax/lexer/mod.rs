@@ -233,7 +233,7 @@ mod tests {
 
     #[test]
     fn test_keywords() {
-        let tokens = collect_tokens("import var pr fn run env log cd shell switch case");
+        let tokens = collect_tokens("import var pr fn run env log cd switch case");
         assert_eq!(
             tokens,
             vec![
@@ -245,7 +245,6 @@ mod tests {
                 TokenType::Env,
                 TokenType::Log,
                 TokenType::Cd,
-                TokenType::Shell,
                 TokenType::Switch,
                 TokenType::Case,
             ]
@@ -309,16 +308,17 @@ mod tests {
 
     #[test]
     fn test_comments() {
-        let tokens = collect_tokens("# comment\nshell = (sh);");
+        let tokens = collect_tokens("# comment\nvar x = (hello);");
         assert_eq!(
             tokens,
             vec![
-                TokenType::Shell,
+                TokenType::Var,
+                TokenType::Ident("x".to_string()),
                 TokenType::Assign,
                 TokenType::Template(crate::syntax::source::Template {
-                    parts: vec![crate::syntax::source::Part::Lit("sh".to_string())],
+                    parts: vec![crate::syntax::source::Part::Lit("hello".to_string())],
                     offset: 18,
-                    len: 4,
+                    len: 7,
                     source_name: String::new(),
                 }),
                 TokenType::Semicolon,

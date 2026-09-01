@@ -259,26 +259,6 @@ fn read_instructions(nodes: &[Sexp]) -> Result<Vec<Instruction>, String> {
     Ok(out)
 }
 
-fn parse_sync_entry(ni: &[Sexp]) -> Result<(String, Sync), String> {
-    let id = expect_sym_arg(ni, 1, "sync id")?;
-    let mut sync = Sync::default();
-    let mut j = 2;
-    while j < ni.len() {
-        let fi = as_list(&ni[j]).ok_or("sync field must be list".to_string())?;
-        let f = sym(fi.first().ok_or("sync field head".to_string())?)
-            .ok_or("sync field head".to_string())?;
-        match f {
-            "url" => sync.url = read_template(&fi[1])?,
-            "dir" => sync.dir = read_template(&fi[1])?,
-            "branch" => sync.branch = read_template(&fi[1])?,
-            "strategy" => sync.strategy = read_template(&fi[1])?,
-            other => return Err(format!("unknown sync field: {}", other)),
-        }
-        j += 1;
-    }
-    Ok((id, sync))
-}
-
 fn parse_project_entry(ni: &[Sexp]) -> Result<(String, Project), String> {
     let id = expect_sym_arg(ni, 1, "project id")?;
     let mut project = Project::default();
@@ -341,17 +321,6 @@ impl Ir {
                 .ok_or("entry head must be a symbol".to_string())?;
             match head {
                 "version" => {}
-                "shell" => ir.shell = expect_str(ni, 1, "shell")?,
-                "timeout" => {
-                    let val: u64 = expect_sym_arg(ni, 1, "timeout")?
-                        .parse()
-                        .map_err(|e| format!("timeout value: {}", e))?;
-                    ir.timeout = val;
-                }
-                "sync" => {
-                    let (id, sync) = parse_sync_entry(ni)?;
-                    ir.repositories.insert(id, sync);
-                }
                 "project" => {
                     let (id, project) = parse_project_entry(ni)?;
                     ir.projects.insert(id, project);

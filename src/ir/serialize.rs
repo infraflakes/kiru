@@ -96,20 +96,6 @@ impl Ir {
         let mut out = String::new();
         out.push_str("(kirufile\n");
         out.push_str("  (version 1)\n");
-        out.push_str(&format!("  (shell {})\n", quote_string(&self.shell)));
-        out.push_str(&format!("  (timeout {})\n", self.timeout));
-
-        for (id, sync) in &self.repositories {
-            out.push_str(&format!("  (sync {} (url ", id));
-            fmt_template(&mut out, &sync.url);
-            out.push_str(") (dir ");
-            fmt_template(&mut out, &sync.dir);
-            out.push_str(") (branch ");
-            fmt_template(&mut out, &sync.branch);
-            out.push_str(") (strategy ");
-            fmt_template(&mut out, &sync.strategy);
-            out.push_str("))\n");
-        }
 
         for (id, project) in &self.projects {
             out.push_str(&format!("  (project {}\n", id));
@@ -141,24 +127,9 @@ impl Ir {
 }
 
 /// Render a template back to its `(t (lit ...) (cmd ...))` s-expression form.
-/// Used by `serialize` and by the status/sync printers.
 #[cfg(test)]
 pub(crate) fn write_template(tmpl: &Template) -> String {
     let mut out = String::new();
     fmt_template(&mut out, tmpl);
-    out
-}
-
-/// Render a template as a human-readable string for terminal display: literals
-/// are shown verbatim and `$(command)` parts are shown by their inner literal
-/// text. Commands are never executed here.
-pub(crate) fn render_ir_literal(tmpl: &Template) -> String {
-    let mut out = String::new();
-    for segment in &tmpl.segments {
-        match segment {
-            Segment::Literal(s) => out.push_str(s),
-            Segment::Command(inner) => out.push_str(&render_ir_literal(inner)),
-        }
-    }
     out
 }

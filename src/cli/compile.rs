@@ -7,18 +7,12 @@ fn resolve_compile_input(input: Option<PathBuf>) -> PathBuf {
     if let Some(path) = input {
         return path;
     }
-    if crate::exec::kiru_cwd_enabled() {
-        return PathBuf::from("main.kiru");
-    }
     super::kiru_config_dir().join("main.kiru")
 }
 
 fn resolve_compile_output(output: Option<PathBuf>) -> PathBuf {
     if let Some(dir) = output {
         return dir.join("kirufile");
-    }
-    if crate::exec::kiru_cwd_enabled() {
-        return PathBuf::from("kirufile");
     }
     super::kiru_config_dir().join("kirufile")
 }
@@ -30,8 +24,7 @@ pub(crate) fn run_compile_command(
     let input = resolve_compile_input(input);
     let output = resolve_compile_output(output);
 
-    let ir = crate::lower::lower_and_resolve(&input, crate::exec::kiru_cwd_enabled())
-        .map_err(super::compile_error_to_string)?;
+    let ir = crate::lower::lower_and_resolve(&input).map_err(super::compile_error_to_string)?;
 
     let text = ir.serialize();
     std::fs::write(&output, text)

@@ -1,6 +1,3 @@
-# shell = (sh);
-# timeout = (120);
-
 pr kiru {
   fn update {
     log (Updating dependencies);

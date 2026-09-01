@@ -29,7 +29,9 @@ The part we care about most: **kiru validates your config before running anythin
 curl -sSf https://raw.githubusercontent.com/infraflakes/kiru/main/install.sh | sh
 ```
 
-The default config is at `~/.config/kiru/main.kiru`. Override with `-c <path>` or set `KIRU_CWD=1` to use `./main.kiru` instead.
+The default config is at `~/.config/kiru/main.kiru`. Override with `-c <path>`.
+
+Machine-level config (shell, timeout, repos) lives in `~/.config/kiru/kiru.toml`.
 
 A `.kiru` file reads like the shell you already write:
 
@@ -91,8 +93,6 @@ A `var shell` command runs where it's declared:
 - **Inside a global function** — does **not** run at declaration time. The function is a template; the `var shell` runs only when the function is applied to a project via `use`, and then in that project's directory.
 
 Non-zero exit is not an error — `var shell` returns `""` if the command fails. This makes it useful as a probe (e.g. `` var shell has_feature = `test -f x && echo yes` ``).
-
-Set `KIRU_CWD=1` to force all `var shell` and runtime `exec` commands to run in the current directory instead of the project directory.
 
 ### Referencing variables: namespaces are mandatory
 
@@ -163,19 +163,16 @@ run all {
 
 ### Projects: declaring repos
 
+Projects are declared in the DSL with `pr` blocks containing `var` and `fn`:
+
 ```kiru
-pr name [
-    url    = `git@github.com:user/repo.git`
-    dir    = `./project`
-    sync   = `ignore`      # optional: omit to clone/update the repo (default)
-    branch = `main`         # optional
-] {
+pr name {
     var string x = `...`;
     use build;              # apply a global function
 }
 ```
 
-Fields are space-separated inside brackets. Relative `dir` paths resolve against the config file's directory. Repos are cloned (and updated on `kiru sync`) by default; set `sync` to `ignore` to leave one alone. Writing `sync = \`clone\`` is rejected — it is the default, so the field only ever needs to opt *out*.
+Repo configuration (url, dir, branch, sync strategy) lives in `~/.config/kiru/kiru.toml` and is read at execution time. Projects without a matching `repos` entry in `kiru.toml` run commands in the user's current directory.
 
 ### Imports: splitting configs
 
@@ -203,12 +200,6 @@ import `${global::dir}/common.kiru`;
 
 - [Introduction to kiru](./assets/introduction.kiru) — walks through every DSL feature step by step.
 - [main.kiru](./main.kiru) — kiru's own config, used to build, test, and CI the kiru repository itself.
-
----
-
-## Environment
-
-`KIRU_CWD=1` — run everything in the current directory (config resolves to `./main.kiru`, project `var shell` and `exec` commands ignore the project's `dir` field). Useful for CI/CD.
 
 ---
 

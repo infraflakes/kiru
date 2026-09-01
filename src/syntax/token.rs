@@ -19,7 +19,6 @@ pub(crate) enum TokenType {
     /// stage only after the current one finishes.
     ChainArrow,
     Import,
-    Shell,
     Var,
     Fn,
     Run,
@@ -27,10 +26,8 @@ pub(crate) enum TokenType {
     Log,
     Cd,
     Pr,
-    Sync,
     Switch,
     Case,
-    Timeout,
     /// `::` separator used in run-block references (`pr::fn`).
     NamespaceSep,
 }
@@ -63,16 +60,13 @@ const KEYWORDS: &[(&str, TokenType)] = &[
     ("import", TokenType::Import),
     ("var", TokenType::Var),
     ("pr", TokenType::Pr),
-    ("sync", TokenType::Sync),
     ("fn", TokenType::Fn),
     ("run", TokenType::Run),
     ("env", TokenType::Env),
     ("log", TokenType::Log),
     ("cd", TokenType::Cd),
-    ("shell", TokenType::Shell),
     ("case", TokenType::Case),
     ("switch", TokenType::Switch),
-    ("timeout", TokenType::Timeout),
 ];
 
 /// Convert a keyword string to its corresponding token type,
@@ -107,18 +101,15 @@ pub(crate) fn format_token_type(ty: &TokenType) -> String {
         TokenType::Illegal(_) => "illegal token".to_string(),
         TokenType::Eof => "end of file".to_string(),
         TokenType::Import
-        | TokenType::Shell
         | TokenType::Var
         | TokenType::Fn
         | TokenType::Run
         | TokenType::Pr
-        | TokenType::Sync
         | TokenType::Log
         | TokenType::Env
         | TokenType::Cd
         | TokenType::Case
-        | TokenType::Switch
-        | TokenType::Timeout => unreachable!("keyword tokens are named by the keyword table"),
+        | TokenType::Switch => unreachable!("keyword tokens are named by the keyword table"),
     }
 }
 

@@ -95,15 +95,6 @@ impl Call {
     }
 }
 
-/// A resolved repository/sync declaration.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub(crate) struct Sync {
-    pub(crate) url: Template,
-    pub(crate) dir: Template,
-    pub(crate) branch: Template,
-    pub(crate) strategy: Template,
-}
-
 /// A fully compiled project: its functions (variables are inlined into the
 /// templates that use them at compile time, so nothing static lives here).
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -112,11 +103,12 @@ pub(crate) struct Project {
 }
 
 /// The final, fully resolved IR. The executor works exclusively with this type.
+///
+/// Shell, timeout, and repository configuration live in `kiru.toml` and are
+/// injected at execution time by the CLI. The IR is purely behavioral: projects
+/// (functions) and execution chains (run blocks).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct Ir {
-    pub(crate) shell: String,
-    pub(crate) timeout: u64,
-    pub(crate) repositories: BTreeMap<String, Sync>,
     pub(crate) projects: BTreeMap<String, Project>,
     pub(crate) execution_chains: BTreeMap<String, Vec<Vec<Call>>>,
 }

@@ -18,7 +18,7 @@ pub(crate) fn compile_str(src: &str) -> Ir {
         TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
     std::fs::write(&file, src).expect("write temp config");
-    let ir = lower_and_resolve(&file, false).unwrap_or_else(|e| panic!("compile failed: {:?}", e));
+    let ir = lower_and_resolve(&file).unwrap_or_else(|e| panic!("compile failed: {:?}", e));
     let _ = std::fs::remove_file(&file);
     ir
 }

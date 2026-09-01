@@ -1,5 +1,6 @@
 mod args;
 mod commands;
+pub(crate) mod kiru_toml;
 mod pager;
 mod status;
 mod sync;
@@ -69,9 +70,6 @@ pub(crate) fn kiru_config_dir() -> PathBuf {
 fn get_config_path(config_arg: Option<PathBuf>) -> PathBuf {
     if let Some(path) = config_arg {
         return path;
-    }
-    if crate::exec::kiru_cwd_enabled() {
-        return PathBuf::from("kirufile");
     }
     kiru_config_dir().join("kirufile")
 }

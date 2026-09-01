@@ -30,11 +30,8 @@ pub(crate) fn count_stmt_types(program: &Program) -> Vec<&'static str> {
         .map(|s| match s {
             TopLevel::Stmt(Stmt::Var { .. }) => "var",
             TopLevel::Stmt(Stmt::Project { .. }) => "pr",
-            TopLevel::Stmt(Stmt::Field { .. }) => "field",
             TopLevel::Stmt(Stmt::Fn { .. }) => "fn",
             TopLevel::Stmt(Stmt::Run { .. }) => "run",
-            TopLevel::Stmt(Stmt::Shell { .. }) => "shell",
-            TopLevel::Stmt(Stmt::Timeout { .. }) => "timeout",
             TopLevel::Import(_) => "import",
         })
         .collect()
@@ -45,7 +42,7 @@ pub(crate) fn count_body_stmt_types(body: &[Stmt]) -> Vec<&'static str> {
         .map(|s| match s {
             Stmt::Var { .. } => "var",
             Stmt::Fn { .. } => "fn",
-            Stmt::Project { .. } | Stmt::Field { .. } => "other",
+            Stmt::Project { .. } => "other",
             _ => "other",
         })
         .collect()

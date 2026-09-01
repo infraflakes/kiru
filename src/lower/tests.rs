@@ -2,15 +2,7 @@
 fn test_compile_basic_project() {
     let ir = crate::lower::test_support::compile_str(
         "\
-shell = (sh);
-timeout = (30);
 var home_dir = $(echo /home/user);
-sync nix {
-    url = (git@github.com:nix);
-    dir = (@(home_dir)/nix);
-    branch = (main);
-    sync = (clone);
-};
 pr nix {
     var channel = (unstable);
     fn eval { log (evaluating @(channel)); };
@@ -18,8 +10,8 @@ pr nix {
 run bootstrap { nix::eval; };
 ",
     );
-    use crate::ir::{Instruction, write_template};
-    assert_eq!(ir.shell, "sh");
+    use crate::ir::Instruction;
+    use crate::ir::serialize::write_template;
     assert_eq!(ir.projects.len(), 1);
     let nix = ir.projects.get("nix").expect("nix project");
     // Function-local `var channel` is fully inlined: `@(channel)` -> `unstable`,
@@ -35,19 +27,6 @@ run bootstrap { nix::eval; };
         }
         _ => panic!("expected log"),
     }
-    let sync = ir.repositories.get("nix").expect("nix sync");
-    // `@(home_dir)` is inlined into the dir template as the preserved command;
-    // nothing is executed or frozen at compile time.
-    assert_eq!(
-        write_template(&sync.url),
-        "(t (lit \"git@github.com:nix\"))"
-    );
-    assert_eq!(
-        write_template(&sync.dir),
-        "(t (cmd (t (lit \"echo /home/user\"))) (lit \"/nix\"))"
-    );
-    assert_eq!(write_template(&sync.branch), "(t (lit \"main\"))");
-    assert_eq!(write_template(&sync.strategy), "(t (lit \"clone\"))");
     let calls = ir.execution_chains.get("bootstrap").expect("bootstrap run");
     assert_eq!(calls.len(), 1, "single stage");
     assert_eq!(calls[0].len(), 1, "single call in stage");
@@ -62,7 +41,7 @@ fn test_compile_unknown_run_reference_fails() {
         "pr nix { fn eval { log (x); }; } run bad { nix::missing; };",
     )
     .unwrap();
-    let result = crate::lower::lower_and_resolve(&file, false);
+    let result = crate::lower::lower_and_resolve(&file);
     let _ = std::fs::remove_file(&file);
     assert!(result.is_err());
 }
@@ -71,7 +50,6 @@ fn test_compile_unknown_run_reference_fails() {
 fn test_compile_switch_lowering() {
     let ir = crate::lower::test_support::compile_str(
         "\
-timeout = (30);
 pr p {
     var os = (linux);
     fn pick {

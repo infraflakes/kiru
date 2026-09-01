@@ -37,17 +37,6 @@ fn sample_ir() -> Ir {
         ],
     );
 
-    let mut repositories = BTreeMap::new();
-    repositories.insert(
-        "nix".to_string(),
-        Sync {
-            url: Template::lit("https://example.com/nix"),
-            dir: Template::lit("/home/me/nix"),
-            branch: Template::lit("main"),
-            strategy: Template::lit("clone"),
-        },
-    );
-
     let mut execution_chains = BTreeMap::new();
     execution_chains.insert(
         "bootstrap".to_string(),
@@ -58,9 +47,6 @@ fn sample_ir() -> Ir {
     );
 
     Ir {
-        shell: "sh".to_string(),
-        timeout: 30,
-        repositories,
         projects: {
             let mut m = BTreeMap::new();
             m.insert("nix".to_string(), project);
@@ -80,10 +66,7 @@ fn test_kirufile_round_trip() {
 
 #[test]
 fn test_kirufile_escapes() {
-    let mut ir = Ir {
-        shell: "sh".to_string(),
-        ..Default::default()
-    };
+    let mut ir = Ir::default();
     let mut project = Project::default();
     project.functions.insert(
         "weird".to_string(),

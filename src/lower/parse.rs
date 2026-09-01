@@ -38,14 +38,13 @@ pub(super) fn load_import(
     state: &mut LoweringState,
     program: &Program,
 ) -> Result<(), CompileError> {
-    let shell = state.shell();
     let inlined = inline_dsl_template(
         path,
         &state.globals,
         &state.source_texts,
         &program.source_name,
     )?;
-    let path_str = eval_path_template(&inlined, &shell);
+    let path_str = eval_path_template(&inlined);
     if path_str.is_empty() {
         return Err(state.spanned(
             "import path cannot be empty".to_string(),
@@ -126,7 +125,7 @@ fn resolve_import_candidates(base_dir: &Path, path_str: &str) -> Vec<PathBuf> {
 /// operation, so any `$(command)` part here is executed to obtain a concrete
 /// path -- this is the one place commands run at compile time, and the result is
 /// used only to locate the file (it is never frozen into the IR).
-pub(super) fn eval_path_template(tmpl: &Template, shell: &str) -> String {
+pub(super) fn eval_path_template(tmpl: &Template) -> String {
     let mut out = String::new();
     for part in &tmpl.parts {
         match part {
@@ -140,32 +139,17 @@ pub(super) fn eval_path_template(tmpl: &Template, shell: &str) -> String {
                 out.push_str(name);
             }
             DslPart::Cmd(inner) => {
-                let cmd = eval_path_template(inner, shell);
-                out.push_str(&run_capture(&cmd, shell));
+                let cmd = eval_path_template(inner);
+                out.push_str(&run_capture(&cmd));
             }
         }
     }
     out
 }
 
-/// Run `cmd` via `shell -c` and return its stdout (trimmed). Non-zero exit is
+/// Run `cmd` via `sh -c` and return its stdout (trimmed). Non-zero exit is
 /// non-fatal: whatever stdout was produced is returned. Used only for resolving
 /// import paths (see `eval_path_template`).
-fn run_capture(cmd: &str, shell: &str) -> String {
-    crate::exec::subprocess::capture_shell(cmd, shell, None, None, None).unwrap_or_default()
-}
-
-/// Render a template to a plain string for structural compile-time needs
-/// (e.g. the `shell` value), concatenating literal parts and dropping command
-/// output. Variable references are expected to be inlined already.
-pub(super) fn render_literal(tmpl: &Template) -> String {
-    let mut out = String::new();
-    for part in &tmpl.parts {
-        match part {
-            DslPart::Lit(s) => out.push_str(s),
-            DslPart::Var(name) => out.push_str(name),
-            DslPart::Cmd(inner) => out.push_str(&render_literal(inner)),
-        }
-    }
-    out
+fn run_capture(cmd: &str) -> String {
+    crate::exec::subprocess::capture_shell(cmd, "sh", None, None, None).unwrap_or_default()
 }

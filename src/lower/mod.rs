@@ -23,7 +23,7 @@ use parse::load_import;
 
 /// Run the full compilation pipeline, always building the complete IR (the
 /// executor/sync both need the resolved projects).
-pub(crate) fn lower_and_resolve(entry_path: &Path, _force_cwd: bool) -> Result<Ir, CompileError> {
+pub(crate) fn lower_and_resolve(entry_path: &Path) -> Result<Ir, CompileError> {
     let abs_entry = canonicalize_entry(entry_path)?;
     let mut state = LoweringState::new();
     compile_source_file(&abs_entry, &mut state)?;
@@ -35,14 +35,6 @@ struct LoweringState {
     /// template with no `@(var)` references. Commands inside them are preserved
     /// as `Cmd` parts, they are never executed or frozen at compile time.
     globals: BTreeMap<String, Template>,
-    /// Shell command name (e.g. "sh", "fish") from the mandatory
-    /// `shell = (sh);` declaration.
-    shell: Option<String>,
-    /// Global timeout in seconds from the mandatory `timeout = (N);`
-    /// declaration. Applied to every `$(cmd)` substitution at runtime.
-    timeout: Option<u64>,
-    /// Repository/sync blocks accumulated from `sync name { ... }` syntax.
-    syncs: BTreeMap<String, PendingSync>,
     /// Project blocks accumulated from `pr name { ... }` syntax, each
     /// containing inlined static vars and lowered function bodies.
     projects: BTreeMap<String, PendingProject>,
@@ -61,14 +53,6 @@ struct LoweringState {
     recursion_stack: HashSet<PathBuf>,
 }
 
-/// A repository/sync block being accumulated (fields only).
-struct PendingSync {
-    url: Option<Template>,
-    dir: Option<Template>,
-    branch: Option<Template>,
-    strategy: Option<Template>,
-}
-
 /// A project block being accumulated: inlined static vars and lowered function
 /// bodies. Function-local `bind` variables are inlined away during lowering, so
 /// nothing static survives here either.
@@ -81,19 +65,12 @@ impl LoweringState {
     fn new() -> Self {
         Self {
             globals: BTreeMap::new(),
-            shell: None,
-            timeout: None,
-            syncs: BTreeMap::new(),
             projects: BTreeMap::new(),
             run_blocks: BTreeMap::new(),
             source_texts: HashMap::new(),
             loaded_files: HashSet::new(),
             recursion_stack: HashSet::new(),
         }
-    }
-
-    fn shell(&self) -> String {
-        self.shell.clone().unwrap_or_else(|| "sh".to_string())
     }
 
     fn spanned(
@@ -180,18 +157,6 @@ fn compile_stmt(
     program: &Program,
 ) -> Result<(), CompileError> {
     match stmt {
-        Stmt::Shell {
-            value,
-            offset,
-            len,
-            source_name,
-        } => stmt::compile_shell_decl(value, *offset, *len, source_name, state),
-        Stmt::Timeout {
-            value,
-            offset,
-            len,
-            source_name,
-        } => stmt::compile_timeout_decl(value, *offset, *len, source_name, state),
         Stmt::Var {
             name,
             value,
@@ -199,8 +164,7 @@ fn compile_stmt(
             len,
         } => stmt::compile_var_decl(name, value, *offset, *len, &program.source_name, state),
         Stmt::Fn { .. } => Ok(()),
-        Stmt::Project { name, fields, body } => {
-            stmt::compile_project_fields(name, fields, &program.source_name, state)?;
+        Stmt::Project { name, body } => {
             stmt::compile_project_body(name, body, &program.source_name, state)
         }
         Stmt::Run {
@@ -209,6 +173,5 @@ fn compile_stmt(
             offset,
             len,
         } => stmt::compile_run_decl(name, calls, *offset, *len, &program.source_name, state),
-        Stmt::Field { .. } => Ok(()),
     }
 }

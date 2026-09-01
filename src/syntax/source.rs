@@ -32,16 +32,6 @@ pub(crate) struct Template {
 }
 
 impl Template {
-    /// A template consisting of a single literal string.
-    pub(crate) fn lit(s: &str) -> Template {
-        Template {
-            parts: vec![Part::Lit(s.to_string())],
-            offset: 0,
-            len: 0,
-            source_name: String::new(),
-        }
-    }
-
     /// Returns the literal text of the template, concatenating literal parts and
     /// rendering `@(name)`/`$(cmd)` references as their textual spelling. Used for
     /// case-pattern matching where the pattern must be a concrete literal.

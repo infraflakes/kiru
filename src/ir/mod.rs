@@ -7,10 +7,9 @@
 //! type or operator system, the DSL is an IaC task runner.
 
 mod deserialize;
-mod serialize;
+pub(crate) mod serialize;
 #[cfg(test)]
 mod tests;
 mod types;
 
-pub(crate) use serialize::*;
 pub(crate) use types::*;

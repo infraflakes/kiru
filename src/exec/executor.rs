@@ -2,12 +2,15 @@ use crate::exec::OutputCallback;
 use crate::exec::context::ExecContext;
 use crate::exec::error::RuntimeError;
 use crate::ir::{Instruction, Ir, Project};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 /// Executes resolved function bodies against a compiled `Ir`.
 pub(crate) struct Executor {
     ir: Arc<Ir>,
+    shell: String,
+    timeout: Option<Duration>,
     output: OutputCallback,
 }
 
@@ -35,8 +38,18 @@ pub(crate) fn lookup_project_function_body<'a>(
 
 impl Executor {
     /// Create an executor that forwards every emitted output line to `output`.
-    pub(crate) fn new(ir: Arc<Ir>, output: OutputCallback) -> Self {
-        Executor { ir, output }
+    pub(crate) fn new(
+        ir: Arc<Ir>,
+        shell: String,
+        timeout: Option<Duration>,
+        output: OutputCallback,
+    ) -> Self {
+        Executor {
+            ir,
+            shell,
+            timeout,
+            output,
+        }
     }
 
     /// Look up and execute a function within a named project.
@@ -44,6 +57,7 @@ impl Executor {
         &mut self,
         fn_name: &str,
         project_name: &str,
+        cwd: PathBuf,
     ) -> Result<(), RuntimeError> {
         let project =
             self.ir.projects.get(project_name).ok_or_else(|| {
@@ -52,8 +66,7 @@ impl Executor {
 
         let fn_body = lookup_project_function_body(project, project_name, fn_name)?;
 
-        let timeout = Duration::from_secs(self.ir.timeout);
-        let mut ctx = ExecContext::new(&mut self.output, self.ir.shell.clone(), timeout);
+        let mut ctx = ExecContext::new(&mut self.output, cwd, self.shell.clone(), self.timeout);
         ctx.exec_stmts(fn_body)
     }
 }

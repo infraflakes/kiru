@@ -1,30 +1,15 @@
 //! IR builder: consumes the accumulated `LoweringState` and produces
-//! the final [`Ir`] with resolved repositories, projects, and run blocks.
+//! the final [`Ir`] with resolved projects and run blocks.
 
 use crate::diagnostics::{Diagnostic, Span};
-use crate::ir::{Ir, Project, Sync};
-use crate::syntax::Template;
+use crate::ir::{Ir, Project};
 use std::collections::BTreeMap;
 
-use super::inline::lower_template;
 use super::{CompileError, LoweringState};
 
 pub(super) fn build_ir(state: LoweringState) -> Result<Ir, CompileError> {
-    let shell = state.shell.unwrap_or_else(|| "sh".to_string());
-    let timeout = state.timeout.ok_or_else(|| {
-        CompileError::Validation(vec![Diagnostic::new(
-            "<config>".to_string(),
-            Span::new(0, 0),
-            "missing mandatory `timeout = (<seconds>);` declaration",
-            String::new(),
-        )])
-    })?;
-
     let LoweringState {
-        shell: _,
-        timeout: _,
         globals: _,
-        syncs,
         projects,
         run_blocks,
         source_texts: _,
@@ -32,37 +17,17 @@ pub(super) fn build_ir(state: LoweringState) -> Result<Ir, CompileError> {
         recursion_stack: _,
     } = state;
 
-    let mut repositories = BTreeMap::new();
-    for (name, s) in &syncs {
-        repositories.insert(
-            name.clone(),
-            Sync {
-                url: lower_template(s.url.as_ref().unwrap_or(&Template::default())),
-                dir: lower_template(s.dir.as_ref().unwrap_or(&Template::default())),
-                branch: lower_template(s.branch.as_ref().unwrap_or(&Template::default())),
-                strategy: lower_template(s.strategy.as_ref().unwrap_or(&Template::lit("clone"))),
+    let mut ir_projects = BTreeMap::new();
+    for (name, pending) in projects {
+        ir_projects.insert(
+            name,
+            Project {
+                functions: pending.functions,
             },
         );
     }
 
-    let mut ir_projects = BTreeMap::new();
-    // Every name that appears in either map gets a project entry.
-    let mut names: Vec<String> = projects.keys().cloned().collect();
-    for name in syncs.keys() {
-        if !names.contains(name) {
-            names.push(name.clone());
-        }
-    }
-    let mut projects_map = projects;
-    for name in names {
-        let functions = match projects_map.remove(&name) {
-            Some(pending) => pending.functions,
-            None => BTreeMap::new(),
-        };
-        ir_projects.insert(name, Project { functions });
-    }
-
-    // Validate run-block references against the merged projects.
+    // Validate run-block references against the projects.
     for (run_name, stages) in &run_blocks {
         for stage in stages {
             for call in stage {
@@ -94,9 +59,6 @@ pub(super) fn build_ir(state: LoweringState) -> Result<Ir, CompileError> {
     }
 
     Ok(Ir {
-        shell,
-        timeout,
-        repositories,
         projects: ir_projects,
         execution_chains: run_blocks,
     })

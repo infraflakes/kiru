@@ -1,48 +1,53 @@
-//! `kiru sync` command: resolves repositories from the compiled IR and
-//! clones or fast-forward-pulls each project into its declared directory.
+//! `kiru sync` command: reads `kiru.toml` directly and clones or
+//! fast-forward-pulls each project into its declared directory.
 
-use crate::exec;
-use crate::ir::Sync;
-use std::collections::BTreeMap;
-use std::path::PathBuf;
-use std::time::Duration;
+use crate::cli::kiru_toml;
+use crate::exec::sync::RepoSync;
 
-pub(crate) fn run_sync_command(config_arg: Option<PathBuf>) -> Result<(), String> {
-    let config = super::load_config(config_arg)?;
+pub(crate) fn run_sync_command(config_arg: Option<std::path::PathBuf>) -> Result<(), String> {
+    // When a config_arg is given, it's a kirufile path, but sync needs the toml.
+    // For now, sync always reads the canonical toml location.
+    let _ = config_arg;
 
-    let total_project_count = config.repositories.len();
+    let mut toml = kiru_toml::load_kiru_toml()?;
+    kiru_toml::expand_repo_dirs(&mut toml);
 
-    let syncs: BTreeMap<String, Sync> = config
-        .repositories
+    let repos: Vec<RepoSync> = toml
+        .repos
         .into_iter()
-        .filter(|(name, sync)| {
-            let url = &sync.url;
-            let dir = &sync.dir;
-            let skip_reason = if url.segments.is_empty() && dir.segments.is_empty() {
+        .filter(|repo| {
+            let skip_reason = if repo.url.is_empty() && repo.dir.is_empty() {
                 Some("missing url and dir")
-            } else if url.segments.is_empty() {
+            } else if repo.url.is_empty() {
                 Some("missing url")
-            } else if dir.segments.is_empty() {
+            } else if repo.dir.is_empty() {
                 Some("missing dir")
             } else {
                 None
             };
             if let Some(reason) = skip_reason {
-                eprintln!("Warning: project {:?}: {}, skipping sync", name, reason);
+                eprintln!(
+                    "Warning: project {:?}: {}, skipping sync",
+                    repo.name, reason
+                );
                 false
             } else {
                 true
             }
         })
+        .map(|repo| RepoSync {
+            name: repo.name,
+            url: repo.url,
+            dir: repo.dir,
+            branch: repo.branch,
+            strategy: repo.strategy,
+        })
         .collect();
 
-    if syncs.is_empty() {
-        if total_project_count == 0 {
-            eprintln!("Warning: no projects to sync");
-            return Ok(());
-        }
-        return Err("all projects were skipped due to missing url or dir".to_string());
+    if repos.is_empty() {
+        eprintln!("Warning: no projects to sync");
+        return Ok(());
     }
 
-    exec::sync::run_sync_for_projects(syncs, &config.shell, Duration::from_secs(config.timeout))
+    crate::exec::sync::run_sync_for_projects(repos)
 }

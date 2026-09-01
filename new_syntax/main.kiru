@@ -1,40 +1,80 @@
-# shell declared on top
-shell = (sh);
-timeout = (300);
-
 var home_dir = $(echo $HOME);
 var project_dir = (@(home_dir)/Projects);
 var config_dir = (@(home_dir)/.config);
 
-# sync block, cannot dupe
-sync kiru {
-  url = (https://github.com/infraflakes/kiru.git)
-  dir = (@(project_dir)/kiru)
-  branch = (dev)
+pr nix {
+  var name = (nixenv);
+  
+  fn ssh {
+    var check_ssh = $(test -f "$HOME/.ssh/id_ed25519.pub" && git remote get-url origin 2>/dev/null | grep -q "^https://" && echo "1");
+    switch check_ssh {
+      case (1) {
+        log (Switching url source...);
+        $(git remote set-url origin git@github.com:infraflakes/@(name).git);
+      };
+      case _ {
+        log (Source is already switched, or not enough condition.);
+      };
+    };
+  };
+
+  fn update {
+    log (Pulling new changes...);
+    $(git pull);
+  };
+  fn eval {
+    log (Building flake home manager...);
+    $(home-manager switch --flake .#nixenv@container);
+  };
 };
 
-sync portfolio {
-  url = (https://github.com/infraflakes/infraflakes.github.io.git)
-  dir = (@(project_dir)/portfolio)
-  sync = (ignore)
+pr dots {
+  var name = (dots);
+
+  fn ssh {
+    var check_ssh = $(test -f "$HOME/.ssh/id_ed25519.pub" && git remote get-url origin 2>/dev/null | grep -q "^https://" && echo "1");
+    switch check_ssh {
+      case (1) {
+        log (Switching url source...);
+        $(git remote set-url origin git@github.com:infraflakes/@(name).git);
+      };
+      case _ {
+        log (Source is already switched, or not enough condition.);
+      };
+    };
+  };
+
+  fn update {
+    log (Pulling new changes...);
+    $(git pull);
+  };
+
+  fn init {
+    var fish_exist = $(test -f ~/.config/fish/config.fish && echo "1");
+    switch fish_exist {
+      case (1) {
+        log (Symlinking with stow...);
+        $(stow --adopt -t @(config_dir) config);
+        $(git restore config/fish);
+      };
+     case _ {
+        log (Symlinking with stow...);
+        $(stow -t @(config_dir) config);
+      };
+    };
+  };
+
+  fn remove {
+    log (Removing stow's symlink...);
+    $(stow -D -t @(config_dir) config);
+  };
 };
 
-sync devenv {
-  url = (https://github.com/infraflakes/devenv.git)
-  dir = (@(project_dir)/kiru)
+run bootstrap {
+  nix::eval => nix::ssh;
+  dots::init;
 };
 
-sync dots {
-  url = (https://github.com/infraflakes/dots.git)
-  dir = (@(home_dir)/dots)
-};
-
-sync nix {
-  url = (https://github.com/infraflakes/nixenv.git)
-  dir = (@(home_dir)/nix)
-};
-
+import (others.kiru);
 import (@(project_dir)/kiru/main.kiru);
 import (@(project_dir)/portfolio/main.kiru);
-
-import (kiru/environment.kiru);

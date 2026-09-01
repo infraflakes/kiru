@@ -1,7 +1,8 @@
 use super::load_config;
 use super::pager;
+use crate::cli::kiru_toml;
 use crate::exec::colors::{BOLD, BOLD_CYAN, CYAN, GRAY_ANSI, RESET, YELLOW};
-use crate::ir::{Ir, Project, Sync, render_ir_literal};
+use crate::ir::{Ir, Project};
 use std::path::PathBuf;
 
 macro_rules! style {
@@ -12,15 +13,16 @@ macro_rules! style {
 
 pub(crate) fn run_status_command(config_arg: Option<PathBuf>) -> Result<(), String> {
     let config = load_config(config_arg)?;
-    let rendered_status_tree = format_config_as_tree(&config);
+    let toml = kiru_toml::load_kiru_toml().ok();
+    let rendered_status_tree = format_config_as_tree(&config, toml.as_ref());
     pager::display_output_through_pager(&rendered_status_tree)?;
     Ok(())
 }
 
 /// Render the whole config (projects + runs) as an indented tree suitable for
-/// the pager. Each project lists its sync fields and functions; each run lists
-/// its chain of `project::function` references.
-fn format_config_as_tree(config: &Ir) -> String {
+/// the pager. Each project lists its functions; each run lists its chain of
+/// `project::function` references.
+fn format_config_as_tree(config: &Ir, toml: Option<&kiru_toml::KiruToml>) -> String {
     let mut formatted_output = String::new();
     formatted_output.push('\n');
 
@@ -37,8 +39,8 @@ fn format_config_as_tree(config: &Ir) -> String {
         let count = config.projects.len();
         for (i, (name, project)) in config.projects.iter().enumerate() {
             let is_last_project = i == count - 1;
-            let sync = config.repositories.get(name);
-            draw_project(&mut formatted_output, name, project, sync, is_last_project);
+            let repo = toml.and_then(|t| t.repos.iter().find(|r| r.name == *name));
+            draw_project(&mut formatted_output, name, project, repo, is_last_project);
         }
     }
 
@@ -81,8 +83,14 @@ fn format_config_as_tree(config: &Ir) -> String {
     formatted_output
 }
 
-/// Render a single project node with its sync fields and functions.
-fn draw_project(out: &mut String, name: &str, project: &Project, sync: Option<&Sync>, last: bool) {
+/// Render a single project node with its functions and optional repo config.
+fn draw_project(
+    out: &mut String,
+    name: &str,
+    project: &Project,
+    repo: Option<&kiru_toml::Repo>,
+    last: bool,
+) {
     let branch = if last { "└" } else { "├" };
     out.push_str(&format!(
         "  {}── {}\n",
@@ -92,18 +100,18 @@ fn draw_project(out: &mut String, name: &str, project: &Project, sync: Option<&S
 
     let indent = if last { "   " } else { "│  " };
 
-    if let Some(sync) = sync {
-        if !sync.url.segments.is_empty() {
-            project_field(out, indent, "url", &render_ir_literal(&sync.url));
+    if let Some(repo) = repo {
+        if !repo.url.is_empty() {
+            project_field(out, indent, "url", &repo.url);
         }
-        if !sync.dir.segments.is_empty() {
-            project_field(out, indent, "dir", &render_ir_literal(&sync.dir));
+        if !repo.dir.is_empty() {
+            project_field(out, indent, "dir", &repo.dir);
         }
-        if !sync.branch.segments.is_empty() {
-            project_field(out, indent, "branch", &render_ir_literal(&sync.branch));
+        if !repo.branch.is_empty() {
+            project_field(out, indent, "branch", &repo.branch);
         }
-        if !sync.strategy.segments.is_empty() {
-            project_field(out, indent, "sync", &render_ir_literal(&sync.strategy));
+        if repo.strategy != "clone" {
+            project_field(out, indent, "sync", &repo.strategy);
         }
     }
 
@@ -137,7 +145,7 @@ fn draw_item_line(out: &mut String, indent: &str, connector: &str, label: &str, 
             indent,
             connector,
             style!(YELLOW, "{}", label),
-            style!(GRAY_ANSI, "—")
+            style!(GRAY_ANSI, "none")
         ));
     } else {
         let count = style!(GRAY_ANSI, "({})", names.len());
@@ -167,7 +175,7 @@ fn footer_bar(out: &mut String, config: &Ir) {
 
     out.push_str(&style!(
         GRAY_ANSI,
-        "  ─ {} projects · {} functions · {} runs ─\n",
+        "  -- {} projects, {} functions, {} runs --\n",
         config.projects.len(),
         fn_count,
         run_count,

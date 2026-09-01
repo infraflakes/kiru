@@ -22,14 +22,18 @@ pub(crate) struct ExecContext<'a> {
     env_layers: Vec<BTreeMap<String, String>>,
     system_env: Vec<(String, String)>,
     shell: String,
-    timeout: Duration,
+    timeout: Option<Duration>,
 }
 
 impl<'a> ExecContext<'a> {
-    /// Create a new execution context. The working directory starts at the
-    /// process current directory.
-    pub(crate) fn new(output: &'a mut OutputCallback, shell: String, timeout: Duration) -> Self {
-        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+    /// Create a new execution context. `cwd` is the starting working directory;
+    /// when `timeout` is `None`, commands have no time limit.
+    pub(crate) fn new(
+        output: &'a mut OutputCallback,
+        cwd: PathBuf,
+        shell: String,
+        timeout: Option<Duration>,
+    ) -> Self {
         ExecContext {
             output,
             cwd,
@@ -96,7 +100,7 @@ impl<'a> ExecContext<'a> {
             &[shell, "-c", cmd],
             Some(work_dir),
             Some(&env_overrides),
-            Some(self.timeout),
+            self.timeout,
             &mut |line| match line {
                 subprocess::SubprocessLine::Stdout(text)
                 | subprocess::SubprocessLine::Stderr(text) => {
@@ -115,7 +119,7 @@ impl<'a> ExecContext<'a> {
                 Ok(())
             }
             Err(subprocess::SubprocessError::Timeout { command, .. }) => {
-                let timeout_secs = self.timeout.as_secs();
+                let timeout_secs = self.timeout.map_or(0, |d| d.as_secs());
                 (self.output)(format!(
                     "{output_indent}Error: timeout: command timed out after {timeout_secs}s: {command}"
                 ));
@@ -139,12 +143,12 @@ impl<'a> ExecContext<'a> {
             &self.shell,
             Some(&self.cwd),
             Some(&env_overrides),
-            Some(self.timeout),
+            self.timeout,
         )
         .map_err(|e| match e {
             subprocess::SubprocessError::Timeout { command, .. } => RuntimeError::Timeout {
                 cmd: command,
-                secs: self.timeout.as_secs(),
+                secs: self.timeout.map_or(0, |d| d.as_secs()),
             },
             other => RuntimeError::exec_io_error(cmd, other),
         })
@@ -257,7 +261,13 @@ mod tests {
     #[test]
     fn test_switch_first_match() {
         let mut output: OutputCallback = Arc::new(|_| {});
-        let mut ctx = ExecContext::new(&mut output, "sh".to_string(), Duration::from_secs(30));
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+        let mut ctx = ExecContext::new(
+            &mut output,
+            cwd,
+            "sh".to_string(),
+            Some(Duration::from_secs(30)),
+        );
         let body: [Instruction; 1] = [Instruction::Switch {
             subject: lit("a"),
             arms: vec![

@@ -37,4 +37,4 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Run CI via Kiru
-        run: KIRU_CWD=1 cargo run -- run ci_kiru
+        run: cargo run -- run ci_kiru
