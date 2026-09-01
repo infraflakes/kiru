@@ -1,15 +1,14 @@
-//! `kiru sync` command: reads `kiru.toml` directly and clones or
-//! fast-forward-pulls each project into its declared directory.
+//! `kiru sync` command: clones or fast-forward-pulls each repo declared in
+//! `kiru.toml` into its directory. Reads the default `kiru.toml`, or the one
+//! given with `-c`.
 
+use crate::cli::get_toml_path;
 use crate::cli::kiru_toml;
 use crate::exec::sync::RepoSync;
 
 pub(crate) fn run_sync_command(config_arg: Option<std::path::PathBuf>) -> Result<(), String> {
-    // When a config_arg is given, it's a kirufile path, but sync needs the toml.
-    // For now, sync always reads the canonical toml location.
-    let _ = config_arg;
-
-    let mut toml = kiru_toml::load_kiru_toml()?;
+    let toml_path = get_toml_path(config_arg);
+    let mut toml = kiru_toml::load_kiru_toml_at(&toml_path)?;
     kiru_toml::expand_repo_dirs(&mut toml);
 
     let repos: Vec<RepoSync> = toml
@@ -40,7 +39,6 @@ pub(crate) fn run_sync_command(config_arg: Option<std::path::PathBuf>) -> Result
             url: repo.url,
             dir: repo.dir,
             branch: repo.branch,
-            strategy: repo.strategy,
         })
         .collect();
 

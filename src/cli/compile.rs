@@ -1,10 +1,10 @@
-//! `kiru compile` command: reads a `.kiru` source file and writes its
-//! serialized kirufile output to a file or stdout.
+//! `kiru compile` command: parses a `.kiru` source file and writes the
+//! compiled `kirufile` that the other commands read.
 
 use std::path::PathBuf;
 
-fn resolve_compile_input(input: Option<PathBuf>) -> PathBuf {
-    if let Some(path) = input {
+fn resolve_compile_input(config_arg: Option<PathBuf>) -> PathBuf {
+    if let Some(path) = config_arg {
         return path;
     }
     super::kiru_config_dir().join("main.kiru")
@@ -18,10 +18,10 @@ fn resolve_compile_output(output: Option<PathBuf>) -> PathBuf {
 }
 
 pub(crate) fn run_compile_command(
-    input: Option<PathBuf>,
+    config_arg: Option<PathBuf>,
     output: Option<PathBuf>,
 ) -> Result<(), String> {
-    let input = resolve_compile_input(input);
+    let input = resolve_compile_input(config_arg);
     let output = resolve_compile_output(output);
 
     let ir = crate::lower::lower_and_resolve(&input).map_err(super::compile_error_to_string)?;

@@ -1,5 +1,5 @@
-//! Top-level declaration parsers: `var`, `shell`, `timeout`, `fn`,
-//! and project-level `var`/`fn` inside `pr` bodies.
+//! Top-level declaration parsers: `var`, `fn`, and project-level
+//! `var`/`fn` inside `pr` bodies.
 
 use super::*;
 

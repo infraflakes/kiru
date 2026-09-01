@@ -1,34 +1,26 @@
-var string app = `todo`;
-var shell os   = `uname -s`;
+# The smallest useful kiru setup.
+#
+# Copy to ~/.config/kiru/main.kiru, add a "todo" repo to kiru.toml,
+# then: kiru compile, kiru status, kiru run ci.
 
-fn build {
-    log `Building ${global::app}...`;
-    case $global::os {
-        `Linux` {
-            exec `go build -o bin/${global::app} .`;
-        };
-        `Darwin` {
-            exec `go build -o bin/${global::app} .`;
-        };
-        _ { log `unsupported OS: ${global::os}`; };
+var app = (todo);
+
+pr todo {
+  fn build {
+    log (Building @(app)...);
+    $(go build -o bin/@(app) .);
+  }
+
+  fn test {
+    log (Testing @(app)...);
+    env {
+      CGO_ENABLED = (0);
+    } {
+      $(go test -race ./...);
     };
-}
-
-fn test {
-    env [CGO_ENABLED = `0`] {
-        exec `go test -race ./...`;
-    };
-}
-
-pr todo [
-    url  = `git@github.com:yourname/todo.git`
-    dir  = `todo`
-] {
-    var string version = `dev`;
-    use build;
-    use test;
+  }
 }
 
 run ci {
-    todo::test => todo::build;
+  todo::test => todo::build;
 }

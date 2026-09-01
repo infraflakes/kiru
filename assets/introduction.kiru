@@ -1,176 +1,145 @@
-# kiru — introductory example
+# kiru - introduction
 #
-# This file walks through every DSL feature step by step.
+# This file walks through the language, feature by feature.
+# Each section builds on the last; the file compiles as it stands.
 #
-# Usage:
-#   kiru status                 # check the config is valid
-#   kiru sync                   # clone all repos
-#   kiru fn  build  myapp       # run a single function
-#   kiru run all                # run an orchestration pipeline
+# Try it after reading:
+#   kiru compile -c intro.kiru -o .   # turn this into a kirufile
+#   kiru status -p kirufile           # see what kiru found
+#   kiru run all -p kirufile          # run the pipeline at the bottom
 
-# ── 1. GLOBAL VARIABLES ─────────────────────────────────────────────
+# -- 1. VARIABLES -----------------------------------------------------
 #
-# var string name = `value`;     store value as-is
-# var shell  name = `command`;   run command now, store its output
+# A var holds a value you can reuse.
 #
-# Global var shell runs in the current directory at config-check time.
-# A failed command returns "" (not an error) — useful for probing.
+#   var name = (text);      the text as-is
+#   var name = $(command);  run the command now and keep its output
 #
-# Use $global::name or ${global::name} to reference a global variable.
+# A failed $(command) is not an error; it leaves "". Handy for probing,
+# e.g. var has_docker = $(command -v docker).
+#
+# Use @(name) later to use the value again.
 
-var string app  = `myapp`;
-var string user = `yourname`;
-var string repo = `${global::user}/${global::app}`;
-var shell os    = `uname -s`;
+var app  = (myapp);
+var user = (yourname);
+var os   = $(uname -s);
 
-# ── 2. IMPORT ──────────────────────────────────────────────────────
-#
-# Split config across multiple .kiru files.
-# Paths are relative to the current file's directory.
-#
-# import `shared.kiru`;
-#
-# Imports are processed at their source position, so you can interpolate
-# global variables into the path:
-#
-# var string dir = `configs`;
-# import `${global::dir}/common.kiru`;
+# @(app) works inside any template, so this builds a name out of parts:
+var repo = (@(user)/@(app));
 
-# ── 3. FUNCTIONS (top-level templates) ──────────────────────────────
+# -- 2. IMPORT --------------------------------------------------------
 #
-# Functions are defined at the top level, NOT inside projects.
-# They are templates: use $self:: to reference the project that will
-# eventually host the function. When applied via use, self:: gets
-# rewritten to that project's name.
+# Pull in another file with import. The path is a template and is
+# relative to the importing file:
 #
-# Inside a global function template, none of the body statements execute
-# at declaration time. They are stored as AST and only resolved when the
-# function is applied to a project via use.
+#   import (./shared.kiru);
 #
-# A function body can contain:
+# Variables already in scope work in the path too:
 #
-#   log  `message`;         print a message
-#   exec `command`;         run a shell command (live output)
-#   cd   `path`;            change directory (persistent, relative joins)
+#   var dir = (~/configs);
+#   import (@(dir)/common.kiru);
+
+# -- 3. FUNCTIONS -----------------------------------------------------
 #
-#   var string x = `val`;   project-scoped variable (visible to all fns)
-#   var shell  x = `cmd`;   shell variable (runs in the project dir when
-#                            the function is applied via use; never runs
-#                            at function declaration time)
+# A project (pr) groups functions that act on the same repo. Each
+# function is a list of steps:
 #
-#   env [KEY = `val`] {     scoped env vars for the block
+#   log  (msg);           print a message
+#   $(cmd);               run a shell command (live output)
+#   cd  (path);           change directory for the rest of the function
+#
+#   var name = (val);     a value shared by this project's functions
+#   var name = $(cmd);    same, but captured when you run kiru compile
+#
+#   env { KEY = (val); } {    run a block with extra environment
 #       ...;
 #   };
 #
-#   case $cond {            branching — first match wins
-#       `literal` { ... };
-#       $var_ref  { ... };  match against a variable's value
-#       _         { ... };  default / catch-all
+#   switch @(x) {             run the first case that matches
+#       case (value) { ... };
+#       case _ { ... };       everything else
 #   };
 
-fn check {
-    log `Running static checks for ${global::app}...`;
-    exec `go fmt ./...`;
-    exec `go vet ./...`;
-}
+pr myapp {
+  var docker_registry = (ghcr.io/@(user));
+  var port = (3000);
 
-fn build {
-    log `Building ${global::app}...`;
+  fn check {
+    log (Running static checks for @(app)...);
+    $(go fmt ./...);
+    $(go vet ./...);
+  }
 
-    case $global::os {
-        `Linux` {
-            env [GOOS = `linux` GOARCH = `amd64`] {
-                exec `go build -o bin/${global::app} .`;
-            };
+  fn build {
+    log (Building @(app)...);
+
+    switch @(os) {
+      case (Linux) {
+        env {
+          GOOS = (linux);
+          GOARCH = (amd64);
+        } {
+          $(go build -o bin/@(app) .);
         };
-        `Darwin` {
-            cd `cmd`;
-            exec `go build -o ../bin/${global::app} .`;
-        };
-        _ {
-            log `unsupported OS: ${global::os}, falling back to native build`;
-            exec `go build -o bin/${global::app} .`;
-        };
+      };
+      case (Darwin) {
+        cd (cmd);
+        $(go build -o ../bin/@(app) .);
+      };
+      case _ {
+        log (unsupported OS: @(os), falling back to native build);
+        $(go build -o bin/@(app) .);
+      };
     };
-}
+  }
 
-fn test {
-    log `Running tests for ${global::app}...`;
-    var string gopath = `/home/user/.local/share/go`;
+  fn test {
+    log (Running tests for @(app)...);
+    var gopath = (/home/user/.local/share/go);
 
-    env [
-        CGO_ENABLED = `0`
-        GOPATH = $self::gopath
-    ] {
-        log `Testing go program`;
-        exec `go test -race ./...`;
+    env {
+      CGO_ENABLED = (0);
+      GOPATH = @(gopath);
+    } {
+      log (Testing go program);
+      $(go test -race ./...);
     };
-}
+  }
 
-fn lint {
-    exec `golangci-lint run ./...`;
-}
+  fn lint {
+    $(golangci-lint run ./...);
+  }
 
-fn release {
-    var string tag = `v1.0.0`;
-    case $self::tag {
-        `` {
-            log `no git tag found, skipping release`;
-        };
-        _ {
-            log `releasing ${self::tag}...`;
-            exec `docker build -t ${self::docker_registry}/${global::app}:${self::tag} .`;
-            exec `docker push ${self::docker_registry}/${global::app}:${self::tag}`;
-        };
+  fn release {
+    var tag = (v1.0.0);
+    switch @(tag) {
+      case () {
+        log (no git tag found, skipping release);
+      };
+      case _ {
+        log (releasing @(tag)...);
+        $(docker build -t @(docker_registry)/@(app):@(tag) .);
+        $(docker push @(docker_registry)/@(app):@(tag));
+      };
     };
+  }
 }
 
-# ── 4. PROJECTS (declare repos + apply functions) ──────────────────
+# -- 4. RUN BLOCKS ----------------------------------------------------
 #
-# pr <name> [field = value ...] { <body> }
+# A run block calls functions across projects as a pipeline.
 #
-# Fields (space-separated, inside brackets):
-#   url     — git remote URL
-#   dir     — local directory (relative paths resolve against this file)
-#   sync    — "ignore" (optional; repos are cloned/updated by default)
-#   branch  — git branch to clone (optional)
+#   ;   means "at the same time"
+#   =>  means "wait for the one before"
 #
-# Project body (inside the braces):
-#   var <type> <name> = <value>;     project-scoped variable
-#   use <function> [as <alias>];     apply a global function to this project
-
-pr myapp [
-    url  = `git@github.com:${global::user}/myapp.git`
-    dir  = `${global::app}`
-    branch = `main`
-] {
-    var string docker_registry = `ghcr.io/${global::user}`;
-    var string port = `3000`;
-
-    # Apply global functions. They become myapp::check, myapp::build, etc.
-    # $self:: inside a function body now refers to myapp's variables.
-    use check;
-    use build;
-    use test;
-    use lint;
-    use release;
-}
-
-# ── 5. RUN BLOCKS (orchestration) ──────────────────────────────────
-#
-# Run blocks are top-level. They orchestrate functions across projects.
-#
-#   ;   separates parallel chains
-#   =>  sequences functions within a chain
-#
-# All chains start at once. If one function in a chain fails, the rest
-# of that chain is skipped but other chains continue.
+# Each ;-separated line starts at once. If a step in a chain fails, the
+# rest of that chain is skipped, but the other chains keep going.
 
 run all {
-    myapp::lint => myapp::check => myapp::build;
-    myapp::test;
+  myapp::lint => myapp::check => myapp::build;   # one after another
+  myapp::test;                                   # alongside the chain above
 }
 
 run ci {
-    myapp::lint => myapp::test;
+  myapp::lint => myapp::test;
 }

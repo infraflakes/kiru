@@ -13,13 +13,16 @@ pub(crate) struct Cli {
 pub(crate) enum Commands {
     /// Show the resolved configuration (parse, resolve, and validate)
     Status {
-        /// Path to kirufile (defaults to ~/.config/kiru/kirufile)
+        /// Path to kiru.toml (defaults to ~/.config/kiru/kiru.toml)
         #[arg(short, long)]
         config: Option<PathBuf>,
+        /// Path to kirufile (defaults to ~/.config/kiru/kirufile)
+        #[arg(short = 'p', long)]
+        kirufile: Option<PathBuf>,
     },
     /// Clone/sync project repositories
     Sync {
-        /// Path to kirufile (defaults to ~/.config/kiru/kirufile)
+        /// Path to kiru.toml (defaults to ~/.config/kiru/kiru.toml)
         #[arg(short, long)]
         config: Option<PathBuf>,
     },
@@ -27,27 +30,21 @@ pub(crate) enum Commands {
     Run {
         /// Name of the run block to execute
         name: String,
-        /// Path to kirufile (defaults to ~/.config/kiru/kirufile)
+        /// Path to kiru.toml (defaults to ~/.config/kiru/kiru.toml)
         #[arg(short, long)]
         config: Option<PathBuf>,
+        /// Path to kirufile (defaults to ~/.config/kiru/kirufile)
+        #[arg(short = 'p', long)]
+        kirufile: Option<PathBuf>,
     },
-    /// Compile a `.kiru` DSL file into a `kirufile` s-expression artifact
+    /// Compile a `.kiru` DSL file into a `kirufile`
     Compile {
         /// Path to the `.kiru` source file (defaults to ~/.config/kiru/main.kiru)
-        input: Option<PathBuf>,
+        #[arg(short, long)]
+        config: Option<PathBuf>,
         /// Output directory for kirufile (defaults to ~/.config/kiru/)
         #[arg(short, long)]
         output: Option<PathBuf>,
-    },
-    /// Run a function directly
-    Fn {
-        /// Name of the function to run
-        name: String,
-        /// Project to run the function in
-        project: Option<String>,
-        /// Path to kirufile (defaults to ~/.config/kiru/kirufile)
-        #[arg(short, long)]
-        config: Option<PathBuf>,
     },
     /// Print the version number
     Version,

@@ -11,9 +11,12 @@ macro_rules! style {
     };
 }
 
-pub(crate) fn run_status_command(config_arg: Option<PathBuf>) -> Result<(), String> {
-    let config = load_config(config_arg)?;
-    let toml = kiru_toml::load_kiru_toml().ok();
+pub(crate) fn run_status_command(
+    config_arg: Option<PathBuf>,
+    kirufile_arg: Option<PathBuf>,
+) -> Result<(), String> {
+    let config = load_config(kirufile_arg)?;
+    let toml = kiru_toml::load_kiru_toml_at(&super::get_toml_path(config_arg)).ok();
     let rendered_status_tree = format_config_as_tree(&config, toml.as_ref());
     pager::display_output_through_pager(&rendered_status_tree)?;
     Ok(())
@@ -109,9 +112,6 @@ fn draw_project(
         }
         if !repo.branch.is_empty() {
             project_field(out, indent, "branch", &repo.branch);
-        }
-        if repo.strategy != "clone" {
-            project_field(out, indent, "sync", &repo.strategy);
         }
     }
 

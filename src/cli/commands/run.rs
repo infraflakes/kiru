@@ -8,10 +8,14 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub(crate) fn execute_run_block(config_arg: Option<PathBuf>, name: String) -> Result<(), String> {
-    let config = load_config(config_arg)?;
+pub(crate) fn execute_run_block(
+    config_arg: Option<PathBuf>,
+    kirufile_arg: Option<PathBuf>,
+    name: String,
+) -> Result<(), String> {
+    let config = load_config(kirufile_arg)?;
 
-    let toml = kiru_toml::load_kiru_toml()?;
+    let toml = kiru_toml::load_kiru_toml_at(&crate::cli::get_toml_path(config_arg))?;
     let mut repo_dirs = BTreeMap::new();
     let mut toml_expanded = toml.clone();
     kiru_toml::expand_repo_dirs(&mut toml_expanded);

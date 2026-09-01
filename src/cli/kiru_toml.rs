@@ -1,6 +1,6 @@
-//! `kiru.toml` configuration: the single mandatory source of truth for
-//! machine-level config (shell, timeout, repos). Read before anything else;
-//! the DSL (`main.kiru`) is pure behavior.
+//! `kiru.toml` holds per-machine settings (repos, shell, timeout).
+//! Kept separate from the DSL (`main.kiru`) so the DSL stays portable
+//! and only the machine-specific bits live here.
 
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -46,10 +46,6 @@ pub(crate) struct Repo {
     /// Branch to clone/pull. Empty string means the default branch.
     #[serde(default)]
     pub(crate) branch: String,
-
-    /// Sync strategy: `"clone"` (default) or `"ignore"`.
-    #[serde(default = "default_strategy")]
-    pub(crate) strategy: String,
 }
 
 fn default_version() -> u8 {
@@ -58,10 +54,6 @@ fn default_version() -> u8 {
 
 fn default_shell() -> String {
     "sh".to_string()
-}
-
-fn default_strategy() -> String {
-    "clone".to_string()
 }
 
 /// Expand `~` and `$HOME` in a path string. `~` is replaced with the user's
@@ -86,11 +78,10 @@ fn expand_home(path: &str) -> String {
     path.to_string()
 }
 
-/// Load and validate `kiru.toml` from the config directory. Returns a
-/// hard error if the file is missing or malformed.
-pub(crate) fn load_kiru_toml() -> Result<KiruToml, String> {
-    let path = get_kiru_toml_path();
-    let text = std::fs::read_to_string(&path)
+/// Load and validate `kiru.toml` from an explicit path. Callers resolve the
+/// path first (`-c` override or the canonical `~/.config/kiru/kiru.toml`).
+pub(crate) fn load_kiru_toml_at(path: &Path) -> Result<KiruToml, String> {
+    let text = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read {}: {}", path.display(), e))?;
     let config: KiruToml =
         toml::from_str(&text).map_err(|e| format!("failed to parse {}: {}", path.display(), e))?;
@@ -105,14 +96,6 @@ fn validate_kiru_toml(config: &KiruToml) -> Result<(), String> {
             "unsupported kiru.toml version: {} (expected 1)",
             config.version
         ));
-    }
-    for repo in &config.repos {
-        if repo.strategy != "clone" && repo.strategy != "ignore" {
-            return Err(format!(
-                "repo '{}': unknown strategy '{}' (expected 'clone' or 'ignore')",
-                repo.name, repo.strategy
-            ));
-        }
     }
     if let Some(timeout) = config.timeout
         && timeout == 0
@@ -163,40 +146,6 @@ mod tests {
     #[test]
     fn test_expand_home_noop() {
         assert_eq!(expand_home("/absolute/path"), "/absolute/path");
-    }
-
-    #[test]
-    fn test_validate_default_strategy() {
-        let config = KiruToml {
-            version: 1,
-            shell: "sh".to_string(),
-            timeout: None,
-            repos: vec![Repo {
-                name: "test".to_string(),
-                url: "https://example.com".to_string(),
-                dir: "~/test".to_string(),
-                branch: String::new(),
-                strategy: "clone".to_string(),
-            }],
-        };
-        assert!(validate_kiru_toml(&config).is_ok());
-    }
-
-    #[test]
-    fn test_validate_bad_strategy() {
-        let config = KiruToml {
-            version: 1,
-            shell: "sh".to_string(),
-            timeout: None,
-            repos: vec![Repo {
-                name: "test".to_string(),
-                url: String::new(),
-                dir: String::new(),
-                branch: String::new(),
-                strategy: "pull".to_string(),
-            }],
-        };
-        assert!(validate_kiru_toml(&config).is_err());
     }
 
     #[test]

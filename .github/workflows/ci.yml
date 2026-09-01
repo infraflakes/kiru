@@ -36,5 +36,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
+      - name: Compile Kiru Config
+        run: cargo run -- compile -c main.kiru -o .
+
       - name: Run CI via Kiru
-        run: cargo run -- run ci_kiru
+        run: cargo run -- run ci_kiru -p kirufile

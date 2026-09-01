@@ -1,5 +1,4 @@
 use ratatui::style::Color;
-use std::io::Write;
 
 /// ANSI escape code to reset all formatting.
 pub(crate) const RESET: &str = "\x1b[0m";
@@ -77,19 +76,14 @@ pub(crate) fn colored_line_parts(line: &str) -> (usize, &'static str, &'static s
 
 /// Render a captured output line as a fully colored string (indent left
 /// uncolored, then color + prefix + rest + reset). Single implementation
-/// shared by every sink: the `Write` path (`write_colored_line`) and the
-/// `String` buffer path (`write_colored_line_buf`).
+/// shared by every sink; the TUI renderer wraps this for its `String`
+/// buffer path.
 pub(crate) fn colored_line_string(line: &str) -> String {
     if line.contains("\x1b[") {
         return line.to_string();
     }
     let (indent, prefix, color, rest) = colored_line_parts(line);
     format!("{}{}{}{}{}", &line[..indent], color, prefix, rest, RESET)
-}
-
-/// Write a single colored output line to a writer.
-pub(crate) fn write_colored_line(line: &str, writer: &mut impl Write) {
-    let _ = writer.write_all(colored_line_string(line).as_bytes());
 }
 
 #[cfg(test)]

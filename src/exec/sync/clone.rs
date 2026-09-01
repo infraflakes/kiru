@@ -4,28 +4,17 @@ use crate::exec::subprocess;
 use crate::exec::{TaskOutcome, TaskStatus, TuiEvent, await_tasks_and_report, report_task_outcome};
 use std::path::PathBuf;
 
-/// A plain repo configuration read from `kiru.toml`, used by sync instead
-/// of the old IR `Sync` struct.
+/// A plain repo configuration read from `kiru.toml`, used by sync.
 #[derive(Debug, Clone)]
 pub(crate) struct RepoSync {
     pub(crate) name: String,
     pub(crate) url: String,
     pub(crate) dir: String,
     pub(crate) branch: String,
-    pub(crate) strategy: String,
 }
 
-/// Dispatch sync for a single project into `repo.dir` by its strategy. A
-/// `strategy = "ignore"` is a no-op; anything else clones/pulls the repo.
+/// Dispatch sync for a single project into `repo.dir` by cloning or pulling.
 fn sync_project_inner(repo: &RepoSync, output: &mut dyn FnMut(&str)) -> Result<(), RuntimeError> {
-    if repo.strategy.trim().eq_ignore_ascii_case("ignore") {
-        output(&format!(
-            "{} {} (sync=ignore)",
-            colors::SYNC_PREFIXES[0],
-            repo.name
-        ));
-        return Ok(());
-    }
     run_sync_clone_or_update(repo, output)
 }
 

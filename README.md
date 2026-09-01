@@ -11,195 +11,87 @@
 > [!CAUTION]
 > `kiru` is still in early development, breaking changes may happen.
 
-With kiru you declare multiple git repos, write shell functions once, and wire them into concurrent pipelines — all in one DSL.
+kiru is a small tool that keeps several git repos in sync and runs jobs across them. You describe the work once, in one file, and kiru runs it for you.
 
-## Why kiru?
+## What you get
 
-Keeping several git repositories in sync usually means a folder of brittle shell scripts or a separate Makefile per project. Scattered, hard to read, and easy to break in ways you only notice once something is already running.
+- One DSL for the repos you work with and the shell steps that build, test, and release them.
+- Pipelines that run steps in parallel or one after another, across repos.
+- Validation up front: kiru checks your file before it runs anything, so mistakes show up while you edit, not mid-deploy.
 
-kiru gives you one small DSL to declare your repos, write the shell commands you already know as reusable functions, and wire them into concurrent or sequential pipelines.
-
-The part we care about most: **kiru validates your config before running anything**. It catches invalid syntax, undefined variables, and broken function references at config-check time — so you spot mistakes while editing, not halfway through a deploy.
-
----
-
-## Quick start
+## Install
 
 ```bash
 curl -sSf https://raw.githubusercontent.com/infraflakes/kiru/main/install.sh | sh
 ```
 
-The default config is at `~/.config/kiru/main.kiru`. Override with `-c <path>`.
+This puts `kiru` in `~/.local/bin`. Make sure that directory is on your `PATH`.
 
-Machine-level config (shell, timeout, repos) lives in `~/.config/kiru/kiru.toml`.
+## Your two files
 
-A `.kiru` file reads like the shell you already write:
+Everything lives in `~/.config/kiru/`, in two files you write.
+
+**`main.kiru`** - the work. Projects (`pr`), their functions (`fn`), and the pipelines (`run`) that call them. This one travels well, so keep it under version control.
 
 ```kiru
-var string app = `todo`;
-var shell  os  = `uname -s`;
+var app = (todo);
 
-fn build {
-    log `Building ${global::app} on ${global::os}...`;
-    case $global::os {
-        `Linux`   { exec `go build -o bin/${global::app} .`; };
-        `Darwin`  { exec `go build -o bin/${global::app} .`; };
-        _         { log `unsupported OS: ${global::os}`; };
-    };
-}
+pr todo {
+  fn build {
+    log (Building @(app)...);
+    $(go build -o bin/@(app) .);
+  }
 
-fn test {
-    exec `go test -race ./...`;
-}
-
-pr todo [
-    url  = `git@github.com:yourname/todo.git`
-    dir  = `todo`
-] {
-    var string version = `dev`;
-    use build;
-    use test;
+  fn test {
+    $(go test -race ./...);
+  }
 }
 
 run ci {
-    todo::test => todo::build;
+  todo::test => todo::build;
 }
 ```
+
+**`kiru.toml`** - your machine. Which shell to use and which repos kiru should clone for you.
+
+```toml
+version = 1
+shell = "sh"
+
+[[repos]]
+name = "todo"
+url  = "git@github.com:you/todo.git"
+dir  = "~/projects/todo"
+```
+
+## Compile and run
+
+kiru does not read `main.kiru` directly. First, compile it into the `kirufile` that the rest of the commands use:
+
+```bash
+kiru compile -c main.kiru -o ~/.config/kiru
+```
+
+Compile parses and checks `main.kiru`, then writes `kirufile` into the output directory. If it reports errors, fix them and compile again. Every edit to `main.kiru` needs a fresh `kiru compile` before the other commands see it.
 
 | command | what it does |
 |---------|-------------|
-| `kiru status` | check the config is valid and show everything kiru found |
-| `kiru sync` | clone or update all declared repos |
-| `kiru run ci` | execute the `ci` pipeline (sequentially chains functions) |
-| `kiru fn build todo` | run a single function in a project directly |
-| `kiru version` | print the installed version |
+| `kiru compile -c main.kiru -o DIR` | turn a `main.kiru` into the `kirufile` |
+| `kiru status` | validate the `kirufile` and show what's inside |
+| `kiru run ci` | run the `ci` pipeline |
+| `kiru sync` | clone or update the repos in `kiru.toml` |
+| `kiru version` | print the version |
 
-All commands accept `-c <path>` to use a config file other than `~/.config/kiru/main.kiru`.
+Start with `kiru status`. It never runs anything, just tells you whether your config is sound.
 
----
+Flags follow one rule: `-c` points at a config, `-p` at a `kirufile`. Only the flags a command actually needs exist. Defaults are `~/.config/kiru/kiru.toml` for `-c` and `~/.config/kiru/kirufile` for `-p`; `compile -c` defaults to `~/.config/kiru/main.kiru`.
 
-## How the DSL works
+## Learn the DSL
 
-### Variables: `string` vs `shell`
-
-| form | what it does |
-|------|-------------|
-| `var string name = \`value\`;` | store a string as-is; `\${...}` gets substituted |
-| `var shell name = \`cmd\`;` | **run the command** at config-check time and store its output |
-
-A `var shell` command runs where it's declared:
-- **Global scope** — runs in the current directory
-- **Inside a project** — runs in that project's directory
-- **Inside a global function** — does **not** run at declaration time. The function is a template; the `var shell` runs only when the function is applied to a project via `use`, and then in that project's directory.
-
-Non-zero exit is not an error — `var shell` returns `""` if the command fails. This makes it useful as a probe (e.g. `` var shell has_feature = `test -f x && echo yes` ``).
-
-### Referencing variables: namespaces are mandatory
-
-Every variable reference must be namespaced with `namespace::name`:
-
-| reference | what it targets |
-|-----------|----------------|
-| `$global::app` or `\${global::app}` | a global variable |
-| `$self::version` or `\${self::version}` | the **current project's** variable (rewritten to the project name at config-check time) |
-
-Inside a function body or project field value, use `$self::name` to refer to a variable of whatever project eventually hosts the function. When the function is applied to a project via `use` (or the project body is processed), `self::` gets rewritten to that project's name.
-
-A project can only read its own variables and globals. Reading another project's variables is a compile-time error.
-
-### Functions are templates, not methods
-
-Functions are defined at the **top level**, not inside projects:
-
-```kiru
-fn build {
-    log `Building ${self::name}...`;
-    exec `make build`;
-}
-```
-
-They are **applied** to a project with `use`:
-
-```kiru
-pr myapp [url = `...` dir = `...`] {
-    var string name = `myapp`;
-    use build;         # becomes myapp::build
-}
-```
-
-You can rename a function with `as`:
-
-```kiru
-pr backend [url = `...` dir = `...`] {
-    var string name = `backend`;
-    use build as compile;   # becomes backend::compile
-}
-```
-
-### Function body: what you can write
-
-| statement | what it does |
-|-----------|-------------|
-| `log \`msg\`;` | print a message |
-| `exec \`cmd\`;` | run a shell command (stderr + stdout merged, live output) |
-| `cd \`path\`;` | change directory (relative paths join, persists for later statements) |
-| `var string x = \`v\`;` | scoped variable (visible to all functions in the project) |
-| `var shell x = \`cmd\`;` | scoped variable that runs a shell command at config-check time |
-| `env [KEY = \`val\` ...] { ... };` | scoped environment variables for the block body |
-| `case $cond { ... };` | branching: `\`literal\``, `$var`, or `_` default; first match wins |
-
-### Run blocks: orchestration
-
-```kiru
-run all {
-    myapp::lint => myapp::check => myapp::build;  # sequential chain
-    myapp::test;                                    # parallel chain
-}
-```
-
-- **`;`** separates chains that run in parallel
-- **`=>`** chains functions within a chain that run sequentially
-- All chains start at once; if one function fails, its chain stops but others continue
-
-### Projects: declaring repos
-
-Projects are declared in the DSL with `pr` blocks containing `var` and `fn`:
-
-```kiru
-pr name {
-    var string x = `...`;
-    use build;              # apply a global function
-}
-```
-
-Repo configuration (url, dir, branch, sync strategy) lives in `~/.config/kiru/kiru.toml` and is read at execution time. Projects without a matching `repos` entry in `kiru.toml` run commands in the user's current directory.
-
-### Imports: splitting configs
-
-A config can be split across several files with `import`. The path is a backtick literal and resolves **relative to the importing file**:
-
-```kiru
-import `./shared.kiru`;
-```
-
-The path may interpolate globals declared earlier in the file:
-
-```kiru
-var string dir = `~/configs`;
-import `${global::dir}/common.kiru`;
-```
-
-- Imported files are processed in place, as if their contents were written at the `import` statement.
-- The same file can be imported more than once; it is loaded only on its first occurrence.
-- Circular imports (a file importing itself, directly or indirectly) are a compile-time error.
-- During `kiru sync`'s lightweight metadata pass, a missing import target is skipped with a warning; full compilation (`status`, `run`, `fn`) treats it as an error.
-
----
-
-## Examples
-
-- [Introduction to kiru](./assets/introduction.kiru) — walks through every DSL feature step by step.
-- [main.kiru](./main.kiru) — kiru's own config, used to build, test, and CI the kiru repository itself.
+- [Introduction to kiru](./assets/introduction.kiru) - the language, feature by feature.
+- [Minimal example](./assets/example.kiru) - the smallest setup that runs.
+- [Grammar](./assets/kiru.ebnf) - the formal spec.
+- [main.kiru](./main.kiru) - kiru's own config, used to build and test itself.
 
 ---
 

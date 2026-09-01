@@ -1,93 +1,90 @@
-(* ──────────────────────────────────────────────────────────────────── *)
-(*  kiru DSL — EBNF Grammar                                          *)
-(* ──────────────────────────────────────────────────────────────────── *)
+(* ----------------------------------------------------------------- *)
+(*  kiru DSL - EBNF Grammar                                         *)
+(* ----------------------------------------------------------------- *)
 
-(* ═══════════════════════════════════════════════════════════════════ *)
+(* ================================================================= *)
 (*  PROGRAM                                                          *)
-(* ═══════════════════════════════════════════════════════════════════ *)
+(* ================================================================= *)
 
 program          = { statement } ;
 statement        = import_decl | var_decl
                  | fn_decl | project_decl | run_decl ;
 
-(* ═══════════════════════════════════════════════════════════════════ *)
+(* ================================================================= *)
 (*  GLOBAL DECLARATIONS                                              *)
-(* ═══════════════════════════════════════════════════════════════════ *)
+(* ================================================================= *)
 
-import_decl      = "import" expr ";" ;
-var_decl         = "var" type ident "=" expr ";" ;
-type             = "string" | "shell" ;
+import_decl      = "import" template ";" ;
+var_decl         = "var" ident "=" template ";" ;
 
-(* ═══════════════════════════════════════════════════════════════════ *)
-(*  FUNCTION (always top-level)                                      *)
-(* ═══════════════════════════════════════════════════════════════════ *)
+(* ================================================================= *)
+(*  FUNCTION (always inside a project)                               *)
+(* ================================================================= *)
 
-fn_decl          = "fn" ident "{" { fn_stmt } "}" ;
+fn_decl          = "fn" ident "{" { fn_stmt } "}" ";" ;
 fn_stmt          = log_stmt | exec_stmt | cd_stmt
-                 | var_decl | env_block | case_stmt ;
+                 | var_decl | env_block | switch_stmt ;
 
-log_stmt         = "log"  expr ";" ;
-exec_stmt        = "exec" expr ";" ;
-cd_stmt          = "cd"   expr ";" ;
+log_stmt         = "log"  template ";" ;
+exec_stmt        = "$(" template ")" ";" ;
+cd_stmt          = "cd"   template ";" ;
 
-(* ── env block ──────────────────────────────────────────────────── *)
+(* -- env block ---------------------------------------------------- *)
 
-env_block        = "env" "[" [ env_pairs ] "]" "{" { fn_stmt } "}" ";" ;
-env_pairs        = env_pair { env_pair } ;
-env_pair         = ident "=" expr ;
+env_block        = "env" "{" { env_pair } "}" "{" { fn_stmt } "}" ";" ;
+env_pair         = ident "=" template ";" ;
 
-(* ── case block ─────────────────────────────────────────────────── *)
+(* -- switch block ------------------------------------------------- *)
 
-case_stmt        = "case" expr "{" case_arm { case_arm } "}" ";" ;
-case_arm         = case_pattern "{" { fn_stmt } "}" ";" ;
-case_pattern     = backtick_expr          (* literal — exact string match *)
-                 | var_ref                (* variable reference         *)
-                 | "_" ;                  (* default / catch-all        *)
+switch_stmt      = "switch" template "{" { case_arm } "}" ";" ;
+case_arm         = "case" case_pattern "{" { fn_stmt } "}" ";" ;
+case_pattern     = template               (* literal match          *)
+                 | "_" ;                  (* default / catch-all    *)
 
-(* ═══════════════════════════════════════════════════════════════════ *)
-(*  PROJECT — declares a repo + applies global functions             *)
-(* ═══════════════════════════════════════════════════════════════════ *)
+(* ================================================================= *)
+(*  PROJECT - declares a scope for vars and functions                *)
+(* ================================================================= *)
 
-project_decl     = "pr" ident [ "[" field_decl { field_decl } "]" ] "{" { project_stmt } "}" ;
-project_stmt     = var_decl | use_decl ;
-field_decl       = ident "=" expr ;
+project_decl     = "pr" ident "{" { project_stmt } "}" ;
+project_stmt     = var_decl | fn_decl ;
 
-(* Recognised field names: url, dir, sync, branch. Unknown fields are *)
-(* rejected at parse time. The sync field accepts only `ignore` — the *)
-(* default of `clone` applies when the field is omitted.              *)
+(* ================================================================= *)
+(*  RUN BLOCK - orchestrates functions across projects               *)
+(* ================================================================= *)
 
-use_decl         = "use" ident [ "as" ident ] ";" ;
+run_decl         = "run" ident "{" { chain } "}" ;
+chain            = qualified_fn_ref { "=> qualified_fn_ref } ";" ;
+qualified_fn_ref = ident "::" ident ;     (* project::function      *)
 
-(* ═══════════════════════════════════════════════════════════════════ *)
-(*  RUN BLOCK — orchestrates functions across projects              *)
-(* ═══════════════════════════════════════════════════════════════════ *)
+(* ================================================================= *)
+(*  TEMPLATES / EXPRESSIONS                                         *)
+(* ================================================================= *)
 
-run_decl         = "run" ident "{" chain { chain } "}" ;
-chain            = qualified_fn_ref { "=>" qualified_fn_ref } ";" ;
-qualified_fn_ref = ident "::" ident ;     (* project::function *)
+(* a template is (text), @(name) to use a variable, or $(command)   *)
+(* to run one                                                       *)
 
-(* ═══════════════════════════════════════════════════════════════════ *)
-(*  EXPRESSIONS                                                      *)
-(* ═══════════════════════════════════════════════════════════════════ *)
+template         = "(" { template_part } ")"
+                 | "$(" { template_part } ")"
+                 | "@(" { template_part } ")"
+                 | ident ;
 
-expr             = backtick_expr | var_ref ;
+template_part    = lit_text
+                 | "@(" ident ")"
+                 | "$(" template ")" ;
 
-var_ref          = "$" ident "::" ident ;   (* $namespace::name *)
+lit_text         = ? any character except ")", "@(", "$( " ? ;
 
-backtick_expr    = "`" { interpolation | raw_char } "`" ;
-interpolation    = "${" ident "::" ident "}" ;  (* ${namespace::name} *)
-
-(* ═══════════════════════════════════════════════════════════════════ *)
+(* ================================================================= *)
 (*  LEXICAL TOKENS                                                   *)
-(* ═══════════════════════════════════════════════════════════════════ *)
+(* ================================================================= *)
 
 ident            = ( letter | "_" ) { letter | digit | "_" } ;
-letter           = "A" | "B" | … | "Z" | "a" | "b" | … | "z" ;
-digit            = "0" | "1" | … | "9" ;
-raw_char         = ? any character except "`" or "\n" ? ;
+letter           = "A" | "B" | ... | "Z" | "a" | "b" | ... | "z" ;
+digit            = "0" | "1" | ... | "9" ;
 
 (* Keywords (reserved, cannot be used as identifiers):               *)
-(*   import var string shell pr fn run log exec cd env case use      *)
+(*   import var pr fn run log cd env switch case                     *)
 (*                                                                   *)
 (* Comments start with # and run to end of line.                     *)
-(* ──────────────────────────────────────────────────────────────────── *)
+(* Semicolons are mandatory in fn bodies and after var declarations. *)
+(* ----------------------------------------------------------------- *)
