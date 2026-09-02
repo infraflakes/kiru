@@ -48,11 +48,7 @@ impl Parser {
 
         let end_offset = self.current_token().offset + self.current_token().len;
         self.expect_with_context(TokenType::RBrace, "to close run block")?;
-        // A trailing `;` after the block is optional, matching the other
-        // top-level declarations (`sync`/`pr`/`var`/`fn`/`shell`).
-        if self.current_token().token_type == TokenType::Semicolon {
-            self.advance();
-        }
+        self.expect_with_context(TokenType::Semicolon, "after run declaration")?;
 
         Ok(Stmt::Run {
             name,
@@ -81,7 +77,7 @@ mod tests {
 
     #[test]
     fn test_run_single_ref() {
-        let input = "run b { p::build; }";
+        let input = "run b { p::build; };";
         let prog = parse_program(input).unwrap();
         match &prog.top_level_items[0] {
             TopLevel::Stmt(Stmt::Run { calls, .. }) => {
@@ -101,7 +97,7 @@ mod tests {
 
     #[test]
     fn test_run_multiple_semicolon_is_separate_chains() {
-        let input = "run d { p::build; p::deploy; p::notify; }";
+        let input = "run d { p::build; p::deploy; p::notify; };";
         let prog = parse_program(input).unwrap();
         match &prog.top_level_items[0] {
             TopLevel::Stmt(Stmt::Run { calls, .. }) => {
@@ -116,7 +112,7 @@ mod tests {
 
     #[test]
     fn test_run_arrow_is_sequential_chain() {
-        let input = "run d { p::a => p::b => p::c; }";
+        let input = "run d { p::a => p::b => p::c; };";
         let prog = parse_program(input).unwrap();
         match &prog.top_level_items[0] {
             TopLevel::Stmt(Stmt::Run { calls, .. }) => {
@@ -132,7 +128,7 @@ mod tests {
 
     #[test]
     fn test_run_mixed_chains() {
-        let input = "run d { p::a; p::b => p::c; p::d }";
+        let input = "run d { p::a; p::b => p::c; p::d; };";
         let prog = parse_program(input).unwrap();
         match &prog.top_level_items[0] {
             TopLevel::Stmt(Stmt::Run { calls, .. }) => {
@@ -149,13 +145,19 @@ mod tests {
 
     #[test]
     fn test_run_requires_separator_between_calls() {
-        let result = parse_program("run r { p::a p::b }");
+        let result = parse_program("run r { p::a p::b; };");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_run_requires_namespace() {
-        let result = parse_program("run r { build; }");
+        let result = parse_program("run r { build; };");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_run_decl_requires_semicolon() {
+        let result = parse_program("run r { p::a; }");
         assert!(result.is_err());
     }
 }

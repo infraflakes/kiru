@@ -40,16 +40,16 @@ pr todo {
   fn build {
     log (Building @(app)...);
     $(go build -o bin/@(app) .);
-  }
+  };
 
   fn test {
     $(go test -race ./...);
-  }
-}
+  };
+};
 
 run ci {
   todo::test => todo::build;
-}
+};
 ```
 
 **`kiru.toml`** - your machine. Which shell to use and which repos kiru should clone for you.

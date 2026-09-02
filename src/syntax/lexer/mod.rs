@@ -293,6 +293,68 @@ mod tests {
     }
 
     #[test]
+    fn test_nested_var_reference_requires_closing_paren() {
+        // Top-level `@(` was already strict; the same must hold inside templates.
+        let cases = [
+            ("(a @(b c)", "unterminated variable reference"),
+            ("$(echo @(x", "unterminated variable reference"),
+        ];
+        for (input, expected) in cases {
+            let errors = extract_errors(input);
+            assert!(
+                errors.iter().any(|e| e == expected),
+                "input {:?}: expected {:?}, got {:?}",
+                input,
+                expected,
+                errors
+            );
+        }
+    }
+
+    #[test]
+    fn test_empty_var_reference_rejected() {
+        let cases = ["@()", "(a @() b)"];
+        for input in cases {
+            let errors = extract_errors(input);
+            assert!(
+                errors.iter().any(|e| e == "empty variable reference"),
+                "input {:?}: got {:?}",
+                input,
+                errors
+            );
+        }
+    }
+
+    #[test]
+    fn test_empty_command_substitution_rejected() {
+        let cases = ["$()", "$(  )", "(a $() b)", "$($( ))"];
+        for input in cases {
+            let errors = extract_errors(input);
+            assert!(
+                errors.iter().any(|e| e == "empty command substitution"),
+                "input {:?}: got {:?}",
+                input,
+                errors
+            );
+        }
+    }
+
+    #[test]
+    fn test_empty_literal_template_still_valid() {
+        // `()` is the empty-string literal (used by `case ()` patterns) and
+        // must keep parsing as a template, not an error.
+        let errors = extract_errors("()");
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_complex_nested_template_still_valid() {
+        // Nesting commands and references inside one template must keep working.
+        let errors = extract_errors("($(echo @(name))suffix)");
+        assert!(errors.is_empty(), "got {:?}", errors);
+    }
+
+    #[test]
     fn test_namespace_sep() {
         let mut lexer = Lexer::new("a::b".to_string());
         assert_eq!(

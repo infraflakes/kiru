@@ -4,12 +4,12 @@ pr kiru {
     $(cargo update);
     $(cargo upgrade);
     $(nix flake update);
-  }
+  };
 
   fn build {
     log (Building kiru cli!);
     $(cargo build --release);
-  }
+  };
 
   fn container {
     var docker_bin = $(command -v docker >/dev/null 2>&1 && echo "docker" || { command -v podman >/dev/null 2>&1 && echo "podman"; });
@@ -23,26 +23,26 @@ pr kiru {
         $(@(docker_bin) build --output type=local,dest=bin .);
       };
     };
-  }
+  };
 
   fn clean {
     log (Cleaning up artifacts...);
     $(rm -rf bin);
     $(rm -rf result);
-  }
+  };
 
   fn fmt {
     log (Formatting the codebase...);
     $(cargo clippy --fix --allow-dirty);
     $(cargo fmt);
-  }
+  };
 
   fn test {
     log (Testing the codebase!);
     $(cargo test);
     $(cargo clippy -- -D warnings);
     $(cargo fmt --check);
-  }
+  };
 
   fn fail {
     log (Failing the task!);
@@ -52,19 +52,18 @@ pr kiru {
     } {
       $(go build ./...);
     };
-  }
+  };
 };
 
-run build_container_kiru {
-  kiru::container;
-};
-
-run build_kiru {
+run all_kiru {
+  kiru::test;
   kiru::build;
+  kiru::fmt;
 };
 
 run test_kiru {
-  kiru::fmt => kiru::test => kiru::build;
+  kiru::fmt => kiru::test;
+  kiru::build;
 };
 
 run ci_kiru {

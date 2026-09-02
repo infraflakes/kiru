@@ -2,6 +2,7 @@
 #
 # This file walks through the language, feature by feature.
 # Each section builds on the last; the file compiles as it stands.
+# Every declaration ends with a semicolon.
 #
 # Try it after reading:
 #   kiru compile -c intro.kiru -o .   # turn this into a kirufile
@@ -68,7 +69,7 @@ pr myapp {
     log (Running static checks for @(app)...);
     $(go fmt ./...);
     $(go vet ./...);
-  }
+  };
 
   fn build {
     log (Building @(app)...);
@@ -91,7 +92,7 @@ pr myapp {
         $(go build -o bin/@(app) .);
       };
     };
-  }
+  };
 
   fn test {
     log (Running tests for @(app)...);
@@ -104,11 +105,11 @@ pr myapp {
       log (Testing go program);
       $(go test -race ./...);
     };
-  }
+  };
 
   fn lint {
     $(golangci-lint run ./...);
-  }
+  };
 
   fn release {
     var tag = (v1.0.0);
@@ -122,8 +123,8 @@ pr myapp {
         $(docker push @(docker_registry)/@(app):@(tag));
       };
     };
-  }
-}
+  };
+};
 
 # -- 4. RUN BLOCKS ----------------------------------------------------
 #
@@ -138,8 +139,8 @@ pr myapp {
 run all {
   myapp::lint => myapp::check => myapp::build;   # one after another
   myapp::test;                                   # alongside the chain above
-}
+};
 
 run ci {
   myapp::lint => myapp::test;
-}
+};

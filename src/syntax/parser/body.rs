@@ -84,7 +84,7 @@ impl Parser {
 
     /// Parses a `switch`/`case` block: `switch cond { case (pat) { ... } case _ { ... } };`.
     pub(crate) fn parse_switch_stmt(&mut self) -> Result<FnStmt, ParseError> {
-        self.advance(); // skip 'switch' or 'case'
+        self.advance(); // skip `switch`
 
         let subject = self.parse_expr()?;
 
@@ -115,11 +115,23 @@ impl Parser {
     fn parse_case_pattern(&mut self) -> Result<ArmPattern, ParseError> {
         if matches!(self.current_token().token_type, TokenType::Ident(ref ident) if ident == "_") {
             self.advance();
-            Ok(ArmPattern::Default)
-        } else {
-            let template = self.parse_expr()?;
-            Ok(ArmPattern::Lit(template.literal_text()))
+            return Ok(ArmPattern::Default);
         }
+        let template = self.parse_expr()?;
+        // Patterns are matched against the resolved subject string, so only
+        // literal text is meaningful: `@(var)` would compare against the
+        // variable's name, not its value, and `$(cmd)` has no static text.
+        let pattern_is_literal = template
+            .parts
+            .iter()
+            .all(|p| matches!(p, crate::syntax::source::Part::Lit(_)));
+        if !pattern_is_literal {
+            return Err(ParseError::new(
+                crate::diagnostics::Span::new(template.offset, template.len.max(1)),
+                "case pattern must be literal text or `_`".to_string(),
+            ));
+        }
+        Ok(ArmPattern::Lit(template.literal_text()))
     }
 }
 
@@ -128,109 +140,144 @@ mod tests {
     use crate::syntax::fnstmt::FnStmt;
     use crate::syntax::parser::test_support::*;
     use crate::syntax::source::ArmPattern;
-    use crate::syntax::{Stmt, TopLevel};
+    use crate::syntax::Stmt;
+
+    /// Parse a wrapped function body: tests describe `fn` bodies, which the
+    /// grammar only allows inside a `pr` block.
+    fn parse_fn_body(input: &str) -> Vec<FnStmt> {
+        let prog = parse_program(input).unwrap();
+        match &prog.top_level_items[0] {
+            crate::syntax::TopLevel::Stmt(Stmt::Project { body, .. }) => match &body[0] {
+                Stmt::Fn { body, .. } => body.clone(),
+                other => panic!("expected fn in project body, got {:?}", other),
+            },
+            other => panic!("expected project, got {:?}", other),
+        }
+    }
 
     #[test]
     fn test_fn_body_with_log_exec() {
-        let input = "fn build {\n\
-                      log (compiling);\n\
-                      $(cargo build);\n\
-                      }";
-        let prog = parse_program(input).unwrap();
-        match &prog.top_level_items[0] {
-            TopLevel::Stmt(Stmt::Fn { name, body, .. }) => {
-                assert_eq!(name, "build");
-                assert_eq!(count_fn_stmt_types(body), vec!["log", "exec"]);
-            }
-            _ => panic!("expected FnDecl"),
-        }
+        let body = parse_fn_body(
+            "pr t {\
+              fn build {\
+                log (compiling);\
+                $(cargo build);\
+              };\
+            };",
+        );
+        assert_eq!(count_fn_stmt_types(&body), vec!["log", "exec"]);
     }
 
     #[test]
     fn test_fn_body_orders() {
-        let input = "fn deploy {\n\
-                      env { CGO_ENABLED = (0); } {\n\
-                        $(deploy);\n\
-                      };\n\
-                      cd (./dist);\n\
-                      $(npm publish);\n\
-                      log (done);\n\
-                      }";
-        let prog = parse_program(input).unwrap();
-        match &prog.top_level_items[0] {
-            TopLevel::Stmt(Stmt::Fn { name, body, .. }) => {
-                assert_eq!(name, "deploy");
-                assert_eq!(count_fn_stmt_types(body), vec!["env", "cd", "exec", "log"]);
-            }
-            _ => panic!("expected FnDecl"),
-        }
+        let body = parse_fn_body(
+            "pr t {\
+              fn deploy {\
+                env { CGO_ENABLED = (0); } {\
+                  $(deploy);\
+                };\
+                cd (./dist);\
+                $(npm publish);\
+                log (done);\
+              };\
+            };",
+        );
+        assert_eq!(count_fn_stmt_types(&body), vec!["env", "cd", "exec", "log"]);
     }
 
     #[test]
     fn test_env_block_contents() {
-        let input = "fn test {\n\
-                      env { X = (1); } {\n\
-                        $(run tests);\n\
-                        log (testing);\n\
-                      };\n\
-                      }";
-        let prog = parse_program(input).unwrap();
-        match &prog.top_level_items[0] {
-            TopLevel::Stmt(Stmt::Fn { body, .. }) => {
-                assert_eq!(body.len(), 1);
-                let env = match &body[0] {
-                    FnStmt::EnvBlock { body, .. } => body,
-                    other => panic!("expected EnvBlock, got {:?}", other),
-                };
-                assert_eq!(env.len(), 2);
-                assert!(matches!(&env[0], FnStmt::Bind { target: None, .. }));
-                assert!(matches!(&env[1], FnStmt::Log(_)));
-            }
-            _ => panic!("expected FnDecl"),
-        }
+        let body = parse_fn_body(
+            "pr t {\
+              fn test {\
+                env { X = (1); } {\
+                  $(run tests);\
+                  log (testing);\
+                };\
+              };\
+            };",
+        );
+        assert_eq!(body.len(), 1);
+        let env = match &body[0] {
+            FnStmt::EnvBlock { body, .. } => body,
+            other => panic!("expected EnvBlock, got {:?}", other),
+        };
+        assert_eq!(env.len(), 2);
+        assert!(matches!(&env[0], FnStmt::Bind { target: None, .. }));
+        assert!(matches!(&env[1], FnStmt::Log(_)));
     }
 
     #[test]
     fn test_switch_branches() {
-        let input = "fn deploy {\n\
-                      switch @(target) {\n\
-                        case (production) { $(deploy-prod); };\n\
-                        case _ { log (unknown); };\n\
-                      };\n\
-                      }";
-        let prog = parse_program(input).unwrap();
-        match &prog.top_level_items[0] {
-            TopLevel::Stmt(Stmt::Fn { body, .. }) => {
-                let sw = match &body[0] {
-                    FnStmt::Switch { arms, .. } => arms,
-                    other => panic!("expected Switch, got {:?}", other),
-                };
-                assert_eq!(sw.len(), 2);
-                assert!(matches!(sw[0].pattern, ArmPattern::Lit(_)));
-                assert!(matches!(sw[1].pattern, ArmPattern::Default));
-            }
-            _ => panic!("expected FnDecl"),
-        }
+        let body = parse_fn_body(
+            "pr t {\
+              fn deploy {\
+                switch @(target) {\
+                  case (production) { $(deploy-prod); };\
+                  case _ { log (unknown); };\
+                };\
+              };\
+            };",
+        );
+        let sw = match &body[0] {
+            FnStmt::Switch { arms, .. } => arms,
+            other => panic!("expected Switch, got {:?}", other),
+        };
+        assert_eq!(sw.len(), 2);
+        assert!(matches!(sw[0].pattern, ArmPattern::Lit(_)));
+        assert!(matches!(sw[1].pattern, ArmPattern::Default));
+    }
+
+    #[test]
+    fn test_case_pattern_must_be_literal() {
+        let result = parse_program(
+            "pr t {\
+              fn d {\
+                switch @(t) {\
+                  case @(v) { log (x); };\
+                };\
+              };\
+            };",
+        );
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.to_string().contains("case pattern must be literal text or `_`")),
+            "got: {:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn test_case_command_pattern_rejected() {
+        let result = parse_program(
+            "pr t {\
+              fn d {\
+                switch @(t) {\
+                  case $(cmd) { log (x); };\
+                };\
+              };\
+            };",
+        );
+        assert!(result.is_err());
     }
 
     #[test]
     fn test_cd_statement() {
-        let input = "fn build {\n\
-                      cd (./src);\n\
-                      }";
-        let prog = parse_program(input).unwrap();
-        match &prog.top_level_items[0] {
-            TopLevel::Stmt(Stmt::Fn { body, .. }) => {
-                assert_eq!(body.len(), 1);
-                assert!(matches!(body[0], FnStmt::Cd(_)));
-            }
-            _ => panic!("expected FnDecl"),
-        }
+        let body = parse_fn_body("pr t { fn build { cd (./src); }; };");
+        assert_eq!(body.len(), 1);
+        assert!(matches!(body[0], FnStmt::Cd(_)));
     }
 
     #[test]
     fn test_log_must_end_with_semicolon() {
-        let result = parse_program("fn x { log (hi) }");
+        let result = parse_program("pr t { fn x { log (hi) }; };");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fn_decl_requires_semicolon() {
+        let result = parse_program("pr t { fn x { log (hi); } };");
         assert!(result.is_err());
     }
 }

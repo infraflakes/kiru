@@ -84,6 +84,14 @@ impl Lexer {
                 self.read_char(); // consume '('
                 match self.read_template_parts() {
                     Ok(inner) => {
+                        if template_is_only_whitespace(&inner) {
+                            return self.illegal(
+                                "empty command substitution",
+                                start_line,
+                                start_col,
+                                start_offset,
+                            );
+                        }
                         let len = self.byte_offset - start_offset;
                         vec![Part::Cmd(Template {
                             parts: inner,
@@ -92,13 +100,8 @@ impl Lexer {
                             source_name: String::new(),
                         })]
                     }
-                    Err(()) => {
-                        return self.illegal(
-                            "unterminated template",
-                            start_line,
-                            start_col,
-                            start_offset,
-                        );
+                    Err(msg) => {
+                        return self.illegal(&msg, start_line, start_col, start_offset);
                     }
                 }
             }
@@ -115,6 +118,14 @@ impl Lexer {
                         start_offset,
                     );
                 }
+                if name.is_empty() {
+                    return self.illegal(
+                        "empty variable reference",
+                        start_line,
+                        start_col,
+                        start_offset,
+                    );
+                }
                 self.read_char(); // consume ')'
                 vec![Part::Var(name)]
             }
@@ -122,13 +133,8 @@ impl Lexer {
                 self.read_char(); // consume '('
                 match self.read_template_parts() {
                     Ok(parts) => parts,
-                    Err(()) => {
-                        return self.illegal(
-                            "unterminated template",
-                            start_line,
-                            start_col,
-                            start_offset,
-                        );
+                    Err(msg) => {
+                        return self.illegal(&msg, start_line, start_col, start_offset);
                     }
                 }
             }
@@ -182,12 +188,15 @@ impl Lexer {
     }
 
     /// Read the body of a template until the matching top-level `)`. Inside, `@(`
-    /// starts a `Var` part and `$(` starts a nested `Cmd` part (whose own body is
-    /// read recursively). All other characters accumulate into a literal part.
+    /// starts a `Var` part (its `)` is mandatory and its name must not be empty)
+    /// and `$(` starts a nested `Cmd` part (whose own body is read recursively
+    /// and must not be empty). All other characters accumulate into a literal
+    /// part.
     ///
-    /// Returns `Err(())` when the template is never closed, so the caller can emit
-    /// an `Illegal` token instead of a malformed `Template`.
-    fn read_template_parts(&mut self) -> Result<Vec<Part>, ()> {
+    /// Returns `Err(message)` when the template is malformed, so the caller can
+    /// emit an `Illegal` token carrying that message instead of a malformed
+    /// `Template`.
+    fn read_template_parts(&mut self) -> Result<Vec<Part>, String> {
         let mut parts: Vec<Part> = Vec::new();
         let mut lit = String::new();
 
@@ -195,10 +204,7 @@ impl Lexer {
             match self.ch {
                 None => {
                     // Unterminated template: signal the caller so it can error.
-                    if !lit.is_empty() {
-                        parts.push(Part::Lit(lit));
-                    }
-                    return Err(());
+                    return Err("unterminated template".to_string());
                 }
                 Some(')') => {
                     self.read_char();
@@ -211,9 +217,13 @@ impl Lexer {
                     self.read_char(); // '@'
                     self.read_char(); // '('
                     let name = self.read_ident_chars();
-                    if self.ch == Some(')') {
-                        self.read_char(); // ')'
+                    if self.ch != Some(')') {
+                        return Err("unterminated variable reference".to_string());
                     }
+                    if name.is_empty() {
+                        return Err("empty variable reference".to_string());
+                    }
+                    self.read_char(); // ')'
                     parts.push(Part::Var(name));
                 }
                 Some('$') if self.peek_next() == Some('(') => {
@@ -223,8 +233,10 @@ impl Lexer {
                     let cmd_offset = self.pos;
                     self.read_char(); // '$'
                     self.read_char(); // '('
-                    let _inner_start = self.pos;
                     let inner = self.read_template_parts()?;
+                    if template_is_only_whitespace(&inner) {
+                        return Err("empty command substitution".to_string());
+                    }
                     parts.push(Part::Cmd(Template {
                         parts: inner,
                         offset: cmd_offset,
@@ -258,4 +270,14 @@ impl Lexer {
         }
         name
     }
+}
+
+/// A command substitution is empty when it contains no variable or nested
+/// command parts and its literal text is only whitespace; running it would
+/// be a silent no-op. A general `()` template is deliberately exempt: it is
+/// the empty-string literal (used by `case ()` patterns).
+fn template_is_only_whitespace(parts: &[Part]) -> bool {
+    parts
+        .iter()
+        .all(|p| matches!(p, Part::Lit(s) if s.trim().is_empty()))
 }

@@ -42,12 +42,18 @@ impl From<TaskRunError> for CliError {
     }
 }
 
-/// Map a compile failure. Diagnostics were already printed to stderr by the
-/// snippet renderer; I/O failures still need a message.
+/// Map a compile failure: diagnostics are printed to stderr by the snippet
+/// renderer here, so only the exit code remains (`Reported`); I/O failures
+/// still need a message.
 pub(crate) fn compile_error_to_cli_error(e: CompileError) -> CliError {
     match e {
         CompileError::Io(e) => CliError::Message(format!("I/O error: {}", e)),
-        CompileError::Diagnostics(_) => CliError::Reported,
+        CompileError::Diagnostics(diags) => {
+            for d in &diags {
+                crate::diagnostics::print_diagnostic(d);
+            }
+            CliError::Reported
+        }
     }
 }
 

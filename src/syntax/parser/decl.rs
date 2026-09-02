@@ -28,9 +28,7 @@ impl Parser {
             "to close function body",
             Self::parse_fn_stmt,
         )?;
-        if self.current_token().token_type == TokenType::Semicolon {
-            self.advance();
-        }
+        self.expect_with_context(TokenType::Semicolon, "after function declaration")?;
 
         Ok(Stmt::Fn {
             name,
@@ -88,7 +86,13 @@ mod tests {
 
     #[test]
     fn test_unclosed_fn_brace() {
-        let result = parse_program("fn bad { log (hi);");
+        let result = parse_program("pr t { fn bad { log (hi); };");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_toplevel_fn_is_rejected() {
+        let result = parse_program("fn build { log (hi); };");
         assert!(result.is_err());
     }
 }

@@ -1,7 +1,8 @@
 # The smallest useful kiru setup.
 #
 # Copy to ~/.config/kiru/main.kiru, add a "todo" repo to kiru.toml,
-# then: kiru compile, kiru status, kiru run ci.
+# then: kiru compile -c main.kiru -o ~/.config/kiru, kiru status, kiru run ci.
+# Every declaration ends with a semicolon.
 
 var app = (todo);
 
@@ -9,7 +10,7 @@ pr todo {
   fn build {
     log (Building @(app)...);
     $(go build -o bin/@(app) .);
-  }
+  };
 
   fn test {
     log (Testing @(app)...);
@@ -18,9 +19,9 @@ pr todo {
     } {
       $(go test -race ./...);
     };
-  }
-}
+  };
+};
 
 run ci {
   todo::test => todo::build;
-}
+};

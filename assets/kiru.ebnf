@@ -38,21 +38,22 @@ env_pair         = ident "=" template ";" ;
 
 switch_stmt      = "switch" template "{" { case_arm } "}" ";" ;
 case_arm         = "case" case_pattern "{" { fn_stmt } "}" ";" ;
-case_pattern     = template               (* literal match          *)
-                 | "_" ;                  (* default / catch-all    *)
+case_pattern     = literal_template       (* literal match only:     *)
+                 | "_" ;                  (* @(var) and $(cmd) are   *)
+                                          (* rejected here           *)
 
 (* ================================================================= *)
 (*  PROJECT - declares a scope for vars and functions                *)
 (* ================================================================= *)
 
-project_decl     = "pr" ident "{" { project_stmt } "}" ;
+project_decl     = "pr" ident "{" { project_stmt } "}" ";" ;
 project_stmt     = var_decl | fn_decl ;
 
 (* ================================================================= *)
 (*  RUN BLOCK - orchestrates functions across projects               *)
 (* ================================================================= *)
 
-run_decl         = "run" ident "{" { chain } "}" ;
+run_decl         = "run" ident "{" { chain } "}" ";" ;
 chain            = qualified_fn_ref { "=> qualified_fn_ref } ";" ;
 qualified_fn_ref = ident "::" ident ;     (* project::function      *)
 

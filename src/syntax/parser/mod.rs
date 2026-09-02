@@ -239,9 +239,18 @@ impl Parser {
         match self.current_token().token_type {
             TokenType::Var => self.parse_var_decl(),
             TokenType::Pr => self.parse_project_decl(),
-            TokenType::Fn => self.parse_fn_decl(),
+            TokenType::Fn => {
+                // Consume `fn` before erroring so error recovery always makes
+                // progress past this token.
+                let fn_span = self.eof_aware_span();
+                self.advance();
+                Err(ParseError::new(
+                    fn_span,
+                    "functions must be declared inside a `pr` block".to_string(),
+                ))
+            }
             TokenType::Run => self.parse_run_decl(),
-            _ => Err(self.unexpected_stmt_start_error("var, pr, fn, or run")),
+            _ => Err(self.unexpected_stmt_start_error("var, pr, or run")),
         }
     }
 
@@ -282,7 +291,7 @@ impl Parser {
             TokenType::Cd => self.parse_cd_stmt(),
             TokenType::Var => self.parse_fn_var_decl(),
             TokenType::Env => self.parse_env_block(),
-            TokenType::Switch | TokenType::Case => self.parse_switch_stmt(),
+            TokenType::Switch => self.parse_switch_stmt(),
             TokenType::Template(_) => self.parse_exec_stmt(),
             TokenType::Semicolon => Err(ParseError::new(
                 self.eof_aware_span(),
@@ -324,11 +333,10 @@ mod tests {
     #[test]
     fn test_multiple_top_level_statements() {
         let input = "var x = (hello);\n\
-                      fn f { log (hi); }\n\
-                      pr p { fn b { log (x); } }\n\
-                      run s { p::b; }";
+                      pr p { fn b { log (x); }; };\n\
+                      run s { p::b; };";
         let prog = parse_program(input).unwrap();
-        assert_eq!(count_stmt_types(&prog), vec!["var", "fn", "pr", "run"]);
+        assert_eq!(count_stmt_types(&prog), vec!["var", "pr", "run"]);
     }
 
     #[test]
@@ -338,13 +346,26 @@ mod tests {
         let errs = result.unwrap_err();
         assert!(
             errs.iter()
-                .any(|e| { e.to_string().contains("expected var, pr, fn, or run") })
+                .any(|e| { e.to_string().contains("expected var, pr, or run") })
+        );
+    }
+
+    #[test]
+    fn test_toplevel_fn_rejected() {
+        let result = parse_program("fn f { log (hi); };");
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter().any(|e| e
+                .to_string()
+                .contains("functions must be declared inside a `pr` block")),
+            "got: {:?}",
+            errs
         );
     }
 
     #[test]
     fn test_underscore_outside_case_pattern() {
-        let result = parse_program("fn test { log (hi); _; }");
+        let result = parse_program("pr t { fn test { log (hi); _; }; };");
         let errs = result.unwrap_err();
         assert!(
             errs.iter().any(|e| e
