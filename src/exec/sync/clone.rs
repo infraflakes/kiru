@@ -37,7 +37,7 @@ fn run_sync_clone_or_update(
     if target_dir.join(".git").exists() {
         output(&format!(
             "{} {} -> {}",
-            colors::SYNC_PREFIXES[1],
+            colors::SYNC_UPDATE_PREFIX,
             repo.name,
             target_dir.display()
         ));
@@ -58,7 +58,7 @@ fn run_sync_clone_or_update(
 
     output(&format!(
         "{} {} -> {}",
-        colors::SYNC_PREFIXES[2],
+        colors::SYNC_CLONE_PREFIX,
         repo.name,
         target_dir.display()
     ));

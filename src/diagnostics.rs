@@ -13,22 +13,13 @@ impl Span {
     }
 }
 
-/// A labeled secondary span.
-#[derive(Debug, Clone)]
-pub struct Label {
-    pub span: Span,
-    pub message: String,
-}
-
-/// A diagnostic with file, primary span, optional labels, optional help.
+/// A diagnostic with file, primary span, message, and source snapshot.
 #[derive(Debug, Clone)]
 pub struct Diagnostic {
     pub file: String,
     pub primary: Span,
     pub message: String,
     pub source: String,
-    pub labels: Vec<Label>,
-    pub help: Option<String>,
 }
 
 impl Diagnostic {
@@ -43,8 +34,6 @@ impl Diagnostic {
             primary: span,
             message: msg.into(),
             source: source.into(),
-            labels: Vec::new(),
-            help: None,
         }
     }
 }
@@ -88,7 +77,7 @@ pub fn render_diagnostic(diag: &Diagnostic) -> String {
         start..end
     };
 
-    let mut snip = Snippet::source(windowed)
+    let snip = Snippet::source(windowed)
         .path(diag.file.as_str())
         .line_start(first_line + 1)
         .fold(false)
@@ -98,27 +87,9 @@ pub fn render_diagnostic(diag: &Diagnostic) -> String {
                 .label(diag.message.as_str()),
         );
 
-    for label in &diag.labels {
-        snip = snip.annotation(
-            AnnotationKind::Context
-                .span(rebase(label.span))
-                .label(label.message.as_str()),
-        );
-    }
-
-    let mut groups = vec![
-        Level::ERROR
-            .primary_title(diag.message.as_str())
-            .element(snip),
-    ];
-
-    if let Some(ref help) = diag.help {
-        groups.push(
-            Level::HELP
-                .secondary_title(help.as_str())
-                .element(Level::HELP.message(help.as_str())),
-        );
-    }
+    let groups = vec![Level::ERROR
+        .primary_title(diag.message.as_str())
+        .element(snip)];
 
     let renderer = if is_terminal() {
         Renderer::styled().decor_style(DecorStyle::Ascii)

@@ -13,22 +13,14 @@ pub(crate) enum Part {
     Cmd(Template),
 }
 
-impl Default for Part {
-    fn default() -> Self {
-        Part::Lit(String::new())
-    }
-}
-
 /// A template: the single value form in kiru. It is a sequence of parts that
-/// resolves to one `String`. Backtick strings and `@{ns::name}` interpolation
-/// are gone; templates are written as `( ... )` and contain `@(name)` data
-/// references and `$(command)` substitutions.
+/// resolves to one `String`. Templates are written as `( ... )` and contain
+/// `@(name)` data references and `$(command)` substitutions.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct Template {
     pub(crate) parts: Vec<Part>,
     pub(crate) offset: usize,
     pub(crate) len: usize,
-    pub(crate) source_name: String,
 }
 
 impl Template {

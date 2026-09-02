@@ -1,5 +1,5 @@
 //! Tokenizer: consumes characters and produces [`Token`]s for the parser.
-//! Handles string escapes, template segment detection, and keyword lookup.
+//! Handles template segment detection and keyword lookup.
 
 use super::Lexer;
 use crate::syntax::source::{Part, Template};
@@ -17,13 +17,6 @@ impl Lexer {
         };
         self.pos = self.read_pos;
         self.read_pos += 1;
-
-        if self.ch == Some('\n') {
-            self.line += 1;
-            self.col = 0;
-        } else {
-            self.col += 1;
-        }
     }
 
     pub(super) fn skip_whitespace(&mut self) {
@@ -42,8 +35,6 @@ impl Lexer {
     }
 
     pub(super) fn read_ident(&mut self) -> Token {
-        let start_line = self.line;
-        let start_col = self.col;
         let start_pos = self.pos;
         let start_byte_offset = self.byte_offset;
 
@@ -59,8 +50,6 @@ impl Lexer {
         let token_type = lookup_ident(&ident);
         Token::new(
             token_type,
-            start_line,
-            start_col,
             start_byte_offset,
             self.byte_offset - start_byte_offset,
         )
@@ -69,12 +58,7 @@ impl Lexer {
     /// Read a template expression starting at the current character. The current
     /// character must be `(` (general template), `$` followed by `(` (command
     /// substitution), or `@` followed by `(` (variable reference).
-    pub(super) fn read_template_token(
-        &mut self,
-        start_line: usize,
-        start_col: usize,
-        start_byte_offset: usize,
-    ) -> Token {
+    pub(super) fn read_template_token(&mut self, start_byte_offset: usize) -> Token {
         let start_offset = start_byte_offset;
 
         let mut parts = match self.ch {
@@ -85,23 +69,17 @@ impl Lexer {
                 match self.read_template_parts() {
                     Ok(inner) => {
                         if template_is_only_whitespace(&inner) {
-                            return self.illegal(
-                                "empty command substitution",
-                                start_line,
-                                start_col,
-                                start_offset,
-                            );
+                            return self.illegal("empty command substitution", start_offset);
                         }
                         let len = self.byte_offset - start_offset;
                         vec![Part::Cmd(Template {
                             parts: inner,
                             offset: start_offset,
                             len,
-                            source_name: String::new(),
                         })]
                     }
                     Err(msg) => {
-                        return self.illegal(&msg, start_line, start_col, start_offset);
+                        return self.illegal(&msg, start_offset);
                     }
                 }
             }
@@ -111,20 +89,10 @@ impl Lexer {
                 self.read_char(); // consume '('
                 let name = self.read_ident_chars();
                 if self.ch != Some(')') {
-                    return self.illegal(
-                        "unterminated variable reference",
-                        start_line,
-                        start_col,
-                        start_offset,
-                    );
+                    return self.illegal("unterminated variable reference", start_offset);
                 }
                 if name.is_empty() {
-                    return self.illegal(
-                        "empty variable reference",
-                        start_line,
-                        start_col,
-                        start_offset,
-                    );
+                    return self.illegal("empty variable reference", start_offset);
                 }
                 self.read_char(); // consume ')'
                 vec![Part::Var(name)]
@@ -134,17 +102,12 @@ impl Lexer {
                 match self.read_template_parts() {
                     Ok(parts) => parts,
                     Err(msg) => {
-                        return self.illegal(&msg, start_line, start_col, start_offset);
+                        return self.illegal(&msg, start_offset);
                     }
                 }
             }
             _ => {
-                return self.illegal(
-                    "expected template starting with `(`",
-                    start_line,
-                    start_col,
-                    start_offset,
-                );
+                return self.illegal("expected template starting with `(`", start_offset);
             }
         };
 
@@ -162,26 +125,15 @@ impl Lexer {
                 parts,
                 offset: start_offset,
                 len,
-                source_name: String::new(),
             }),
-            start_line,
-            start_col,
             start_offset,
             len,
         )
     }
 
-    fn illegal(
-        &mut self,
-        msg: &str,
-        _start_line: usize,
-        _start_col: usize,
-        start_offset: usize,
-    ) -> Token {
+    fn illegal(&mut self, msg: &str, start_offset: usize) -> Token {
         Token::new(
             TokenType::Illegal(msg.to_string()),
-            self.line,
-            self.col,
             start_offset,
             (self.byte_offset - start_offset).max(1),
         )
@@ -241,7 +193,6 @@ impl Lexer {
                         parts: inner,
                         offset: cmd_offset,
                         len: self.pos - cmd_offset,
-                        source_name: String::new(),
                     }));
                 }
                 Some(ch) => {

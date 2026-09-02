@@ -15,8 +15,8 @@ pub(crate) enum Stmt {
     /// A project declaration: `pr name { var; fn; }`. Contains behavioral
     /// definitions only (repo config lives in `kiru.toml`).
     Project { name: String, body: Vec<Stmt> },
-    /// A function definition (`fn name { ... }`). Inside a `pr` it belongs to
-    /// that project; at the top level it is a global function template.
+    /// A function definition (`fn name { ... }`), only valid inside a `pr`
+    /// block (a top-level `fn` is a parse error).
     Fn {
         name: String,
         body: Vec<FnStmt>,

@@ -91,7 +91,7 @@ impl<'a> ExecContext<'a> {
         // Echo: "{shell}  {cmd}" in blue at log indent level.
         (self.output)(format!(
             "{shell_indent}{}{shell}  {cmd}{}",
-            colors::EXEC_ANSI,
+            colors::CMD_ANSI,
             colors::RESET
         ));
 
@@ -181,7 +181,7 @@ impl<'a> ExecContext<'a> {
                     let resolved = self.resolve(t, false)?;
                     self.emit(0, colors::LOG_PREFIX, &resolved);
                 }
-                Instruction::Exec { value } => {
+                Instruction::RunShellCmd { value } => {
                     // Bare `$(cmd);` from a lowered `exec`, execute for side
                     // effects only; the variable is already inlined everywhere.
                     self.resolve(value, true)?;

@@ -55,7 +55,6 @@ run ci {
 **`kiru.toml`** - your machine. Which shell to use and which repos kiru should clone for you.
 
 ```toml
-version = 1
 shell = "sh"
 
 [[repos]]

@@ -23,11 +23,11 @@ impl Parser {
         Ok(FnStmt::Cd(self.parse_expr_stmt("after `cd`")?))
     }
 
-    /// Parses a bare `$(cmd);` exec statement. The current token is a template
+    /// Parses a bare `$(cmd);` statement. The current token is a template
     /// token; it is consumed and must contain at least one `$(...)` command.
     /// Bare `()` or `@()` values are rejected (use `log`, `cd`, `var`, `env`,
     /// or `switch` instead).
-    pub(crate) fn parse_exec_stmt(&mut self) -> Result<FnStmt, ParseError> {
+    pub(crate) fn parse_run_shell_cmd_stmt(&mut self) -> Result<FnStmt, ParseError> {
         let value = self.parse_expr()?;
         let has_cmd = value
             .parts
@@ -40,7 +40,7 @@ impl Parser {
                     .to_string(),
             ));
         }
-        self.expect_with_context(TokenType::Semicolon, "after exec statement")?;
+        self.expect_with_context(TokenType::Semicolon, "after command statement")?;
         Ok(FnStmt::Bind {
             target: None,
             value,
@@ -165,7 +165,7 @@ mod tests {
               };\
             };",
         );
-        assert_eq!(count_fn_stmt_types(&body), vec!["log", "exec"]);
+        assert_eq!(count_fn_stmt_types(&body), vec!["log", "run_shell_cmd"]);
     }
 
     #[test]
@@ -182,7 +182,10 @@ mod tests {
               };\
             };",
         );
-        assert_eq!(count_fn_stmt_types(&body), vec!["env", "cd", "exec", "log"]);
+        assert_eq!(
+            count_fn_stmt_types(&body),
+            vec!["env", "cd", "run_shell_cmd", "log"]
+        );
     }
 
     #[test]

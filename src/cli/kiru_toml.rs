@@ -8,10 +8,6 @@ use std::path::{Path, PathBuf};
 /// The top-level `kiru.toml` schema.
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct KiruToml {
-    /// Schema version (must be 1).
-    #[serde(default = "default_version")]
-    pub(crate) version: u8,
-
     /// Shell binary name used for `$(cmd)` substitution and `exec`.
     /// Defaults to `"sh"` when absent.
     #[serde(default = "default_shell")]
@@ -46,10 +42,6 @@ pub(crate) struct Repo {
     /// Branch to clone/pull. Empty string means the default branch.
     #[serde(default)]
     pub(crate) branch: String,
-}
-
-fn default_version() -> u8 {
-    1
 }
 
 fn default_shell() -> String {
@@ -91,12 +83,6 @@ pub(crate) fn load_kiru_toml_at(path: &Path) -> Result<KiruToml, String> {
 
 /// Validate a `KiruToml` after parsing.
 fn validate_kiru_toml(config: &KiruToml) -> Result<(), String> {
-    if config.version != 1 {
-        return Err(format!(
-            "unsupported kiru.toml version: {} (expected 1)",
-            config.version
-        ));
-    }
     if let Some(timeout) = config.timeout
         && timeout == 0
     {
@@ -151,7 +137,6 @@ mod tests {
     #[test]
     fn test_validate_zero_timeout() {
         let config = KiruToml {
-            version: 1,
             shell: "sh".to_string(),
             timeout: Some(0),
             repos: vec![],

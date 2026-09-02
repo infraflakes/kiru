@@ -8,7 +8,8 @@
 
 program          = { statement } ;
 statement        = import_decl | var_decl
-                 | fn_decl | project_decl | run_decl ;
+                 | project_decl | run_decl ;
+(* `fn` is only valid inside a project body; a top-level `fn` is an error. *)
 
 (* ================================================================= *)
 (*  GLOBAL DECLARATIONS                                              *)
@@ -54,8 +55,9 @@ project_stmt     = var_decl | fn_decl ;
 (* ================================================================= *)
 
 run_decl         = "run" ident "{" { chain } "}" ";" ;
-chain            = qualified_fn_ref { "=> qualified_fn_ref } ";" ;
+chain            = qualified_fn_ref { "=>" qualified_fn_ref } [ ";" ] ;
 qualified_fn_ref = ident "::" ident ;     (* project::function      *)
+(* The `;` after the last chain of a block is optional.             *)
 
 (* ================================================================= *)
 (*  TEMPLATES / EXPRESSIONS                                         *)
@@ -66,7 +68,7 @@ qualified_fn_ref = ident "::" ident ;     (* project::function      *)
 
 template         = "(" { template_part } ")"
                  | "$(" { template_part } ")"
-                 | "@(" { template_part } ")"
+                 | "@(" ident ")"
                  | ident ;
 
 template_part    = lit_text
@@ -74,6 +76,9 @@ template_part    = lit_text
                  | "$(" template ")" ;
 
 lit_text         = ? any character except ")", "@(", "$( " ? ;
+
+(* A bare `(` inside a template is literal text; only `@(` and `$( ` *)
+(* start nested parts.                                              *)
 
 (* ================================================================= *)
 (*  LEXICAL TOKENS                                                   *)

@@ -63,9 +63,9 @@ pub(crate) struct Arm {
 pub(crate) enum Instruction {
     /// Execute `value` for its side effects at runtime. Every `$(command)` part
     /// of the template is run through `shell -c` and streamed to output. There is
-    /// no `target`: variable bindings are inlined away at compile time, so an
-    /// `exec` is purely a command execution statement.
-    Exec { value: Template },
+    /// no `target`: variable bindings are inlined away at compile time, so a
+    /// `RunShellCmd` is purely a command execution statement.
+    RunShellCmd { value: Template },
     /// Emit `value` to the output log.
     Log(Template),
     /// Change the working directory to the resolved `value`.

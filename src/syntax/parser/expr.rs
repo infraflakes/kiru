@@ -23,7 +23,6 @@ impl Parser {
                     parts: vec![Part::Var(name)],
                     offset: self.current_token().offset,
                     len: 0,
-                    source_name: self.source_name.clone(),
                 })
             }
             _ => Err(self.unexpected_stmt_start_error("template or variable reference")),

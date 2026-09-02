@@ -12,10 +12,11 @@ use ratatui::{
 /// Extract the meaningful payload from a sync summary line by stripping the
 /// known sync prefix. Returns the line unchanged if no prefix matches.
 fn sync_message(line: &str) -> &str {
-    let Some(rest) = crate::exec::colors::SYNC_PREFIXES
-        .iter()
-        .find_map(|prefix| line.strip_prefix(prefix))
-    else {
+    let rest = if let Some(rest) = line.strip_prefix(crate::exec::colors::SYNC_UPDATE_PREFIX) {
+        rest
+    } else if let Some(rest) = line.strip_prefix(crate::exec::colors::SYNC_CLONE_PREFIX) {
+        rest
+    } else {
         return line;
     };
     match rest.find(' ') {

@@ -17,5 +17,3 @@ impl std::fmt::Display for ParseError {
         write!(f, "{}", self.msg)
     }
 }
-
-impl std::error::Error for ParseError {}

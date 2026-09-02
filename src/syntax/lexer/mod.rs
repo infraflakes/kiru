@@ -13,10 +13,6 @@ pub(crate) struct Lexer {
     pub(super) read_pos: usize,
     /// The current character at `pos`, or `None` at end-of-input.
     pub(super) ch: Option<char>,
-    /// Current 1-indexed line number (for diagnostics).
-    pub(super) line: usize,
-    /// Current 1-indexed column number within the line (for diagnostics).
-    pub(super) col: usize,
     /// Byte offset of `pos` in the original source string, used for
     /// token span computation when characters are multi-byte.
     pub(super) byte_offset: usize,
@@ -30,8 +26,6 @@ impl Lexer {
             pos: 0,
             read_pos: 0,
             ch: None,
-            line: 1,
-            col: 0,
             byte_offset: 0,
         };
         lexer.read_char();
@@ -49,41 +43,17 @@ impl Lexer {
     }
 
     /// Consume the current character and produce a single-character token.
-    fn single_char_token(
-        &mut self,
-        ty: TokenType,
-        start_line: usize,
-        start_col: usize,
-        start_byte_offset: usize,
-    ) -> Token {
+    fn single_char_token(&mut self, ty: TokenType, start_byte_offset: usize) -> Token {
         self.read_char();
-        Token::new(
-            ty,
-            start_line,
-            start_col,
-            start_byte_offset,
-            self.byte_offset - start_byte_offset,
-        )
+        Token::new(ty, start_byte_offset, self.byte_offset - start_byte_offset)
     }
 
     /// Consume the current character plus the peeked one and produce a
     /// two-character token.
-    fn two_char_token(
-        &mut self,
-        ty: TokenType,
-        start_line: usize,
-        start_col: usize,
-        start_byte_offset: usize,
-    ) -> Token {
+    fn two_char_token(&mut self, ty: TokenType, start_byte_offset: usize) -> Token {
         self.read_char();
         self.read_char();
-        Token::new(
-            ty,
-            start_line,
-            start_col,
-            start_byte_offset,
-            self.byte_offset - start_byte_offset,
-        )
+        Token::new(ty, start_byte_offset, self.byte_offset - start_byte_offset)
     }
 
     /// Returns the next Token from the input.
@@ -96,73 +66,36 @@ impl Lexer {
             self.skip_comment();
         }
 
-        let start_line = self.line;
-        let start_col = self.col;
         let start_byte_offset = self.byte_offset;
         let ch = self.ch;
 
         match ch {
-            None => Token::new(TokenType::Eof, start_line, start_col, start_byte_offset, 0),
-            Some('{') => {
-                self.single_char_token(TokenType::LBrace, start_line, start_col, start_byte_offset)
+            None => Token::new(TokenType::Eof, start_byte_offset, 0),
+            Some('{') => self.single_char_token(TokenType::LBrace, start_byte_offset),
+            Some('}') => self.single_char_token(TokenType::RBrace, start_byte_offset),
+            Some('(') => self.read_template_token(start_byte_offset),
+            Some(')') => self.single_char_token(TokenType::RParen, start_byte_offset),
+            Some(';') => self.single_char_token(TokenType::Semicolon, start_byte_offset),
+            Some('=') if self.peek_next() == Some('>') => {
+                self.two_char_token(TokenType::ChainArrow, start_byte_offset)
             }
-            Some('}') => {
-                self.single_char_token(TokenType::RBrace, start_line, start_col, start_byte_offset)
+            Some('=') => self.single_char_token(TokenType::Assign, start_byte_offset),
+            Some(':') if self.peek_next() == Some(':') => {
+                self.two_char_token(TokenType::NamespaceSep, start_byte_offset)
             }
-            Some('[') => self.single_char_token(
-                TokenType::LBracket,
-                start_line,
-                start_col,
-                start_byte_offset,
-            ),
-            Some(']') => self.single_char_token(
-                TokenType::RBracket,
-                start_line,
-                start_col,
-                start_byte_offset,
-            ),
-            Some('(') => self.read_template_token(start_line, start_col, start_byte_offset),
-            Some(')') => {
-                self.single_char_token(TokenType::RParen, start_line, start_col, start_byte_offset)
-            }
-            Some(';') => self.single_char_token(
-                TokenType::Semicolon,
-                start_line,
-                start_col,
-                start_byte_offset,
-            ),
-            Some('=') if self.peek_next() == Some('>') => self.two_char_token(
-                TokenType::ChainArrow,
-                start_line,
-                start_col,
-                start_byte_offset,
-            ),
-            Some('=') => {
-                self.single_char_token(TokenType::Assign, start_line, start_col, start_byte_offset)
-            }
-            Some(':') if self.peek_next() == Some(':') => self.two_char_token(
-                TokenType::NamespaceSep,
-                start_line,
-                start_col,
-                start_byte_offset,
-            ),
             Some('$') if self.peek_next() == Some('(') => {
-                self.read_template_token(start_line, start_col, start_byte_offset)
+                self.read_template_token(start_byte_offset)
             }
             Some('@') if self.peek_next() == Some('(') => {
-                self.read_template_token(start_line, start_col, start_byte_offset)
+                self.read_template_token(start_byte_offset)
             }
             Some(':') => self.single_char_token(
                 TokenType::Illegal("unexpected character: :".to_string()),
-                start_line,
-                start_col,
                 start_byte_offset,
             ),
             Some(ch) if ch.is_alphabetic() || ch == '_' => self.read_ident(),
             Some(ch) => self.single_char_token(
                 TokenType::Illegal(format!("unexpected character: {}", ch)),
-                start_line,
-                start_col,
                 start_byte_offset,
             ),
         }
@@ -215,9 +148,8 @@ mod tests {
             ("=", TokenType::Assign),
             ("{", TokenType::LBrace),
             ("}", TokenType::RBrace),
-            ("[", TokenType::LBracket),
-            ("]", TokenType::RBracket),
             (";", TokenType::Semicolon),
+            (")", TokenType::RParen),
             ("=>", TokenType::ChainArrow),
         ];
         for (input, expected) in cases {
@@ -229,6 +161,15 @@ mod tests {
                 input
             );
         }
+    }
+
+    #[test]
+    fn test_brackets_are_illegal() {
+        // `[` / `]` belonged to the removed bracket-field syntax; they must
+        // not lex as accepted tokens.
+        let errors = extract_errors("pr p [x] { };");
+        assert_eq!(errors.len(), 2, "got {:?}", errors);
+        assert!(errors.iter().all(|e| e.starts_with("unexpected character")));
     }
 
     #[test]
@@ -381,7 +322,6 @@ mod tests {
                     parts: vec![crate::syntax::source::Part::Lit("hello".to_string())],
                     offset: 18,
                     len: 7,
-                    source_name: String::new(),
                 }),
                 TokenType::Semicolon,
             ]

@@ -210,9 +210,9 @@ fn read_instructions(nodes: &[Sexp]) -> Result<Vec<Instruction>, String> {
         let head = sym(items.first().ok_or("empty instruction".to_string())?)
             .ok_or("instruction head must be a symbol".to_string())?;
         match head {
-            "exec" => {
+            "run_shell_cmd" => {
                 let value = read_template(&items[1])?;
-                out.push(Instruction::Exec { value });
+                out.push(Instruction::RunShellCmd { value });
             }
             "log" => {
                 let value = read_template(&items[1])?;
@@ -321,7 +321,6 @@ impl Ir {
             let head = sym(ni.first().ok_or("empty entry".to_string())?)
                 .ok_or("entry head must be a symbol".to_string())?;
             match head {
-                "version" => {}
                 "project" => {
                     let (id, project) = parse_project_entry(ni)?;
                     ir.projects.insert(id, project);

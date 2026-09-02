@@ -7,9 +7,6 @@ pub(crate) mod subprocess;
 pub(crate) mod sync;
 pub(crate) mod tui;
 
-#[cfg(test)]
-mod test_support;
-
 pub(crate) use context::OutputCallback;
 pub(crate) use executor::Executor;
 pub(crate) use tui::{TaskStatus, TuiEvent, run_tui_with, send_tui_event};

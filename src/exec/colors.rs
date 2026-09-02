@@ -25,8 +25,8 @@ pub(crate) const BOLD_CYAN: &str = "\x1b[1;36m";
 
 /// Bright white text color.
 pub(crate) const TEXT_ANSI: &str = "\x1b[97m";
-/// Blue color for `exec` statements.
-pub(crate) const EXEC_ANSI: &str = "\x1b[94m";
+/// Blue color for the shell-command echo emitted before each command runs.
+pub(crate) const CMD_ANSI: &str = "\x1b[94m";
 /// Magenta color for `env` statements.
 pub(crate) const ENV_ANSI: &str = "\x1b[95m";
 
@@ -43,8 +43,6 @@ pub(crate) const PENDING: Color = Color::Indexed(8);
 /// Single source of truth: `context.rs` emits it and
 /// `colored_line_parts` parses it, so the two must never diverge.
 pub(crate) const LOG_PREFIX: &str = "log  ";
-/// Prefix written before an `exec` statement's command in captured output.
-pub(crate) const EXEC_PREFIX: &str = "exec ";
 /// Prefix written before a `cd` statement's target in captured output.
 pub(crate) const CD_PREFIX: &str = "cd   ";
 /// Prefix written before an `env` statement's keys in captured output.
@@ -52,8 +50,8 @@ pub(crate) const ENV_PREFIX: &str = "env  ";
 
 /// Sync progress-line prefixes, shared by the line emitters (sync runner)
 /// and the TUI payload stripper (`sync_message`) so the two never diverge.
-/// Order: skip, update, clone.
-pub(crate) const SYNC_PREFIXES: [&str; 3] = ["skip  ", "update  ", "clone  "];
+pub(crate) const SYNC_UPDATE_PREFIX: &str = "update  ";
+pub(crate) const SYNC_CLONE_PREFIX: &str = "clone  ";
 
 /// Decompose an output line into (indent, prefix, ANSI color, rest) for
 /// rendering.  Used by both terminal and TUI output paths.
@@ -63,8 +61,6 @@ pub(crate) fn colored_line_parts(line: &str) -> (usize, &'static str, &'static s
 
     if let Some(rest) = trimmed.strip_prefix(LOG_PREFIX) {
         (indent, LOG_PREFIX, BRIGHT_YELLOW_ANSI, rest)
-    } else if let Some(rest) = trimmed.strip_prefix(EXEC_PREFIX) {
-        (indent, EXEC_PREFIX, EXEC_ANSI, rest)
     } else if let Some(rest) = trimmed.strip_prefix(CD_PREFIX) {
         (indent, CD_PREFIX, BRIGHT_YELLOW_ANSI, rest)
     } else if let Some(rest) = trimmed.strip_prefix(ENV_PREFIX) {
@@ -96,7 +92,6 @@ mod tests {
     fn colored_line_parts_recognizes_every_prefix() {
         let cases = [
             (LOG_PREFIX, BRIGHT_YELLOW_ANSI),
-            (EXEC_PREFIX, EXEC_ANSI),
             (CD_PREFIX, BRIGHT_YELLOW_ANSI),
             (ENV_PREFIX, ENV_ANSI),
         ];

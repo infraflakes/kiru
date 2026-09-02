@@ -14,6 +14,6 @@ fi
 mkdir -p "$TARGET"
 echo "Fetching kiru $TAG..."
 
-curl -L -s -o "$TARGET/kiru" "https://github.com/../../../../../../${REPO}/releases/download/${TAG}/kiru-${TAG}-linux-x86_64"
+curl -L -s -o "$TARGET/kiru" "https://github.com/${REPO}/releases/download/${TAG}/kiru-${TAG}-linux-x86_64"
 chmod +x "$TARGET/kiru"
 echo "Installed kiru $TAG to $TARGET/kiru"

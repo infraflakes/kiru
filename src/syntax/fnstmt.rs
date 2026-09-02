@@ -13,7 +13,7 @@ pub(crate) enum FnStmt {
     /// `log (template);`, emit the resolved template to the output log.
     Log(Template),
     /// A binding statement. Created from `var name = (tmpl);` and bare
-    /// `$(cmd);` (exec statement).
+    /// `$(cmd);` (command statement).
     /// `target == None` is always a command template (must contain ≥1 `Cmd`
     /// segment, bare `()` / `@()` as standalone is a parse error). The
     /// resolved template is run strictly (non-zero aborts).
@@ -31,7 +31,8 @@ pub(crate) enum FnStmt {
         pairs: Vec<EnvPair>,
         body: Vec<FnStmt>,
     },
-    /// `switch (cond) { case (pat) { ... } case _ { ... } }`.
+    /// `switch cond { case (pat) { ... } case _ { ... } }` with the subject
+    /// written directly (template or bare identifier).
     Switch { subject: Template, arms: Vec<Arm> },
 }
 

@@ -52,7 +52,6 @@ pub(super) fn inline_dsl_parts(
                     parts: inlined,
                     offset: inner.offset,
                     len: inner.len,
-                    source_name: inner.source_name.clone(),
                 }));
             }
         }
@@ -73,7 +72,6 @@ pub(super) fn inline_dsl_template(
         parts,
         offset: tmpl.offset,
         len: tmpl.len,
-        source_name: tmpl.source_name.clone(),
     })
 }
 
@@ -101,7 +99,7 @@ pub(super) fn lower_template(tmpl: &Template) -> IrTemplate {
 /// Function-local `var x = T` maps name `x` to template `T` in the local
 /// scope so later references resolve to `T`. The bind itself does NOT
 /// emit an `Instruction`: execution is deferred to each use site via tolerant
-/// `capture`. Only bare `$(cmd);` (no target) emits strict `Instruction::Exec`.
+/// `capture`. Only bare `$(cmd);` (no target) emits strict `Instruction::RunShellCmd`.
 /// Nested `env`/`switch` bodies get a *copy* of the local scope so their binds
 /// do not leak into the surrounding body.
 pub(super) fn lower_function_body(
@@ -137,7 +135,7 @@ fn lower_fn_stmts(
                     Some(name) => {
                         scope.insert(name.clone(), inlined);
                         // Assignment bindings are fully inlined into scope.
-                        // No runtime Exec emitted: execution happens lazily at
+                        // No runtime command emitted: execution happens lazily at
                         // each use site via tolerant capture (Switch/Log/Cd/Env).
                     }
                     None => {
@@ -154,7 +152,7 @@ fn lower_fn_stmts(
                                 sources.get(source_name).cloned().unwrap_or_default(),
                             )));
                         }
-                        out.push(Instruction::Exec { value: ir });
+                        out.push(Instruction::RunShellCmd { value: ir });
                     }
                 }
             }

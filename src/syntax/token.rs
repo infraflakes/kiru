@@ -7,11 +7,12 @@ pub(crate) enum TokenType {
     /// A parsed template expression `( ... )`, `$( ... )`, or `@( ... )`.
     /// The template carries its resolved parts (literal / var / command).
     Template(crate::syntax::source::Template),
+    /// A bare `)` outside any template. Never accepted by the grammar, but
+    /// kept as a distinct token so a stray `)` reports as "found `)`" instead
+    /// of a generic illegal-character error.
     RParen,
     LBrace,
     RBrace,
-    LBracket,
-    RBracket,
     Semicolon,
     Assign,
     /// `=>` separator inside run blocks: starts a new sequential stage. Calls
@@ -32,22 +33,18 @@ pub(crate) enum TokenType {
     NamespaceSep,
 }
 
-/// A lexical token with source position tracking.
+/// A lexical token with its byte-offset span into the source text.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Token {
     pub(crate) token_type: TokenType,
-    pub(crate) line: usize,
-    pub(crate) col: usize,
     pub(crate) offset: usize,
     pub(crate) len: usize,
 }
 
 impl Token {
-    pub(crate) fn new(ty: TokenType, line: usize, col: usize, offset: usize, len: usize) -> Self {
+    pub(crate) fn new(ty: TokenType, offset: usize, len: usize) -> Self {
         Self {
             token_type: ty,
-            line,
-            col,
             offset,
             len,
         }
@@ -89,8 +86,6 @@ pub(crate) fn format_token_type(ty: &TokenType) -> String {
     match ty {
         TokenType::LBrace => "`{`".to_string(),
         TokenType::RBrace => "`}`".to_string(),
-        TokenType::LBracket => "`[`".to_string(),
-        TokenType::RBracket => "`]`".to_string(),
         TokenType::RParen => "`)`".to_string(),
         TokenType::Semicolon => "`;`".to_string(),
         TokenType::Assign => "`=`".to_string(),

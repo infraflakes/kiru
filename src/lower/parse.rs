@@ -17,8 +17,7 @@ pub(super) fn parse_file(canon_path: &Path) -> Result<Program, CompileError> {
         ))
     })?;
     let source_name = canon_path.display().to_string();
-    let mut parser = crate::syntax::Parser::new(Lexer::new(source_text.clone()))
-        .with_source_name(source_name.clone());
+    let mut parser = crate::syntax::Parser::new(Lexer::new(source_text.clone()));
     let mut program = Program::new_with_source(source_name, source_text);
     while let Some(toplevel) = parser.parse_toplevel().map_err(|e| {
         CompileError::diagnostic(Diagnostic::new(
@@ -44,7 +43,7 @@ pub(super) fn load_import(
         &state.source_texts,
         &program.source_name,
     )?;
-    let path_str = eval_path_template(&inlined);
+    let path_str = eval_path_template(&inlined, state, &program.source_name)?;
     if path_str.is_empty() {
         return Err(state.spanned(
             "import path cannot be empty".to_string(),
@@ -125,26 +124,37 @@ fn resolve_import_candidates(base_dir: &Path, path_str: &str) -> Vec<PathBuf> {
 /// operation, so any `$(command)` part here is executed to obtain a concrete
 /// path -- this is the one place commands run at compile time, and the result is
 /// used only to locate the file (it is never frozen into the IR).
-pub(super) fn eval_path_template(tmpl: &Template) -> String {
+///
+/// Deliberately config-independent: compilation never reads `kiru.toml` (the IR
+/// is config-free), so these commands always run under `sh` with no timeout.
+/// Custom shell/timeout apply at run time only.
+pub(super) fn eval_path_template(
+    tmpl: &Template,
+    state: &mut LoweringState,
+    source_name: &str,
+) -> Result<String, CompileError> {
     let mut out = String::new();
     for part in &tmpl.parts {
         match part {
             DslPart::Lit(s) => out.push_str(s),
+            // Unreachable via the parser: `inline_dsl_template` resolves every
+            // `Var` part before its result reaches this function. Kept as an
+            // error rather than a silent fallback so the invariant is enforced.
             DslPart::Var(name) => {
-                debug_assert!(
-                    false,
-                    "unexpected @(var) in import path template: @({})",
-                    name
-                );
-                out.push_str(name);
+                return Err(state.spanned(
+                    format!("unexpected @({name}) in import path"),
+                    source_name,
+                    tmpl.offset,
+                    tmpl.len.max(1),
+                ));
             }
             DslPart::Cmd(inner) => {
-                let cmd = eval_path_template(inner);
+                let cmd = eval_path_template(inner, state, source_name)?;
                 out.push_str(&run_capture(&cmd));
             }
         }
     }
-    out
+    Ok(out)
 }
 
 /// Run `cmd` via `sh -c` and return its stdout (trimmed). Non-zero exit is

@@ -25,18 +25,9 @@ pub(crate) struct Parser {
     /// blocks from a bare identifier in a function body.
     next: Token,
     source_len: usize,
-    source_name: String,
 }
 
 impl Parser {
-    /// Records the canonical path of the source file so every parsed node
-    /// carries the name used to resolve its diagnostic span. The compiler sets
-    /// this before parsing, tests that only inspect structure leave it empty.
-    pub(crate) fn with_source_name(mut self, name: String) -> Self {
-        self.source_name = name;
-        self
-    }
-
     /// Constructs a new Parser from the given Lexer, advancing to the first token.
     pub(crate) fn new(mut lexer: Lexer) -> Self {
         let source_len = lexer.source_len();
@@ -47,7 +38,6 @@ impl Parser {
             current,
             next,
             source_len,
-            source_name: String::new(),
         }
     }
 
@@ -292,7 +282,7 @@ impl Parser {
             TokenType::Var => self.parse_fn_var_decl(),
             TokenType::Env => self.parse_env_block(),
             TokenType::Switch => self.parse_switch_stmt(),
-            TokenType::Template(_) => self.parse_exec_stmt(),
+            TokenType::Template(_) => self.parse_run_shell_cmd_stmt(),
             TokenType::Semicolon => Err(ParseError::new(
                 self.eof_aware_span(),
                 "unexpected `;` (empty statement)".to_string(),

@@ -32,8 +32,8 @@ fn fmt_instruction(buf: &mut String, inst: &Instruction, indent: Option<usize>) 
         buf.push_str(&"  ".repeat(level));
     }
     match inst {
-        Instruction::Exec { value } => {
-            buf.push_str("(exec ");
+        Instruction::RunShellCmd { value } => {
+            buf.push_str("(run_shell_cmd ");
             fmt_template(buf, value);
             buf.push(')');
         }
@@ -95,7 +95,6 @@ impl Ir {
     pub(crate) fn serialize(&self) -> String {
         let mut out = String::new();
         out.push_str("(kirufile\n");
-        out.push_str("  (version 1)\n");
 
         for (id, project) in &self.projects {
             out.push_str(&format!("  (project {}\n", id));

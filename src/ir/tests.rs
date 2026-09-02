@@ -11,7 +11,7 @@ fn sample_ir() -> Ir {
     project.functions.insert(
         "ssh".to_string(),
         vec![
-            Instruction::Exec {
+            Instruction::RunShellCmd {
                 value: check_cmd.clone(),
             },
             Instruction::Switch {
@@ -70,7 +70,7 @@ fn test_kirufile_escapes() {
     let mut project = Project::default();
     project.functions.insert(
         "weird".to_string(),
-        vec![Instruction::Exec {
+        vec![Instruction::RunShellCmd {
             value: Template::lit("has \"quotes\" and ) parens"),
         }],
     );
@@ -79,8 +79,16 @@ fn test_kirufile_escapes() {
     let parsed = Ir::deserialize(&text).expect("should parse");
     assert_eq!(
         parsed.projects["p"].functions["weird"][0],
-        Instruction::Exec {
+        Instruction::RunShellCmd {
             value: Template::lit("has \"quotes\" and ) parens"),
         }
     );
+}
+
+#[test]
+fn test_kirufile_version_entry_rejected() {
+    // The version marker is gone from the format; kirufiles carrying it
+    // (from older builds) must be rejected, not silently tolerated.
+    let text = "(kirufile\n  (version 1)\n)\n";
+    assert!(Ir::deserialize(text).is_err());
 }
