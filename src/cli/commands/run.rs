@@ -1,6 +1,7 @@
 //! `kiru run` command: executes a named run block by resolving its chain
 //! of project-function calls through the TUI.
 
+use crate::cli::CliError;
 use crate::cli::kiru_toml;
 use crate::cli::load_config;
 use crate::exec;
@@ -12,10 +13,11 @@ pub(crate) fn execute_run_block(
     config_arg: Option<PathBuf>,
     kirufile_arg: Option<PathBuf>,
     name: String,
-) -> Result<(), String> {
-    let config = load_config(kirufile_arg)?;
+) -> Result<(), CliError> {
+    let config = load_config(kirufile_arg).map_err(CliError::message)?;
 
-    let toml = kiru_toml::load_kiru_toml_at(&crate::cli::get_toml_path(config_arg))?;
+    let toml = kiru_toml::load_kiru_toml_at(&crate::cli::get_toml_path(config_arg))
+        .map_err(CliError::message)?;
     let mut repo_dirs = BTreeMap::new();
     let mut toml_expanded = toml.clone();
     kiru_toml::expand_repo_dirs(&mut toml_expanded);
@@ -28,7 +30,7 @@ pub(crate) fn execute_run_block(
     let chains = match config.execution_chains.get(&name) {
         Some(stages) => stages.clone(),
         None => {
-            return Err(format!("unknown run block '{}'", name));
+            return Err(CliError::message(format!("unknown run block '{}'", name)));
         }
     };
 
@@ -43,4 +45,5 @@ pub(crate) fn execute_run_block(
         repo_dirs,
         invocation_cwd,
     )
+    .map_err(CliError::from)
 }

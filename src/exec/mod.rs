@@ -12,11 +12,25 @@ mod test_support;
 
 pub(crate) use context::OutputCallback;
 pub(crate) use executor::Executor;
-pub(crate) use tui::{TaskStatus, TuiEvent, run_tui_with_run, run_tui_with_sync, send_tui_event};
+pub(crate) use tui::{TaskStatus, TuiEvent, run_tui_with, send_tui_event};
 
 use crate::exec::error::RuntimeError;
 use tokio::sync::mpsc;
 use tokio::task::{JoinError, JoinHandle};
+
+/// Why a TUI-driven batch of tasks (a run block or a sync) ended
+/// unsuccessfully. The distinction matters for reporting: task failures
+/// were already rendered through the output sink, infrastructure failures
+/// were not.
+pub(crate) enum TaskRunError {
+    /// At least one task failed. Every failing task rendered its own error
+    /// through the output sink (and the TUI summary shows the final count),
+    /// so there is nothing left to print, only a non-zero exit remains.
+    TaskFailed,
+    /// The TUI or worker infrastructure failed before or while running the
+    /// tasks. The message has not been shown anywhere yet.
+    Infrastructure(String),
+}
 
 /// Outcome of a single async task (a chain step or a project sync), used to
 /// centralize the TUI event reporting shared by the chain and sync runners.
@@ -67,18 +81,18 @@ pub(crate) fn report_task_outcome(
 }
 
 /// Await all spawned task handles and reduce their results to a single
-/// aggregate error message.
+/// outcome.
 ///
 /// Success and error outcomes are reported by each task's own blocking
 /// closure (chain tasks report per-step as they progress, sync tasks report
-/// when a project finishes), so this driver only joins the handles, reports
-/// panics the closures had no chance to surface, and fails with
-/// `failure_message` when any task failed or panicked.
+/// when a project finishes), so this driver only joins the handles and
+/// reports panics the closures had no chance to surface. When anything
+/// failed or panicked, the error is [`TaskRunError::TaskFailed`]: the user
+/// has already seen every individual failure.
 pub(crate) async fn await_tasks_and_report(
     tx: &mpsc::UnboundedSender<TuiEvent>,
     task_handles: Vec<(usize, JoinHandle<Result<(), RuntimeError>>)>,
-    failure_message: &str,
-) -> Result<(), String> {
+) -> Result<(), TaskRunError> {
     let mut any_failed = false;
     for (task_index, handle) in task_handles {
         match handle.await {
@@ -96,7 +110,7 @@ pub(crate) async fn await_tasks_and_report(
         }
     }
     if any_failed {
-        Err(failure_message.to_string())
+        Err(TaskRunError::TaskFailed)
     } else {
         Ok(())
     }

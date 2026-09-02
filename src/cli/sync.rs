@@ -2,13 +2,14 @@
 //! `kiru.toml` into its directory. Reads the default `kiru.toml`, or the one
 //! given with `-c`.
 
+use crate::cli::CliError;
 use crate::cli::get_toml_path;
 use crate::cli::kiru_toml;
 use crate::exec::sync::RepoSync;
 
-pub(crate) fn run_sync_command(config_arg: Option<std::path::PathBuf>) -> Result<(), String> {
+pub(crate) fn run_sync_command(config_arg: Option<std::path::PathBuf>) -> Result<(), CliError> {
     let toml_path = get_toml_path(config_arg);
-    let mut toml = kiru_toml::load_kiru_toml_at(&toml_path)?;
+    let mut toml = kiru_toml::load_kiru_toml_at(&toml_path).map_err(CliError::message)?;
     kiru_toml::expand_repo_dirs(&mut toml);
 
     let repos: Vec<RepoSync> = toml
@@ -47,5 +48,5 @@ pub(crate) fn run_sync_command(config_arg: Option<std::path::PathBuf>) -> Result
         return Ok(());
     }
 
-    crate::exec::sync::run_sync_for_projects(repos)
+    crate::exec::sync::run_sync_for_projects(repos).map_err(CliError::from)
 }

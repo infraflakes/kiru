@@ -1,3 +1,4 @@
+use super::CliError;
 use super::load_config;
 use super::pager;
 use crate::cli::kiru_toml;
@@ -14,11 +15,12 @@ macro_rules! style {
 pub(crate) fn run_status_command(
     config_arg: Option<PathBuf>,
     kirufile_arg: Option<PathBuf>,
-) -> Result<(), String> {
-    let config = load_config(kirufile_arg)?;
+) -> Result<(), CliError> {
+    let config = load_config(kirufile_arg).map_err(CliError::message)?;
     let toml = kiru_toml::load_kiru_toml_at(&super::get_toml_path(config_arg)).ok();
     let rendered_status_tree = format_config_as_tree(&config, toml.as_ref());
-    pager::display_output_through_pager(&rendered_status_tree)?;
+    pager::display_output_through_pager(&rendered_status_tree)
+        .map_err(|e| CliError::message(format!("failed to display output: {}", e)))?;
     Ok(())
 }
 

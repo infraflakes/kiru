@@ -26,20 +26,20 @@ pub(super) fn inline_dsl_parts(
             DslPart::Lit(s) => out.push(DslPart::Lit(s.clone())),
             DslPart::Var(name) => {
                 if stack.contains(name) {
-                    return Err(CompileError::Validation(vec![Diagnostic::new(
+                    return Err(CompileError::diagnostic(Diagnostic::new(
                         source_name.to_string(),
                         Span::new(tmpl.offset, tmpl.len.max(1)),
                         format!("circular variable reference: {}", name),
                         sources.get(source_name).cloned().unwrap_or_default(),
-                    )]));
+                    )));
                 }
                 let var_tmpl = scope.get(name).ok_or_else(|| {
-                    CompileError::Validation(vec![Diagnostic::new(
+                    CompileError::diagnostic(Diagnostic::new(
                         source_name.to_string(),
                         Span::new(tmpl.offset, tmpl.len.max(1)),
                         format!("undefined variable: {}", name),
                         sources.get(source_name).cloned().unwrap_or_default(),
-                    )])
+                    ))
                 })?;
                 stack.push(name.clone());
                 let inlined = inline_dsl_parts(var_tmpl, scope, sources, source_name, stack)?;
@@ -147,14 +147,12 @@ fn lower_fn_stmts(
                             .iter()
                             .any(|s| matches!(s, crate::ir::Segment::Command(_)));
                         if !has_cmd {
-                            return Err(crate::lower::CompileError::Validation(vec![
-                                Diagnostic::new(
-                                    source_name.to_string(),
-                                    Span::new(value.offset, value.len.max(1)),
-                                    "bare template is not a statement, wrap the command in $(...) or prefix with log, cd, var, env or switch",
-                                    sources.get(source_name).cloned().unwrap_or_default(),
-                                ),
-                            ]));
+                            return Err(crate::lower::CompileError::diagnostic(Diagnostic::new(
+                                source_name.to_string(),
+                                Span::new(value.offset, value.len.max(1)),
+                                "bare template is not a statement, wrap the command in $(...) or prefix with log, cd, var, env or switch",
+                                sources.get(source_name).cloned().unwrap_or_default(),
+                            )));
                         }
                         out.push(Instruction::Exec { value: ir });
                     }

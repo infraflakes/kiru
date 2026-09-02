@@ -3,6 +3,8 @@
 
 use std::path::PathBuf;
 
+use super::CliError;
+
 fn resolve_compile_input(config_arg: Option<PathBuf>) -> PathBuf {
     if let Some(path) = config_arg {
         return path;
@@ -20,15 +22,20 @@ fn resolve_compile_output(output: Option<PathBuf>) -> PathBuf {
 pub(crate) fn run_compile_command(
     config_arg: Option<PathBuf>,
     output: Option<PathBuf>,
-) -> Result<(), String> {
+) -> Result<(), CliError> {
     let input = resolve_compile_input(config_arg);
     let output = resolve_compile_output(output);
 
-    let ir = crate::lower::lower_and_resolve(&input).map_err(super::compile_error_to_string)?;
+    let ir = crate::lower::lower_and_resolve(&input).map_err(super::compile_error_to_cli_error)?;
 
     let text = ir.serialize();
-    std::fs::write(&output, text)
-        .map_err(|e| format!("failed to write kirufile {}: {}", output.display(), e))?;
+    std::fs::write(&output, text).map_err(|e| {
+        CliError::message(format!(
+            "failed to write kirufile {}: {}",
+            output.display(),
+            e
+        ))
+    })?;
 
     println!("compiled {} -> {}", input.display(), output.display());
     Ok(())

@@ -2,8 +2,10 @@
 //! through the TUI, reporting each step's status as it completes.
 
 use crate::exec::error::RuntimeError;
+use crate::exec::tui::run::{format_final_output, render_run_output};
 use crate::exec::{
-    Executor, TaskOutcome, TaskStatus, TuiEvent, await_tasks_and_report, report_task_outcome,
+    Executor, TaskOutcome, TaskRunError, TaskStatus, TuiEvent, await_tasks_and_report,
+    report_task_outcome,
 };
 use crate::ir::{Call, Ir};
 use std::collections::BTreeMap;
@@ -83,7 +85,7 @@ pub(crate) fn execute_task_chains(
     timeout: Option<std::time::Duration>,
     repo_dirs: BTreeMap<String, PathBuf>,
     invocation_cwd: PathBuf,
-) -> Result<(), String> {
+) -> Result<(), TaskRunError> {
     // One TUI chain group per run-block chain, labelled by its joined calls.
     let chain_pairs: Vec<(String, Vec<String>)> = chains
         .iter()
@@ -102,25 +104,32 @@ pub(crate) fn execute_task_chains(
         invocation_cwd,
     });
 
-    crate::exec::run_tui_with_run(chain_pairs, move |tx| async move {
-        let mut chain_handles = Vec::new();
-        let mut base_index = 0;
+    match crate::exec::run_tui_with(
+        chain_pairs,
+        move |tx| async move {
+            let mut chain_handles = Vec::new();
+            let mut base_index = 0;
 
-        for chain in &chains {
-            let tx = tx.clone();
-            let chain = chain.clone();
-            let start_index = base_index;
-            let chain_len = chain.len();
-            let config = Arc::clone(&chain_config);
+            for chain in &chains {
+                let tx = tx.clone();
+                let chain = chain.clone();
+                let start_index = base_index;
+                let chain_len = chain.len();
+                let config = Arc::clone(&chain_config);
 
-            let handle = tokio::task::spawn_blocking(move || {
-                execute_single_chain(chain, start_index, &config, tx)
-            });
-            chain_handles.push((start_index + chain_len.saturating_sub(1), handle));
-            base_index += chain_len;
-        }
+                let handle = tokio::task::spawn_blocking(move || {
+                    execute_single_chain(chain, start_index, &config, tx)
+                });
+                chain_handles.push((start_index + chain_len.saturating_sub(1), handle));
+                base_index += chain_len;
+            }
 
-        await_tasks_and_report(&tx, chain_handles, "One or more chain tasks failed").await
-    })?;
-    Ok(())
+            await_tasks_and_report(&tx, chain_handles).await
+        },
+        render_run_output,
+        Some(format_final_output),
+    ) {
+        Ok(worker_result) => worker_result,
+        Err(message) => Err(TaskRunError::Infrastructure(message)),
+    }
 }

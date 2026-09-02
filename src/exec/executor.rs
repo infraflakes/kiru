@@ -1,7 +1,7 @@
 use crate::exec::OutputCallback;
 use crate::exec::context::ExecContext;
 use crate::exec::error::RuntimeError;
-use crate::ir::{Instruction, Ir, Project};
+use crate::ir::Ir;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,28 +12,6 @@ pub(crate) struct Executor {
     shell: String,
     timeout: Option<Duration>,
     output: OutputCallback,
-}
-
-/// Look up a function body by name inside a resolved project.
-///
-/// Centralizes the function lookup plus its `unknown function` error so the CLI
-/// entry point and the executor never diverge on how a missing function is
-/// reported.
-pub(crate) fn lookup_project_function_body<'a>(
-    project: &'a Project,
-    project_name: &str,
-    fn_name: &str,
-) -> Result<&'a [Instruction], RuntimeError> {
-    project
-        .functions
-        .get(fn_name)
-        .map(Vec::as_slice)
-        .ok_or_else(|| {
-            RuntimeError::Lookup(format!(
-                "unknown function {} in project {}",
-                fn_name, project_name
-            ))
-        })
 }
 
 impl Executor {
@@ -64,7 +42,16 @@ impl Executor {
                 RuntimeError::Lookup(format!("unknown project: {}", project_name))
             })?;
 
-        let fn_body = lookup_project_function_body(project, project_name, fn_name)?;
+        let fn_body = project
+            .functions
+            .get(fn_name)
+            .map(Vec::as_slice)
+            .ok_or_else(|| {
+                RuntimeError::Lookup(format!(
+                    "unknown function {} in project {}",
+                    fn_name, project_name
+                ))
+            })?;
 
         let mut ctx = ExecContext::new(&mut self.output, cwd, self.shell.clone(), self.timeout);
         ctx.exec_stmts(fn_body)

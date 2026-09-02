@@ -7,6 +7,7 @@ mod sync;
 
 pub(crate) use args::{Cli, Commands};
 
+use crate::exec::TaskRunError;
 use crate::ir::Ir;
 use crate::lower::CompileError;
 use clap::Parser;
@@ -14,18 +15,39 @@ use std::path::PathBuf;
 
 pub(crate) mod compile;
 
-/// Print compile errors to stderr (snippets rendered via annotate-snippets)
-/// and return empty string to signal "already printed". Non-empty return is
-/// only for non-diagnostic errors (I/O) where main.rs should add prefix.
-pub(crate) fn compile_error_to_string(e: CompileError) -> String {
-    match e {
-        CompileError::Io(e) => format!("I/O error: {}", e),
-        CompileError::Parse(diags) | CompileError::Validation(diags) => {
-            for d in &diags {
-                crate::diagnostics::print_diagnostic(d);
-            }
-            String::new() // already printed
+/// Terminal outcome of a CLI command. The distinction decides whether
+/// `main` still has something to print.
+pub(crate) enum CliError {
+    /// The failure has not been shown to the user yet; print the message.
+    Message(String),
+    /// The failure was already rendered to the user (compile diagnostics via
+    /// the snippet renderer, task outcomes via the TUI); only the non-zero
+    /// exit code remains.
+    Reported,
+}
+
+impl CliError {
+    /// Wrap a not-yet-shown message.
+    pub(crate) fn message(msg: impl Into<String>) -> Self {
+        CliError::Message(msg.into())
+    }
+}
+
+impl From<TaskRunError> for CliError {
+    fn from(error: TaskRunError) -> Self {
+        match error {
+            TaskRunError::TaskFailed => CliError::Reported,
+            TaskRunError::Infrastructure(message) => CliError::Message(message),
         }
+    }
+}
+
+/// Map a compile failure. Diagnostics were already printed to stderr by the
+/// snippet renderer; I/O failures still need a message.
+pub(crate) fn compile_error_to_cli_error(e: CompileError) -> CliError {
+    match e {
+        CompileError::Io(e) => CliError::Message(format!("I/O error: {}", e)),
+        CompileError::Diagnostics(_) => CliError::Reported,
     }
 }
 
@@ -39,7 +61,7 @@ pub(crate) fn load_config(kirufile_arg: Option<PathBuf>) -> Result<Ir, String> {
         .map_err(|e| format!("failed to parse kirufile {}: {}", config_path.display(), e))
 }
 
-pub(crate) fn run_cli() -> Result<(), String> {
+pub(crate) fn run_cli() -> Result<(), CliError> {
     let parsed_cli = Cli::parse();
 
     match parsed_cli.command {

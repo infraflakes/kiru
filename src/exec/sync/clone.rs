@@ -1,7 +1,9 @@
 use crate::exec::colors;
 use crate::exec::error::RuntimeError;
 use crate::exec::subprocess;
-use crate::exec::{TaskOutcome, TaskStatus, TuiEvent, await_tasks_and_report, report_task_outcome};
+use crate::exec::{
+    TaskOutcome, TaskRunError, TaskStatus, TuiEvent, await_tasks_and_report, report_task_outcome,
+};
 use std::path::PathBuf;
 
 /// A plain repo configuration read from `kiru.toml`, used by sync.
@@ -13,9 +15,14 @@ pub(crate) struct RepoSync {
     pub(crate) branch: String,
 }
 
-/// Dispatch sync for a single project into `repo.dir` by cloning or pulling.
-fn sync_project_inner(repo: &RepoSync, output: &mut dyn FnMut(&str)) -> Result<(), RuntimeError> {
-    run_sync_clone_or_update(repo, output)
+/// Synchronize a single project into `repo.dir` by cloning or pulling.
+/// Accepts an output callback that receives progress lines for display or
+/// forwarding.
+pub(crate) fn sync_project_with_callback(
+    repo: &RepoSync,
+    mut output_cb: impl FnMut(&str),
+) -> Result<(), RuntimeError> {
+    run_sync_clone_or_update(repo, &mut output_cb)
 }
 
 /// Git-clone a single project's repo into `repo.dir`, or fast-forward it to its
@@ -90,70 +97,62 @@ fn run_git_with_output(
     Ok(())
 }
 
-/// Synchronize a single project into `repo.dir`.
-/// Accepts an output callback that receives progress lines for display or forwarding.
-pub(crate) fn sync_project_with_callback(
-    repo: &RepoSync,
-    mut output_cb: impl FnMut(&str),
-) -> Result<(), RuntimeError> {
-    sync_project_inner(repo, &mut output_cb)
-}
-
 /// Run sync for all projects through the TUI.
 ///
 /// The sync chain list is derived from the repo list itself: every project is
 /// its own single-step chain labelled by its name, so the CLI cannot pass a
 /// chain list that disagrees with the projects being synced. Each project runs
 /// in its own blocking task that reports its own outcome, and
-/// `await_tasks_and_report` reduces the results to a single aggregate error
+/// `await_tasks_and_report` reduces the results to a single outcome
 /// (also surfacing any task panic).
-pub(crate) fn run_sync_for_projects(repos: Vec<RepoSync>) -> Result<(), String> {
-    let name_indices: Vec<(String, usize)> = repos
+pub(crate) fn run_sync_for_projects(repos: Vec<RepoSync>) -> Result<(), TaskRunError> {
+    let chain_pairs: Vec<(String, Vec<String>)> = repos
         .iter()
-        .enumerate()
-        .map(|(index, repo)| (repo.name.clone(), index))
-        .collect();
-    let chain_pairs: Vec<(String, Vec<String>)> = name_indices
-        .iter()
-        .map(|(name, _)| (name.clone(), vec![name.clone()]))
+        .map(|repo| {
+            let name = repo.name.clone();
+            (name.clone(), vec![name])
+        })
         .collect();
 
-    crate::exec::run_tui_with_sync(chain_pairs, move |tx| async move {
-        let mut task_handles = Vec::new();
+    match crate::exec::run_tui_with(
+        chain_pairs,
+        move |tx| async move {
+            let mut task_handles = Vec::new();
 
-        for (project_name, project_index) in name_indices {
-            let repo = match repos.iter().find(|r| r.name == project_name) {
-                Some(r) => r.clone(),
-                None => continue,
-            };
-            let tx_cb = tx.clone();
+            for (project_index, repo) in repos.into_iter().enumerate() {
+                let tx_cb = tx.clone();
 
-            let handle = tokio::task::spawn_blocking(move || {
-                crate::exec::send_tui_event(
-                    &tx_cb,
-                    TuiEvent::UpdateStatus(project_index, TaskStatus::Running),
-                );
-                let result = crate::exec::sync::sync_project_with_callback(&repo, |line: &str| {
+                let handle = tokio::task::spawn_blocking(move || {
                     crate::exec::send_tui_event(
                         &tx_cb,
-                        TuiEvent::AppendOutput(project_index, line.to_string()),
+                        TuiEvent::UpdateStatus(project_index, TaskStatus::Running),
                     );
+                    let result = sync_project_with_callback(&repo, |line: &str| {
+                        crate::exec::send_tui_event(
+                            &tx_cb,
+                            TuiEvent::AppendOutput(project_index, line.to_string()),
+                        );
+                    });
+                    report_task_outcome(
+                        &tx_cb,
+                        project_index,
+                        match &result {
+                            Ok(()) => TaskOutcome::Success,
+                            Err(error) => TaskOutcome::Error(error),
+                        },
+                    );
+                    result
                 });
-                report_task_outcome(
-                    &tx_cb,
-                    project_index,
-                    match &result {
-                        Ok(()) => TaskOutcome::Success,
-                        Err(error) => TaskOutcome::Error(error),
-                    },
-                );
-                result
-            });
 
-            task_handles.push((project_index, handle));
-        }
+                task_handles.push((project_index, handle));
+            }
 
-        await_tasks_and_report(&tx, task_handles, "One or more projects failed to sync").await
-    })?;
-    Ok(())
+            await_tasks_and_report(&tx, task_handles).await
+        },
+        crate::exec::tui::sync::render_sync_output,
+        None,
+    ) {
+        Ok(worker_result) => worker_result,
+        Err(message) => Err(TaskRunError::Infrastructure(message)),
+    }
 }

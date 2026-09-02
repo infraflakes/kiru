@@ -21,12 +21,12 @@ pub(super) fn parse_file(canon_path: &Path) -> Result<Program, CompileError> {
         .with_source_name(source_name.clone());
     let mut program = Program::new_with_source(source_name, source_text);
     while let Some(toplevel) = parser.parse_toplevel().map_err(|e| {
-        CompileError::Parse(vec![Diagnostic::new(
+        CompileError::diagnostic(Diagnostic::new(
             program.source_name.clone(),
             e.span,
             e.msg,
             program.source_text.clone(),
-        )])
+        ))
     })? {
         program.top_level_items.push(toplevel);
     }

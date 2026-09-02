@@ -85,12 +85,12 @@ impl LoweringState {
             .get(source_name)
             .cloned()
             .unwrap_or_default();
-        CompileError::Validation(vec![Diagnostic::new(
+        CompileError::diagnostic(Diagnostic::new(
             source_name.to_string(),
             Span::new(offset, len),
             msg,
             src,
-        )])
+        ))
     }
 }
 

@@ -10,8 +10,8 @@ enum Sexp {
     List(Vec<Sexp>),
 }
 
-/// Tokenize the textual kirufile into s-expression tokens.
-/// Lightweight token for the textual kirufile s-expression format.
+/// One lexical token of the kirufile s-expression grammar. The token text
+/// is carried alongside the kind in the `tokenize_kirufile` output.
 #[derive(Clone, Copy)]
 enum Token {
     LParen,
@@ -20,6 +20,7 @@ enum Token {
     Str,
 }
 
+/// Tokenize the textual kirufile into s-expression tokens.
 fn tokenize_kirufile(src: &str) -> Result<Vec<(Token, String)>, String> {
     let chars: Vec<char> = src.chars().collect();
     let mut i = 0;
@@ -166,7 +167,7 @@ fn expect_sym(items: &[Sexp], idx: usize, expected: &str) -> Result<(), String> 
 fn expect_str(items: &[Sexp], item_index: usize, ctx: &str) -> Result<String, String> {
     match items.get(item_index) {
         Some(Sexp::Str(s)) => Ok(s.clone()),
-        other => Err(format!("expected string for {} , found {:?}", ctx, other)),
+        other => Err(format!("expected string for {}, found {:?}", ctx, other)),
     }
 }
 

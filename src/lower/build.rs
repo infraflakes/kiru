@@ -34,7 +34,7 @@ pub(super) fn build_ir(state: LoweringState) -> Result<Ir, CompileError> {
                 match ir_projects.get(&call.project) {
                     Some(project) => {
                         if !project.functions.contains_key(&call.function) {
-                            return Err(CompileError::Validation(vec![Diagnostic::new(
+                            return Err(CompileError::diagnostic(Diagnostic::new(
                                 "<run>".to_string(),
                                 Span::new(0, 0),
                                 format!(
@@ -42,16 +42,16 @@ pub(super) fn build_ir(state: LoweringState) -> Result<Ir, CompileError> {
                                     run_name, call.function, call.project
                                 ),
                                 String::new(),
-                            )]));
+                            )));
                         }
                     }
                     None => {
-                        return Err(CompileError::Validation(vec![Diagnostic::new(
+                        return Err(CompileError::diagnostic(Diagnostic::new(
                             "<run>".to_string(),
                             Span::new(0, 0),
                             format!("run `{}`: unknown project `{}`", run_name, call.project),
                             String::new(),
-                        )]));
+                        )));
                     }
                 }
             }

@@ -178,18 +178,23 @@ pub(crate) async fn run_tui_event_loop(
 /// Set up the tokio runtime, build the model from chains, and run the TUI
 /// alongside the given worker future. `format_fn` produces the final text
 /// dump after the TUI closes; `None` skips the dump entirely (e.g. sync).
-pub(crate) fn run_tui_with<F, Fut>(
+///
+/// The outer error is an infrastructure failure (TUI panic, terminal error,
+/// worker panic) that has not been shown to the user anywhere. The inner
+/// result is the worker's own outcome, passed through untouched.
+pub(crate) fn run_tui_with<F, Fut, E>(
     chains: Vec<(String, Vec<String>)>,
     worker: F,
     render_fn: fn(&mut Frame, &Model, usize),
     format_fn: Option<fn(&Model) -> String>,
-) -> Result<(), String>
+) -> Result<Result<(), E>, String>
 where
     F: FnOnce(mpsc::UnboundedSender<TuiEvent>) -> Fut + Send + 'static,
-    Fut: Future<Output = Result<(), String>> + Send + 'static,
+    Fut: Future<Output = Result<(), E>> + Send + 'static,
+    E: Send + 'static,
 {
     let tokio_runtime = tokio::runtime::Runtime::new().map_err(|e| format!("{}", e))?;
-    let result: Result<(), String> = tokio_runtime.block_on(async {
+    tokio_runtime.block_on(async {
         let mut model = Model::new();
         for (label, task_names) in chains {
             model.add_chain(label, task_names);
@@ -222,40 +227,9 @@ where
             std::process::exit(130);
         }
 
-        let worker_result: Result<(), String> = worker
+        let worker_result: Result<(), E> = worker
             .await
             .map_err(|e| format!("worker panicked: {}", e))?;
-        worker_result
-    });
-    result
-}
-
-/// Run the TUI with run-specific render and format functions.
-pub(crate) fn run_tui_with_run<F, Fut>(
-    chains: Vec<(String, Vec<String>)>,
-    worker: F,
-) -> Result<(), String>
-where
-    F: FnOnce(mpsc::UnboundedSender<TuiEvent>) -> Fut + Send + 'static,
-    Fut: Future<Output = Result<(), String>> + Send + 'static,
-{
-    run_tui_with(
-        chains,
-        worker,
-        run::render_run_output,
-        Some(run::format_final_output),
-    )
-}
-
-/// Run the TUI with the sync-specific render function. Sync produces no
-/// final text dump, so the format function is omitted.
-pub(crate) fn run_tui_with_sync<F, Fut>(
-    chains: Vec<(String, Vec<String>)>,
-    worker: F,
-) -> Result<(), String>
-where
-    F: FnOnce(mpsc::UnboundedSender<TuiEvent>) -> Fut + Send + 'static,
-    Fut: Future<Output = Result<(), String>> + Send + 'static,
-{
-    run_tui_with(chains, worker, sync::render_sync_output, None)
+        Ok(worker_result)
+    })
 }

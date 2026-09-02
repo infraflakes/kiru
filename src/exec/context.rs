@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// Callback invoked for each emitted output line. This is the only output
-/// sink: every execution path (the `run`/`sync` TUI, the direct `fn` command)
-/// supplies one, so there is no separate "write straight to stdout" mode.
+/// sink: every execution path (the `run` and `sync` TUIs) supplies one, so
+/// there is no separate "write straight to stdout" mode.
 pub(crate) type OutputCallback = Arc<dyn Fn(String) + Send + Sync>;
 
 /// Runtime execution context for a resolved function body.
