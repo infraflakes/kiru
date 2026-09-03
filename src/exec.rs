@@ -9,7 +9,11 @@ pub(crate) mod tui;
 
 pub(crate) use context::OutputCallback;
 pub(crate) use executor::Executor;
-pub(crate) use tui::{TaskStatus, TuiEvent, run_tui_with, send_tui_event};
+pub(crate) use sync::clone::{RepoSync, run_sync_for_projects};
+pub(crate) use tui::model::TaskStatus;
+pub(crate) use tui::run::{format_final_output, render_run_output};
+pub(crate) use tui::sync::render_sync_output;
+pub(crate) use tui::{TuiEvent, run_tui_with, send_tui_event};
 
 use crate::exec::error::RuntimeError;
 use tokio::sync::mpsc;

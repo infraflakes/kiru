@@ -9,7 +9,6 @@ impl Parser {
     /// `@( ... )` template token, or a bare identifier treated as a `@(name)`
     /// variable reference (used for `switch` conditions).
     pub(crate) fn parse_expr(&mut self) -> Result<Template, ParseError> {
-        self.err_on_illegal_token()?;
         match &self.current_token().token_type {
             TokenType::Template(t) => {
                 let t = t.clone();

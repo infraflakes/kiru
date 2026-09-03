@@ -1,4 +1,5 @@
-use super::{SPINNER_FRAMES, TaskStatus};
+use super::SPINNER_FRAMES;
+use super::model::TaskStatus;
 use crate::exec::colors;
 use ratatui::style::Color;
 

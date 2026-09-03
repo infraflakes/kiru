@@ -2,10 +2,9 @@
 //! through the TUI, reporting each step's status as it completes.
 
 use crate::exec::error::RuntimeError;
-use crate::exec::tui::run::{format_final_output, render_run_output};
 use crate::exec::{
     Executor, TaskOutcome, TaskRunError, TaskStatus, TuiEvent, await_tasks_and_report,
-    report_task_outcome,
+    format_final_output, render_run_output, report_task_outcome,
 };
 use crate::ir::{Call, Ir};
 use std::collections::BTreeMap;

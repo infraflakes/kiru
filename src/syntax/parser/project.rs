@@ -19,8 +19,8 @@ impl Parser {
     fn parse_project_body(&mut self) -> Result<Vec<Stmt>, ParseError> {
         let mut body = Vec::new();
         while self.current_token().token_type != TokenType::RBrace {
-            self.err_on_illegal_token()?;
             if self.current_token().token_type == TokenType::Eof {
+                self.take_pending_lex_error()?;
                 return Err(ParseError::new(
                     self.eof_aware_span(),
                     "expected `}` to close project body".to_string(),

@@ -1,8 +1,8 @@
 mod cli;
+mod compile;
 mod diagnostics;
 mod exec;
 mod ir;
-mod lower;
 mod syntax;
 
 fn main() {

@@ -4,7 +4,7 @@ use super::*;
 
 fn sample_ir() -> Ir {
     let check_cmd = Template {
-        segments: vec![Segment::Command(Template::lit("test -f $HOME"))],
+        parts: vec![Segment::Cmd(Template::lit("test -f $HOME"))],
     };
 
     let mut project = Project::default();
@@ -90,5 +90,13 @@ fn test_kirufile_version_entry_rejected() {
     // The version marker is gone from the format; kirufiles carrying it
     // (from older builds) must be rejected, not silently tolerated.
     let text = "(kirufile\n  (version 1)\n)\n";
+    assert!(Ir::deserialize(text).is_err());
+}
+
+#[test]
+fn test_kirufile_trailing_content_rejected() {
+    // Anything after the root s-expression means a truncated or
+    // concatenated file; it must never half-load.
+    let text = "(kirufile)\n(run rogue (stage (call p f)))\n";
     assert!(Ir::deserialize(text).is_err());
 }

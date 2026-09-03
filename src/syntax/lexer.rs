@@ -1,8 +1,12 @@
+use crate::diagnostics::Span;
+use crate::syntax::error::ParseError;
 use crate::syntax::token::{Token, TokenType};
 
 mod tokenizer;
 
-/// Character-level lexer that emits tokens from source text.
+/// Character-level lexer that emits tokens from source text. Lexing is
+/// strict: any character or template that cannot form a token is an error
+/// carrying its span, never a token.
 #[derive(Debug)]
 pub(crate) struct Lexer {
     /// Source characters as a Vec<char> for O(1) index access.
@@ -56,8 +60,21 @@ impl Lexer {
         Token::new(ty, start_byte_offset, self.byte_offset - start_byte_offset)
     }
 
-    /// Returns the next Token from the input.
-    pub(crate) fn next_token(&mut self) -> Token {
+    /// Build the error for a character (or template) that cannot form a token.
+    fn unexpected(&self, msg: String, start_byte_offset: usize) -> ParseError {
+        ParseError::new(
+            Span::new(
+                start_byte_offset,
+                (self.byte_offset - start_byte_offset).max(1),
+            ),
+            msg,
+        )
+    }
+
+    /// Returns the next Token from the input, or a lex error with its span.
+    /// Every error path consumes at least one character, so callers always
+    /// make progress.
+    pub(crate) fn next_token(&mut self) -> Result<Token, ParseError> {
         loop {
             self.skip_whitespace();
             if self.ch != Some('#') {
@@ -70,18 +87,18 @@ impl Lexer {
         let ch = self.ch;
 
         match ch {
-            None => Token::new(TokenType::Eof, start_byte_offset, 0),
-            Some('{') => self.single_char_token(TokenType::LBrace, start_byte_offset),
-            Some('}') => self.single_char_token(TokenType::RBrace, start_byte_offset),
+            None => Ok(Token::new(TokenType::Eof, start_byte_offset, 0)),
+            Some('{') => Ok(self.single_char_token(TokenType::LBrace, start_byte_offset)),
+            Some('}') => Ok(self.single_char_token(TokenType::RBrace, start_byte_offset)),
             Some('(') => self.read_template_token(start_byte_offset),
-            Some(')') => self.single_char_token(TokenType::RParen, start_byte_offset),
-            Some(';') => self.single_char_token(TokenType::Semicolon, start_byte_offset),
+            Some(')') => Ok(self.single_char_token(TokenType::RParen, start_byte_offset)),
+            Some(';') => Ok(self.single_char_token(TokenType::Semicolon, start_byte_offset)),
             Some('=') if self.peek_next() == Some('>') => {
-                self.two_char_token(TokenType::ChainArrow, start_byte_offset)
+                Ok(self.two_char_token(TokenType::ChainArrow, start_byte_offset))
             }
-            Some('=') => self.single_char_token(TokenType::Assign, start_byte_offset),
+            Some('=') => Ok(self.single_char_token(TokenType::Assign, start_byte_offset)),
             Some(':') if self.peek_next() == Some(':') => {
-                self.two_char_token(TokenType::NamespaceSep, start_byte_offset)
+                Ok(self.two_char_token(TokenType::NamespaceSep, start_byte_offset))
             }
             Some('$') if self.peek_next() == Some('(') => {
                 self.read_template_token(start_byte_offset)
@@ -89,53 +106,54 @@ impl Lexer {
             Some('@') if self.peek_next() == Some('(') => {
                 self.read_template_token(start_byte_offset)
             }
-            Some(':') => self.single_char_token(
-                TokenType::Illegal("unexpected character: :".to_string()),
-                start_byte_offset,
-            ),
-            Some(ch) if ch.is_alphabetic() || ch == '_' => self.read_ident(),
-            Some(ch) => self.single_char_token(
-                TokenType::Illegal(format!("unexpected character: {}", ch)),
-                start_byte_offset,
-            ),
+            Some(':') => {
+                self.read_char();
+                Err(self.unexpected("unexpected character: :".to_string(), start_byte_offset))
+            }
+            Some(ch) if ch.is_alphabetic() || ch == '_' => Ok(self.read_ident()),
+            Some(ch) => {
+                self.read_char();
+                Err(self.unexpected(format!("unexpected character: {ch}"), start_byte_offset))
+            }
         }
     }
 }
 
 #[cfg(test)]
-/// Drive the lexer to EOF, returning every token (including EOF) in order.
-fn drain_tokens(input: &str) -> Vec<Token> {
+/// Drive the lexer to EOF, returning every token (including EOF) in order
+/// alongside every lex error message.
+fn drain_tokens(input: &str) -> (Vec<Token>, Vec<String>) {
     let mut lexer = Lexer::new(input.to_string());
     let mut tokens = Vec::new();
+    let mut errors = Vec::new();
     loop {
-        let tok = lexer.next_token();
-        let is_eof = matches!(tok.token_type, TokenType::Eof);
-        tokens.push(tok);
-        if is_eof {
-            break;
+        match lexer.next_token() {
+            Ok(tok) => {
+                let is_eof = matches!(tok.token_type, TokenType::Eof);
+                tokens.push(tok);
+                if is_eof {
+                    break;
+                }
+            }
+            Err(e) => errors.push(e.msg),
         }
     }
-    tokens
+    (tokens, errors)
 }
 
 #[cfg(test)]
 fn collect_tokens(input: &str) -> Vec<TokenType> {
     drain_tokens(input)
+        .0
         .into_iter()
-        .filter(|tok| !matches!(tok.token_type, TokenType::Eof | TokenType::Illegal(_)))
+        .filter(|tok| !matches!(tok.token_type, TokenType::Eof))
         .map(|tok| tok.token_type)
         .collect()
 }
 
 #[cfg(test)]
 fn extract_errors(input: &str) -> Vec<String> {
-    drain_tokens(input)
-        .into_iter()
-        .filter_map(|tok| match tok.token_type {
-            TokenType::Illegal(msg) => Some(msg),
-            _ => None,
-        })
-        .collect()
+    drain_tokens(input).1
 }
 
 #[cfg(test)]
@@ -155,7 +173,7 @@ mod tests {
         for (input, expected) in cases {
             let mut lexer = Lexer::new(input.to_string());
             assert_eq!(
-                lexer.next_token().token_type,
+                lexer.next_token().unwrap().token_type,
                 expected,
                 "input: {:?}",
                 input
@@ -198,7 +216,7 @@ mod tests {
         for ident in cases {
             let mut lexer = Lexer::new(ident.to_string());
             assert_eq!(
-                lexer.next_token().token_type,
+                lexer.next_token().unwrap().token_type,
                 TokenType::Ident(ident.to_string()),
                 "ident: {:?}",
                 ident
@@ -217,7 +235,7 @@ mod tests {
         ];
         for (input, _, _) in cases {
             let mut lexer = Lexer::new(input.to_string());
-            let tok = lexer.next_token();
+            let tok = lexer.next_token().unwrap();
             assert!(
                 matches!(&tok.token_type, TokenType::Template(_)),
                 "input {:?} should be a template, got {:?}",
@@ -299,12 +317,15 @@ mod tests {
     fn test_namespace_sep() {
         let mut lexer = Lexer::new("a::b".to_string());
         assert_eq!(
-            lexer.next_token().token_type,
+            lexer.next_token().unwrap().token_type,
             TokenType::Ident("a".to_string())
         );
-        assert_eq!(lexer.next_token().token_type, TokenType::NamespaceSep);
         assert_eq!(
-            lexer.next_token().token_type,
+            lexer.next_token().unwrap().token_type,
+            TokenType::NamespaceSep
+        );
+        assert_eq!(
+            lexer.next_token().unwrap().token_type,
             TokenType::Ident("b".to_string())
         );
     }

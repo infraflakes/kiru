@@ -5,11 +5,11 @@ mod pager;
 mod status;
 mod sync;
 
-pub(crate) use args::{Cli, Commands};
+use args::{Cli, Commands};
 
+use crate::compile::CompileError;
 use crate::exec::TaskRunError;
 use crate::ir::Ir;
-use crate::lower::CompileError;
 use clap::Parser;
 use std::path::PathBuf;
 
@@ -77,7 +77,7 @@ pub(crate) fn run_cli() -> Result<(), CliError> {
             name,
             config,
             kirufile,
-        } => commands::execute_run_block(config, kirufile, name),
+        } => commands::run::execute_run_block(config, kirufile, name),
         Commands::Compile { config, output } => compile::run_compile_command(config, output),
         Commands::Version => {
             println!("kiru {}", env!("CARGO_PKG_VERSION"));

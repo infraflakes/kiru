@@ -26,7 +26,7 @@ pub(crate) fn run_compile_command(
     let input = resolve_compile_input(config_arg);
     let output = resolve_compile_output(output);
 
-    let ir = crate::lower::lower_and_resolve(&input).map_err(super::compile_error_to_cli_error)?;
+    let ir = crate::compile::compile_path(&input).map_err(super::compile_error_to_cli_error)?;
 
     let text = ir.serialize();
     std::fs::write(&output, text).map_err(|e| {

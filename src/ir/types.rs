@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 
 /// A single piece of a [`Template`].
 ///
-/// - `Literal` is literal text.
-/// - `Command` is a `$(command)` substitution whose inner template is run through
+/// - `Lit` is literal text.
+/// - `Cmd` is a `$(command)` substitution whose inner template is run through
 ///   `shell -c` at runtime and replaced by its captured stdout.
 ///
 /// `@(var)` references no longer exist in the IR: the compiler inlines every
@@ -13,16 +13,16 @@ use std::collections::BTreeMap;
 /// no runtime variable scope to resolve against.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Segment {
-    Literal(String),
+    Lit(String),
     /// A `$(command)` substitution. The inner template is run through `shell -c`
     /// at runtime.
-    Command(Template),
+    Cmd(Template),
 }
 
 /// A template: the single string-valued form in the DSL.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct Template {
-    pub(crate) segments: Vec<Segment>,
+    pub(crate) parts: Vec<Segment>,
 }
 
 impl Template {
@@ -30,7 +30,7 @@ impl Template {
     #[cfg(test)]
     pub(crate) fn lit(s: &str) -> Self {
         Template {
-            segments: vec![Segment::Literal(s.to_string())],
+            parts: vec![Segment::Lit(s.to_string())],
         }
     }
 }

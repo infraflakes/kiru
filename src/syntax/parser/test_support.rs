@@ -12,10 +12,8 @@ pub(crate) fn count_fn_stmt_types(body: &[FnStmt]) -> Vec<&'static str> {
     body.iter()
         .map(|s| match s {
             FnStmt::Log(_) => "log",
-            FnStmt::Bind { target: None, .. } => "run_shell_cmd",
-            FnStmt::Bind {
-                target: Some(_), ..
-            } => "var",
+            FnStmt::RunShellCmd(_) => "run_shell_cmd",
+            FnStmt::Bind { .. } => "var",
             FnStmt::Cd(_) => "cd",
             FnStmt::EnvBlock { .. } => "env",
             FnStmt::Switch { .. } => "switch",

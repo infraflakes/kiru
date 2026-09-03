@@ -12,11 +12,11 @@ use tokio::sync::mpsc;
 
 mod crossterm_backend;
 pub(super) mod model;
-pub(crate) mod render;
-pub(crate) mod run;
-pub(crate) mod sync;
+pub(super) mod render;
+pub(super) mod run;
+pub(super) mod sync;
 
-pub(crate) use model::{Model, TaskRow, TaskStatus};
+use model::{Model, TaskRow, TaskStatus};
 
 use crossterm_backend::SafeBackend;
 

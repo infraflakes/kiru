@@ -5,7 +5,7 @@ use crate::syntax::Stmt;
 use std::collections::BTreeMap;
 
 use super::inline::inline_dsl_template;
-use super::{CompileError, LoweringState, PendingProject};
+use super::{CompileError, CompileState, PendingProject};
 
 pub(super) fn compile_var_decl(
     name: &str,
@@ -13,7 +13,7 @@ pub(super) fn compile_var_decl(
     offset: usize,
     len: usize,
     source_name: &str,
-    state: &mut LoweringState,
+    state: &mut CompileState,
 ) -> Result<(), CompileError> {
     let inlined = inline_dsl_template(value, &state.globals, &state.source_texts, source_name)?;
     if state.globals.contains_key(name) {
@@ -34,7 +34,7 @@ pub(super) fn compile_run_decl(
     offset: usize,
     len: usize,
     source_name: &str,
-    state: &mut LoweringState,
+    state: &mut CompileState,
 ) -> Result<(), CompileError> {
     if state.run_blocks.contains_key(name) {
         return Err(state.spanned(
@@ -56,7 +56,15 @@ pub(super) fn compile_run_decl(
                 .collect()
         })
         .collect();
-    state.run_blocks.insert(name.to_string(), ir_calls);
+    state.run_blocks.insert(
+        name.to_string(),
+        super::PendingRunBlock {
+            stages: ir_calls,
+            source_name: source_name.to_string(),
+            offset,
+            len,
+        },
+    );
     Ok(())
 }
 
@@ -64,7 +72,7 @@ pub(super) fn compile_project_body(
     name: &str,
     body: &[Stmt],
     source_name: &str,
-    state: &mut LoweringState,
+    state: &mut CompileState,
 ) -> Result<(), CompileError> {
     let pending = state
         .projects
@@ -117,7 +125,7 @@ pub(super) fn compile_project_body(
                         *len,
                     ));
                 }
-                let lowered = super::inline::lower_function_body(
+                let lowered = super::inline::compile_function_body(
                     fn_body,
                     &scope,
                     &state.source_texts,

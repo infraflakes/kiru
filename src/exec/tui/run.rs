@@ -1,5 +1,6 @@
+use super::MAX_PANEL_HEIGHT;
+use super::model::{Model, TaskRow, TaskStatus};
 use super::render::{self, status_color, status_glyph, status_label};
-use super::{MAX_PANEL_HEIGHT, Model, TaskRow, TaskStatus};
 use crate::exec::colors;
 use ratatui::{
     Frame,

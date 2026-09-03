@@ -1,6 +1,6 @@
 #[test]
 fn test_compile_basic_project() {
-    let ir = crate::lower::test_support::compile_str(
+    let ir = crate::compile::test_support::compile_str(
         "\
 var home_dir = $(echo /home/user);
 pr nix {
@@ -41,14 +41,14 @@ fn test_compile_unknown_run_reference_fails() {
         "pr nix { fn eval { log (x); }; } run bad { nix::missing; };",
     )
     .unwrap();
-    let result = crate::lower::lower_and_resolve(&file);
+    let result = crate::compile::compile_path(&file);
     let _ = std::fs::remove_file(&file);
     assert!(result.is_err());
 }
 
 #[test]
 fn test_compile_switch_lowering() {
-    let ir = crate::lower::test_support::compile_str(
+    let ir = crate::compile::test_support::compile_str(
         "\
 pr p {
     var os = (linux);

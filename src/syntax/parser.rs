@@ -14,7 +14,7 @@ mod expr;
 mod project;
 
 #[cfg(test)]
-pub(crate) mod test_support;
+mod test_support;
 
 /// Recursive-descent parser for the kiru DSL. Wraps a `Lexer` and produces
 /// a sequence of `TopLevel` items (statements and imports).
@@ -25,20 +25,50 @@ pub(crate) struct Parser {
     /// blocks from a bare identifier in a function body.
     next: Token,
     source_len: usize,
+    /// First lex error hit while filling the token windows. Lex errors are
+    /// deferred to the next `parse_toplevel` call so the statement currently
+    /// being parsed finishes normally before compilation aborts.
+    pending_lex_error: Option<ParseError>,
 }
 
 impl Parser {
     /// Constructs a new Parser from the given Lexer, advancing to the first token.
-    pub(crate) fn new(mut lexer: Lexer) -> Self {
+    pub(crate) fn new(lexer: Lexer) -> Self {
         let source_len = lexer.source_len();
-        let current = lexer.next_token();
-        let next = lexer.next_token();
-        Parser {
+        let mut parser = Parser {
             lexer,
-            current,
-            next,
+            current: Token::new(TokenType::Eof, source_len, 0),
+            next: Token::new(TokenType::Eof, source_len, 0),
             source_len,
-        }
+            pending_lex_error: None,
+        };
+        // Fill both lookahead slots (current + next) from the lexer.
+        parser.fill_token_window();
+        parser.fill_token_window();
+        parser
+    }
+
+    /// Pulls one token from the lexer into `self.next`. A lex error is
+    /// stashed (first one wins) and an EOF token takes its place, so the
+    /// token window always holds usable tokens.
+    fn pull_token(&mut self) {
+        let token = match self.lexer.next_token() {
+            Ok(token) => token,
+            Err(e) => {
+                if self.pending_lex_error.is_none() {
+                    self.pending_lex_error = Some(e);
+                }
+                Token::new(TokenType::Eof, self.source_len, 0)
+            }
+        };
+        self.next = token;
+    }
+
+    /// Refills the lookahead window: `current` becomes the old `next` and a
+    /// fresh token is pulled from the lexer.
+    fn fill_token_window(&mut self) {
+        self.current = std::mem::replace(&mut self.next, Token::new(TokenType::Eof, 0, 0));
+        self.pull_token();
     }
 
     /// Returns a reference to the current token.
@@ -48,7 +78,18 @@ impl Parser {
 
     /// Advances to the next token from the lexer.
     fn advance(&mut self) {
-        self.current = std::mem::replace(&mut self.next, self.lexer.next_token());
+        self.fill_token_window();
+    }
+
+    /// Surfaces a deferred lex error. Every site that reports "end of file"
+    /// must call this first: an EOF reached while a lex error is pending is
+    /// the synthetic EOF substituted for the unreadable token, and the real
+    /// error is the pending one.
+    fn take_pending_lex_error(&mut self) -> Result<(), ParseError> {
+        match self.pending_lex_error.take() {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
     }
 
     /// Returns a Span that safely handles EOF by pointing at the last byte.
@@ -154,15 +195,6 @@ impl Parser {
         Ok((project, function, function_end))
     }
 
-    /// Returns an error if the current token is an illegal (lexer-error) token,
-    /// otherwise `Ok(())`.
-    fn err_on_illegal_token(&self) -> Result<(), ParseError> {
-        if let TokenType::Illegal(msg) = &self.current_token().token_type {
-            return Err(ParseError::new(self.eof_aware_span(), msg.clone()));
-        }
-        Ok(())
-    }
-
     /// Builds the error for an unexpected statement-start token.
     fn unexpected_stmt_start_error(&self, expected: &'static str) -> ParseError {
         if matches!(&self.current_token().token_type, TokenType::Ident(i) if i == "_") {
@@ -181,12 +213,15 @@ impl Parser {
         )
     }
 
-    /// Parses one top-level item, returning None on EOF.
+    /// Parses one top-level item, returning None on EOF. A deferred lex
+    /// error surfaces here before anything else parses.
     pub(crate) fn parse_toplevel(&mut self) -> Result<Option<TopLevel>, ParseError> {
+        if let Some(err) = self.pending_lex_error.take() {
+            return Err(err);
+        }
         if self.current_token().token_type == TokenType::Eof {
             return Ok(None);
         }
-        self.err_on_illegal_token()?;
         match &self.current_token().token_type {
             TokenType::Import => {
                 self.advance();
@@ -225,7 +260,6 @@ impl Parser {
 
     /// Dispatches to the correct parser based on the current token for top-level statements.
     fn parse_top_level_stmt(&mut self) -> Result<Stmt, ParseError> {
-        self.err_on_illegal_token()?;
         match self.current_token().token_type {
             TokenType::Var => self.parse_var_decl(),
             TokenType::Pr => self.parse_project_decl(),
@@ -275,7 +309,6 @@ impl Parser {
 
     /// Dispatches to the correct statement parser for statements inside a function body.
     pub(crate) fn parse_fn_stmt(&mut self) -> Result<FnStmt, ParseError> {
-        self.err_on_illegal_token()?;
         match &self.current_token().token_type {
             TokenType::Log => self.parse_log_stmt(),
             TokenType::Cd => self.parse_cd_stmt(),
@@ -304,6 +337,7 @@ impl Parser {
         let mut items = Vec::new();
         while self.current_token().token_type != TokenType::RBrace {
             if self.current_token().token_type == TokenType::Eof {
+                self.take_pending_lex_error()?;
                 return Err(ParseError::new(
                     self.eof_aware_span(),
                     format!("expected `}}` {}, found end of file", close_ctx),

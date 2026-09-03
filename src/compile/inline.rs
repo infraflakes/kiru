@@ -77,42 +77,42 @@ pub(super) fn inline_dsl_template(
 
 /// Lower an already-inlined DSL `Template` (no `Var` parts) into an IR
 /// `Template`. Commands survive as `Cmd` nodes for the executor to execute.
-pub(super) fn lower_template(tmpl: &Template) -> IrTemplate {
+pub(super) fn compile_template(tmpl: &Template) -> IrTemplate {
     IrTemplate {
-        segments: tmpl
+        parts: tmpl
             .parts
             .iter()
             .map(|p| match p {
-                DslPart::Lit(s) => Segment::Literal(s.clone()),
+                DslPart::Lit(s) => Segment::Lit(s.clone()),
                 DslPart::Var(_) => {
                     unreachable!("variables are inlined away before lowering")
                 }
-                DslPart::Cmd(inner) => Segment::Command(lower_template(inner)),
+                DslPart::Cmd(inner) => Segment::Cmd(compile_template(inner)),
             })
             .collect(),
     }
 }
 
-/// Lower a function body into IR `Instruction`s, inlining every `@(var)`
+/// Compile a function body into IR `Instruction`s, inlining every `@(var)`
 /// reference (against `static_scope` plus function-local `bind`s) as it goes.
 ///
 /// Function-local `var x = T` maps name `x` to template `T` in the local
 /// scope so later references resolve to `T`. The bind itself does NOT
 /// emit an `Instruction`: execution is deferred to each use site via tolerant
-/// `capture`. Only bare `$(cmd);` (no target) emits strict `Instruction::RunShellCmd`.
+/// `capture`. Only bare `$(cmd);` emits strict `Instruction::RunShellCmd`.
 /// Nested `env`/`switch` bodies get a *copy* of the local scope so their binds
 /// do not leak into the surrounding body.
-pub(super) fn lower_function_body(
+pub(super) fn compile_function_body(
     stmts: &[crate::syntax::FnStmt],
     static_scope: &BTreeMap<String, Template>,
     sources: &HashMap<String, String>,
     source_name: &str,
 ) -> Result<Vec<Instruction>, CompileError> {
     let mut local_scope = static_scope.clone();
-    lower_fn_stmts(stmts, &mut local_scope, sources, source_name)
+    compile_fn_stmts(stmts, &mut local_scope, sources, source_name)
 }
 
-fn lower_fn_stmts(
+fn compile_fn_stmts(
     stmts: &[crate::syntax::FnStmt],
     scope: &mut BTreeMap<String, Template>,
     sources: &HashMap<String, String>,
@@ -122,42 +122,39 @@ fn lower_fn_stmts(
     for stmt in stmts {
         match stmt {
             crate::syntax::FnStmt::Log(t) => {
-                out.push(Instruction::Log(lower_template(&inline_dsl_template(
+                out.push(Instruction::Log(compile_template(&inline_dsl_template(
                     t,
                     scope,
                     sources,
                     source_name,
                 )?)));
             }
-            crate::syntax::FnStmt::Bind { target, value } => {
+            crate::syntax::FnStmt::Bind { name, value } => {
                 let inlined = inline_dsl_template(value, scope, sources, source_name)?;
-                match target {
-                    Some(name) => {
-                        scope.insert(name.clone(), inlined);
-                        // Assignment bindings are fully inlined into scope.
-                        // No runtime command emitted: execution happens lazily at
-                        // each use site via tolerant capture (Switch/Log/Cd/Env).
-                    }
-                    None => {
-                        let ir = lower_template(&inlined);
-                        let has_cmd = ir
-                            .segments
-                            .iter()
-                            .any(|s| matches!(s, crate::ir::Segment::Command(_)));
-                        if !has_cmd {
-                            return Err(crate::lower::CompileError::diagnostic(Diagnostic::new(
-                                source_name.to_string(),
-                                Span::new(value.offset, value.len.max(1)),
-                                "bare template is not a statement, wrap the command in $(...) or prefix with log, cd, var, env or switch",
-                                sources.get(source_name).cloned().unwrap_or_default(),
-                            )));
-                        }
-                        out.push(Instruction::RunShellCmd { value: ir });
-                    }
+                scope.insert(name.clone(), inlined);
+                // Assignment bindings are fully inlined into scope.
+                // No runtime command emitted: execution happens lazily at
+                // each use site via tolerant capture (Switch/Log/Cd/Env).
+            }
+            crate::syntax::FnStmt::RunShellCmd(value) => {
+                let ir =
+                    compile_template(&inline_dsl_template(value, scope, sources, source_name)?);
+                let has_cmd = ir
+                    .parts
+                    .iter()
+                    .any(|s| matches!(s, crate::ir::Segment::Cmd(_)));
+                if !has_cmd {
+                    return Err(crate::compile::CompileError::diagnostic(Diagnostic::new(
+                        source_name.to_string(),
+                        Span::new(value.offset, value.len.max(1)),
+                        "bare template is not a statement, wrap the command in $(...) or prefix with log, cd, var, env or switch",
+                        sources.get(source_name).cloned().unwrap_or_default(),
+                    )));
                 }
+                out.push(Instruction::RunShellCmd { value: ir });
             }
             crate::syntax::FnStmt::Cd(t) => {
-                out.push(Instruction::Cd(lower_template(&inline_dsl_template(
+                out.push(Instruction::Cd(compile_template(&inline_dsl_template(
                     t,
                     scope,
                     sources,
@@ -170,7 +167,7 @@ fn lower_fn_stmts(
                     .map(|p| -> Result<EnvPair, CompileError> {
                         Ok(EnvPair {
                             key: p.key.clone(),
-                            value: lower_template(&inline_dsl_template(
+                            value: compile_template(&inline_dsl_template(
                                 &p.value,
                                 scope,
                                 sources,
@@ -180,12 +177,12 @@ fn lower_fn_stmts(
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let mut inner = scope.clone();
-                let body = lower_fn_stmts(body, &mut inner, sources, source_name)?;
+                let body = compile_fn_stmts(body, &mut inner, sources, source_name)?;
                 out.push(Instruction::Env { pairs, body });
             }
             crate::syntax::FnStmt::Switch { subject, arms } => {
                 let subject =
-                    lower_template(&inline_dsl_template(subject, scope, sources, source_name)?);
+                    compile_template(&inline_dsl_template(subject, scope, sources, source_name)?);
                 let mut arms_out = Vec::new();
                 for arm in arms {
                     let pattern = match &arm.pattern {
@@ -193,7 +190,7 @@ fn lower_fn_stmts(
                         DslArmPattern::Default => ArmPattern::Default,
                     };
                     let mut inner = scope.clone();
-                    let body = lower_fn_stmts(&arm.body, &mut inner, sources, source_name)?;
+                    let body = compile_fn_stmts(&arm.body, &mut inner, sources, source_name)?;
                     arms_out.push(Arm { pattern, body });
                 }
                 out.push(Instruction::Switch {

@@ -1,5 +1,6 @@
+use super::SPINNER_FRAMES;
+use super::model::Model;
 use super::render;
-use super::{Model, SPINNER_FRAMES};
 use crate::exec::colors;
 use ratatui::{
     Frame,

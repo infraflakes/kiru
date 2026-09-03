@@ -7,7 +7,7 @@ use crate::syntax::lexer::Lexer;
 use crate::syntax::{Part as DslPart, Program, Template};
 use std::path::{Path, PathBuf};
 
-use super::{CompileError, LoweringState, compile_source_file, inline::inline_dsl_template};
+use super::{CompileError, CompileState, compile_source_file, inline::inline_dsl_template};
 
 pub(super) fn parse_file(canon_path: &Path) -> Result<Program, CompileError> {
     let source_text = std::fs::read_to_string(canon_path).map_err(|e| {
@@ -16,7 +16,15 @@ pub(super) fn parse_file(canon_path: &Path) -> Result<Program, CompileError> {
             format!("failed to read {}: {}", canon_path.display(), e),
         ))
     })?;
-    let source_name = canon_path.display().to_string();
+    parse_source(canon_path.display().to_string(), source_text)
+}
+
+/// Parse a named source string into a `Program`. Shared by the file-based
+/// entry (`parse_file`) and the in-memory entry (`compile_source`).
+pub(super) fn parse_source(
+    source_name: String,
+    source_text: String,
+) -> Result<Program, CompileError> {
     let mut parser = crate::syntax::Parser::new(Lexer::new(source_text.clone()));
     let mut program = Program::new_with_source(source_name, source_text);
     while let Some(toplevel) = parser.parse_toplevel().map_err(|e| {
@@ -34,7 +42,7 @@ pub(super) fn parse_file(canon_path: &Path) -> Result<Program, CompileError> {
 
 pub(super) fn load_import(
     path: &Template,
-    state: &mut LoweringState,
+    state: &mut CompileState,
     program: &Program,
 ) -> Result<(), CompileError> {
     let inlined = inline_dsl_template(
@@ -130,7 +138,7 @@ fn resolve_import_candidates(base_dir: &Path, path_str: &str) -> Vec<PathBuf> {
 /// Custom shell/timeout apply at run time only.
 pub(super) fn eval_path_template(
     tmpl: &Template,
-    state: &mut LoweringState,
+    state: &mut CompileState,
     source_name: &str,
 ) -> Result<String, CompileError> {
     let mut out = String::new();

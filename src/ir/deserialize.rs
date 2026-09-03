@@ -191,16 +191,16 @@ fn read_template(node: &Sexp) -> Result<Template, String> {
         match pitems.first() {
             Some(Sexp::Sym(s)) if s == "lit" => {
                 let text = expect_str(pitems, 1, "lit")?;
-                segments.push(Segment::Literal(text));
+                segments.push(Segment::Lit(text));
             }
             Some(Sexp::Sym(s)) if s == "cmd" => {
                 let inner = read_template(&pitems[1])?;
-                segments.push(Segment::Command(inner));
+                segments.push(Segment::Cmd(inner));
             }
             other => return Err(format!("unknown segment: {:?}", other)),
         }
     }
-    Ok(Template { segments })
+    Ok(Template { parts: segments })
 }
 
 fn read_instructions(nodes: &[Sexp]) -> Result<Vec<Instruction>, String> {
@@ -305,11 +305,20 @@ fn parse_run_entry(ni: &[Sexp]) -> Result<(String, Vec<Vec<Call>>), String> {
 }
 
 impl Ir {
-    /// Parse a textual kirufile into an `Ir`.
+    /// Parse a textual kirufile into an `Ir`. Trailing text after the root
+    /// s-expression is rejected: a truncated or concatenated kirufile must
+    /// never half-load.
     pub(crate) fn deserialize(src: &str) -> Result<Ir, String> {
         let tokens = tokenize_kirufile(src)?;
         let mut pos = 0;
         let root = parse_sexp_tokens(&tokens, &mut pos)?;
+        if pos != tokens.len() {
+            return Err(format!(
+                "unexpected content after kirufile root (token {} of {})",
+                pos + 1,
+                tokens.len()
+            ));
+        }
         let items = as_list(&root).ok_or("kirufile must be a list".to_string())?;
         expect_sym(items, 0, "kirufile")?;
 

@@ -10,10 +10,10 @@ pub(crate) fn quote_string(s: &str) -> String {
 /// Append a `Template` as a `(t ...)` s-expression node to `buf`.
 fn fmt_template(buf: &mut String, tmpl: &Template) {
     buf.push_str("(t");
-    for segment in &tmpl.segments {
+    for segment in &tmpl.parts {
         match segment {
-            Segment::Literal(s) => buf.push_str(&format!(" (lit {})", quote_string(s))),
-            Segment::Command(inner) => {
+            Segment::Lit(s) => buf.push_str(&format!(" (lit {})", quote_string(s))),
+            Segment::Cmd(inner) => {
                 buf.push_str(" (cmd ");
                 fmt_template(buf, inner);
                 buf.push(')');

@@ -1,7 +1,9 @@
 //! Tokenizer: consumes characters and produces [`Token`]s for the parser.
-//! Handles template segment detection and keyword lookup.
+//! Handles template segment detection and keyword lookup. Any malformed
+//! template is a lex error, never a token.
 
 use super::Lexer;
+use crate::syntax::error::ParseError;
 use crate::syntax::source::{Part, Template};
 use crate::syntax::token::{Token, TokenType, lookup_ident};
 
@@ -58,7 +60,10 @@ impl Lexer {
     /// Read a template expression starting at the current character. The current
     /// character must be `(` (general template), `$` followed by `(` (command
     /// substitution), or `@` followed by `(` (variable reference).
-    pub(super) fn read_template_token(&mut self, start_byte_offset: usize) -> Token {
+    pub(super) fn read_template_token(
+        &mut self,
+        start_byte_offset: usize,
+    ) -> Result<Token, ParseError> {
         let start_offset = start_byte_offset;
 
         let mut parts = match self.ch {
@@ -69,7 +74,10 @@ impl Lexer {
                 match self.read_template_parts() {
                     Ok(inner) => {
                         if template_is_only_whitespace(&inner) {
-                            return self.illegal("empty command substitution", start_offset);
+                            return Err(self.unexpected(
+                                "empty command substitution".to_string(),
+                                start_offset,
+                            ));
                         }
                         let len = self.byte_offset - start_offset;
                         vec![Part::Cmd(Template {
@@ -78,9 +86,7 @@ impl Lexer {
                             len,
                         })]
                     }
-                    Err(msg) => {
-                        return self.illegal(&msg, start_offset);
-                    }
+                    Err(msg) => return Err(self.unexpected(msg, start_offset)),
                 }
             }
             Some('@') => {
@@ -89,10 +95,13 @@ impl Lexer {
                 self.read_char(); // consume '('
                 let name = self.read_ident_chars();
                 if self.ch != Some(')') {
-                    return self.illegal("unterminated variable reference", start_offset);
+                    return Err(self
+                        .unexpected("unterminated variable reference".to_string(), start_offset));
                 }
                 if name.is_empty() {
-                    return self.illegal("empty variable reference", start_offset);
+                    return Err(
+                        self.unexpected("empty variable reference".to_string(), start_offset)
+                    );
                 }
                 self.read_char(); // consume ')'
                 vec![Part::Var(name)]
@@ -101,13 +110,14 @@ impl Lexer {
                 self.read_char(); // consume '('
                 match self.read_template_parts() {
                     Ok(parts) => parts,
-                    Err(msg) => {
-                        return self.illegal(&msg, start_offset);
-                    }
+                    Err(msg) => return Err(self.unexpected(msg, start_offset)),
                 }
             }
             _ => {
-                return self.illegal("expected template starting with `(`", start_offset);
+                return Err(self.unexpected(
+                    "expected template starting with `(`".to_string(),
+                    start_offset,
+                ));
             }
         };
 
@@ -120,7 +130,7 @@ impl Lexer {
         {
             parts = Vec::new();
         }
-        Token::new(
+        Ok(Token::new(
             TokenType::Template(Template {
                 parts,
                 offset: start_offset,
@@ -128,15 +138,7 @@ impl Lexer {
             }),
             start_offset,
             len,
-        )
-    }
-
-    fn illegal(&mut self, msg: &str, start_offset: usize) -> Token {
-        Token::new(
-            TokenType::Illegal(msg.to_string()),
-            start_offset,
-            (self.byte_offset - start_offset).max(1),
-        )
+        ))
     }
 
     /// Read the body of a template until the matching top-level `)`. Inside, `@(`

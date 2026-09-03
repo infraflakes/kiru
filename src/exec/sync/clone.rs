@@ -2,7 +2,8 @@ use crate::exec::colors;
 use crate::exec::error::RuntimeError;
 use crate::exec::subprocess;
 use crate::exec::{
-    TaskOutcome, TaskRunError, TaskStatus, TuiEvent, await_tasks_and_report, report_task_outcome,
+    TaskOutcome, TaskRunError, TaskStatus, TuiEvent, await_tasks_and_report, render_sync_output,
+    report_task_outcome,
 };
 use std::path::PathBuf;
 
@@ -149,7 +150,7 @@ pub(crate) fn run_sync_for_projects(repos: Vec<RepoSync>) -> Result<(), TaskRunE
 
             await_tasks_and_report(&tx, task_handles).await
         },
-        crate::exec::tui::sync::render_sync_output,
+        render_sync_output,
         None,
     ) {
         Ok(worker_result) => worker_result,

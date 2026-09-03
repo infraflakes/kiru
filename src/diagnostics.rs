@@ -87,9 +87,11 @@ pub fn render_diagnostic(diag: &Diagnostic) -> String {
                 .label(diag.message.as_str()),
         );
 
-    let groups = vec![Level::ERROR
-        .primary_title(diag.message.as_str())
-        .element(snip)];
+    let groups = vec![
+        Level::ERROR
+            .primary_title(diag.message.as_str())
+            .element(snip),
+    ];
 
     let renderer = if is_terminal() {
         Renderer::styled().decor_style(DecorStyle::Ascii)

@@ -50,10 +50,10 @@ impl<'a> ExecContext<'a> {
     /// empty string on error.
     fn resolve(&self, tmpl: &Template, strict: bool) -> Result<String, RuntimeError> {
         let mut out = String::new();
-        for segment in &tmpl.segments {
+        for segment in &tmpl.parts {
             match segment {
-                Segment::Literal(s) => out.push_str(s),
-                Segment::Command(inner) => {
+                Segment::Lit(s) => out.push_str(s),
+                Segment::Cmd(inner) => {
                     let cmd = self.resolve(inner, false)?;
                     if strict {
                         self.run_live(&cmd)?;
@@ -254,7 +254,7 @@ mod tests {
 
     fn lit(s: &str) -> Template {
         Template {
-            segments: vec![Segment::Literal(s.to_string())],
+            parts: vec![Segment::Lit(s.to_string())],
         }
     }
 

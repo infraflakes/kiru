@@ -41,18 +41,12 @@ impl Parser {
             ));
         }
         self.expect_with_context(TokenType::Semicolon, "after command statement")?;
-        Ok(FnStmt::Bind {
-            target: None,
-            value,
-        })
+        Ok(FnStmt::RunShellCmd(value))
     }
 
     pub(crate) fn parse_fn_var_decl(&mut self) -> Result<FnStmt, ParseError> {
         let (name, value) = self.parse_var_decl_common()?;
-        Ok(FnStmt::Bind {
-            target: Some(name),
-            value,
-        })
+        Ok(FnStmt::Bind { name, value })
     }
 
     pub(crate) fn parse_env_block(&mut self) -> Result<FnStmt, ParseError> {
@@ -137,10 +131,10 @@ impl Parser {
 
 #[cfg(test)]
 mod tests {
+    use crate::syntax::Stmt;
     use crate::syntax::fnstmt::FnStmt;
     use crate::syntax::parser::test_support::*;
     use crate::syntax::source::ArmPattern;
-    use crate::syntax::Stmt;
 
     /// Parse a wrapped function body: tests describe `fn` bodies, which the
     /// grammar only allows inside a `pr` block.
@@ -206,7 +200,7 @@ mod tests {
             other => panic!("expected EnvBlock, got {:?}", other),
         };
         assert_eq!(env.len(), 2);
-        assert!(matches!(&env[0], FnStmt::Bind { target: None, .. }));
+        assert!(matches!(&env[0], FnStmt::RunShellCmd(_)));
         assert!(matches!(&env[1], FnStmt::Log(_)));
     }
 
@@ -244,8 +238,9 @@ mod tests {
         );
         let errs = result.unwrap_err();
         assert!(
-            errs.iter()
-                .any(|e| e.to_string().contains("case pattern must be literal text or `_`")),
+            errs.iter().any(|e| e
+                .to_string()
+                .contains("case pattern must be literal text or `_`")),
             "got: {:?}",
             errs
         );

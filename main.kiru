@@ -55,15 +55,20 @@ pr kiru {
   };
 };
 
-run all_kiru {
-  kiru::test;
+run clean_kiru {
+  kiru::clean;
+};
+
+run build_kiru {
   kiru::build;
-  kiru::fmt;
+};
+
+run build_container_kiru {
+  kiru::container;
 };
 
 run test_kiru {
-  kiru::fmt => kiru::test;
-  kiru::build;
+  kiru::fmt => kiru::test => kiru::build;
 };
 
 run ci_kiru {

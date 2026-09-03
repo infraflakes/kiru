@@ -2,7 +2,6 @@
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum TokenType {
     Eof,
-    Illegal(String),
     Ident(String),
     /// A parsed template expression `( ... )`, `$( ... )`, or `@( ... )`.
     /// The template carries its resolved parts (literal / var / command).
@@ -93,7 +92,6 @@ pub(crate) fn format_token_type(ty: &TokenType) -> String {
         TokenType::Ident(_) => "identifier".to_string(),
         TokenType::NamespaceSep => "`::`".to_string(),
         TokenType::Template(_) => "template".to_string(),
-        TokenType::Illegal(_) => "illegal token".to_string(),
         TokenType::Eof => "end of file".to_string(),
         TokenType::Import
         | TokenType::Var
@@ -112,7 +110,6 @@ pub(crate) fn format_token(token: &Token) -> String {
     match &token.token_type {
         TokenType::Ident(s) => format!("`{}`", s),
         TokenType::Template(_) => "template".to_string(),
-        TokenType::Illegal(s) => format!("`{}`", s),
         _ => format_token_type(&token.token_type),
     }
 }

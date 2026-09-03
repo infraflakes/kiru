@@ -5,7 +5,7 @@
 use crate::cli::CliError;
 use crate::cli::get_toml_path;
 use crate::cli::kiru_toml;
-use crate::exec::sync::RepoSync;
+use crate::exec::RepoSync;
 
 pub(crate) fn run_sync_command(config_arg: Option<std::path::PathBuf>) -> Result<(), CliError> {
     let toml_path = get_toml_path(config_arg);
@@ -48,5 +48,5 @@ pub(crate) fn run_sync_command(config_arg: Option<std::path::PathBuf>) -> Result
         return Ok(());
     }
 
-    crate::exec::sync::run_sync_for_projects(repos).map_err(CliError::from)
+    crate::exec::run_sync_for_projects(repos).map_err(CliError::from)
 }
