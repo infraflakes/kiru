@@ -21,8 +21,11 @@ impl Parser {
         let mut chains: Vec<Vec<Call>> = Vec::new();
         let mut current_chain: Vec<Call> = Vec::new();
         while self.current_token().token_type != TokenType::RBrace {
-            let call = self.parse_run_call()?;
-            current_chain.push(call);
+            let (project, function, _) = self.parse_qualified_ref(
+                "expected project namespace in run reference",
+                "expected function name after `::` in run reference",
+            )?;
+            current_chain.push(Call { project, function });
             match self.current_token().token_type.clone() {
                 TokenType::ChainArrow => self.advance(),
                 TokenType::Semicolon => {
@@ -56,16 +59,6 @@ impl Parser {
             offset: start_offset,
             len: end_offset - start_offset,
         })
-    }
-
-    /// Parses a single `project::function` reference inside a run block. The
-    /// separating `;`/`=>` is handled by the caller so stages can be grouped.
-    fn parse_run_call(&mut self) -> Result<Call, ParseError> {
-        let (project, function, _end) = self.parse_qualified_ref(
-            "expected project namespace in run reference",
-            "expected function name after `::` in run reference",
-        )?;
-        Ok(Call { project, function })
     }
 }
 

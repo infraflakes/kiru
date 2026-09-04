@@ -125,9 +125,10 @@ pub(super) fn compile_project_body(
                         *len,
                     ));
                 }
-                let lowered = super::inline::compile_function_body(
+                let mut local_scope = scope.clone();
+                let lowered = super::inline::compile_fn_stmts(
                     fn_body,
-                    &scope,
+                    &mut local_scope,
                     &state.source_texts,
                     source_name,
                 )?;

@@ -11,26 +11,26 @@ pub(crate) enum TaskStatus {
 /// accumulated output lines.
 #[derive(Debug, Clone)]
 pub(crate) struct TaskRow {
-    pub name: String,
-    pub status: TaskStatus,
-    pub output: Vec<String>,
+    pub(crate) name: String,
+    pub(crate) status: TaskStatus,
+    pub(crate) output: Vec<String>,
 }
 
 /// A chain of sequential tasks. Tasks are stored contiguously in `Model::tasks`
 /// so `task_start`/`task_count` index into that flat vector.
 #[derive(Debug, Clone)]
 pub(crate) struct Chain {
-    pub label: String,
-    pub task_start: usize,
-    pub task_count: usize,
+    pub(crate) label: String,
+    pub(crate) task_start: usize,
+    pub(crate) task_count: usize,
 }
 
 /// All state tracked during a TUI session: a flat list of tasks with an
 /// index structure (chains) that groups them into sequential groups.
 #[derive(Debug, Clone)]
 pub(crate) struct Model {
-    pub tasks: Vec<TaskRow>,
-    pub chains: Vec<Chain>,
+    pub(crate) tasks: Vec<TaskRow>,
+    pub(crate) chains: Vec<Chain>,
 }
 
 impl Model {

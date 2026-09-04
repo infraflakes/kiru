@@ -8,19 +8,14 @@ use crate::syntax::source::{ArmPattern, EnvPair};
 impl Parser {
     /// Parses a keyword-expr-semicolon statement (`log`, `cd`): skips the
     /// keyword, parses the value expression, and expects the terminating `;`.
-    fn parse_expr_stmt(&mut self, context: &'static str) -> Result<Template, ParseError> {
+    pub(super) fn parse_expr_stmt(
+        &mut self,
+        context: &'static str,
+    ) -> Result<Template, ParseError> {
         self.advance();
         let value = self.parse_expr()?;
         self.expect_with_context(TokenType::Semicolon, context)?;
         Ok(value)
-    }
-
-    pub(crate) fn parse_log_stmt(&mut self) -> Result<FnStmt, ParseError> {
-        Ok(FnStmt::Log(self.parse_expr_stmt("after `log`")?))
-    }
-
-    pub(crate) fn parse_cd_stmt(&mut self) -> Result<FnStmt, ParseError> {
-        Ok(FnStmt::Cd(self.parse_expr_stmt("after `cd`")?))
     }
 
     /// Parses a bare `$(cmd);` statement. The current token is a template
@@ -42,11 +37,6 @@ impl Parser {
         }
         self.expect_with_context(TokenType::Semicolon, "after command statement")?;
         Ok(FnStmt::RunShellCmd(value))
-    }
-
-    pub(crate) fn parse_fn_var_decl(&mut self) -> Result<FnStmt, ParseError> {
-        let (name, value) = self.parse_var_decl_common()?;
-        Ok(FnStmt::Bind { name, value })
     }
 
     pub(crate) fn parse_env_block(&mut self) -> Result<FnStmt, ParseError> {

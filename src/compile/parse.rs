@@ -158,16 +158,13 @@ pub(super) fn eval_path_template(
             }
             DslPart::Cmd(inner) => {
                 let cmd = eval_path_template(inner, state, source_name)?;
-                out.push_str(&run_capture(&cmd));
+                // Tolerant capture: non-zero exit returns whatever stdout was
+                // produced (empty on failure).
+                let captured = crate::exec::subprocess::capture_shell(&cmd, "sh", None, None, None)
+                    .unwrap_or_default();
+                out.push_str(&captured);
             }
         }
     }
     Ok(out)
-}
-
-/// Run `cmd` via `sh -c` and return its stdout (trimmed). Non-zero exit is
-/// non-fatal: whatever stdout was produced is returned. Used only for resolving
-/// import paths (see `eval_path_template`).
-fn run_capture(cmd: &str) -> String {
-    crate::exec::subprocess::capture_shell(cmd, "sh", None, None, None).unwrap_or_default()
 }

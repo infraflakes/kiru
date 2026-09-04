@@ -20,8 +20,6 @@ pub(crate) use error::CompileError;
 
 use build::build_ir;
 use parse::load_import;
-#[cfg(test)]
-use parse::parse_source;
 
 /// Run the full compilation pipeline, always building the complete IR (the
 /// executor/sync both need the resolved projects).

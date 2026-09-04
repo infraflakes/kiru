@@ -2,28 +2,28 @@ use annotate_snippets::{AnnotationKind, Level, Renderer, Snippet, renderer::Deco
 
 /// Byte span in a source file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Span {
-    pub offset: usize,
-    pub len: usize,
+pub(crate) struct Span {
+    pub(crate) offset: usize,
+    pub(crate) len: usize,
 }
 
 impl Span {
-    pub const fn new(offset: usize, len: usize) -> Self {
+    pub(crate) const fn new(offset: usize, len: usize) -> Self {
         Self { offset, len }
     }
 }
 
 /// A diagnostic with file, primary span, message, and source snapshot.
 #[derive(Debug, Clone)]
-pub struct Diagnostic {
-    pub file: String,
-    pub primary: Span,
-    pub message: String,
-    pub source: String,
+pub(crate) struct Diagnostic {
+    pub(crate) file: String,
+    pub(crate) primary: Span,
+    pub(crate) message: String,
+    pub(crate) source: String,
 }
 
 impl Diagnostic {
-    pub fn new(
+    pub(crate) fn new(
         file: impl Into<String>,
         span: Span,
         msg: impl Into<String>,
@@ -38,13 +38,8 @@ impl Diagnostic {
     }
 }
 
-fn is_terminal() -> bool {
-    use std::io::IsTerminal;
-    std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none()
-}
-
 /// Render a diagnostic to a string using annotate-snippets.
-pub fn render_diagnostic(diag: &Diagnostic) -> String {
+pub(crate) fn render_diagnostic(diag: &Diagnostic) -> String {
     let src = diag.source.as_str();
     let src_len = src.len();
 
@@ -92,8 +87,10 @@ pub fn render_diagnostic(diag: &Diagnostic) -> String {
             .primary_title(diag.message.as_str())
             .element(snip),
     ];
+    use std::io::IsTerminal;
+    let colored = std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
 
-    let renderer = if is_terminal() {
+    let renderer = if colored {
         Renderer::styled().decor_style(DecorStyle::Ascii)
     } else {
         Renderer::plain().decor_style(DecorStyle::Ascii)
@@ -103,6 +100,6 @@ pub fn render_diagnostic(diag: &Diagnostic) -> String {
 }
 
 /// Print a diagnostic to stderr.
-pub fn print_diagnostic(diag: &Diagnostic) {
+pub(crate) fn print_diagnostic(diag: &Diagnostic) {
     anstream::eprint!("{}", render_diagnostic(diag));
 }

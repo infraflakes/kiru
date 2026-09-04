@@ -16,21 +16,12 @@ pub(crate) struct RepoSync {
     pub(crate) branch: String,
 }
 
-/// Synchronize a single project into `repo.dir` by cloning or pulling.
-/// Accepts an output callback that receives progress lines for display or
-/// forwarding.
-pub(crate) fn sync_project_with_callback(
-    repo: &RepoSync,
-    mut output_cb: impl FnMut(&str),
-) -> Result<(), RuntimeError> {
-    run_sync_clone_or_update(repo, &mut output_cb)
-}
-
 /// Git-clone a single project's repo into `repo.dir`, or fast-forward it to its
-/// remote when the repo already exists. Progress is reported through `output`.
+/// remote when the repo already exists. Progress lines go to `output` for
+/// display or forwarding.
 fn run_sync_clone_or_update(
     repo: &RepoSync,
-    output: &mut dyn FnMut(&str),
+    mut output: impl FnMut(&str),
 ) -> Result<(), RuntimeError> {
     let target_dir = PathBuf::from(&repo.dir);
     let target_dir_str = target_dir.to_string_lossy().to_string();
@@ -54,7 +45,7 @@ fn run_sync_clone_or_update(
                 &repo.branch,
             ]
         };
-        return run_git_with_output("git pull", &args, &repo.name, output);
+        return run_git_with_output("git pull", &args, &repo.name, &mut output);
     }
 
     output(&format!(
@@ -68,7 +59,7 @@ fn run_sync_clone_or_update(
     } else {
         vec!["clone", "-b", &repo.branch, &repo.url, &target_dir_str]
     };
-    run_git_with_output("git clone", &args, &repo.name, output)
+    run_git_with_output("git clone", &args, &repo.name, &mut output)
 }
 
 /// Spawn a `git` invocation through the shared subprocess runner, forward its
@@ -128,7 +119,7 @@ pub(crate) fn run_sync_for_projects(repos: Vec<RepoSync>) -> Result<(), TaskRunE
                         &tx_cb,
                         TuiEvent::UpdateStatus(project_index, TaskStatus::Running),
                     );
-                    let result = sync_project_with_callback(&repo, |line: &str| {
+                    let result = run_sync_clone_or_update(&repo, |line: &str| {
                         crate::exec::send_tui_event(
                             &tx_cb,
                             TuiEvent::AppendOutput(project_index, line.to_string()),

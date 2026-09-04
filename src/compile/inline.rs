@@ -93,8 +93,8 @@ pub(super) fn compile_template(tmpl: &Template) -> IrTemplate {
     }
 }
 
-/// Compile a function body into IR `Instruction`s, inlining every `@(var)`
-/// reference (against `static_scope` plus function-local `bind`s) as it goes.
+/// Compile a function body's statements into IR `Instruction`s, inlining every
+/// `@(var)` reference (against `scope` plus function-local `bind`s) as it goes.
 ///
 /// Function-local `var x = T` maps name `x` to template `T` in the local
 /// scope so later references resolve to `T`. The bind itself does NOT
@@ -102,17 +102,7 @@ pub(super) fn compile_template(tmpl: &Template) -> IrTemplate {
 /// `capture`. Only bare `$(cmd);` emits strict `Instruction::RunShellCmd`.
 /// Nested `env`/`switch` bodies get a *copy* of the local scope so their binds
 /// do not leak into the surrounding body.
-pub(super) fn compile_function_body(
-    stmts: &[crate::syntax::FnStmt],
-    static_scope: &BTreeMap<String, Template>,
-    sources: &HashMap<String, String>,
-    source_name: &str,
-) -> Result<Vec<Instruction>, CompileError> {
-    let mut local_scope = static_scope.clone();
-    compile_fn_stmts(stmts, &mut local_scope, sources, source_name)
-}
-
-fn compile_fn_stmts(
+pub(super) fn compile_fn_stmts(
     stmts: &[crate::syntax::FnStmt],
     scope: &mut BTreeMap<String, Template>,
     sources: &HashMap<String, String>,

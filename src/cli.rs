@@ -60,7 +60,7 @@ pub(crate) fn compile_error_to_cli_error(e: CompileError) -> CliError {
 /// Load the IR by reading and parsing a `kirufile` (the compiled form of
 /// the DSL that `status` and `run` work against).
 pub(crate) fn load_config(kirufile_arg: Option<PathBuf>) -> Result<Ir, String> {
-    let config_path = get_kirufile_path(kirufile_arg);
+    let config_path = kirufile_arg.unwrap_or_else(|| kiru_config_dir().join("kirufile"));
     let text = std::fs::read_to_string(&config_path)
         .map_err(|e| format!("failed to read kirufile {}: {}", config_path.display(), e))?;
     Ir::deserialize(&text)
@@ -98,10 +98,4 @@ pub(crate) fn kiru_config_dir() -> PathBuf {
 /// `~/.config/kiru/kiru.toml`.
 pub(crate) fn get_toml_path(config_arg: Option<PathBuf>) -> PathBuf {
     config_arg.unwrap_or_else(kiru_toml::get_kiru_toml_path)
-}
-
-/// Resolve the kirufile path from `-p`, falling back to the canonical
-/// `~/.config/kiru/kirufile`.
-fn get_kirufile_path(kirufile_arg: Option<PathBuf>) -> PathBuf {
-    kirufile_arg.unwrap_or_else(|| kiru_config_dir().join("kirufile"))
 }

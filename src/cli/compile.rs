@@ -5,26 +5,14 @@ use std::path::PathBuf;
 
 use super::CliError;
 
-fn resolve_compile_input(config_arg: Option<PathBuf>) -> PathBuf {
-    if let Some(path) = config_arg {
-        return path;
-    }
-    super::kiru_config_dir().join("main.kiru")
-}
-
-fn resolve_compile_output(output: Option<PathBuf>) -> PathBuf {
-    if let Some(dir) = output {
-        return dir.join("kirufile");
-    }
-    super::kiru_config_dir().join("kirufile")
-}
-
 pub(crate) fn run_compile_command(
     config_arg: Option<PathBuf>,
     output: Option<PathBuf>,
 ) -> Result<(), CliError> {
-    let input = resolve_compile_input(config_arg);
-    let output = resolve_compile_output(output);
+    let input = config_arg.unwrap_or_else(|| super::kiru_config_dir().join("main.kiru"));
+    let output = output
+        .map(|dir| dir.join("kirufile"))
+        .unwrap_or_else(|| super::kiru_config_dir().join("kirufile"));
 
     let ir = crate::compile::compile_path(&input).map_err(super::compile_error_to_cli_error)?;
 

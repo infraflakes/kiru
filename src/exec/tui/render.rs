@@ -41,12 +41,6 @@ pub(crate) fn status_color(status: TaskStatus) -> Color {
     }
 }
 
-/// Append a single output line to `buf` with ANSI color codes derived from
-/// the line prefix (log, exec, cd, env, etc.).
-pub(crate) fn write_colored_line_buf(buf: &mut String, line: &str) {
-    buf.push_str(&colors::colored_line_string(line));
-}
-
 /// Write a horizontal separator line with a centered label into `buf`,
 /// using 78-character width defined by `SEPARATOR_WIDTH`.
 pub(crate) fn write_separator(buf: &mut String, label: &str) {

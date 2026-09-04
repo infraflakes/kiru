@@ -216,9 +216,7 @@ impl Parser {
     /// Parses one top-level item, returning None on EOF. A deferred lex
     /// error surfaces here before anything else parses.
     pub(crate) fn parse_toplevel(&mut self) -> Result<Option<TopLevel>, ParseError> {
-        if let Some(err) = self.pending_lex_error.take() {
-            return Err(err);
-        }
+        self.take_pending_lex_error()?;
         if self.current_token().token_type == TokenType::Eof {
             return Ok(None);
         }
@@ -310,9 +308,12 @@ impl Parser {
     /// Dispatches to the correct statement parser for statements inside a function body.
     pub(crate) fn parse_fn_stmt(&mut self) -> Result<FnStmt, ParseError> {
         match &self.current_token().token_type {
-            TokenType::Log => self.parse_log_stmt(),
-            TokenType::Cd => self.parse_cd_stmt(),
-            TokenType::Var => self.parse_fn_var_decl(),
+            TokenType::Log => Ok(FnStmt::Log(self.parse_expr_stmt("after `log`")?)),
+            TokenType::Cd => Ok(FnStmt::Cd(self.parse_expr_stmt("after `cd`")?)),
+            TokenType::Var => {
+                let (name, value) = self.parse_var_decl_common()?;
+                Ok(FnStmt::Bind { name, value })
+            }
             TokenType::Env => self.parse_env_block(),
             TokenType::Switch => self.parse_switch_stmt(),
             TokenType::Template(_) => self.parse_run_shell_cmd_stmt(),

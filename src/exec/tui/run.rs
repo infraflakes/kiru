@@ -105,7 +105,7 @@ fn format_task_output(buf: &mut String, task: &TaskRow) {
             buf.push_str(colors::GRAY_ANSI);
             buf.push_str("  ");
             buf.push_str(colors::RESET);
-            render::write_colored_line_buf(buf, output_line);
+            buf.push_str(&colors::colored_line_string(output_line));
             buf.push('\n');
         }
     }
