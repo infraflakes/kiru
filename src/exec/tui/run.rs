@@ -30,6 +30,7 @@ pub(crate) fn render_run_output(frame: &mut Frame, model: &Model, spinner_idx: u
         let header_char = match ch_status {
             TaskStatus::Success => "✓",
             TaskStatus::Error => "✗",
+            TaskStatus::Cancelled => "■",
             _ => "├─",
         };
 
@@ -73,6 +74,7 @@ fn format_task_output(buf: &mut String, task: &TaskRow) {
         TaskStatus::Running => colors::BRIGHT_YELLOW_ANSI,
         TaskStatus::Pending => colors::GRAY_ANSI,
         TaskStatus::Error => colors::FAILED_ANSI,
+        TaskStatus::Cancelled => colors::CANCELLED_ANSI,
     };
     let marker = status_glyph(task.status, 0);
 
@@ -112,19 +114,9 @@ fn format_task_output(buf: &mut String, task: &TaskRow) {
     buf.push('\n');
 }
 
-/// Append the run summary (pass/fail counts) to the buffer.
-fn format_summary(buf: &mut String, model: &Model) {
-    let (ok_count, err_count) = model.success_and_error_counts();
-    if err_count > 0 {
-        buf.push_str(&format!("{} done, {} failed\n", ok_count, err_count));
-    } else {
-        buf.push_str(&format!("✓ all {} passed\n", ok_count));
-    }
-}
-
-/// Build the final ANSI-colored text dump after all tasks complete.
-/// Includes per-task status, output lines (truncated to `MAX_PANEL_HEIGHT`),
-/// and a summary line with pass/fail counts.
+/// Build the final ANSI-colored text dump after all tasks complete: per-task
+/// status markers and output lines (truncated to `MAX_PANEL_HEIGHT`). The
+/// per-task glyphs are the whole report; there is no summary line.
 pub(crate) fn format_final_output(model: &Model) -> String {
     let mut buf = String::new();
     buf.push('\n');
@@ -139,6 +131,5 @@ pub(crate) fn format_final_output(model: &Model) -> String {
         }
     }
 
-    format_summary(&mut buf, model);
     buf
 }

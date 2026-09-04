@@ -1,11 +1,12 @@
 use crate::exec::colors;
 use crate::exec::error::RuntimeError;
-use crate::exec::subprocess;
+use crate::exec::subprocess::{RunKillSwitch, run_subprocess};
 use crate::exec::{
     TaskOutcome, TaskRunError, TaskStatus, TuiEvent, await_tasks_and_report, render_sync_output,
     report_task_outcome,
 };
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// A plain repo configuration read from `kiru.toml`, used by sync.
 #[derive(Debug, Clone)]
@@ -18,9 +19,11 @@ pub(crate) struct RepoSync {
 
 /// Git-clone a single project's repo into `repo.dir`, or fast-forward it to its
 /// remote when the repo already exists. Progress lines go to `output` for
-/// display or forwarding.
+/// display or forwarding. `kill` registers the git process group so a keyboard
+/// cancel can stop the clone.
 fn run_sync_clone_or_update(
     repo: &RepoSync,
+    kill: &RunKillSwitch,
     mut output: impl FnMut(&str),
 ) -> Result<(), RuntimeError> {
     let target_dir = PathBuf::from(&repo.dir);
@@ -45,7 +48,7 @@ fn run_sync_clone_or_update(
                 &repo.branch,
             ]
         };
-        return run_git_with_output("git pull", &args, &repo.name, &mut output);
+        return run_git_with_output("git pull", &args, &repo.name, kill, &mut output);
     }
 
     output(&format!(
@@ -59,7 +62,7 @@ fn run_sync_clone_or_update(
     } else {
         vec!["clone", "-b", &repo.branch, &repo.url, &target_dir_str]
     };
-    run_git_with_output("git clone", &args, &repo.name, &mut output)
+    run_git_with_output("git clone", &args, &repo.name, kill, &mut output)
 }
 
 /// Spawn a `git` invocation through the shared subprocess runner, forward its
@@ -69,21 +72,31 @@ fn run_git_with_output(
     cmd_desc: &str,
     args: &[&str],
     proj_name: &str,
+    kill: &RunKillSwitch,
     output: &mut dyn FnMut(&str),
 ) -> Result<(), RuntimeError> {
     let full_cmd = format!("{} {}", cmd_desc, proj_name);
     let argv: Vec<&str> = std::iter::once("git").chain(args.iter().copied()).collect();
-    let status =
-        subprocess::run_subprocess(&full_cmd, &argv, None, None, None, &mut |line| match line {
-            subprocess::SubprocessLine::Stdout(line) => output(&format!("    {}", line)),
-            subprocess::SubprocessLine::Stderr(line) => output(&line),
-        })
-        .map_err(|e| RuntimeError::exec_io_error(&full_cmd, e))?;
+    let exit = run_subprocess(
+        &full_cmd,
+        &argv,
+        None,
+        None,
+        None,
+        Some(kill),
+        &mut |line| match line {
+            crate::exec::subprocess::SubprocessLine::Stdout(line) => {
+                output(&format!("    {}", line))
+            }
+            crate::exec::subprocess::SubprocessLine::Stderr(line) => output(&line),
+        },
+    )
+    .map_err(|e| RuntimeError::exec_io_error(&full_cmd, e))?;
 
-    if !status.success() {
+    if !exit.status.success() {
         return Err(RuntimeError::exec_io_error(
             &full_cmd,
-            subprocess::describe_exit_failure(&status),
+            crate::exec::subprocess::describe_exit_failure(&exit.status),
         ));
     }
     Ok(())
@@ -105,6 +118,12 @@ pub(crate) fn run_sync_for_projects(repos: Vec<RepoSync>) -> Result<(), TaskRunE
             (name.clone(), vec![name])
         })
         .collect();
+    // Sync failures are all-settle (a failed clone does not abort other
+    // clones), but a keyboard cancel kills every running git process.
+    let kill = Arc::new(RunKillSwitch::new());
+    // Cloned before the worker closure moves `kill` into the async task:
+    // the cancel path needs the same kill switch.
+    let kill_for_cancel = Arc::clone(&kill);
 
     match crate::exec::run_tui_with(
         chain_pairs,
@@ -113,13 +132,14 @@ pub(crate) fn run_sync_for_projects(repos: Vec<RepoSync>) -> Result<(), TaskRunE
 
             for (project_index, repo) in repos.into_iter().enumerate() {
                 let tx_cb = tx.clone();
+                let kill = Arc::clone(&kill);
 
                 let handle = tokio::task::spawn_blocking(move || {
                     crate::exec::send_tui_event(
                         &tx_cb,
                         TuiEvent::UpdateStatus(project_index, TaskStatus::Running),
                     );
-                    let result = run_sync_clone_or_update(&repo, |line: &str| {
+                    let result = run_sync_clone_or_update(&repo, &kill, |line: &str| {
                         crate::exec::send_tui_event(
                             &tx_cb,
                             TuiEvent::AppendOutput(project_index, line.to_string()),
@@ -143,6 +163,7 @@ pub(crate) fn run_sync_for_projects(repos: Vec<RepoSync>) -> Result<(), TaskRunE
         },
         render_sync_output,
         None,
+        Some(kill_for_cancel),
     ) {
         Ok(worker_result) => worker_result,
         Err(message) => Err(TaskRunError::Infrastructure(message)),

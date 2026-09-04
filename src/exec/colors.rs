@@ -38,6 +38,12 @@ pub(crate) const RUNNING: Color = Color::Indexed(11);
 pub(crate) const FAILED: Color = Color::Indexed(9);
 /// Gray ratatui color for pending status.
 pub(crate) const PENDING: Color = Color::Indexed(8);
+/// White ratatui color for cancelled status: distinct from red so the eye
+/// goes to the task that actually failed, not to fail-fast victims.
+pub(crate) const CANCELLED: Color = Color::White;
+
+/// White ANSI color for cancelled status in text output.
+pub(crate) const CANCELLED_ANSI: &str = "\x1b[97m";
 
 /// Prefix written before a `log` statement's text in captured output.
 /// Single source of truth: `context.rs` emits it and

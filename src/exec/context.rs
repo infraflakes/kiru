@@ -1,6 +1,7 @@
 use super::subprocess;
-use crate::exec::DirenvState;
+use super::subprocess::RunKillSwitch;
 use crate::exec::colors;
+use crate::exec::direnv::has_envrc;
 use crate::exec::error::RuntimeError;
 use crate::ir::{ArmPattern, EnvPair, Instruction, Segment, Template};
 use std::collections::{BTreeMap, HashMap};
@@ -24,8 +25,14 @@ pub(crate) struct ExecContext<'a> {
     system_env: Vec<(String, String)>,
     shell: String,
     timeout: Option<Duration>,
-    /// Per-directory decision whether commands run via `direnv exec`.
-    direnv: Arc<DirenvState>,
+    /// Commands run via `direnv exec` when the config opted in, the binary
+    /// is on `PATH`, and the project's starting directory has a `.envrc`.
+    /// Resolved once per project context; direnv itself resolves
+    /// per-directory rc rules when it runs.
+    direnv_wrap: bool,
+    /// Run-level kill switch: a failing chain or a keyboard cancel kills
+    /// every live command group of the run.
+    kill: Option<Arc<RunKillSwitch>>,
 }
 
 impl<'a> ExecContext<'a> {
@@ -36,8 +43,10 @@ impl<'a> ExecContext<'a> {
         cwd: PathBuf,
         shell: String,
         timeout: Option<Duration>,
-        direnv: Arc<DirenvState>,
+        direnv: bool,
+        kill: Option<Arc<RunKillSwitch>>,
     ) -> Self {
+        let direnv_wrap = direnv && has_envrc(&cwd);
         ExecContext {
             output,
             cwd,
@@ -45,14 +54,15 @@ impl<'a> ExecContext<'a> {
             system_env: std::env::vars().collect(),
             shell,
             timeout,
-            direnv,
+            direnv_wrap,
+            kill,
         }
     }
 
-    /// The directory argument for `direnv exec` when the cwd's rc is
-    /// allowed, `None` otherwise (including when direnv integration is off).
+    /// The directory argument for `direnv exec` when commands are wrapped,
+    /// `None` otherwise.
     fn direnv_dir(&self) -> Option<String> {
-        if self.direnv.should_wrap(&self.cwd) {
+        if self.direnv_wrap {
             Some(self.cwd.to_string_lossy().into_owned())
         } else {
             None
@@ -131,12 +141,13 @@ impl<'a> ExecContext<'a> {
         ));
 
         let argv = self.shell_argv(shell, cmd, direnv_dir.as_deref());
-        let status = subprocess::run_subprocess(
+        let exit = subprocess::run_subprocess(
             cmd,
             &argv,
             Some(work_dir),
             Some(&env_overrides),
             self.timeout,
+            self.kill.as_deref(),
             &mut |line| match line {
                 subprocess::SubprocessLine::Stdout(text)
                 | subprocess::SubprocessLine::Stderr(text) => {
@@ -144,12 +155,19 @@ impl<'a> ExecContext<'a> {
                 }
             },
         );
-        match status {
-            Ok(status) => {
-                if !status.success() {
+        match exit {
+            Ok(exit) => {
+                // The run's stop killed this command: it is a fail-fast
+                // victim, not an independent failure.
+                if exit.killed_by_switch {
+                    return Err(RuntimeError::Cancelled(
+                        "stopped because another chain failed".to_string(),
+                    ));
+                }
+                if !exit.status.success() {
                     return Err(RuntimeError::exec_io_error(
                         cmd,
-                        subprocess::describe_exit_failure(&status),
+                        subprocess::describe_exit_failure(&exit.status),
                     ));
                 }
                 Ok(())
@@ -182,6 +200,7 @@ impl<'a> ExecContext<'a> {
             Some(&self.cwd),
             Some(&env_overrides),
             self.timeout,
+            self.kill.as_deref(),
         )
         .map_err(|e| match e {
             subprocess::SubprocessError::Timeout { command, .. } => RuntimeError::Timeout {
@@ -305,7 +324,8 @@ mod tests {
             cwd,
             "sh".to_string(),
             Some(Duration::from_secs(30)),
-            Arc::new(DirenvState::new(false)),
+            false,
+            None,
         );
         let body: [Instruction; 1] = [Instruction::Switch {
             subject: lit("a"),

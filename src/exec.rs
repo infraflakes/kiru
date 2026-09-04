@@ -9,7 +9,6 @@ pub(crate) mod sync;
 pub(crate) mod tui;
 
 pub(crate) use context::OutputCallback;
-pub(crate) use direnv::DirenvState;
 pub(crate) use executor::Executor;
 pub(crate) use sync::clone::{RepoSync, run_sync_for_projects};
 pub(crate) use tui::model::TaskStatus;
@@ -51,6 +50,11 @@ pub(crate) enum TaskOutcome<E> {
 /// Centralizes the success/error/panic status reporting shared by the chain
 /// and sync runners. The error is borrowed so callers keep ownership and can
 /// propagate it further.
+///
+/// Display follows the error's own cause, never timing: only
+/// [`RuntimeError::Cancelled`] — a task that never ran, or was killed,
+/// because the run was already lost to another chain's failure — renders as
+/// cancelled. Every other error is a genuine failure.
 pub(crate) fn report_task_outcome(
     tx: &mpsc::UnboundedSender<TuiEvent>,
     index: usize,
@@ -69,7 +73,11 @@ pub(crate) fn report_task_outcome(
             if !is_timeout {
                 send_tui_event(tx, TuiEvent::AppendOutput(index, format!("Error: {}", e)));
             }
-            send_tui_event(tx, TuiEvent::UpdateStatus(index, TaskStatus::Error));
+            let status = match e {
+                error::RuntimeError::Cancelled(_) => TaskStatus::Cancelled,
+                _ => TaskStatus::Error,
+            };
+            send_tui_event(tx, TuiEvent::UpdateStatus(index, status));
             true
         }
         TaskOutcome::Panic(e) => {
@@ -77,6 +85,7 @@ pub(crate) fn report_task_outcome(
                 tx,
                 TuiEvent::AppendOutput(index, format!("Task panicked: {}", e)),
             );
+            // A panic is a genuine defect, never a fail-fast victim.
             send_tui_event(tx, TuiEvent::UpdateStatus(index, TaskStatus::Error));
             true
         }
@@ -116,5 +125,43 @@ pub(crate) async fn await_tasks_and_report(
         Err(TaskRunError::TaskFailed)
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn report_and_collect(outcome: TaskOutcome<&RuntimeError>) -> Vec<TuiEvent> {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        report_task_outcome(&tx, 0, outcome);
+        let mut events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            events.push(event);
+        }
+        events
+    }
+
+    #[test]
+    fn display_follows_the_error_cause() {
+        // A fail-fast victim carries Cancelled and renders as cancelled.
+        let events = report_and_collect(TaskOutcome::Error(&RuntimeError::Cancelled(
+            "stopped because another chain failed".to_string(),
+        )));
+        assert!(matches!(
+            events.last(),
+            Some(TuiEvent::UpdateStatus(_, TaskStatus::Cancelled))
+        ));
+
+        // A genuine failure renders as failed even if every other chain in
+        // the run already failed.
+        let events = report_and_collect(TaskOutcome::Error(&RuntimeError::Exec {
+            cmd: "make".to_string(),
+            detail: "exited with code 2".to_string(),
+        }));
+        assert!(matches!(
+            events.last(),
+            Some(TuiEvent::UpdateStatus(_, TaskStatus::Error))
+        ));
     }
 }

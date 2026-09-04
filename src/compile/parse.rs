@@ -167,6 +167,7 @@ pub(super) fn eval_path_template(
                     None,
                     None,
                     None,
+                    None,
                 )
                 .unwrap_or_default();
                 out.push_str(&captured);

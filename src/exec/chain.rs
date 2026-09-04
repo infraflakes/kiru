@@ -1,8 +1,9 @@
 //! Chain execution: runs a sequential chain of project-function calls
 //! through the TUI, reporting each step's status as it completes.
 
-use crate::exec::DirenvState;
+use crate::exec::direnv::direnv_on_path;
 use crate::exec::error::RuntimeError;
+use crate::exec::subprocess::RunKillSwitch;
 use crate::exec::{
     Executor, TaskOutcome, TaskRunError, TaskStatus, TuiEvent, await_tasks_and_report,
     format_final_output, render_run_output, report_task_outcome,
@@ -20,8 +21,11 @@ struct ChainConfig {
     timeout: Option<std::time::Duration>,
     repo_dirs: BTreeMap<String, PathBuf>,
     invocation_cwd: PathBuf,
-    /// Per-directory direnv decisions, shared across all chains.
-    direnv: Arc<DirenvState>,
+    /// Config flag + binary presence; the `.envrc` check happens per
+    /// context against its starting directory.
+    direnv: bool,
+    /// Run-level kill switch: one failing chain stops the whole run.
+    kill: Arc<RunKillSwitch>,
 }
 
 /// Execute a single chain of calls sequentially inside a blocking task.
@@ -38,6 +42,21 @@ fn execute_single_chain(
     tx: mpsc::UnboundedSender<TuiEvent>,
 ) -> Result<(), RuntimeError> {
     for (call_idx, call) in chain.iter().enumerate() {
+        // Fail-fast: once any chain of the run has failed, no new command
+        // starts. This step and every later one in the chain never run;
+        // mark them cancelled so the chain ends terminal and its header
+        // matches its rows.
+        if config.kill.is_failed() {
+            for pending_idx in call_idx..chain.len() {
+                crate::exec::send_tui_event(
+                    &tx,
+                    TuiEvent::UpdateStatus(start_index + pending_idx, TaskStatus::Cancelled),
+                );
+            }
+            return Err(RuntimeError::Cancelled(
+                "run failed in another chain".to_string(),
+            ));
+        }
         let task_idx = start_index + call_idx;
         let output_callback = {
             let tx = tx.clone();
@@ -50,7 +69,8 @@ fn execute_single_chain(
             config.shell.clone(),
             config.timeout,
             Arc::new(output_callback),
-            Arc::clone(&config.direnv),
+            config.direnv,
+            Some(Arc::clone(&config.kill)),
         );
         crate::exec::send_tui_event(&tx, TuiEvent::UpdateStatus(task_idx, TaskStatus::Running));
 
@@ -69,7 +89,20 @@ fn execute_single_chain(
                 Err(error) => TaskOutcome::Error(error),
             },
         );
-        result?;
+        if let Err(error) = result {
+            // Fail-fast: the whole run stops; running sibling chains get
+            // their process groups killed so nothing keeps running. The
+            // remaining steps of this chain never run; mark them cancelled
+            // so the chain display is terminal and unified.
+            for later_idx in (call_idx + 1)..chain.len() {
+                crate::exec::send_tui_event(
+                    &tx,
+                    TuiEvent::UpdateStatus(start_index + later_idx, TaskStatus::Cancelled),
+                );
+            }
+            config.kill.fail();
+            return Err(error);
+        }
     }
 
     Ok(())
@@ -106,8 +139,14 @@ pub(crate) fn execute_task_chains(
         timeout,
         repo_dirs,
         invocation_cwd,
-        direnv: Arc::new(DirenvState::new(direnv_enabled)),
+        // One binary check per run; the `.envrc` check happens per project
+        // context against its starting directory.
+        direnv: direnv_enabled && direnv_on_path(),
+        kill: Arc::new(RunKillSwitch::new()),
     });
+    // Cloned before the worker closure moves `chain_config` into the async
+    // task: the cancel path needs the same kill switch.
+    let kill_for_cancel = Arc::clone(&chain_config.kill);
 
     match crate::exec::run_tui_with(
         chain_pairs,
@@ -133,6 +172,7 @@ pub(crate) fn execute_task_chains(
         },
         render_run_output,
         Some(format_final_output),
+        Some(kill_for_cancel),
     ) {
         Ok(worker_result) => worker_result,
         Err(message) => Err(TaskRunError::Infrastructure(message)),

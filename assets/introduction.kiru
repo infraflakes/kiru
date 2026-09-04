@@ -130,11 +130,12 @@ pr myapp {
 #
 # A run block calls functions across projects as a pipeline.
 #
-#   ;   means "at the same time"
-#   =>  means "wait for the one before"
+#   ;   means "starts at the same time"
+#   =>  means "wait for the one before to succeed"
 #
-# Each ;-separated line starts at once. If a step in a chain fails, the
-# rest of that chain is skipped, but the other chains keep going.
+# Chains starting together are not immune to each other: the first
+# failure anywhere stops the whole run. Running chains get killed and
+# pending steps are cancelled, so nothing keeps running in the background.
 
 run all {
   myapp::lint => myapp::check => myapp::build;   # one after another

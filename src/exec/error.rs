@@ -4,8 +4,17 @@ use std::fmt;
 pub(crate) enum RuntimeError {
     Lookup(String),
     Io(#[from] std::io::Error),
-    Exec { cmd: String, detail: String },
-    Timeout { cmd: String, secs: u64 },
+    Exec {
+        cmd: String,
+        detail: String,
+    },
+    Timeout {
+        cmd: String,
+        secs: u64,
+    },
+    /// A step that never ran because the run was already lost to another
+    /// chain's failure.
+    Cancelled(String),
 }
 
 impl RuntimeError {
@@ -32,6 +41,7 @@ impl fmt::Display for RuntimeError {
             RuntimeError::Timeout { cmd, secs } => {
                 write!(f, "timeout: command timed out after {secs}s: {cmd}")
             }
+            RuntimeError::Cancelled(reason) => write!(f, "cancelled: {reason}"),
         }
     }
 }

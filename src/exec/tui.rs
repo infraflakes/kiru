@@ -187,6 +187,7 @@ pub(crate) fn run_tui_with<F, Fut, E>(
     worker: F,
     render_fn: fn(&mut Frame, &Model, usize),
     format_fn: Option<fn(&Model) -> String>,
+    kill: Option<Arc<crate::exec::subprocess::RunKillSwitch>>,
 ) -> Result<Result<(), E>, String>
 where
     F: FnOnce(mpsc::UnboundedSender<TuiEvent>) -> Fut + Send + 'static,
@@ -222,8 +223,12 @@ where
             .map_err(|e| format!("TUI error: {}", e))?;
 
         if cancelled {
-            // Kill everything immediately, running shell commands included.
+            // Kill every live child process group so spawned commands cannot
+            // outlive the run, then exit with the conventional Ctrl-C code.
             // The TUI loop already disabled raw mode and dropped the terminal.
+            if let Some(kill) = &kill {
+                kill.kill_all();
+            }
             std::process::exit(130);
         }
 

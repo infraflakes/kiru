@@ -1,7 +1,7 @@
 use crate::exec::OutputCallback;
 use crate::exec::context::ExecContext;
-use crate::exec::direnv::DirenvState;
 use crate::exec::error::RuntimeError;
+use crate::exec::subprocess::RunKillSwitch;
 use crate::ir::Ir;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -13,7 +13,10 @@ pub(crate) struct Executor {
     shell: String,
     timeout: Option<Duration>,
     output: OutputCallback,
-    direnv: Arc<DirenvState>,
+    /// Config flag + binary presence; the `.envrc` check happens per
+    /// context against its starting directory.
+    direnv: bool,
+    kill: Option<Arc<RunKillSwitch>>,
 }
 
 impl Executor {
@@ -23,7 +26,8 @@ impl Executor {
         shell: String,
         timeout: Option<Duration>,
         output: OutputCallback,
-        direnv: Arc<DirenvState>,
+        direnv: bool,
+        kill: Option<Arc<RunKillSwitch>>,
     ) -> Self {
         Executor {
             ir,
@@ -31,6 +35,7 @@ impl Executor {
             timeout,
             output,
             direnv,
+            kill,
         }
     }
 
@@ -62,7 +67,8 @@ impl Executor {
             cwd,
             self.shell.clone(),
             self.timeout,
-            Arc::clone(&self.direnv),
+            self.direnv,
+            self.kill.clone(),
         );
         ctx.exec_stmts(fn_body)
     }

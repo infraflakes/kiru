@@ -63,7 +63,7 @@ url  = "git@github.com:you/todo.git"
 dir  = "~/projects/todo"
 ```
 
-Set `direnv = true` to run commands through `direnv exec` when the project's `.envrc` is allowed (off by default; requires the `direnv` binary).
+Set `direnv = true` to run commands through `direnv exec` when the direnv binary is on your `PATH` and the project has a `.envrc`; otherwise commands run plain (a missing binary is silently ignored). An untrusted `.envrc` fails wrapped commands with direnv's own error.
 
 ## Compile and run
 

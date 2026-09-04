@@ -1,5 +1,5 @@
 use super::SPINNER_FRAMES;
-use super::model::Model;
+use super::model::{Model, TaskStatus};
 use super::render;
 use crate::exec::colors;
 use ratatui::{
@@ -29,9 +29,6 @@ fn sync_message(line: &str) -> &str {
 /// Return the most recent output line of a task, extracted to its
 /// meaningful message via `sync_message`.
 fn current_display(task: &super::TaskRow) -> String {
-    if task.output.is_empty() {
-        return String::new();
-    }
     task.output
         .last()
         .map(|line| sync_message(line).to_string())
@@ -48,39 +45,35 @@ pub(crate) fn render_sync_output(frame: &mut Frame, model: &Model, spinner_idx: 
     }
 
     let mut y_pos = area.y;
-    let all_done = model.all_done();
-    let (ok_count, err_count) = model.success_and_error_counts();
-    let total = model.tasks.len();
 
-    let header = if !all_done {
-        format!(
+    // Live progress only: the per-project glyphs below are the report, so
+    // the header disappears once everything is done instead of announcing
+    // final counts.
+    if !model.all_done() {
+        let total = model.tasks.len();
+        let done = model
+            .tasks
+            .iter()
+            .filter(|t| {
+                matches!(
+                    t.status,
+                    TaskStatus::Success | TaskStatus::Error | TaskStatus::Cancelled
+                )
+            })
+            .count();
+        let header = format!(
             "{} Syncing projects ({}/{})",
-            SPINNER_FRAMES[spinner_idx],
-            ok_count + err_count,
-            total
-        )
-    } else if err_count > 0 {
-        format!("✗ {} synced, {} failed", ok_count, err_count)
-    } else {
-        format!("✓ All {} synced", ok_count)
-    };
-    let header_color = if all_done {
-        if err_count > 0 {
-            colors::FAILED
-        } else {
-            colors::OK
-        }
-    } else {
-        colors::RUNNING
-    };
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            &header,
-            Style::default().fg(header_color),
-        ))),
-        Rect::new(area.x, y_pos, area.width, 1),
-    );
-    y_pos += 1;
+            SPINNER_FRAMES[spinner_idx], done, total
+        );
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                &header,
+                Style::default().fg(colors::RUNNING),
+            ))),
+            Rect::new(area.x, y_pos, area.width, 1),
+        );
+        y_pos += 1;
+    }
 
     for (chain_idx, chain) in model.chains.iter().enumerate() {
         if y_pos >= area.y + area.height {
