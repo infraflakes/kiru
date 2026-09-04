@@ -1,6 +1,7 @@
 pub(crate) mod chain;
 pub(crate) mod colors;
 pub(crate) mod context;
+pub(crate) mod direnv;
 pub(crate) mod error;
 pub(crate) mod executor;
 pub(crate) mod subprocess;
@@ -8,6 +9,7 @@ pub(crate) mod sync;
 pub(crate) mod tui;
 
 pub(crate) use context::OutputCallback;
+pub(crate) use direnv::DirenvState;
 pub(crate) use executor::Executor;
 pub(crate) use sync::clone::{RepoSync, run_sync_for_projects};
 pub(crate) use tui::model::TaskStatus;

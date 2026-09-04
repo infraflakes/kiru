@@ -1,4 +1,5 @@
 use super::subprocess;
+use crate::exec::DirenvState;
 use crate::exec::colors;
 use crate::exec::error::RuntimeError;
 use crate::ir::{ArmPattern, EnvPair, Instruction, Segment, Template};
@@ -23,6 +24,8 @@ pub(crate) struct ExecContext<'a> {
     system_env: Vec<(String, String)>,
     shell: String,
     timeout: Option<Duration>,
+    /// Per-directory decision whether commands run via `direnv exec`.
+    direnv: Arc<DirenvState>,
 }
 
 impl<'a> ExecContext<'a> {
@@ -33,6 +36,7 @@ impl<'a> ExecContext<'a> {
         cwd: PathBuf,
         shell: String,
         timeout: Option<Duration>,
+        direnv: Arc<DirenvState>,
     ) -> Self {
         ExecContext {
             output,
@@ -41,7 +45,37 @@ impl<'a> ExecContext<'a> {
             system_env: std::env::vars().collect(),
             shell,
             timeout,
+            direnv,
         }
+    }
+
+    /// The directory argument for `direnv exec` when the cwd's rc is
+    /// allowed, `None` otherwise (including when direnv integration is off).
+    fn direnv_dir(&self) -> Option<String> {
+        if self.direnv.should_wrap(&self.cwd) {
+            Some(self.cwd.to_string_lossy().into_owned())
+        } else {
+            None
+        }
+    }
+
+    /// Build the argv for running `cmd` under `shell -c` in the current cwd.
+    /// When `direnv_dir` is set, the shell invocation is prefixed with
+    /// `direnv exec <dir>` so the project environment applies. `shell` is
+    /// passed in (rather than read from `self`) so every argv element shares
+    /// one borrow region.
+    fn shell_argv<'cmd>(
+        &self,
+        shell: &'cmd str,
+        cmd: &'cmd str,
+        direnv_dir: Option<&'cmd str>,
+    ) -> Vec<&'cmd str> {
+        let mut argv: Vec<&'cmd str> = Vec::new();
+        if let Some(dir) = direnv_dir {
+            argv.extend_from_slice(&[crate::exec::direnv::DIRENV_PROGRAM, "exec", dir]);
+        }
+        argv.extend_from_slice(&[shell, "-c", cmd]);
+        argv
     }
 
     /// Resolve a template to a string. When `strict` is true, `$(cmd)` parts
@@ -84,6 +118,7 @@ impl<'a> ExecContext<'a> {
     fn run_live(&self, cmd: &str) -> Result<(), RuntimeError> {
         let work_dir = &self.cwd;
         let env_overrides: HashMap<String, String> = self.env_overrides();
+        let direnv_dir = self.direnv_dir();
         let output_indent = "  ".repeat(self.env_layers.len() + 1);
         let shell_indent = "  ".repeat(self.env_layers.len());
         let shell = &self.shell;
@@ -95,9 +130,10 @@ impl<'a> ExecContext<'a> {
             colors::RESET
         ));
 
+        let argv = self.shell_argv(shell, cmd, direnv_dir.as_deref());
         let status = subprocess::run_subprocess(
             cmd,
-            &[shell, "-c", cmd],
+            &argv,
             Some(work_dir),
             Some(&env_overrides),
             self.timeout,
@@ -138,9 +174,11 @@ impl<'a> ExecContext<'a> {
     /// non-fatal.
     fn capture(&self, cmd: &str) -> Result<String, RuntimeError> {
         let env_overrides: HashMap<String, String> = self.env_overrides();
-        subprocess::capture_shell(
+        let direnv_dir = self.direnv_dir();
+        let argv = self.shell_argv(self.shell.as_str(), cmd, direnv_dir.as_deref());
+        subprocess::capture_argv(
+            &argv,
             cmd,
-            &self.shell,
             Some(&self.cwd),
             Some(&env_overrides),
             self.timeout,
@@ -267,6 +305,7 @@ mod tests {
             cwd,
             "sh".to_string(),
             Some(Duration::from_secs(30)),
+            Arc::new(DirenvState::new(false)),
         );
         let body: [Instruction; 1] = [Instruction::Switch {
             subject: lit("a"),

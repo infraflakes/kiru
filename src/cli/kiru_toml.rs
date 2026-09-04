@@ -18,6 +18,12 @@ pub(crate) struct KiruToml {
     #[serde(default)]
     pub(crate) timeout: Option<u64>,
 
+    /// Opt-in direnv integration: when true, `$(command)` execution is
+    /// wrapped in `direnv exec <dir>` for directories whose rc is allowed
+    /// (per `direnv status`). Disabled by default.
+    #[serde(default)]
+    pub(crate) direnv: bool,
+
     /// Repository declarations that `kiru sync` clones/pulls and that the
     /// executor uses to resolve project working directories.
     #[serde(default)]
@@ -139,8 +145,23 @@ mod tests {
         let config = KiruToml {
             shell: "sh".to_string(),
             timeout: Some(0),
+            direnv: false,
             repos: vec![],
         };
         assert!(validate_kiru_toml(&config).is_err());
+    }
+
+    #[test]
+    fn test_direnv_defaults_to_disabled() {
+        // A kiru.toml without a `direnv` key must deserialize with the
+        // integration off.
+        let config: KiruToml = toml::from_str("shell = \"sh\"").unwrap();
+        assert!(!config.direnv);
+    }
+
+    #[test]
+    fn test_direnv_opt_in_parses() {
+        let config: KiruToml = toml::from_str("direnv = true").unwrap();
+        assert!(config.direnv);
     }
 }

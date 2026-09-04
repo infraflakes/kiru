@@ -178,30 +178,24 @@ pub(crate) fn run_subprocess(
     child.wait().map_err(SubprocessError::Spawn)
 }
 
-/// Capture stdout from a shell command. Non-zero exit is tolerated (whatever
-/// stdout was produced is returned). Returns `Err(Timeout { .. })` when the
-/// process exceeds the optional timeout.
-pub(crate) fn capture_shell(
-    cmd: &str,
-    shell: &str,
+/// Capture stdout of `argv`. Non-zero exit is tolerated (whatever stdout
+/// was produced is returned). Returns `Err(Timeout { .. })` when the process
+/// exceeds the optional timeout. Single capture implementation shared by the
+/// runtime command capture and the compile-time import-path capture.
+pub(crate) fn capture_argv(
+    argv: &[&str],
+    cmd_desc: &str,
     cwd: Option<&Path>,
     env: Option<&HashMap<String, String>>,
     timeout: Option<Duration>,
 ) -> Result<String, SubprocessError> {
     let mut captured = String::new();
-    run_subprocess(
-        cmd,
-        &[shell, "-c", cmd],
-        cwd,
-        env,
-        timeout,
-        &mut |line| match line {
-            SubprocessLine::Stdout(text) => {
-                captured.push_str(&text);
-                captured.push('\n');
-            }
-            SubprocessLine::Stderr(_) => {}
-        },
-    )?;
+    run_subprocess(cmd_desc, argv, cwd, env, timeout, &mut |line| match line {
+        SubprocessLine::Stdout(text) => {
+            captured.push_str(&text);
+            captured.push('\n');
+        }
+        SubprocessLine::Stderr(_) => {}
+    })?;
     Ok(captured.trim_end().to_string())
 }

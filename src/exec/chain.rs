@@ -1,6 +1,7 @@
 //! Chain execution: runs a sequential chain of project-function calls
 //! through the TUI, reporting each step's status as it completes.
 
+use crate::exec::DirenvState;
 use crate::exec::error::RuntimeError;
 use crate::exec::{
     Executor, TaskOutcome, TaskRunError, TaskStatus, TuiEvent, await_tasks_and_report,
@@ -19,6 +20,8 @@ struct ChainConfig {
     timeout: Option<std::time::Duration>,
     repo_dirs: BTreeMap<String, PathBuf>,
     invocation_cwd: PathBuf,
+    /// Per-directory direnv decisions, shared across all chains.
+    direnv: Arc<DirenvState>,
 }
 
 /// Execute a single chain of calls sequentially inside a blocking task.
@@ -47,6 +50,7 @@ fn execute_single_chain(
             config.shell.clone(),
             config.timeout,
             Arc::new(output_callback),
+            Arc::clone(&config.direnv),
         );
         crate::exec::send_tui_event(&tx, TuiEvent::UpdateStatus(task_idx, TaskStatus::Running));
 
@@ -84,6 +88,7 @@ pub(crate) fn execute_task_chains(
     timeout: Option<std::time::Duration>,
     repo_dirs: BTreeMap<String, PathBuf>,
     invocation_cwd: PathBuf,
+    direnv_enabled: bool,
 ) -> Result<(), TaskRunError> {
     // One TUI chain group per run-block chain, labelled by its joined calls.
     let chain_pairs: Vec<(String, Vec<String>)> = chains
@@ -101,6 +106,7 @@ pub(crate) fn execute_task_chains(
         timeout,
         repo_dirs,
         invocation_cwd,
+        direnv: Arc::new(DirenvState::new(direnv_enabled)),
     });
 
     match crate::exec::run_tui_with(

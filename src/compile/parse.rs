@@ -159,9 +159,16 @@ pub(super) fn eval_path_template(
             DslPart::Cmd(inner) => {
                 let cmd = eval_path_template(inner, state, source_name)?;
                 // Tolerant capture: non-zero exit returns whatever stdout was
-                // produced (empty on failure).
-                let captured = crate::exec::subprocess::capture_shell(&cmd, "sh", None, None, None)
-                    .unwrap_or_default();
+                // produced (empty on failure). Deliberately unwrapped: compile
+                // is config- and direnv-independent by design.
+                let captured = crate::exec::subprocess::capture_argv(
+                    &["sh", "-c", cmd.as_str()],
+                    &cmd,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap_or_default();
                 out.push_str(&captured);
             }
         }

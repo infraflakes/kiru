@@ -1,5 +1,6 @@
 use crate::exec::OutputCallback;
 use crate::exec::context::ExecContext;
+use crate::exec::direnv::DirenvState;
 use crate::exec::error::RuntimeError;
 use crate::ir::Ir;
 use std::path::PathBuf;
@@ -12,6 +13,7 @@ pub(crate) struct Executor {
     shell: String,
     timeout: Option<Duration>,
     output: OutputCallback,
+    direnv: Arc<DirenvState>,
 }
 
 impl Executor {
@@ -21,12 +23,14 @@ impl Executor {
         shell: String,
         timeout: Option<Duration>,
         output: OutputCallback,
+        direnv: Arc<DirenvState>,
     ) -> Self {
         Executor {
             ir,
             shell,
             timeout,
             output,
+            direnv,
         }
     }
 
@@ -53,7 +57,13 @@ impl Executor {
                 ))
             })?;
 
-        let mut ctx = ExecContext::new(&mut self.output, cwd, self.shell.clone(), self.timeout);
+        let mut ctx = ExecContext::new(
+            &mut self.output,
+            cwd,
+            self.shell.clone(),
+            self.timeout,
+            Arc::clone(&self.direnv),
+        );
         ctx.exec_stmts(fn_body)
     }
 }

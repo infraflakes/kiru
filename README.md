@@ -63,6 +63,8 @@ url  = "git@github.com:you/todo.git"
 dir  = "~/projects/todo"
 ```
 
+Set `direnv = true` to run commands through `direnv exec` when the project's `.envrc` is allowed (off by default; requires the `direnv` binary).
+
 ## Compile and run
 
 kiru does not read `main.kiru` directly. First, compile it into the `kirufile` that the rest of the commands use:

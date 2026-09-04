@@ -44,6 +44,7 @@ pub(crate) fn execute_run_block(
         timeout,
         repo_dirs,
         invocation_cwd,
+        toml.direnv,
     )
     .map_err(CliError::from)
 }
