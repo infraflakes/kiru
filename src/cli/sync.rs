@@ -9,6 +9,12 @@ use crate::exec::RepoSync;
 
 pub(crate) fn run_sync_command(config_arg: Option<std::path::PathBuf>) -> Result<(), CliError> {
     let toml_path = get_toml_path(config_arg);
+    if !toml_path.exists() {
+        return Err(CliError::message(format!(
+            "kiru sync requires kiru.toml (not found at {})",
+            toml_path.display()
+        )));
+    }
     let mut toml = kiru_toml::load_kiru_toml_at(&toml_path).map_err(CliError::message)?;
     kiru_toml::expand_repo_dirs(&mut toml);
 

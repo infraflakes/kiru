@@ -78,7 +78,7 @@ Compile parses and checks `main.kiru`, then writes `kirufile` into the output di
 | command | what it does |
 |---------|-------------|
 | `kiru compile -c main.kiru -o DIR` | turn a `main.kiru` into the `kirufile` |
-| `kiru status` | validate the `kirufile` and show what's inside |
+| `kiru status` | show the kiru.toml config and the compiled run blocks |
 | `kiru run ci` | run the `ci` pipeline |
 | `kiru sync` | clone or update the repos in `kiru.toml` |
 | `kiru version` | print the version |

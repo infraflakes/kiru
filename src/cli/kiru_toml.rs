@@ -6,7 +6,7 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
 /// The top-level `kiru.toml` schema.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub(crate) struct KiruToml {
     /// Shell binary used for `$(cmd)` substitution and `exec`. Absent
     /// means the default (`sh`) applies at the use sites.
@@ -83,6 +83,17 @@ pub(crate) fn load_kiru_toml_at(path: &Path) -> Result<KiruToml, String> {
     Ok(config)
 }
 
+/// Load `kiru.toml` when it exists; a missing file is the all-defaults
+/// configuration (commands run at the invocation cwd, shell `sh`, no
+/// timeout, no direnv). A file that exists but is malformed is a hard
+/// error.
+pub(crate) fn load_kiru_toml_or_default(path: &Path) -> Result<KiruToml, String> {
+    if !path.exists() {
+        return Ok(KiruToml::default());
+    }
+    load_kiru_toml_at(path)
+}
+
 /// Validate a `KiruToml` after parsing.
 fn validate_kiru_toml(config: &KiruToml) -> Result<(), String> {
     if let Some(timeout) = config.timeout
@@ -134,6 +145,25 @@ mod tests {
     #[test]
     fn test_expand_home_noop() {
         assert_eq!(expand_home("/absolute/path"), "/absolute/path");
+    }
+
+    #[test]
+    fn test_missing_toml_is_all_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("kiru.toml");
+        let config = load_kiru_toml_or_default(&path).unwrap();
+        assert_eq!(config.shell, None);
+        assert_eq!(config.timeout, None);
+        assert!(!config.direnv);
+        assert!(config.repos.is_empty());
+    }
+
+    #[test]
+    fn test_malformed_toml_still_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("kiru.toml");
+        std::fs::write(&path, "not [valid toml").unwrap();
+        assert!(load_kiru_toml_or_default(&path).is_err());
     }
 
     #[test]

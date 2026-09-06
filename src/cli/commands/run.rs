@@ -16,7 +16,9 @@ pub(crate) fn execute_run_block(
 ) -> Result<(), CliError> {
     let config = load_config(kirufile_arg).map_err(CliError::message)?;
 
-    let toml = kiru_toml::load_kiru_toml_at(&crate::cli::get_toml_path(config_arg))
+    // A missing kiru.toml is the all-defaults configuration: no repos, so
+    // every chain runs at the invocation cwd.
+    let toml = kiru_toml::load_kiru_toml_or_default(&crate::cli::get_toml_path(config_arg))
         .map_err(CliError::message)?;
     let mut repo_dirs = BTreeMap::new();
     let mut toml_expanded = toml.clone();

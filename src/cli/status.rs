@@ -22,10 +22,13 @@ pub(crate) fn run_status_command(
     kirufile_arg: Option<PathBuf>,
 ) -> Result<(), CliError> {
     let toml_path = super::get_toml_path(config_arg);
-    let toml = kiru_toml::load_kiru_toml_at(&toml_path)
+    // A missing kiru.toml means no config and no projects to show; a
+    // malformed one is an error, status validates it.
+    let toml = kiru_toml::load_kiru_toml_or_default(&toml_path)
         .map_err(|e| CliError::message(format!("cannot show status: {e}")))?;
     let mut toml = toml;
     kiru_toml::expand_repo_dirs(&mut toml);
+    let has_toml = toml_path.exists();
 
     // The kirufile is optional: without one there are simply no runs to
     // show. A malformed kirufile is still an error, status validates it.
@@ -35,21 +38,23 @@ pub(crate) fn run_status_command(
         Err(message) => return Err(CliError::message(message)),
     };
 
-    let rendered_status_tree = format_status_tree(&toml, runs.as_ref());
+    let rendered_status_tree = format_status_tree(has_toml.then_some(&toml), runs.as_ref());
     pager::display_output_through_pager(&rendered_status_tree)
         .map_err(|e| CliError::message(format!("failed to display output: {}", e)))?;
     Ok(())
 }
 
-/// Render the whole status: the kiru.toml options, the configured repos, and
-/// the run blocks when a kirufile exists. Absent options render nothing, so
-/// the output shows exactly what is configured.
-pub(crate) fn format_status_tree(toml: &KiruToml, runs: Option<&Ir>) -> String {
+/// Render the whole status: the kiru.toml options and repos when a
+/// kiru.toml exists, and the run blocks when a kirufile exists. Absent
+/// files render nothing, so the output shows exactly what is configured.
+pub(crate) fn format_status_tree(toml: Option<&KiruToml>, runs: Option<&Ir>) -> String {
     let mut out = String::new();
     out.push('\n');
 
-    draw_options(&mut out, toml);
-    draw_projects(&mut out, toml);
+    if let Some(toml) = toml {
+        draw_options(&mut out, toml);
+        draw_projects(&mut out, toml);
+    }
     if let Some(runs) = runs {
         draw_runs(&mut out, runs);
     }
@@ -216,7 +221,7 @@ mod tests {
 
     #[test]
     fn tree_shows_config_projects_and_runs() {
-        let tree = format_status_tree(&sample_toml(), Some(&sample_runs()));
+        let tree = format_status_tree(Some(&sample_toml()), Some(&sample_runs()));
         assert!(tree.contains("Config"), "{tree}");
         assert!(tree.contains("shell") && tree.contains("zsh"), "{tree}");
         assert!(tree.contains("timeout") && tree.contains("300"), "{tree}");
@@ -237,7 +242,7 @@ mod tests {
         toml.shell = None;
         toml.timeout = None;
         toml.direnv = false;
-        let tree = format_status_tree(&toml, None);
+        let tree = format_status_tree(Some(&toml), None);
         assert!(!tree.contains("Config"), "{tree}");
         assert!(!tree.contains("shell"), "{tree}");
         assert!(!tree.contains("timeout"), "{tree}");
@@ -245,5 +250,14 @@ mod tests {
         assert!(tree.contains("Projects"), "{tree}");
         // No kirufile: no runs section at all, no warning line.
         assert!(!tree.contains("Runs"), "{tree}");
+    }
+
+    #[test]
+    fn missing_toml_renders_only_runs() {
+        let tree = format_status_tree(None, Some(&sample_runs()));
+        assert!(!tree.contains("Config"), "{tree}");
+        assert!(!tree.contains("Projects"), "{tree}");
+        assert!(tree.contains("Runs"), "{tree}");
+        assert!(tree.contains("ci"), "{tree}");
     }
 }
