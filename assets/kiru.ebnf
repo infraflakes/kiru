@@ -27,7 +27,8 @@ fn_stmt          = log_stmt | exec_stmt | cd_stmt
                  | var_decl | env_block | switch_stmt ;
 
 log_stmt         = "log"  template ";" ;
-exec_stmt        = "$(" template ")" ";" ;
+(* A bare statement: the template must contain at least one $(command). *)
+exec_stmt        = template ";" ;
 cd_stmt          = "cd"   template ";" ;
 
 (* -- env block ---------------------------------------------------- *)
@@ -42,6 +43,8 @@ case_arm         = "case" case_pattern "{" { fn_stmt } "}" ";" ;
 case_pattern     = literal_template       (* literal match only:     *)
                  | "_" ;                  (* @(var) and $(cmd) are   *)
                                           (* rejected here           *)
+
+literal_template = "(" { lit_text } ")" ;
 
 (* ================================================================= *)
 (*  PROJECT - declares a scope for vars and functions                *)
@@ -92,5 +95,6 @@ digit            = "0" | "1" | ... | "9" ;
 (*   import var pr fn run log cd env switch case                     *)
 (*                                                                   *)
 (* Comments start with # and run to end of line.                     *)
-(* Semicolons are mandatory in fn bodies and after var declarations. *)
+(* Every declaration ends with a semicolon: var, fn, pr, run,        *)
+(* import, and each statement inside fn and pr bodies.               *)
 (* ----------------------------------------------------------------- *)

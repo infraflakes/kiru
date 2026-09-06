@@ -72,7 +72,8 @@ run update_kiru {
 };
 
 run test_kiru {
-  kiru::fmt => kiru::test => kiru::build;
+  kiru::fmt => kiru::test;
+  kiru::clean => kiru::build;
 };
 
 run ci_kiru {

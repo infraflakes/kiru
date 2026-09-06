@@ -52,10 +52,11 @@ run ci {
 };
 ```
 
-**`kiru.toml`** - your machine. Which shell to use and which repos kiru should clone for you.
+**`kiru.toml`** - your machine. Which shell to use, an optional command timeout, and which repos kiru should clone for you.
 
 ```toml
 shell = "sh"
+timeout = 300           # optional, seconds per command
 
 [[repos]]
 name = "todo"
@@ -84,6 +85,8 @@ Compile parses and checks `main.kiru`, then writes `kirufile` into the output di
 | `kiru version` | print the version |
 
 Start with `kiru status`. It never runs anything, just tells you whether your config is sound.
+
+`kiru run` works without a `kiru.toml` too: commands then run in the directory you invoke kiru from, with the default shell. The one command that requires the toml is `kiru sync` - it has nothing to do without repos to clone.
 
 Flags follow one rule: `-c` points at a config, `-p` at a `kirufile`. Only the flags a command actually needs exist. Defaults are `~/.config/kiru/kiru.toml` for `-c` and `~/.config/kiru/kirufile` for `-p`; `compile -c` defaults to `~/.config/kiru/main.kiru`.
 
