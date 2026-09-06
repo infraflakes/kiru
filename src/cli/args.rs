@@ -11,7 +11,7 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 pub(crate) enum Commands {
-    /// Show the resolved configuration (parse, resolve, and validate)
+    /// Show current status of kiru
     Status {
         /// Path to kiru.toml (defaults to ~/.config/kiru/kiru.toml)
         #[arg(short, long)]
@@ -37,9 +37,9 @@ pub(crate) enum Commands {
         #[arg(short = 'p', long)]
         kirufile: Option<PathBuf>,
     },
-    /// Compile a `.kiru` DSL file into a `kirufile`
+    /// Compile kiru files
     Compile {
-        /// Path to the `.kiru` source file (defaults to ~/.config/kiru/main.kiru)
+        /// Path to the kiru source file (defaults to ~/.config/kiru/main.kiru)
         #[arg(short, long)]
         config: Option<PathBuf>,
         /// Output directory for kirufile (defaults to ~/.config/kiru/)

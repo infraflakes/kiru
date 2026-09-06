@@ -1,9 +1,14 @@
+//! `kiru status` renderer: shows the `kiru.toml` options and repos, plus the
+//! compiled run blocks from the kirufile when one exists. Nothing here runs
+//! anything; the sections mirror the two input files so what is displayed is
+//! exactly what is configured.
+
 use super::CliError;
-use super::load_config;
 use super::pager;
 use crate::cli::kiru_toml;
+use crate::cli::kiru_toml::KiruToml;
 use crate::exec::colors::{BOLD, BOLD_CYAN, CYAN, GRAY_ANSI, RESET, YELLOW};
-use crate::ir::{Ir, Project};
+use crate::ir::Ir;
 use std::path::PathBuf;
 
 macro_rules! style {
@@ -16,170 +21,229 @@ pub(crate) fn run_status_command(
     config_arg: Option<PathBuf>,
     kirufile_arg: Option<PathBuf>,
 ) -> Result<(), CliError> {
-    let config = load_config(kirufile_arg).map_err(CliError::message)?;
-    let toml = kiru_toml::load_kiru_toml_at(&super::get_toml_path(config_arg)).ok();
-    let rendered_status_tree = format_config_as_tree(&config, toml.as_ref());
+    let toml_path = super::get_toml_path(config_arg);
+    let toml = kiru_toml::load_kiru_toml_at(&toml_path)
+        .map_err(|e| CliError::message(format!("cannot show status: {e}")))?;
+    let mut toml = toml;
+    kiru_toml::expand_repo_dirs(&mut toml);
+
+    // The kirufile is optional: without one there are simply no runs to
+    // show. A malformed kirufile is still an error, status validates it.
+    let runs = match super::load_config(kirufile_arg) {
+        Ok(config) => Some(config),
+        Err(message) if message.contains("failed to read") => None,
+        Err(message) => return Err(CliError::message(message)),
+    };
+
+    let rendered_status_tree = format_status_tree(&toml, runs.as_ref());
     pager::display_output_through_pager(&rendered_status_tree)
         .map_err(|e| CliError::message(format!("failed to display output: {}", e)))?;
     Ok(())
 }
 
-/// Render the whole config (projects + runs) as an indented tree suitable for
-/// the pager. Each project lists its functions; each run lists its chain of
-/// `project::function` references.
-fn format_config_as_tree(config: &Ir, toml: Option<&kiru_toml::KiruToml>) -> String {
-    let mut formatted_output = String::new();
-    formatted_output.push('\n');
+/// Render the whole status: the kiru.toml options, the configured repos, and
+/// the run blocks when a kirufile exists. Absent options render nothing, so
+/// the output shows exactly what is configured.
+pub(crate) fn format_status_tree(toml: &KiruToml, runs: Option<&Ir>) -> String {
+    let mut out = String::new();
+    out.push('\n');
 
-    let has_projects = !config.projects.is_empty();
-    let has_runs = !config.execution_chains.is_empty();
-
-    if has_projects {
-        formatted_output.push_str(&format!(
-            "\n  {}  {}\n\n",
-            style!(BOLD, "Projects"),
-            style!(YELLOW, "{}", config.projects.len())
-        ));
-
-        let count = config.projects.len();
-        for (i, (name, project)) in config.projects.iter().enumerate() {
-            let is_last_project = i == count - 1;
-            let repo = toml.and_then(|t| t.repos.iter().find(|r| r.name == *name));
-            draw_project(&mut formatted_output, name, project, repo, is_last_project);
-        }
+    draw_options(&mut out, toml);
+    draw_projects(&mut out, toml);
+    if let Some(runs) = runs {
+        draw_runs(&mut out, runs);
     }
 
-    if has_runs {
-        formatted_output.push_str(&format!("\n  {}\n", style!(BOLD, "Runs")));
+    out
+}
 
-        let count = config.execution_chains.len();
-        for (run_idx, (name, calls)) in config.execution_chains.iter().enumerate() {
-            let is_last_run = run_idx == count - 1;
-            let run_connector = if is_last_run { "└" } else { "├" };
-            formatted_output.push_str(&format!(
-                "  {}── {}\n",
-                style!(BOLD, "{}", run_connector),
-                style!(BOLD, "{}", name)
+/// Draw the kiru.toml options. Only fields explicitly set in the file are
+/// shown: unset options stay invisible.
+fn draw_options(out: &mut String, toml: &KiruToml) {
+    let has_any = toml.shell.is_some() || toml.timeout.is_some() || toml.direnv;
+    if !has_any {
+        return;
+    }
+
+    out.push_str(&format!(
+        "\n  {}  {}\n\n",
+        style!(BOLD, "Config"),
+        style!(YELLOW, "")
+    ));
+    let last_index = [toml.shell.is_some(), toml.timeout.is_some(), toml.direnv]
+        .iter()
+        .filter(|shown| **shown)
+        .count()
+        - 1;
+    let mut shown = 0;
+    if let Some(shell) = &toml.shell {
+        draw_option(out, shown == last_index, "shell", shell);
+        shown += 1;
+    }
+    if let Some(timeout) = &toml.timeout {
+        draw_option(out, shown == last_index, "timeout", &timeout.to_string());
+        shown += 1;
+    }
+    if toml.direnv {
+        draw_option(out, shown == last_index, "direnv", "true");
+    }
+}
+
+fn draw_option(out: &mut String, last: bool, key: &str, value: &str) {
+    let connector = if last { "└" } else { "├" };
+    out.push_str(&format!(
+        "  {}── {}  {}\n",
+        connector,
+        style!(CYAN, "{key}"),
+        style!(BOLD, "{value}")
+    ));
+}
+
+/// Draw the configured repositories from `kiru.toml`, in file order. Each
+/// repo shows the fields it actually sets.
+fn draw_projects(out: &mut String, toml: &KiruToml) {
+    out.push_str(&format!(
+        "\n  {}  {}\n\n",
+        style!(BOLD, "Projects"),
+        style!(YELLOW, "{}", toml.repos.len())
+    ));
+
+    let count = toml.repos.len();
+    for (index, repo) in toml.repos.iter().enumerate() {
+        let last = index == count - 1;
+        let branch = if last { "└" } else { "├" };
+        out.push_str(&format!(
+            "  {}── {}\n",
+            branch,
+            style!(BOLD_CYAN, "{}", repo.name)
+        ));
+        let indent = if last { "   " } else { "│  " };
+
+        let fields: [(&str, &str); 3] = [
+            ("url", repo.url.as_str()),
+            ("dir", repo.dir.as_str()),
+            ("branch", repo.branch.as_str()),
+        ];
+        let shown_fields: Vec<(&str, &str)> = fields
+            .into_iter()
+            .filter(|(_, value)| !value.is_empty())
+            .collect();
+        for (field_idx, (key, value)) in shown_fields.iter().enumerate() {
+            let is_last_field = field_idx == shown_fields.len() - 1;
+            out.push_str(&format!(
+                "  {}  {}── {:>7}:  {}\n",
+                indent,
+                if is_last_field { "└" } else { "├" },
+                style!(CYAN, "{key}"),
+                value
             ));
-
-            let run_indent = if is_last_run { "   " } else { "│  " };
-
-            let stage_count = calls.len();
-            for (stage_idx, stage) in calls.iter().enumerate() {
-                let is_last_stage = stage_idx == stage_count - 1;
-                let stage_connector = if is_last_stage { "└" } else { "├" };
-
-                // Join multiple calls in a chain with " => " on a single line.
-                let chain_display: Vec<String> = stage.iter().map(|call| call.fqn()).collect();
-                let chain_line = chain_display.join(&style!(GRAY_ANSI, " => "));
-
-                formatted_output.push_str(&format!(
-                    "  {}  {}── {}\n",
-                    run_indent,
-                    style!(BOLD, "{}", stage_connector),
-                    chain_line
-                ));
-            }
         }
     }
-
-    formatted_output.push('\n');
-    footer_bar(&mut formatted_output, config);
-    formatted_output
 }
 
-/// Render a single project node with its functions and optional repo config.
-fn draw_project(
-    out: &mut String,
-    name: &str,
-    project: &Project,
-    repo: Option<&kiru_toml::Repo>,
-    last: bool,
-) {
-    let branch = if last { "└" } else { "├" };
+/// Draw the compiled run blocks. Only called when a kirufile exists.
+fn draw_runs(out: &mut String, runs: &Ir) {
     out.push_str(&format!(
-        "  {}── {}\n",
-        branch,
-        style!(BOLD_CYAN, "{}", name)
+        "\n  {}  {}\n",
+        style!(BOLD, "Runs"),
+        style!(YELLOW, "{}", runs.execution_chains.len())
     ));
 
-    let indent = if last { "   " } else { "│  " };
-
-    if let Some(repo) = repo {
-        if !repo.url.is_empty() {
-            project_field(out, indent, "url", &repo.url);
-        }
-        if !repo.dir.is_empty() {
-            project_field(out, indent, "dir", &repo.dir);
-        }
-        if !repo.branch.is_empty() {
-            project_field(out, indent, "branch", &repo.branch);
-        }
-    }
-
-    let function_names: Vec<&String> = project.functions.keys().collect();
-    draw_item_line(
-        out,
-        indent,
-        if function_names.is_empty() {
-            "└"
-        } else {
-            "├"
-        },
-        "fn",
-        &function_names,
-    );
-}
-
-fn project_field(out: &mut String, indent: &str, key: &str, value: &str) {
-    out.push_str(&format!(
-        "  {}  ├── {:>7}:  {}\n",
-        indent,
-        style!(CYAN, "{}", key),
-        value
-    ));
-}
-
-fn draw_item_line(out: &mut String, indent: &str, connector: &str, label: &str, names: &[&String]) {
-    if names.is_empty() {
+    let count = runs.execution_chains.len();
+    for (run_idx, (name, stages)) in runs.execution_chains.iter().enumerate() {
+        let is_last_run = run_idx == count - 1;
+        let run_connector = if is_last_run { "└" } else { "├" };
         out.push_str(&format!(
-            "  {}  {}── {:>7}:  {}\n",
-            indent,
-            connector,
-            style!(YELLOW, "{}", label),
-            style!(GRAY_ANSI, "none")
+            "  {}── {}\n",
+            style!(BOLD, "{}", run_connector),
+            style!(BOLD, "{}", name)
         ));
-    } else {
-        let count = style!(GRAY_ANSI, "({})", names.len());
-        let joined = names
-            .iter()
-            .map(|name| style!(BOLD, "{}", name))
-            .collect::<Vec<_>>()
-            .join(", ");
-        out.push_str(&format!(
-            "  {}  {}── {:>7}:  {}  {}\n",
-            indent,
-            connector,
-            style!(YELLOW, "{}", label),
-            joined,
-            count
-        ));
+
+        let run_indent = if is_last_run { "   " } else { "│  " };
+        let stage_count = stages.len();
+        for (stage_idx, stage) in stages.iter().enumerate() {
+            let is_last_stage = stage_idx == stage_count - 1;
+            let stage_connector = if is_last_stage { "└" } else { "├" };
+
+            // Join multiple calls in a chain with " => " on a single line.
+            let chain_display: Vec<String> = stage.iter().map(|call| call.fqn()).collect();
+            let chain_line = chain_display.join(&style!(GRAY_ANSI, " => "));
+
+            out.push_str(&format!(
+                "  {}  {}── {}\n",
+                run_indent,
+                style!(BOLD, "{}", stage_connector),
+                chain_line
+            ));
+        }
     }
 }
 
-fn footer_bar(out: &mut String, config: &Ir) {
-    let fn_count: usize = config
-        .projects
-        .values()
-        .map(|project| project.functions.len())
-        .sum();
-    let run_count = config.execution_chains.len();
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::{Call, Ir};
+    use std::collections::BTreeMap;
 
-    out.push_str(&style!(
-        GRAY_ANSI,
-        "  -- {} projects, {} functions, {} runs --\n",
-        config.projects.len(),
-        fn_count,
-        run_count,
-    ));
+    fn sample_toml() -> KiruToml {
+        KiruToml {
+            shell: Some("zsh".to_string()),
+            timeout: Some(300),
+            direnv: true,
+            repos: vec![kiru_toml::Repo {
+                name: "kiru".to_string(),
+                url: "https://github.com/infraflakes/kiru.git".to_string(),
+                dir: "~/Projects/kiru".to_string(),
+                branch: "dev".to_string(),
+            }],
+        }
+    }
+
+    fn sample_runs() -> Ir {
+        let mut chains = BTreeMap::new();
+        chains.insert(
+            "ci".to_string(),
+            vec![vec![Call {
+                project: "kiru".to_string(),
+                function: "test".to_string(),
+            }]],
+        );
+        Ir {
+            projects: BTreeMap::new(),
+            execution_chains: chains,
+        }
+    }
+
+    #[test]
+    fn tree_shows_config_projects_and_runs() {
+        let tree = format_status_tree(&sample_toml(), Some(&sample_runs()));
+        assert!(tree.contains("Config"), "{tree}");
+        assert!(tree.contains("shell") && tree.contains("zsh"), "{tree}");
+        assert!(tree.contains("timeout") && tree.contains("300"), "{tree}");
+        assert!(tree.contains("direnv") && tree.contains("true"), "{tree}");
+        assert!(tree.contains("Projects"), "{tree}");
+        assert!(tree.contains("kiru") && tree.contains("dev"), "{tree}");
+        assert!(tree.contains("Runs"), "{tree}");
+        assert!(tree.contains("ci") && tree.contains("kiru::test"), "{tree}");
+        // Functions are dead display weight since `kiru fn` was removed.
+        assert!(!tree.contains("fn:"), "{tree}");
+        // The footer is gone.
+        assert!(!tree.contains("projects,"), "{tree}");
+    }
+
+    #[test]
+    fn unset_options_render_nothing() {
+        let mut toml = sample_toml();
+        toml.shell = None;
+        toml.timeout = None;
+        toml.direnv = false;
+        let tree = format_status_tree(&toml, None);
+        assert!(!tree.contains("Config"), "{tree}");
+        assert!(!tree.contains("shell"), "{tree}");
+        assert!(!tree.contains("timeout"), "{tree}");
+        assert!(!tree.contains("direnv"), "{tree}");
+        assert!(tree.contains("Projects"), "{tree}");
+        // No kirufile: no runs section at all, no warning line.
+        assert!(!tree.contains("Runs"), "{tree}");
+    }
 }

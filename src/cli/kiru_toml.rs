@@ -8,10 +8,10 @@ use std::path::{Path, PathBuf};
 /// The top-level `kiru.toml` schema.
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct KiruToml {
-    /// Shell binary name used for `$(cmd)` substitution and `exec`.
-    /// Defaults to `"sh"` when absent.
-    #[serde(default = "default_shell")]
-    pub(crate) shell: String,
+    /// Shell binary used for `$(cmd)` substitution and `exec`. Absent
+    /// means the default (`sh`) applies at the use sites.
+    #[serde(default)]
+    pub(crate) shell: Option<String>,
 
     /// Global timeout in seconds for `$(cmd)` substitution. `None` means
     /// no timeout (commands run indefinitely).
@@ -48,10 +48,6 @@ pub(crate) struct Repo {
     /// Branch to clone/pull. Empty string means the default branch.
     #[serde(default)]
     pub(crate) branch: String,
-}
-
-fn default_shell() -> String {
-    "sh".to_string()
 }
 
 /// Expand `~` and `$HOME` in a path string. `~` is replaced with the user's
@@ -143,7 +139,7 @@ mod tests {
     #[test]
     fn test_validate_zero_timeout() {
         let config = KiruToml {
-            shell: "sh".to_string(),
+            shell: None,
             timeout: Some(0),
             direnv: false,
             repos: vec![],
@@ -163,5 +159,22 @@ mod tests {
     fn test_direnv_opt_in_parses() {
         let config: KiruToml = toml::from_str("direnv = true").unwrap();
         assert!(config.direnv);
+    }
+
+    #[test]
+    fn test_absent_options_stay_none() {
+        // Whatever is not in the file stays unset: status renders defaults
+        // invisibly, so the loader must not fill them in.
+        let config: KiruToml = toml::from_str("").unwrap();
+        assert_eq!(config.shell, None);
+        assert_eq!(config.timeout, None);
+        assert!(!config.direnv);
+        assert!(config.repos.is_empty());
+    }
+
+    #[test]
+    fn test_shell_only_when_present() {
+        let config: KiruToml = toml::from_str("shell = \"zsh\"").unwrap();
+        assert_eq!(config.shell, Some("zsh".to_string()));
     }
 }

@@ -40,7 +40,7 @@ pub(crate) fn execute_run_block(
     exec::chain::execute_task_chains(
         Arc::new(config),
         chains,
-        toml.shell,
+        toml.shell.unwrap_or_else(|| "sh".to_string()),
         timeout,
         repo_dirs,
         invocation_cwd,
