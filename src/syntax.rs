@@ -1,12 +1,11 @@
-pub(crate) mod ast;
-pub(crate) mod error;
-pub(crate) mod fnstmt;
-pub(crate) mod lexer;
-pub(crate) mod parser;
-pub(crate) mod source;
-pub(crate) mod token;
+//! Lexing and parsing for kiru source.
 
-pub(crate) use ast::{Program, Stmt, TopLevel};
-pub(crate) use fnstmt::FnStmt;
-pub(crate) use parser::Parser;
-pub(crate) use source::{Part, Template};
+mod ast;
+mod lexer;
+mod parser;
+mod span;
+mod token;
+
+pub(crate) use ast::{Declaration, Expression, Field, File, Statement, ValueKind};
+pub(crate) use parser::parse_file;
+pub(crate) use span::Span;

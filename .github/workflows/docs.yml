@@ -1,0 +1,87 @@
+name: Docs
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/**'
+      - 'src/**'
+      - 'stdlib/**'
+      - '.kiru/**'
+      - 'entry.kiru'
+      - 'main.kiru'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '**.nix'
+      - 'flake.lock'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'src/**'
+      - 'stdlib/**'
+      - '.kiru/**'
+      - 'entry.kiru'
+      - 'main.kiru'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '**.nix'
+      - 'flake.lock'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Build the compiler
+        run: nix build .#default
+
+      - name: Compile the pipeline
+        run: ./result/bin/kc main.kiru
+
+      - name: Checking the codebase
+        run: |
+          ./main docs build && ./main docs check
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: docs/dist
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

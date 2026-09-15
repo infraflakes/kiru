@@ -1,23 +1,17 @@
-<h1 align="center">kiru</h1>
+<h1 align="center">Kiru</h1>
 <p align="center">
     <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
     <a href="https://github.com/infraflakes/kiru/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/infraflakes/kiru?logo=github"></a>
 </p>
 
-<img src="./assets/kiru.png" alt="TUI" width="600">
-
 ---
 
 > [!CAUTION]
-> `kiru` is still in early development, breaking changes may happen.
+> `Kiru` is still in early development, breaking changes may happen.
+>
+> Many docs are temporarily LLM generated for now.
 
-kiru is a small tool that keeps several git repos in sync and runs jobs across them. You describe the work once, in one file, and kiru runs it for you.
-
-## What you get
-
-- One DSL for the repos you work with and the shell steps that build, test, and release them.
-- Pipelines that run steps in parallel or one after another, across repos.
-- Validation up front: kiru checks your file before it runs anything, so mistakes show up while you edit, not mid-deploy.
+Kiru is a statically typed, compiled process orchestration language.
 
 ## Install
 
@@ -25,79 +19,11 @@ kiru is a small tool that keeps several git repos in sync and runs jobs across t
 curl -sSf https://raw.githubusercontent.com/infraflakes/kiru/main/install.sh | sh
 ```
 
-This puts `kiru` in `~/.local/bin`. Make sure that directory is on your `PATH`.
+This puts `kc` in `~/.local/bin`. Make sure that directory is on your `PATH`.
 
-## Your two files
+## Documentation
 
-Everything lives in `~/.config/kiru/`, in two files you write.
-
-**`main.kiru`** - the work. Projects (`pr`), their functions (`fn`), and the pipelines (`run`) that call them. This one travels well, so keep it under version control.
-
-```kiru
-var app = (todo);
-
-pr todo {
-  fn build {
-    log (Building @(app)...);
-    $(go build -o bin/@(app) .);
-  };
-
-  fn test {
-    $(go test -race ./...);
-  };
-};
-
-run ci {
-  todo::test => todo::build;
-};
-```
-
-**`kiru.toml`** - your machine. Which shell to use, an optional command timeout, and which repos kiru should clone for you.
-
-```toml
-shell = "sh"
-timeout = 300           # optional, seconds per command
-
-[[repos]]
-name = "todo"
-url  = "git@github.com:you/todo.git"
-dir  = "~/projects/todo"
-```
-
-Set `direnv = true` to run commands through `direnv exec` when the direnv binary is on your `PATH` and the project has a `.envrc`; otherwise commands run plain (a missing binary is silently ignored). An untrusted `.envrc` fails wrapped commands with direnv's own error.
-
-## Compile and run
-
-kiru does not read `main.kiru` directly. First, compile it into the `kirufile` that the rest of the commands use:
-
-```bash
-kiru compile -c main.kiru -o ~/.config/kiru
-```
-
-Compile parses and checks `main.kiru`, then writes `kirufile` into the output directory. If it reports errors, fix them and compile again. Every edit to `main.kiru` needs a fresh `kiru compile` before the other commands see it.
-
-| command | what it does |
-|---------|-------------|
-| `kiru compile -c main.kiru -o DIR` | turn a `main.kiru` into the `kirufile` |
-| `kiru status` | show the kiru.toml config and the compiled run blocks |
-| `kiru run ci` | run the `ci` pipeline |
-| `kiru sync` | clone or update the repos in `kiru.toml` |
-| `kiru version` | print the version |
-
-Start with `kiru status`. It never runs anything, just tells you whether your config is sound.
-
-`kiru run` works without a `kiru.toml` too: commands then run in the directory you invoke kiru from, with the default shell. The one command that requires the toml is `kiru sync` - it has nothing to do without repos to clone.
-
-Flags follow one rule: `-c` points at a config, `-p` at a `kirufile`. Only the flags a command actually needs exist. Defaults are `~/.config/kiru/kiru.toml` for `-c` and `~/.config/kiru/kirufile` for `-p`; `compile -c` defaults to `~/.config/kiru/main.kiru`.
-
-## Learn the DSL
-
-- [Introduction to kiru](./assets/introduction.kiru) - the language, feature by feature.
-- [Minimal example](./assets/example.kiru) - the smallest setup that runs.
-- [Grammar](./assets/kiru.ebnf) - the formal spec.
-- [main.kiru](./main.kiru) - kiru's own config, used to build and test itself.
-
----
+The guides and reference live at [kiru.infraflakes.fyi](https://kiru.infraflakes.fyi/), built from [`docs/`](./docs).
 
 ## Contributing
 

@@ -1,4 +1,4 @@
-name: CI
+name: CI Nix
 
 on:
   push:
@@ -6,38 +6,60 @@ on:
       - main
     paths:
       - 'src/**'
+      - 'stdlib/**'
+      - '.kiru/**'
+      - 'entry.kiru'
       - 'main.kiru'
       - 'Cargo.toml'
       - 'Cargo.lock'
-      - '.github/workflows/ci.yml'
+      - '**.nix'
+      - 'flake.lock'
+      - '.github/workflows/ci-nix.yml'
   pull_request:
     branches:
       - main
     paths:
       - 'src/**'
+      - 'stdlib/**'
+      - '.kiru/**'
+      - 'entry.kiru'
       - 'main.kiru'
       - 'Cargo.toml'
       - 'Cargo.lock'
-      - '.github/workflows/ci.yml'
+      - '**.nix'
+      - 'flake.lock'
+      - '.github/workflows/ci-nix.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-nix-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
+  check:
     runs-on: ubuntu-latest
-    container:
-      image: rust:alpine
+    timeout-minutes: 30
     steps:
-      - name: Install Build Dependencies
-        run: apk add --no-cache git
-
-      - name: Install Rust Tools
-        run: |
-          rustup component add clippy rustfmt
-
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Compile Kiru Config
-        run: cargo run -- compile -c main.kiru -o .
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
 
-      - name: Run CI via Kiru
-        run: cargo run -- run ci_kiru -p kirufile
+      - name: Check the flake
+        run: nix flake check -L
+
+      - name: Build the compiler
+        run: nix build .#default
+
+      - name: Compile the pipeline
+        run: ./result/bin/kc main.kiru
+
+      - name: Checking the codebase
+        run: |
+          ./main kiru check

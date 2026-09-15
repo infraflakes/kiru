@@ -1,82 +1,22 @@
-pr kiru {
-  fn update {
-    log (Updating dependencies);
-    $(cargo update);
-    $(cargo upgrade);
-    $(nix flake update);
-  };
+import "entry.kiru";
 
-  fn build {
-    log (Building kiru cli!);
-    $(cargo build --release);
-  };
-
-  fn container {
-    var docker_bin = $(command -v docker >/dev/null 2>&1 && echo "docker" || { command -v podman >/dev/null 2>&1 && echo "podman"; });
-    switch docker_bin {
-      case () {
-        log (no container runtime found);
-        $(exit 1);
-      };
-      case _ {
-        log (building kiru with @(docker_bin));
-        $(@(docker_bin) build --output type=local,dest=bin .);
-      };
-    };
-  };
-
-  fn clean {
-    log (Cleaning up artifacts...);
-    $(rm -rf bin);
-    $(rm -rf result);
-  };
-
-  fn fmt {
-    log (Formatting the codebase...);
-    $(cargo clippy --fix --allow-dirty);
-    $(cargo fmt);
-  };
-
-  fn test {
-    log (Testing the codebase!);
-    $(cargo test);
-    $(cargo clippy -- -D warnings);
-    $(cargo fmt --check);
-  };
-
-  fn fail {
-    log (Failing the task!);
-    env {
-      CGO_ENABLED = (0);
-      GOOS = (linux);
-    } {
-      $(go build ./...);
-    };
-  };
+rec kiru = {
+  name = "kiru",
+  Dir = ".",
+  Nix = "true",
 };
 
-run clean_kiru {
-  kiru::clean;
+rec docs = {
+  name = "docs",
+  Dir = "docs",
+  Nix = "true"
 };
 
-run build_kiru {
-  kiru::build;
-};
-
-run build_container_kiru {
-  kiru::container;
-};
-
-run update_kiru {
-  kiru::update;
-};
-
-run test_kiru {
-  kiru::fmt => kiru::test;
-  kiru::clean => kiru::build;
-};
-
-run ci_kiru {
-  kiru::test;
-  kiru::build;
+fn main(rec args) {
+  switch(args.cmd) {
+    case("kiru") { kiru::kiru_command(kiru, args.flag); };
+    case("docs") { kiru::docs_command(docs, args.flag); };
+    case("all") { kiru::all_command(kiru, docs, args.flag); };
+    default { std::eprint(kiru::usage); };
+  };
 };

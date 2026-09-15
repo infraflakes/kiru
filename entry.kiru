@@ -1,0 +1,6 @@
+module kiru;
+
+import ".kiru/helpers.kiru";
+import ".kiru/kiru.kiru";
+import ".kiru/docs.kiru";
+import ".kiru/cli.kiru";

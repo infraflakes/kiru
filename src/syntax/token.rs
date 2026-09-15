@@ -1,119 +1,77 @@
-/// Token types recognized by the kiru DSL lexer.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum TokenType {
-    Eof,
+//! Token kinds produced by the lexer.
+
+use crate::syntax::Span;
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum TokenKind {
     Ident(String),
-    /// A parsed template expression `( ... )`, `$( ... )`, or `@( ... )`.
-    /// The template carries its resolved parts (literal / var / command).
-    Template(crate::syntax::source::Template),
-    /// A bare `)` outside any template. Never accepted by the grammar, but
-    /// kept as a distinct token so a stray `)` reports as "found `)`" instead
-    /// of a generic illegal-character error.
-    RParen,
-    LBrace,
-    RBrace,
-    Semicolon,
-    Assign,
-    /// `=>` separator inside run blocks: starts a new sequential stage. Calls
-    /// separated by `;` run concurrently in the same stage; `=>` runs the next
-    /// stage only after the current one finishes.
-    ChainArrow,
+    Text(String),
+    Module,
     Import,
-    Var,
     Fn,
-    Run,
-    Env,
-    Log,
-    Cd,
-    Pr,
+    Txt,
+    Rec,
+    Mut,
     Switch,
     Case,
-    /// `::` separator used in run-block references (`pr::fn`).
-    NamespaceSep,
+    Default,
+    Defer,
+    Return,
+    Panic,
+    Async,
+    Wait,
+    PathSep,
+    Dot,
+    Comma,
+    Semi,
+    Equals,
+    Plus,
+    Arrow,
+    LBrace,
+    RBrace,
+    LParen,
+    RParen,
+    Eof,
 }
 
-/// A lexical token with its byte-offset span into the source text.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Token {
-    pub(crate) token_type: TokenType,
-    pub(crate) offset: usize,
-    pub(crate) len: usize,
+    pub(crate) kind: TokenKind,
+    pub(crate) span: Span,
 }
 
-impl Token {
-    pub(crate) fn new(ty: TokenType, offset: usize, len: usize) -> Self {
-        Self {
-            token_type: ty,
-            offset,
-            len,
+impl TokenKind {
+    /// A human readable name used in parser diagnostics.
+    pub(crate) fn describe(&self) -> String {
+        match self {
+            TokenKind::Ident(name) => format!("`{name}`"),
+            TokenKind::Text(_) => "a string".to_owned(),
+            TokenKind::Module => "`module`".to_owned(),
+            TokenKind::Import => "`import`".to_owned(),
+            TokenKind::Fn => "`fn`".to_owned(),
+            TokenKind::Txt => "`txt`".to_owned(),
+            TokenKind::Rec => "`rec`".to_owned(),
+            TokenKind::Mut => "`mut`".to_owned(),
+            TokenKind::Switch => "`switch`".to_owned(),
+            TokenKind::Case => "`case`".to_owned(),
+            TokenKind::Default => "`default`".to_owned(),
+            TokenKind::Defer => "`defer`".to_owned(),
+            TokenKind::Return => "`return`".to_owned(),
+            TokenKind::Panic => "`panic`".to_owned(),
+            TokenKind::Async => "`async`".to_owned(),
+            TokenKind::Wait => "`wait`".to_owned(),
+            TokenKind::PathSep => "`::`".to_owned(),
+            TokenKind::Dot => "`.`".to_owned(),
+            TokenKind::Comma => "`,`".to_owned(),
+            TokenKind::Semi => "`;`".to_owned(),
+            TokenKind::Equals => "`=`".to_owned(),
+            TokenKind::Plus => "`+`".to_owned(),
+            TokenKind::Arrow => "`->`".to_owned(),
+            TokenKind::LBrace => "`{`".to_owned(),
+            TokenKind::RBrace => "`}`".to_owned(),
+            TokenKind::LParen => "`(`".to_owned(),
+            TokenKind::RParen => "`)`".to_owned(),
+            TokenKind::Eof => "the end of the file".to_owned(),
         }
     }
-}
-
-/// All DSL keywords paired with their token types. Single source of truth
-/// used by the lexer (`lookup_ident`), error formatting and keyword checks.
-const KEYWORDS: &[(&str, TokenType)] = &[
-    ("import", TokenType::Import),
-    ("var", TokenType::Var),
-    ("pr", TokenType::Pr),
-    ("fn", TokenType::Fn),
-    ("run", TokenType::Run),
-    ("env", TokenType::Env),
-    ("log", TokenType::Log),
-    ("cd", TokenType::Cd),
-    ("case", TokenType::Case),
-    ("switch", TokenType::Switch),
-];
-
-/// Convert a keyword string to its corresponding token type,
-/// or return `TokenType::Ident` if it is not a keyword.
-pub(crate) fn lookup_ident(ident: &str) -> TokenType {
-    KEYWORDS
-        .iter()
-        .find(|(keyword, _)| *keyword == ident)
-        .map(|(_, ty)| ty.clone())
-        .unwrap_or(TokenType::Ident(ident.to_string()))
-}
-
-/// Returns the user-facing name of a token type. Keyword display names are
-/// derived from the keyword table; punctuation and special types keep their
-/// own spelling.
-pub(crate) fn format_token_type(ty: &TokenType) -> String {
-    if let Some((keyword, _)) = KEYWORDS.iter().find(|(_, keyword_ty)| keyword_ty == ty) {
-        return format!("`{}`", keyword);
-    }
-    match ty {
-        TokenType::LBrace => "`{`".to_string(),
-        TokenType::RBrace => "`}`".to_string(),
-        TokenType::RParen => "`)`".to_string(),
-        TokenType::Semicolon => "`;`".to_string(),
-        TokenType::Assign => "`=`".to_string(),
-        TokenType::ChainArrow => "`=>`".to_string(),
-        TokenType::Ident(_) => "identifier".to_string(),
-        TokenType::NamespaceSep => "`::`".to_string(),
-        TokenType::Template(_) => "template".to_string(),
-        TokenType::Eof => "end of file".to_string(),
-        TokenType::Import
-        | TokenType::Var
-        | TokenType::Fn
-        | TokenType::Run
-        | TokenType::Pr
-        | TokenType::Log
-        | TokenType::Env
-        | TokenType::Cd
-        | TokenType::Case
-        | TokenType::Switch => unreachable!("keyword tokens are named by the keyword table"),
-    }
-}
-
-pub(crate) fn format_token(token: &Token) -> String {
-    match &token.token_type {
-        TokenType::Ident(s) => format!("`{}`", s),
-        TokenType::Template(_) => "template".to_string(),
-        _ => format_token_type(&token.token_type),
-    }
-}
-
-pub(crate) fn is_keyword_token(ty: &TokenType) -> bool {
-    KEYWORDS.iter().any(|(_, keyword_ty)| keyword_ty == ty)
 }
