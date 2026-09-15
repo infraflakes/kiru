@@ -5,8 +5,11 @@
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
-/// The top-level `kiru.toml` schema.
+/// The top-level `kiru.toml` schema. Unknown keys are rejected so a typo
+/// (`shelll`, a retired top-level `direnv`, ...) is a clear error instead
+/// of a silently ignored setting.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct KiruToml {
     /// Shell binary used for `$(cmd)` substitution and `exec`. Absent
     /// means the default (`sh`) applies at the use sites.
@@ -17,12 +20,6 @@ pub(crate) struct KiruToml {
     /// no timeout (commands run indefinitely).
     #[serde(default)]
     pub(crate) timeout: Option<u64>,
-
-    /// Opt-in direnv integration: when true, `$(command)` execution is
-    /// wrapped in `direnv exec <dir>` for directories whose rc is allowed
-    /// (per `direnv status`). Disabled by default.
-    #[serde(default)]
-    pub(crate) direnv: bool,
 
     /// Repository declarations that `kiru sync` clones/pulls and that the
     /// executor uses to resolve project working directories.
@@ -48,6 +45,16 @@ pub(crate) struct Repo {
     /// Branch to clone/pull. Empty string means the default branch.
     #[serde(default)]
     pub(crate) branch: String,
+
+    /// Opt-in direnv integration for this repository: before a function of
+    /// the project runs, kiru executes `direnv allow <dir>` so the rc is
+    /// always approved, then every shell command of the project is wrapped
+    /// in `direnv exec <dir>`. There are no further checks on kiru's side:
+    /// a missing direnv binary, a failing rc, or a directory without an
+    /// `.envrc` fails the command through direnv itself. Disabled by
+    /// default; commands of unflagged repos run plain.
+    #[serde(default)]
+    pub(crate) direnv: bool,
 }
 
 /// Expand `~` and `$HOME` in a path string. `~` is replaced with the user's
@@ -85,8 +92,8 @@ pub(crate) fn load_kiru_toml_at(path: &Path) -> Result<KiruToml, String> {
 
 /// Load `kiru.toml` when it exists; a missing file is the all-defaults
 /// configuration (commands run at the invocation cwd, shell `sh`, no
-/// timeout, no direnv). A file that exists but is malformed is a hard
-/// error.
+/// timeout, no direnv anywhere). A file that exists but is malformed is a
+/// hard error.
 pub(crate) fn load_kiru_toml_or_default(path: &Path) -> Result<KiruToml, String> {
     if !path.exists() {
         return Ok(KiruToml::default());
@@ -100,6 +107,14 @@ fn validate_kiru_toml(config: &KiruToml) -> Result<(), String> {
         && timeout == 0
     {
         return Err("timeout must be greater than zero when set".to_string());
+    }
+    for repo in &config.repos {
+        if repo.direnv && repo.dir.is_empty() {
+            return Err(format!(
+                "project {}: direnv requires a dir (direnv exec runs commands there)",
+                repo.name
+            ));
+        }
     }
     Ok(())
 }
@@ -154,7 +169,6 @@ mod tests {
         let config = load_kiru_toml_or_default(&path).unwrap();
         assert_eq!(config.shell, None);
         assert_eq!(config.timeout, None);
-        assert!(!config.direnv);
         assert!(config.repos.is_empty());
     }
 
@@ -171,24 +185,62 @@ mod tests {
         let config = KiruToml {
             shell: None,
             timeout: Some(0),
-            direnv: false,
             repos: vec![],
         };
         assert!(validate_kiru_toml(&config).is_err());
     }
 
     #[test]
-    fn test_direnv_defaults_to_disabled() {
-        // A kiru.toml without a `direnv` key must deserialize with the
+    fn test_repo_direnv_defaults_to_disabled() {
+        // A repo without a `direnv` key must deserialize with the
         // integration off.
-        let config: KiruToml = toml::from_str("shell = \"sh\"").unwrap();
-        assert!(!config.direnv);
+        let config: KiruToml = toml::from_str(
+            r#"
+            [[repos]]
+            name = "todo"
+            dir = "~/projects/todo"
+            "#,
+        )
+        .unwrap();
+        assert!(!config.repos[0].direnv);
     }
 
     #[test]
-    fn test_direnv_opt_in_parses() {
-        let config: KiruToml = toml::from_str("direnv = true").unwrap();
-        assert!(config.direnv);
+    fn test_repo_direnv_opt_in_parses() {
+        let config: KiruToml = toml::from_str(
+            r#"
+            [[repos]]
+            name = "todo"
+            dir = "~/projects/todo"
+            direnv = true
+            "#,
+        )
+        .unwrap();
+        assert!(config.repos[0].direnv);
+    }
+
+    #[test]
+    fn test_unknown_top_level_key_is_rejected() {
+        // A retired top-level `direnv` (now per repo) or any typo must be
+        // a hard error, not a silently ignored setting.
+        let result = toml::from_str::<KiruToml>("direnv = true");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_repo_direnv_without_dir_is_rejected() {
+        let config = KiruToml {
+            shell: None,
+            timeout: None,
+            repos: vec![Repo {
+                name: "todo".to_string(),
+                url: String::new(),
+                dir: String::new(),
+                branch: String::new(),
+                direnv: true,
+            }],
+        };
+        assert!(validate_kiru_toml(&config).is_err());
     }
 
     #[test]
@@ -198,7 +250,6 @@ mod tests {
         let config: KiruToml = toml::from_str("").unwrap();
         assert_eq!(config.shell, None);
         assert_eq!(config.timeout, None);
-        assert!(!config.direnv);
         assert!(config.repos.is_empty());
     }
 

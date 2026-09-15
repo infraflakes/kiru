@@ -9,7 +9,7 @@ pub(crate) mod sync;
 pub(crate) mod tui;
 
 pub(crate) use context::OutputCallback;
-pub(crate) use executor::Executor;
+pub(crate) use executor::{Executor, RepoExec};
 pub(crate) use sync::clone::{RepoSync, run_sync_for_projects};
 pub(crate) use tui::model::TaskStatus;
 pub(crate) use tui::run::{format_final_output, render_run_output};

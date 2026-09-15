@@ -1,7 +1,6 @@
 use super::subprocess;
 use super::subprocess::RunKillSwitch;
 use crate::exec::colors;
-use crate::exec::direnv::has_envrc;
 use crate::exec::error::RuntimeError;
 use crate::ir::{ArmPattern, EnvPair, Instruction, Segment, Template};
 use std::collections::{BTreeMap, HashMap};
@@ -25,10 +24,10 @@ pub(crate) struct ExecContext<'a> {
     system_env: Vec<(String, String)>,
     shell: String,
     timeout: Option<Duration>,
-    /// Commands run via `direnv exec` when the config opted in, the binary
-    /// is on `PATH`, and the project's starting directory has a `.envrc`.
-    /// Resolved once per project context; direnv itself resolves
-    /// per-directory rc rules when it runs.
+    /// Commands run via `direnv exec <starting directory>` when the repo
+    /// opted in with `direnv = true`. Decided by the caller (the executor
+    /// runs `direnv allow` first); direnv itself resolves per-directory rc
+    /// rules when it runs.
     direnv_wrap: bool,
     /// Run-level kill switch: a failing chain or a keyboard cancel kills
     /// every live command group of the run.
@@ -37,16 +36,17 @@ pub(crate) struct ExecContext<'a> {
 
 impl<'a> ExecContext<'a> {
     /// Create a new execution context. `cwd` is the starting working directory;
-    /// when `timeout` is `None`, commands have no time limit.
+    /// when `timeout` is `None`, commands have no time limit. When
+    /// `direnv_wrap` is true every shell command is wrapped in
+    /// `direnv exec <cwd>`, with the rc already approved by the caller.
     pub(crate) fn new(
         output: &'a mut OutputCallback,
         cwd: PathBuf,
         shell: String,
         timeout: Option<Duration>,
-        direnv: bool,
+        direnv_wrap: bool,
         kill: Option<Arc<RunKillSwitch>>,
     ) -> Self {
-        let direnv_wrap = direnv && has_envrc(&cwd);
         ExecContext {
             output,
             cwd,

@@ -1,8 +1,8 @@
 //! Chain execution: runs a sequential chain of project-function calls
 //! through the TUI, reporting each step's status as it completes.
 
-use crate::exec::direnv::direnv_on_path;
 use crate::exec::error::RuntimeError;
+use crate::exec::executor::RepoExec;
 use crate::exec::subprocess::RunKillSwitch;
 use crate::exec::{
     Executor, TaskOutcome, TaskRunError, TaskStatus, TuiEvent, await_tasks_and_report,
@@ -19,11 +19,11 @@ struct ChainConfig {
     ir: Arc<Ir>,
     shell: String,
     timeout: Option<std::time::Duration>,
-    repo_dirs: BTreeMap<String, PathBuf>,
+    /// Working directory and direnv setup per project; the executor
+    /// resolves the project's starting directory from this, falling back
+    /// to the invocation cwd.
+    repos: Arc<BTreeMap<String, RepoExec>>,
     invocation_cwd: PathBuf,
-    /// Config flag + binary presence; the `.envrc` check happens per
-    /// context against its starting directory.
-    direnv: bool,
     /// Run-level kill switch: one failing chain stops the whole run.
     kill: Arc<RunKillSwitch>,
 }
@@ -66,21 +66,16 @@ fn execute_single_chain(
         };
         let mut executor = Executor::new(
             config.ir.clone(),
+            Arc::clone(&config.repos),
+            config.invocation_cwd.clone(),
             config.shell.clone(),
             config.timeout,
             Arc::new(output_callback),
-            config.direnv,
             Some(Arc::clone(&config.kill)),
         );
         crate::exec::send_tui_event(&tx, TuiEvent::UpdateStatus(task_idx, TaskStatus::Running));
 
-        let cwd = config
-            .repo_dirs
-            .get(&call.project)
-            .cloned()
-            .unwrap_or_else(|| config.invocation_cwd.clone());
-
-        let result = executor.execute_fn_call(&call.function, &call.project, cwd);
+        let result = executor.execute_fn_call(&call.function, &call.project);
         report_task_outcome(
             &tx,
             task_idx,
@@ -117,11 +112,10 @@ fn execute_single_chain(
 pub(crate) fn execute_task_chains(
     ir: Arc<Ir>,
     chains: Vec<Vec<Call>>,
+    repos: Arc<BTreeMap<String, RepoExec>>,
+    invocation_cwd: PathBuf,
     shell: String,
     timeout: Option<std::time::Duration>,
-    repo_dirs: BTreeMap<String, PathBuf>,
-    invocation_cwd: PathBuf,
-    direnv_enabled: bool,
 ) -> Result<(), TaskRunError> {
     // One TUI chain group per run-block chain, labelled by its joined calls.
     let chain_pairs: Vec<(String, Vec<String>)> = chains
@@ -137,11 +131,8 @@ pub(crate) fn execute_task_chains(
         ir,
         shell,
         timeout,
-        repo_dirs,
+        repos,
         invocation_cwd,
-        // One binary check per run; the `.envrc` check happens per project
-        // context against its starting directory.
-        direnv: direnv_enabled && direnv_on_path(),
         kill: Arc::new(RunKillSwitch::new()),
     });
     // Cloned before the worker closure moves `chain_config` into the async

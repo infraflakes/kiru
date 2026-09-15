@@ -62,9 +62,10 @@ timeout = 300           # optional, seconds per command
 name = "todo"
 url  = "git@github.com:you/todo.git"
 dir  = "~/projects/todo"
+direnv = true
 ```
 
-Set `direnv = true` to run commands through `direnv exec` when the direnv binary is on your `PATH` and the project has a `.envrc`; otherwise commands run plain (a missing binary is silently ignored). An untrusted `.envrc` fails wrapped commands with direnv's own error.
+Set `direnv = true` on a repo entry to run that project's commands through `direnv exec`. Before a function of the project runs, kiru calls `direnv allow` on the repo directory for you, so the environment always loads. Everything else is direnv's business: a missing binary, a failing `.envrc`, or a directory without one fails the command with direnv's own error. Repos without the flag run their commands plain.
 
 ## Compile and run
 

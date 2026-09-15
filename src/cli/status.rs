@@ -65,7 +65,7 @@ pub(crate) fn format_status_tree(toml: Option<&KiruToml>, runs: Option<&Ir>) -> 
 /// Draw the kiru.toml options. Only fields explicitly set in the file are
 /// shown: unset options stay invisible.
 fn draw_options(out: &mut String, toml: &KiruToml) {
-    let has_any = toml.shell.is_some() || toml.timeout.is_some() || toml.direnv;
+    let has_any = toml.shell.is_some() || toml.timeout.is_some();
     if !has_any {
         return;
     }
@@ -75,7 +75,7 @@ fn draw_options(out: &mut String, toml: &KiruToml) {
         style!(BOLD, "Config"),
         style!(YELLOW, "")
     ));
-    let last_index = [toml.shell.is_some(), toml.timeout.is_some(), toml.direnv]
+    let last_index = [toml.shell.is_some(), toml.timeout.is_some()]
         .iter()
         .filter(|shown| **shown)
         .count()
@@ -87,10 +87,6 @@ fn draw_options(out: &mut String, toml: &KiruToml) {
     }
     if let Some(timeout) = &toml.timeout {
         draw_option(out, shown == last_index, "timeout", &timeout.to_string());
-        shown += 1;
-    }
-    if toml.direnv {
-        draw_option(out, shown == last_index, "direnv", "true");
     }
 }
 
@@ -129,10 +125,13 @@ fn draw_projects(out: &mut String, toml: &KiruToml) {
             ("dir", repo.dir.as_str()),
             ("branch", repo.branch.as_str()),
         ];
-        let shown_fields: Vec<(&str, &str)> = fields
+        let mut shown_fields: Vec<(&str, &str)> = fields
             .into_iter()
             .filter(|(_, value)| !value.is_empty())
             .collect();
+        if repo.direnv {
+            shown_fields.push(("direnv", "true"));
+        }
         for (field_idx, (key, value)) in shown_fields.iter().enumerate() {
             let is_last_field = field_idx == shown_fields.len() - 1;
             out.push_str(&format!(
@@ -194,12 +193,12 @@ mod tests {
         KiruToml {
             shell: Some("zsh".to_string()),
             timeout: Some(300),
-            direnv: true,
             repos: vec![kiru_toml::Repo {
                 name: "kiru".to_string(),
                 url: "https://github.com/infraflakes/kiru.git".to_string(),
                 dir: "~/Projects/kiru".to_string(),
                 branch: "dev".to_string(),
+                direnv: true,
             }],
         }
     }
@@ -241,7 +240,7 @@ mod tests {
         let mut toml = sample_toml();
         toml.shell = None;
         toml.timeout = None;
-        toml.direnv = false;
+        toml.repos[0].direnv = false;
         let tree = format_status_tree(Some(&toml), None);
         assert!(!tree.contains("Config"), "{tree}");
         assert!(!tree.contains("shell"), "{tree}");
