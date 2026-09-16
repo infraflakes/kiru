@@ -243,14 +243,27 @@ fn read_instructions(nodes: &[Sexp]) -> Result<Vec<Instruction>, String> {
                 let mut arms = Vec::new();
                 for arm_node in &items[2..] {
                     let ai = as_list(arm_node).ok_or("case must be a list".to_string())?;
-                    expect_sym(ai, 0, "case")?;
-                    let pat = match ai.get(1) {
-                        Some(Sexp::Sym(s)) if s == "_" => ArmPattern::Default,
-                        Some(Sexp::Str(s)) => ArmPattern::Lit(s.clone()),
-                        other => return Err(format!("bad case pattern: {:?}", other)),
-                    };
-                    let body = read_instructions(&ai[2..])?;
-                    arms.push(Arm { pattern: pat, body });
+                    // The wildcard arm serializes as `(default <body>...)`,
+                    // encoding the language's bare `default` keyword: no
+                    // pattern element, the body starts right after the head.
+                    let (pattern, body_items) =
+                        match sym(ai.first().ok_or("case arm head".to_string())?) {
+                            Some("default") => (ArmPattern::Default, &ai[1..]),
+                            Some("case") => {
+                                let pat = match ai.get(1) {
+                                    Some(Sexp::Str(s)) => ArmPattern::Lit(s.clone()),
+                                    other => {
+                                        return Err(format!("bad case pattern: {:?}", other));
+                                    }
+                                };
+                                (pat, &ai[2..])
+                            }
+                            other => {
+                                return Err(format!("bad case arm head: {:?}", other));
+                            }
+                        };
+                    let body = read_instructions(body_items)?;
+                    arms.push(Arm { pattern, body });
                 }
                 out.push(Instruction::Switch { subject, arms });
             }

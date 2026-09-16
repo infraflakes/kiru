@@ -86,13 +86,15 @@ mod tests {
 
     #[test]
     fn test_unclosed_fn_brace() {
-        let result = parse_program("project t { fn bad { log (hi); };");
+        let result = parse_program("project t { fn bad { log(hi); };");
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_toplevel_fn_is_rejected() {
-        let result = parse_program("fn build { log (hi); };");
-        assert!(result.is_err());
+    fn test_toplevel_fn_is_accepted() {
+        // Top-level `fn` is a global function template, callable from any
+        // project function body.
+        let prog = parse_program("fn build { log(hi); };").unwrap();
+        assert_eq!(count_stmt_types(&prog), vec!["fn"]);
     }
 }

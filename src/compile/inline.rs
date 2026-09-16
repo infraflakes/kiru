@@ -5,6 +5,17 @@ use crate::syntax::{Part as DslPart, Template};
 use std::collections::{BTreeMap, HashMap};
 
 use super::CompileError;
+use super::PendingFn;
+
+/// What a `name();` call statement can resolve to during lowering: sibling
+/// functions of the project being compiled (explicit or bound from a global
+/// template) and the global function templates collected from every source
+/// file. Both entry kinds carry the source their statements were written
+/// in, so diagnostics from an inlined body render against the right file.
+pub(super) struct FnResolver<'a> {
+    pub(super) project_functions: &'a BTreeMap<String, PendingFn>,
+    pub(super) global_functions: &'a BTreeMap<String, PendingFn>,
+}
 
 /// Inline every `@(var)` reference in `tmpl` against `scope`, replacing each
 /// with the (already-inlined) template it names. Commands are preserved as
@@ -102,11 +113,22 @@ pub(super) fn compile_template(tmpl: &Template) -> IrTemplate {
 /// `capture`. Only bare `$(cmd);` emits strict `Instruction::RunShellCmd`.
 /// Nested `env`/`switch` bodies get a *copy* of the local scope so their binds
 /// do not leak into the surrounding body.
+///
+/// A `name();` call statement is lowered carbon-copy: the target body (a
+/// sibling project function first, then a global function) is compiled
+/// recursively against a copy of the current scope and its instructions are
+/// spliced in place. `cycle_stack` carries the chain of bodies being lowered,
+/// so self- or mutually-recursive calls are reported instead of looping; the
+/// `source_name` switches to the target's own source so diagnostics from an
+/// inlined body render against the file it was written in.
 pub(super) fn compile_fn_stmts(
     stmts: &[crate::syntax::FnStmt],
     scope: &mut BTreeMap<String, Template>,
     sources: &HashMap<String, String>,
     source_name: &str,
+    project_name: &str,
+    resolver: &FnResolver<'_>,
+    cycle_stack: &mut Vec<String>,
 ) -> Result<Vec<Instruction>, CompileError> {
     let mut out = Vec::new();
     for stmt in stmts {
@@ -167,8 +189,63 @@ pub(super) fn compile_fn_stmts(
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let mut inner = scope.clone();
-                let body = compile_fn_stmts(body, &mut inner, sources, source_name)?;
+                let body = compile_fn_stmts(
+                    body,
+                    &mut inner,
+                    sources,
+                    source_name,
+                    project_name,
+                    resolver,
+                    cycle_stack,
+                )?;
                 out.push(Instruction::Env { pairs, body });
+            }
+            crate::syntax::FnStmt::Call { name, offset, len } => {
+                // Resolution order mirrors variables: sibling project
+                // functions first, then global functions. Each entry carries
+                // its own source, so a sibling from an imported global
+                // template reports against that file.
+                let target = match resolver.project_functions.get(name) {
+                    Some(entry) => Some((entry.body.as_slice(), entry.source_name.as_str())),
+                    None => resolver
+                        .global_functions
+                        .get(name)
+                        .map(|entry| (entry.body.as_slice(), entry.source_name.as_str())),
+                };
+                let Some((target_body, target_source)) = target else {
+                    return Err(CompileError::diagnostic(Diagnostic::new(
+                        source_name.to_string(),
+                        Span::new(*offset, (*len).max(1)),
+                        format!(
+                            "undefined function: `{name}` (not a function of project `{project_name}`, and not a global function)"
+                        ),
+                        sources.get(source_name).cloned().unwrap_or_default(),
+                    )));
+                };
+                if cycle_stack.contains(name) {
+                    let mut chain = cycle_stack.join(" -> ");
+                    chain.push_str(" -> ");
+                    chain.push_str(name);
+                    return Err(CompileError::diagnostic(Diagnostic::new(
+                        source_name.to_string(),
+                        Span::new(*offset, (*len).max(1)),
+                        format!("circular function call: {chain}"),
+                        sources.get(source_name).cloned().unwrap_or_default(),
+                    )));
+                }
+                cycle_stack.push(name.clone());
+                let mut inner = scope.clone();
+                let lowered = compile_fn_stmts(
+                    target_body,
+                    &mut inner,
+                    sources,
+                    target_source,
+                    project_name,
+                    resolver,
+                    cycle_stack,
+                )?;
+                cycle_stack.pop();
+                out.extend(lowered);
             }
             crate::syntax::FnStmt::Switch { subject, arms } => {
                 let subject =
@@ -180,7 +257,15 @@ pub(super) fn compile_fn_stmts(
                         DslArmPattern::Default => ArmPattern::Default,
                     };
                     let mut inner = scope.clone();
-                    let body = compile_fn_stmts(&arm.body, &mut inner, sources, source_name)?;
+                    let body = compile_fn_stmts(
+                        &arm.body,
+                        &mut inner,
+                        sources,
+                        source_name,
+                        project_name,
+                        resolver,
+                        cycle_stack,
+                    )?;
                     arms_out.push(Arm { pattern, body });
                 }
                 out.push(Instruction::Switch {

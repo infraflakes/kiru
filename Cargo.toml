@@ -1,26 +1,26 @@
 [package]
 name = "kiru"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 license = "MIT"
 authors = ["Nguyen Bao Truong <infraflakes@proton.me>"]
 
 [dependencies]
-clap = { version = "4.6.6", features = ["derive"] }
-dirs = "6.0.0"
+clap = { version = "4.6.7", features = ["derive"] }
+dirs = "7.0.0"
 libc = "0.2.189"
 annotate-snippets = "0.12.16"
 anstream = "1.0.0"
 ratatui = "0.30.2"
 shlex = "2.0.1"
 thiserror = "2.0.20"
-toml = "1.1.5"
+toml = "1.1.6"
 serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1.53.1", default-features = false, features = ["rt-multi-thread", "sync", "time"] }
 
 [build-dependencies]
-clap = { version = "4.6.6", features = ["derive"] }
-clap_complete = "4.6.9"
+clap = { version = "4.6.7", features = ["derive"] }
+clap_complete = "4.6.11"
 
 [dev-dependencies]
 annotate-snippets = { version = "0.12.16", features = ["testing-colors"] }

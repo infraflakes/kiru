@@ -15,11 +15,20 @@ pub(crate) enum Stmt {
     /// A project declaration: `project name { var; fn; }`. Contains behavioral
     /// definitions only (repo config lives in `kiru.toml`).
     Project { name: String, body: Vec<Stmt> },
-    /// A function definition (`fn name { ... }`), only valid inside a `project`
-    /// block (a top-level `fn` is a parse error).
+    /// A function definition (`fn name { ... }`), valid inside a `project`
+    /// block or at the top level (a global function template).
     Fn {
         name: String,
         body: Vec<FnStmt>,
+        offset: usize,
+        len: usize,
+    },
+    /// A project-body call `name();`: binds a global function template into
+    /// the project as a function of the same name, so run blocks can reach
+    /// it as `project::name`. The carbon-copy lowering resolves the
+    /// template against this project's vars.
+    Call {
+        name: String,
         offset: usize,
         len: usize,
     },

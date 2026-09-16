@@ -2,56 +2,69 @@
 (*  kiru DSL - EBNF Grammar                                         *)
 (* ----------------------------------------------------------------- *)
 
+(* Whitespace between tokens is insignificant, with one exception:    *)
+(* a statement keyword and its call parens must be adjacent           *)
+(* (log(x), never log (x)). The adjacency is what the lexer fuses     *)
+(* into one call-shaped token, so `word(...)` is always one unit.     *)
+
 (* ================================================================= *)
 (*  PROGRAM                                                          *)
 (* ================================================================= *)
 
 program          = { statement } ;
 statement        = import_decl | var_decl
-                 | project_decl | run_decl ;
-(* `fn` is only valid inside a project body; a top-level `fn` is an error. *)
+                 | fn_decl | project_decl | run_decl ;
+(* A top-level `fn` is a global function template: never executable on
+   its own, expanded (carbon-copy) wherever a project function calls
+   it. `fn` inside a project body declares a callable project function. *)
 
 (* ================================================================= *)
 (*  GLOBAL DECLARATIONS                                              *)
 (* ================================================================= *)
 
-import_decl      = "import" template ";" ;
+import_decl      = "import" "(" template ")" ";" ;
 var_decl         = "var" ident "=" template ";" ;
 
 (* ================================================================= *)
-(*  FUNCTION (always inside a project)                               *)
+(*  FUNCTIONS                                                        *)
 (* ================================================================= *)
 
 fn_decl          = "fn" ident "{" { fn_stmt } "}" ";" ;
 fn_stmt          = log_stmt | exec_stmt | cd_stmt
-                 | var_decl | env_block | switch_stmt ;
+                 | var_decl | env_block | switch_stmt | call_stmt ;
 
-log_stmt         = "log"  template ";" ;
+log_stmt         = "log" "(" template ")" ";" ;
 (* A bare statement: the template must contain at least one $(command). *)
 exec_stmt        = template ";" ;
-cd_stmt          = "cd"   template ";" ;
+cd_stmt          = "cd" "(" template ")" ";" ;
+
+(* A call to a sibling function of the enclosing project or to a global
+   function. The parens are part of the fused call token and must be
+   empty; everything the callee needs comes from the expanding scope. *)
+call_stmt        = ident "(" ")" ";" ;
 
 (* -- env block ---------------------------------------------------- *)
 
-env_block        = "env" "{" { env_pair } "}" "{" { fn_stmt } "}" ";" ;
-env_pair         = ident "=" template ";" ;
+env_block        = "env" "(" [ env_pair { ";" env_pair } [ ";" ] ] ")"
+                   "{" { fn_stmt } "}" ";" ;
+env_pair         = ident "=" template ;
 
 (* -- switch block ------------------------------------------------- *)
 
-switch_stmt      = "switch" template "{" { case_arm } "}" ";" ;
-case_arm         = "case" case_pattern "{" { fn_stmt } "}" ";" ;
-case_pattern     = literal_template       (* literal match only:     *)
-                 | "_" ;                  (* @(var) and $(cmd) are   *)
-                                          (* rejected here           *)
-
-literal_template = "(" { lit_text } ")" ;
+switch_stmt      = "switch" "(" template ")" "{" { switch_arm } "}" ";" ;
+switch_arm       = case_arm | default_arm ;
+case_arm         = "case" "(" literal_template ")" "{" { fn_stmt } "}" ";" ;
+(* Literal match only: @(var) and $(cmd) are rejected in a pattern.  *)
+default_arm      = "default" "{" { fn_stmt } "}" ";" ;
 
 (* ================================================================= *)
 (*  PROJECT - declares a scope for vars and functions                *)
 (* ================================================================= *)
 
 project_decl     = "project" ident "{" { project_stmt } "}" ";" ;
-project_stmt     = var_decl | fn_decl ;
+project_stmt     = var_decl | fn_decl | call_stmt ;
+(* A project-body `call_stmt` binds a global function template into the
+   project under that name, so run blocks reach it as project::name.   *)
 
 (* ================================================================= *)
 (*  RUN BLOCK - orchestrates functions across projects               *)
@@ -60,14 +73,16 @@ project_stmt     = var_decl | fn_decl ;
 run_decl         = "run" ident "{" { chain } "}" ";" ;
 chain            = qualified_fn_ref { "=>" qualified_fn_ref } [ ";" ] ;
 qualified_fn_ref = ident "::" ident ;     (* project::function      *)
+(* Run blocks only reach project functions; a global function cannot
+   be called from a run block.                                       *)
 (* The `;` after the last chain of a block is optional.             *)
 
 (* ================================================================= *)
 (*  TEMPLATES / EXPRESSIONS                                         *)
 (* ================================================================= *)
 
-(* a template is (text), @(name) to use a variable, or $(command)   *)
-(* to run one                                                       *)
+(* a template is (text), @(name) to interpolate a variable, or       *)
+(* $(command) to run one                                             *)
 
 template         = "(" { template_part } ")"
                  | "$(" { template_part } ")"
@@ -91,8 +106,10 @@ ident            = ( letter | "_" ) { letter | digit | "_" } ;
 letter           = "A" | "B" | ... | "Z" | "a" | "b" | ... | "z" ;
 digit            = "0" | "1" | ... | "9" ;
 
-(* Keywords (reserved, cannot be used as identifiers):              *)
-(*   import var project fn run log cd env switch case               *)
+(* Keywords (reserved: they cannot be used as identifiers, variable
+   names, or function names; this is what keeps bar() unambiguous
+   against the built-in primitives):                                *)
+(*   import var project fn run log cd env switch case default       *)
 (*                                                                  *)
 (* Comments start with # and run to end of line.                    *)
 (* Every declaration ends with a semicolon: var, fn, project, run,  *)

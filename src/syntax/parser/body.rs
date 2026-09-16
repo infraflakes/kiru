@@ -6,18 +6,6 @@ use crate::syntax::fnstmt::{Arm, FnStmt};
 use crate::syntax::source::{ArmPattern, EnvPair};
 
 impl Parser {
-    /// Parses a keyword-expr-semicolon statement (`log`, `cd`): skips the
-    /// keyword, parses the value expression, and expects the terminating `;`.
-    pub(super) fn parse_expr_stmt(
-        &mut self,
-        context: &'static str,
-    ) -> Result<Template, ParseError> {
-        self.advance();
-        let value = self.parse_expr()?;
-        self.expect_with_context(TokenType::Semicolon, context)?;
-        Ok(value)
-    }
-
     /// Parses a bare `$(cmd);` statement. The current token is a template
     /// token; it is consumed and must contain at least one `$(...)` command.
     /// Bare `()` or `@()` values are rejected (use `log`, `cd`, `var`, `env`,
@@ -39,24 +27,64 @@ impl Parser {
         Ok(FnStmt::RunShellCmd(value))
     }
 
-    pub(crate) fn parse_env_block(&mut self) -> Result<FnStmt, ParseError> {
-        self.advance(); // skip 'env'
+    /// Parses a `name();` call statement. The parens are fused by the lexer
+    /// and must be empty: calls take no arguments, the target resolves at
+    /// compile time against the enclosing project and the global functions.
+    pub(crate) fn parse_call_stmt(&mut self) -> Result<FnStmt, ParseError> {
+        let (name, template, offset, len) = match &self.current_token().token_type {
+            TokenType::Call { name, template } => (
+                name.clone(),
+                template.clone(),
+                self.current_token().offset,
+                self.current_token().len,
+            ),
+            _ => unreachable!("call dispatch guarantees a fused call token"),
+        };
+        if !template.parts.is_empty() {
+            return Err(ParseError::new(
+                crate::diagnostics::Span::new(template.offset, template.len.max(1)),
+                format!("function call `{name}` takes no arguments"),
+            ));
+        }
+        self.advance();
+        self.expect_with_context(TokenType::Semicolon, "after function call")?;
+        Ok(FnStmt::Call { name, offset, len })
+    }
 
-        // First brace group: `key = (template);` env pairs.
-        self.expect_with_context(TokenType::LBrace, "after `env`")?;
+    /// Parses `env(pairs) { body };`. The current token is the fused `env(`
+    /// opener; pairs are an ordinary token stream (`KEY = template;` separated
+    /// by `;`) until the bare closing `)`.
+    pub(crate) fn parse_env_block(&mut self) -> Result<FnStmt, ParseError> {
+        self.advance(); // past `env(`
+
         let mut pairs = Vec::new();
-        while self.current_token().token_type != TokenType::RBrace {
+        loop {
+            if matches!(self.current_token().token_type, TokenType::RParen) {
+                self.advance();
+                break;
+            }
             let key = self.parse_ident_name("identifier in env pair")?;
             self.expect_with_context(TokenType::Assign, "in env pair")?;
             let value = self.parse_expr()?;
-            self.expect_with_context(TokenType::Semicolon, "after env pair")?;
             pairs.push(EnvPair { key, value });
+            match self.current_token().token_type {
+                TokenType::Semicolon => self.advance(),
+                TokenType::RParen => {}
+                _ => {
+                    return Err(ParseError::new(
+                        self.eof_aware_span(),
+                        format!(
+                            "expected `;` or `)` after env pair, found {}",
+                            format_token(self.current_token())
+                        ),
+                    ));
+                }
+            }
         }
-        self.expect_with_context(TokenType::RBrace, "to close env pairs")?;
 
-        // Second brace group: the body executed with those env vars exported.
+        // The body executed with those env vars exported.
         let body = self.parse_braced_block(
-            "to open env block body",
+            "after env pairs",
             "to close env block body",
             Self::parse_fn_stmt,
         )?;
@@ -66,28 +94,21 @@ impl Parser {
         Ok(FnStmt::EnvBlock { pairs, body })
     }
 
-    /// Parses a `switch`/`case` block: `switch cond { case (pat) { ... } case _ { ... } };`.
+    /// Parses a `switch(subject) { case(pat) { ... } default { ... } };`
+    /// block. The subject template is fused into the `switch(...)` token;
+    /// each arm is a call: `case(pattern)` or the wildcard `default()`.
     pub(crate) fn parse_switch_stmt(&mut self) -> Result<FnStmt, ParseError> {
-        self.advance(); // skip `switch`
-
-        let subject = self.parse_expr()?;
+        let subject = match &self.current_token().token_type {
+            TokenType::Switch(Some(subject)) => subject.clone(),
+            _ => unreachable!("switch dispatch guarantees a fused subject"),
+        };
+        self.advance();
 
         self.expect_with_context(TokenType::LBrace, "to open switch arms")?;
 
         let mut arms = Vec::new();
         while self.current_token().token_type != TokenType::RBrace {
-            self.expect_with_context(TokenType::Case, "to open switch arm")?;
-            let pattern = self.parse_case_pattern()?;
-
-            let body = self.parse_braced_block(
-                "after switch pattern",
-                "to close switch arm body",
-                Self::parse_fn_stmt,
-            )?;
-
-            self.expect_with_context(TokenType::Semicolon, "after switch arm")?;
-
-            arms.push(Arm { pattern, body });
+            arms.push(self.parse_switch_arm()?);
         }
         self.expect_with_context(TokenType::RBrace, "to close switch block")?;
 
@@ -96,26 +117,50 @@ impl Parser {
         Ok(FnStmt::Switch { subject, arms })
     }
 
-    fn parse_case_pattern(&mut self) -> Result<ArmPattern, ParseError> {
-        if matches!(self.current_token().token_type, TokenType::Ident(ref ident) if ident == "_") {
-            self.advance();
-            return Ok(ArmPattern::Default);
-        }
-        let template = self.parse_expr()?;
-        // Patterns are matched against the resolved subject string, so only
-        // literal text is meaningful: `@(var)` would compare against the
-        // variable's name, not its value, and `$(cmd)` has no static text.
-        let pattern_is_literal = template
-            .parts
-            .iter()
-            .all(|p| matches!(p, crate::syntax::source::Part::Lit(_)));
-        if !pattern_is_literal {
-            return Err(ParseError::new(
-                crate::diagnostics::Span::new(template.offset, template.len.max(1)),
-                "case pattern must be literal text or `_`".to_string(),
-            ));
-        }
-        Ok(ArmPattern::Lit(template.literal_text()))
+    /// Parses one switch arm: `case(pattern) { body };` or the bare wildcard
+    /// `default { body };`.
+    fn parse_switch_arm(&mut self) -> Result<Arm, ParseError> {
+        let pattern = match &self.current_token().token_type {
+            TokenType::Case(Some(pattern_template)) => {
+                let pattern_template = pattern_template.clone();
+                self.advance();
+                // Patterns are matched against the resolved subject string,
+                // so only literal text is meaningful: `@(var)` inlines to the
+                // variable's value at compile time and `$(cmd)` has no static
+                // text, so neither can form a pattern.
+                let pattern_is_literal = pattern_template
+                    .parts
+                    .iter()
+                    .all(|p| matches!(p, crate::syntax::source::Part::Lit(_)));
+                if !pattern_is_literal {
+                    return Err(ParseError::new(
+                        crate::diagnostics::Span::new(
+                            pattern_template.offset,
+                            pattern_template.len.max(1),
+                        ),
+                        "case pattern must be literal text".to_string(),
+                    ));
+                }
+                ArmPattern::Lit(pattern_template.literal_text())
+            }
+            TokenType::Default => {
+                self.advance();
+                ArmPattern::Default
+            }
+            _ => {
+                return Err(self.unexpected_token_error());
+            }
+        };
+
+        let body = self.parse_braced_block(
+            "after switch pattern",
+            "to close switch arm body",
+            Self::parse_fn_stmt,
+        )?;
+
+        self.expect_with_context(TokenType::Semicolon, "after switch arm")?;
+
+        Ok(Arm { pattern, body })
     }
 }
 
@@ -144,7 +189,7 @@ mod tests {
         let body = parse_fn_body(
             "project t {\
               fn build {\
-                log (compiling);\
+                log(compiling);\
                 $(cargo build);\
               };\
             };",
@@ -157,12 +202,12 @@ mod tests {
         let body = parse_fn_body(
             "project t {\
               fn deploy {\
-                env { CGO_ENABLED = (0); } {\
+                env(CGO_ENABLED = (0);) {\
                   $(deploy);\
                 };\
-                cd (./dist);\
+                cd(./dist);\
                 $(npm publish);\
-                log (done);\
+                log(done);\
               };\
             };",
         );
@@ -177,9 +222,9 @@ mod tests {
         let body = parse_fn_body(
             "project t {\
               fn test {\
-                env { X = (1); } {\
+                env(X = (1);) {\
                   $(run tests);\
-                  log (testing);\
+                  log(testing);\
                 };\
               };\
             };",
@@ -199,9 +244,9 @@ mod tests {
         let body = parse_fn_body(
             "project t {\
               fn deploy {\
-                switch @(target) {\
-                  case (production) { $(deploy-prod); };\
-                  case _ { log (unknown); };\
+                switch(@(target)) {\
+                  case(production) { $(deploy-prod); };\
+                  default { log(unknown); };\
                 };\
               };\
             };",
@@ -220,17 +265,16 @@ mod tests {
         let result = parse_program(
             "project t {\
               fn d {\
-                switch @(t) {\
-                  case @(v) { log (x); };\
+                switch(@(t)) {\
+                  case(@(v)) { log(x); };\
                 };\
               };\
             };",
         );
         let errs = result.unwrap_err();
         assert!(
-            errs.iter().any(|e| e
-                .to_string()
-                .contains("case pattern must be literal text or `_`")),
+            errs.iter()
+                .any(|e| e.to_string().contains("case pattern must be literal text")),
             "got: {:?}",
             errs
         );
@@ -241,8 +285,8 @@ mod tests {
         let result = parse_program(
             "project t {\
               fn d {\
-                switch @(t) {\
-                  case $(cmd) { log (x); };\
+                switch(@(t)) {\
+                  case($(cmd)) { log(x); };\
                 };\
               };\
             };",
@@ -252,20 +296,20 @@ mod tests {
 
     #[test]
     fn test_cd_statement() {
-        let body = parse_fn_body("project t { fn build { cd (./src); }; };");
+        let body = parse_fn_body("project t { fn build { cd(./src); }; };");
         assert_eq!(body.len(), 1);
         assert!(matches!(body[0], FnStmt::Cd(_)));
     }
 
     #[test]
     fn test_log_must_end_with_semicolon() {
-        let result = parse_program("project t { fn x { log (hi) }; };");
+        let result = parse_program("project t { fn x { log(hi) }; };");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_fn_decl_requires_semicolon() {
-        let result = parse_program("project t { fn x { log (hi); } };");
+        let result = parse_program("project t { fn x { log(hi); } };");
         assert!(result.is_err());
     }
 }

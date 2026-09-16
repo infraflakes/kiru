@@ -33,32 +33,33 @@ var repo = (@(user)/@(app));
 # Pull in another file with import. The path is a template and is
 # relative to the importing file:
 #
-#   import (./shared.kiru);
+#   import(./shared.kiru);
 #
 # Variables already in scope work in the path too:
 #
 #   var dir = (~/configs);
-#   import (@(dir)/common.kiru);
+#   import(@(dir)/common.kiru);
 
 # -- 3. FUNCTIONS -----------------------------------------------------
 #
-# A project groups functions that act on the same repo. Each
-# function is a list of steps:
+# A project groups functions that act on the same repo. Each function is
+# a sequence of calls; the keyword and its call parens must be adjacent
+# (log(x), never log (x)) and whitespace between other tokens is free:
 #
-#   log  (msg);           print a message
+#   log(msg);             print a message
 #   $(cmd);               run a shell command (live output)
-#   cd  (path);           change directory for the rest of the function
+#   cd(path);             change directory for the rest of the function
 #
 #   var name = (val);     a value shared by this project's functions
 #   var name = $(cmd);    same, but captured when you run kiru compile
 #
-#   env { KEY = (val); } {    run a block with extra environment
+#   env(KEY = (val);) {   run a block with extra environment
 #       ...;
 #   };
 #
-#   switch @(x) {             run the first case that matches
-#       case (value) { ... };
-#       case _ { ... };       everything else
+#   switch(@(x)) {        run the first case that matches
+#       case(value) { ... };
+#       default { ... };  everything else
 #   };
 
 project myapp {
@@ -66,43 +67,37 @@ project myapp {
   var port = (3000);
 
   fn check {
-    log (Running static checks for @(app)...);
+    log(Running static checks for @(app)...);
     $(go fmt ./...);
     $(go vet ./...);
   };
 
   fn build {
-    log (Building @(app)...);
+    log(Building @(app)...);
 
-    switch @(os) {
-      case (Linux) {
-        env {
-          GOOS = (linux);
-          GOARCH = (amd64);
-        } {
+    switch(@(os)) {
+      case(Linux) {
+        env(GOOS = (linux); GOARCH = (amd64);) {
           $(go build -o bin/@(app) .);
         };
       };
-      case (Darwin) {
-        cd (cmd);
+      case(Darwin) {
+        cd(cmd);
         $(go build -o ../bin/@(app) .);
       };
-      case _ {
-        log (unsupported OS: @(os), falling back to native build);
+      default {
+        log(unsupported OS: @(os), falling back to native build);
         $(go build -o bin/@(app) .);
       };
     };
   };
 
   fn test {
-    log (Running tests for @(app)...);
+    log(Running tests for @(app)...);
     var gopath = (/home/user/.local/share/go);
 
-    env {
-      CGO_ENABLED = (0);
-      GOPATH = @(gopath);
-    } {
-      log (Testing go program);
+    env(CGO_ENABLED = (0); GOPATH = @(gopath);) {
+      log(Testing go program);
       $(go test -race ./...);
     };
   };
@@ -113,12 +108,12 @@ project myapp {
 
   fn release {
     var tag = (v1.0.0);
-    switch @(tag) {
-      case () {
-        log (no git tag found, skipping release);
+    switch(@(tag)) {
+      case() {
+        log(no git tag found, skipping release);
       };
-      case _ {
-        log (releasing @(tag)...);
+      default {
+        log(releasing @(tag)...);
         $(docker build -t @(docker_registry)/@(app):@(tag) .);
         $(docker push @(docker_registry)/@(app):@(tag));
       };
@@ -126,7 +121,57 @@ project myapp {
   };
 };
 
-# -- 4. RUN BLOCKS ----------------------------------------------------
+# -- 4. GLOBAL FUNCTIONS ----------------------------------------------
+#
+# A `fn` at the top level (outside any project) is a global function. It
+# is a template, not something you can run directly, and there are two
+# ways to reference it:
+#
+#   - inside a project body, `name();` binds it into the project as a
+#     function of that name (with the project's vars), so run blocks
+#     reach it as project::name;
+#
+#   - inside a function body, `name();` splices the body right there,
+#     carbon-copy, exactly as if its statements were written there.
+#
+#   fn greet {
+#     log(hello @(app));
+#   };
+#
+#   project myapp {
+#     var app = (myapp);
+#     greet();          # binds: the project now has fn greet
+#
+#     fn build {
+#       greet();        # splices: == log(hello myapp)
+#     };
+#   };
+#
+# Resolution follows the including project: `@(app)` inside the template
+# finds the project's `app` first, then a global var, then fails. Calls
+# inside the template do the same (a project function shadows a global
+# function of the same name). A call takes no arguments; everything it
+# needs comes from the scope it is expanded into. Recursive calls are a
+# compile error.
+#
+fn greet {
+  log(greeting @(app));
+};
+
+project greeter {
+  var app = (kiru);
+  greet();
+
+  fn hello {
+    log(done);
+  };
+};
+
+run greet_run {
+  greeter::hello;
+};
+
+# -- 5. RUN BLOCKS ----------------------------------------------------
 #
 # A run block calls functions across projects as a pipeline.
 #

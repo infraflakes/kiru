@@ -10,6 +10,8 @@
 
 > [!CAUTION]
 > `kiru` is still in early development, breaking changes may happen.
+>
+> Many docs are temporarily LLM generated for now.
 
 kiru is a small tool that keeps several git repos in sync and runs jobs across them. You describe the work once, in one file, and kiru runs it for you.
 
@@ -38,7 +40,7 @@ var app = (todo);
 
 project todo {
   fn build {
-    log (Building @(app)...);
+    log(Building @(app)...);
     $(go build -o bin/@(app) .);
   };
 
@@ -51,6 +53,12 @@ run ci {
   todo::test => todo::build;
 };
 ```
+
+## The language in one paragraph
+
+Every statement is a call, and the keyword and its call parens must be adjacent (`log(x)`, never `log (x)`); whitespace between other tokens is free. Three template forms exist: `()` is literal text, `$(command)` runs a command, and `@(name)` interpolates a variable. The built-in primitives (`log`, `cd`, `env`, `switch`, `case`, `default`, and the declaration keywords) are reserved - they cannot be used as identifiers or function names, which is what keeps `bar()` unambiguous against them.
+
+A `fn` at the top level (outside any project) is a global function: a reusable template that is never run directly. There are two ways to reference it. Inside a project body, `name();` binds it into the project as a function of that name, resolved against the project's vars, so a run block can reach it as `project::name`. Inside any function body, `name();` splices the body right there, carbon-copy. Resolution follows the including project: `@(app)` inside the template finds the project's `app` first, then a global var, then fails; calls inside the template resolve the same way, so a project function shadows a global function of the same name. Calls take no arguments - everything the callee needs comes from the scope it is expanded into - and recursive calls are a compile error.
 
 **`kiru.toml`** - your machine. Which shell to use, an optional command timeout, and which repos kiru should clone for you. Projects are keyed by project name, matching `project <name>` in the DSL.
 

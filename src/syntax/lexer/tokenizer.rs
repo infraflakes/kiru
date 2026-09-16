@@ -5,7 +5,9 @@
 use super::Lexer;
 use crate::syntax::error::ParseError;
 use crate::syntax::source::{Part, Template};
-use crate::syntax::token::{Token, TokenType, lookup_ident};
+use crate::syntax::token::{
+    KeywordForm, Token, TokenType, fuse_call_token, keyword_shape, lookup_ident,
+};
 
 impl Lexer {
     pub(super) fn read_char(&mut self) {
@@ -36,7 +38,14 @@ impl Lexer {
         }
     }
 
-    pub(super) fn read_ident(&mut self) -> Token {
+    /// Read an identifier or keyword. Reserved keywords become their bare
+    /// token type; any `word` immediately followed by `(` is fused into a
+    /// call-shaped token with the template (or, for `env`, the pair-list
+    /// opening) as its payload. Whitespace between the word and `(` prevents
+    /// fusion, so `log (x)` stays keyword + template and is rejected by the
+    /// parser generically. The keyword's grammar shape comes from the
+    /// `KEYWORDS` table; the bare-to-fused mapping lives in `fuse_call_token`.
+    pub(super) fn read_ident(&mut self) -> Result<Token, ParseError> {
         let start_pos = self.pos;
         let start_byte_offset = self.byte_offset;
 
@@ -50,11 +59,52 @@ impl Lexer {
 
         let ident: String = self.input[start_pos..self.pos].iter().collect();
         let token_type = lookup_ident(&ident);
-        Token::new(
+
+        let token_type = if self.ch == Some('(') {
+            match (&token_type, keyword_shape(&token_type)) {
+                // A user function call: `name(...)`.
+                (TokenType::Ident(_), _) => {
+                    let template = self.read_fused_template()?;
+                    TokenType::Call {
+                        name: ident,
+                        template,
+                    }
+                }
+                // Template-taking keywords: the template fuses into the token.
+                (_, Some(KeywordForm::TemplateCall)) => {
+                    let template = self.read_fused_template()?;
+                    fuse_call_token(token_type, template)
+                }
+                // `env(` opens the pair list; its pairs are ordinary tokens.
+                (_, Some(KeywordForm::PairList)) => {
+                    self.read_char(); // consume '('
+                    TokenType::EnvOpen
+                }
+                // Declaration and bare keywords take a name or nothing, never
+                // call parens: leave them bare and let the parser reject the
+                // stray template generically.
+                (_, Some(KeywordForm::Bare | KeywordForm::Declaration)) | (_, None) => token_type,
+            }
+        } else {
+            token_type
+        };
+
+        Ok(Token::new(
             token_type,
             start_byte_offset,
             self.byte_offset - start_byte_offset,
-        )
+        ))
+    }
+
+    /// Read the template starting at the current `(` (the caller has already
+    /// verified adjacency), returning its payload.
+    fn read_fused_template(&mut self) -> Result<crate::syntax::source::Template, ParseError> {
+        let paren_offset = self.byte_offset;
+        let token = self.read_template_token(paren_offset)?;
+        match token.token_type {
+            TokenType::Template(template) => Ok(template),
+            _ => unreachable!("read_template_token always produces a template token"),
+        }
     }
 
     /// Read a template expression starting at the current character. The current

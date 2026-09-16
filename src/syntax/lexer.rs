@@ -110,7 +110,7 @@ impl Lexer {
                 self.read_char();
                 Err(self.unexpected("unexpected character: :".to_string(), start_byte_offset))
             }
-            Some(ch) if ch.is_alphabetic() || ch == '_' => Ok(self.read_ident()),
+            Some(ch) if ch.is_alphabetic() || ch == '_' => self.read_ident(),
             Some(ch) => {
                 self.read_char();
                 Err(self.unexpected(format!("unexpected character: {ch}"), start_byte_offset))
@@ -192,22 +192,45 @@ mod tests {
 
     #[test]
     fn test_keywords() {
-        let tokens = collect_tokens("import var project fn run env log cd switch case");
+        let tokens = collect_tokens("import var project fn run env log cd switch case default");
         assert_eq!(
             tokens,
             vec![
-                TokenType::Import,
+                TokenType::Import(None),
                 TokenType::Var,
                 TokenType::Project,
                 TokenType::Fn,
                 TokenType::Run,
                 TokenType::Env,
-                TokenType::Log,
-                TokenType::Cd,
-                TokenType::Switch,
-                TokenType::Case,
+                TokenType::Log(None),
+                TokenType::Cd(None),
+                TokenType::Switch(None),
+                TokenType::Case(None),
+                TokenType::Default,
             ]
         );
+    }
+
+    #[test]
+    fn test_fused_call_tokens() {
+        // `word(` adjacency fuses the template into one call-shaped token;
+        // a space breaks the fusion and leaves keyword + template apart.
+        let mut lexer = Lexer::new("log(hi);".to_string());
+        assert_eq!(
+            lexer.next_token().unwrap().token_type,
+            TokenType::Log(Some(crate::syntax::source::Template {
+                parts: vec![crate::syntax::source::Part::Lit("hi".to_string())],
+                offset: 3,
+                len: 4,
+            }))
+        );
+        assert_eq!(lexer.next_token().unwrap().token_type, TokenType::Semicolon);
+
+        let mut lexer = Lexer::new("name();".to_string());
+        assert!(matches!(
+            lexer.next_token().unwrap().token_type,
+            TokenType::Call { ref name, .. } if name == "name"
+        ));
     }
 
     #[test]

@@ -24,7 +24,13 @@ impl Parser {
                     len: 0,
                 })
             }
-            _ => Err(self.unexpected_stmt_start_error("template or variable reference")),
+            _ => Err(ParseError::new(
+                self.eof_aware_span(),
+                format!(
+                    "expected a template, found {}",
+                    format_token(self.current_token())
+                ),
+            )),
         }
     }
 }

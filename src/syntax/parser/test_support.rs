@@ -17,6 +17,7 @@ pub(crate) fn count_fn_stmt_types(body: &[FnStmt]) -> Vec<&'static str> {
             FnStmt::Cd(_) => "cd",
             FnStmt::EnvBlock { .. } => "env",
             FnStmt::Switch { .. } => "switch",
+            FnStmt::Call { .. } => "call",
         })
         .collect()
 }
@@ -31,6 +32,7 @@ pub(crate) fn count_stmt_types(program: &Program) -> Vec<&'static str> {
             TopLevel::Stmt(Stmt::Fn { .. }) => "fn",
             TopLevel::Stmt(Stmt::Run { .. }) => "run",
             TopLevel::Import(_) => "import",
+            TopLevel::Stmt(Stmt::Call { .. }) => "call",
         })
         .collect()
 }
@@ -40,7 +42,7 @@ pub(crate) fn count_body_stmt_types(body: &[Stmt]) -> Vec<&'static str> {
         .map(|s| match s {
             Stmt::Var { .. } => "var",
             Stmt::Fn { .. } => "fn",
-            Stmt::Project { .. } => "other",
+            Stmt::Call { .. } => "call",
             _ => "other",
         })
         .collect()

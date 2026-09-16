@@ -10,6 +10,7 @@ use super::{CompileError, CompileState, PendingRunBlock};
 pub(super) fn build_ir(state: CompileState) -> Result<Ir, CompileError> {
     let CompileState {
         globals: _,
+        global_functions: _,
         projects,
         run_blocks,
         source_texts,

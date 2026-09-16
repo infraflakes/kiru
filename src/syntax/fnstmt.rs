@@ -28,9 +28,17 @@ pub(crate) enum FnStmt {
         pairs: Vec<EnvPair>,
         body: Vec<FnStmt>,
     },
-    /// `switch cond { case (pat) { ... } case _ { ... } }` with the subject
-    /// written directly (template or bare identifier).
+    /// `switch cond { case (pat) { ... } default() { ... } }` with the subject
+    /// written inside the call parens.
     Switch { subject: Template, arms: Vec<Arm> },
+    /// `name();` - a call to a sibling function of the enclosing project or
+    /// to a global function. Statements are spliced in at compile time
+    /// (carbon-copy inlining); the call's parens must be empty.
+    Call {
+        name: String,
+        offset: usize,
+        len: usize,
+    },
 }
 
 /// A single arm of a `switch` block.

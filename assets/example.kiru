@@ -8,15 +8,13 @@ var app = (todo);
 
 project todo {
   fn build {
-    log (Building @(app)...);
+    log(Building @(app)...);
     $(go build -o bin/@(app) .);
   };
 
   fn test {
-    log (Testing @(app)...);
-    env {
-      CGO_ENABLED = (0);
-    } {
+    log(Testing @(app)...);
+    env(CGO_ENABLED = (0);) {
       $(go test -race ./...);
     };
   };

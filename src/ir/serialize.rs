@@ -72,7 +72,7 @@ fn fmt_instruction(buf: &mut String, inst: &Instruction, indent: Option<usize>) 
             for arm in arms {
                 match &arm.pattern {
                     ArmPattern::Lit(p) => buf.push_str(&format!(" (case {} ", quote_string(p))),
-                    ArmPattern::Default => buf.push_str(" (case _ "),
+                    ArmPattern::Default => buf.push_str(" (default "),
                 }
                 for (i, b) in arm.body.iter().enumerate() {
                     if i > 0 {

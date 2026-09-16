@@ -33,11 +33,22 @@ impl Parser {
                 TokenType::Fn => {
                     body.push(self.parse_fn_decl()?);
                 }
+                // A project-body call `name();` binds a global function
+                // template into the project as a function of that name.
+                TokenType::Call { .. } => {
+                    let (name, offset, len) = match &self.current_token().token_type {
+                        TokenType::Call { name, .. } => (
+                            name.clone(),
+                            self.current_token().offset,
+                            self.current_token().len,
+                        ),
+                        _ => unreachable!("call dispatch guarantees a fused call token"),
+                    };
+                    self.parse_call_stmt()?;
+                    body.push(Stmt::Call { name, offset, len });
+                }
                 _ => {
-                    return Err(ParseError::new(
-                        self.eof_aware_span(),
-                        "expected `var` or `fn` in project body".to_string(),
-                    ));
+                    return Err(self.unexpected_token_error());
                 }
             }
         }
@@ -52,7 +63,7 @@ mod tests {
 
     #[test]
     fn test_project_with_body() {
-        let input = "project p { var app = (todo); fn build { log (x); }; };";
+        let input = "project p { var app = (todo); fn build { log(x); }; };";
         let prog = parse_program(input).unwrap();
         match &prog.top_level_items[0] {
             TopLevel::Stmt(Stmt::Project { body, .. }) => {
@@ -63,8 +74,36 @@ mod tests {
     }
 
     #[test]
+    fn test_project_body_call_binds_a_global_function() {
+        let input = "fn ssh { log(deploying); };\n\
+                     project deploy { ssh(); };";
+        let prog = parse_program(input).unwrap();
+        assert_eq!(count_stmt_types(&prog), vec!["fn", "project"]);
+        match &prog.top_level_items[1] {
+            TopLevel::Stmt(Stmt::Project { body, .. }) => {
+                assert_eq!(count_body_stmt_types(body), vec!["call"]);
+            }
+            other => panic!("expected project, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_project_body_stray_tokens_rejected_generically() {
+        // Project-body statements are declarations and bindings; anything
+        // else is rejected with the generic found-only error.
+        let result = parse_program("project p { log(hello); };");
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.to_string().contains("unexpected `log(...)`")),
+            "got: {:?}",
+            errs
+        );
+    }
+
+    #[test]
     fn test_project_decl_requires_semicolon() {
-        let result = parse_program("project p { fn b { log (x); }; }");
+        let result = parse_program("project p { fn b { log(x); }; }");
         assert!(result.is_err());
     }
 
