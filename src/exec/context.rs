@@ -24,7 +24,7 @@ pub(crate) struct ExecContext<'a> {
     system_env: Vec<(String, String)>,
     shell: String,
     timeout: Option<Duration>,
-    /// Commands run via `direnv exec <starting directory>` when the repo
+    /// Commands run via `direnv exec <starting directory>` when the project
     /// opted in with `direnv = true`. Decided by the caller (the executor
     /// runs `direnv allow` first); direnv itself resolves per-directory rc
     /// rules when it runs.

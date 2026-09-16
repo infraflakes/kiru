@@ -52,11 +52,11 @@ struct PendingRunBlock {
 }
 
 struct CompileState {
-    /// Static variables (top-level and `pr`-body), each already inlined to a
+    /// Static variables (top-level and `project`-body), each already inlined to a
     /// template with no `@(var)` references. Commands inside them are preserved
     /// as `Cmd` parts, they are never executed or frozen at compile time.
     globals: BTreeMap<String, Template>,
-    /// Project blocks accumulated from `pr name { ... }` syntax, each
+    /// Project blocks accumulated from `project name { ... }` syntax, each
     /// containing inlined static vars and compiled function bodies.
     projects: BTreeMap<String, PendingProject>,
     /// Run blocks accumulated from `run name { ... }` syntax, each being

@@ -42,7 +42,7 @@ var repo = (@(user)/@(app));
 
 # -- 3. FUNCTIONS -----------------------------------------------------
 #
-# A project (pr) groups functions that act on the same repo. Each
+# A project groups functions that act on the same repo. Each
 # function is a list of steps:
 #
 #   log  (msg);           print a message
@@ -61,7 +61,7 @@ var repo = (@(user)/@(app));
 #       case _ { ... };       everything else
 #   };
 
-pr myapp {
+project myapp {
   var docker_registry = (ghcr.io/@(user));
   var port = (3000);
 

@@ -21,7 +21,7 @@ mod test_support;
 pub(crate) struct Parser {
     lexer: Lexer,
     current: Token,
-    /// One token of lookahead, used to disambiguate `pr::fn` references in run
+    /// One token of lookahead, used to disambiguate `project::fn` references in run
     /// blocks from a bare identifier in a function body.
     next: Token,
     source_len: usize,
@@ -260,7 +260,7 @@ impl Parser {
     fn parse_top_level_stmt(&mut self) -> Result<Stmt, ParseError> {
         match self.current_token().token_type {
             TokenType::Var => self.parse_var_decl(),
-            TokenType::Pr => self.parse_project_decl(),
+            TokenType::Project => self.parse_project_decl(),
             TokenType::Fn => {
                 // Consume `fn` before erroring so error recovery always makes
                 // progress past this token.
@@ -268,11 +268,11 @@ impl Parser {
                 self.advance();
                 Err(ParseError::new(
                     fn_span,
-                    "functions must be declared inside a `pr` block".to_string(),
+                    "functions must be declared inside a `project` block".to_string(),
                 ))
             }
             TokenType::Run => self.parse_run_decl(),
-            _ => Err(self.unexpected_stmt_start_error("var, pr, or run")),
+            _ => Err(self.unexpected_stmt_start_error("var, project, or run")),
         }
     }
 
@@ -285,7 +285,7 @@ impl Parser {
                 Semicolon | RBrace => {
                     self.advance();
                 }
-                Var | Pr | Fn | Run => break,
+                Var | Project | Fn | Run => break,
                 _ => self.advance(),
             }
         }
@@ -358,10 +358,10 @@ mod tests {
     #[test]
     fn test_multiple_top_level_statements() {
         let input = "var x = (hello);\n\
-                      pr p { fn b { log (x); }; };\n\
+                      project p { fn b { log (x); }; };\n\
                       run s { p::b; };";
         let prog = parse_program(input).unwrap();
-        assert_eq!(count_stmt_types(&prog), vec!["var", "pr", "run"]);
+        assert_eq!(count_stmt_types(&prog), vec!["var", "project", "run"]);
     }
 
     #[test]
@@ -371,7 +371,7 @@ mod tests {
         let errs = result.unwrap_err();
         assert!(
             errs.iter()
-                .any(|e| { e.to_string().contains("expected var, pr, or run") })
+                .any(|e| { e.to_string().contains("expected var, project, or run") })
         );
     }
 
@@ -382,7 +382,7 @@ mod tests {
         assert!(
             errs.iter().any(|e| e
                 .to_string()
-                .contains("functions must be declared inside a `pr` block")),
+                .contains("functions must be declared inside a `project` block")),
             "got: {:?}",
             errs
         );
@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn test_underscore_outside_case_pattern() {
-        let result = parse_program("pr t { fn test { log (hi); _; }; };");
+        let result = parse_program("project t { fn test { log (hi); _; }; };");
         let errs = result.unwrap_err();
         assert!(
             errs.iter().any(|e| e

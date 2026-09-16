@@ -1,11 +1,11 @@
-//! `kiru sync` command: clones or fast-forward-pulls each repo declared in
+//! `kiru sync` command: clones or fast-forward-pulls each project declared in
 //! `kiru.toml` into its directory. Reads the default `kiru.toml`, or the one
 //! given with `-c`.
 
 use crate::cli::CliError;
 use crate::cli::get_toml_path;
 use crate::cli::kiru_toml;
-use crate::exec::RepoSync;
+use crate::exec::ProjectSync;
 
 pub(crate) fn run_sync_command(config_arg: Option<std::path::PathBuf>) -> Result<(), CliError> {
     let toml_path = get_toml_path(config_arg);
@@ -16,43 +16,39 @@ pub(crate) fn run_sync_command(config_arg: Option<std::path::PathBuf>) -> Result
         )));
     }
     let mut toml = kiru_toml::load_kiru_toml_at(&toml_path).map_err(CliError::message)?;
-    kiru_toml::expand_repo_dirs(&mut toml);
+    kiru_toml::expand_project_dirs(&mut toml);
 
-    let repos: Vec<RepoSync> = toml
-        .repos
+    let projects: Vec<ProjectSync> = toml
+        .projects
         .into_iter()
-        .filter(|repo| {
-            let skip_reason = if repo.url.is_empty() && repo.dir.is_empty() {
+        .filter_map(|(name, project)| {
+            let skip_reason = if project.url.is_empty() && project.dir.is_empty() {
                 Some("missing url and dir")
-            } else if repo.url.is_empty() {
+            } else if project.url.is_empty() {
                 Some("missing url")
-            } else if repo.dir.is_empty() {
+            } else if project.dir.is_empty() {
                 Some("missing dir")
             } else {
                 None
             };
             if let Some(reason) = skip_reason {
-                eprintln!(
-                    "Warning: project {:?}: {}, skipping sync",
-                    repo.name, reason
-                );
-                false
+                eprintln!("Warning: project {name:?}: {}, skipping sync", reason);
+                None
             } else {
-                true
+                Some(ProjectSync {
+                    name,
+                    url: project.url,
+                    dir: project.dir,
+                    branch: project.branch,
+                })
             }
-        })
-        .map(|repo| RepoSync {
-            name: repo.name,
-            url: repo.url,
-            dir: repo.dir,
-            branch: repo.branch,
         })
         .collect();
 
-    if repos.is_empty() {
+    if projects.is_empty() {
         eprintln!("Warning: no projects to sync");
         return Ok(());
     }
 
-    crate::exec::run_sync_for_projects(repos).map_err(CliError::from)
+    crate::exec::run_sync_for_projects(projects).map_err(CliError::from)
 }

@@ -1,10 +1,10 @@
-//! Project parser: handles `pr name { ... }` declarations with function bodies.
+//! Project parser: handles `project name { ... }` declarations with function bodies.
 
 use super::*;
 
 impl Parser {
     pub(crate) fn parse_project_decl(&mut self) -> Result<Stmt, ParseError> {
-        self.advance(); // skip 'pr'
+        self.advance(); // skip 'project'
 
         let name = self.parse_ident_name("project name")?;
 
@@ -51,8 +51,8 @@ mod tests {
     use crate::syntax::{Stmt, TopLevel};
 
     #[test]
-    fn test_pr_with_body() {
-        let input = "pr p { var app = (todo); fn build { log (x); }; };";
+    fn test_project_with_body() {
+        let input = "project p { var app = (todo); fn build { log (x); }; };";
         let prog = parse_program(input).unwrap();
         match &prog.top_level_items[0] {
             TopLevel::Stmt(Stmt::Project { body, .. }) => {
@@ -63,14 +63,14 @@ mod tests {
     }
 
     #[test]
-    fn test_pr_decl_requires_semicolon() {
-        let result = parse_program("pr p { fn b { log (x); }; }");
+    fn test_project_decl_requires_semicolon() {
+        let result = parse_program("project p { fn b { log (x); }; }");
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_pr_body_at_eof_reports_closing_brace() {
-        let result = parse_program("pr p {");
+    fn test_project_body_at_eof_reports_closing_brace() {
+        let result = parse_program("project p {");
         let errs = result.unwrap_err();
         assert!(
             errs.iter()

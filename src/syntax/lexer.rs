@@ -185,20 +185,20 @@ mod tests {
     fn test_brackets_are_illegal() {
         // `[` / `]` belonged to the removed bracket-field syntax; they must
         // not lex as accepted tokens.
-        let errors = extract_errors("pr p [x] { };");
+        let errors = extract_errors("project p [x] { };");
         assert_eq!(errors.len(), 2, "got {:?}", errors);
         assert!(errors.iter().all(|e| e.starts_with("unexpected character")));
     }
 
     #[test]
     fn test_keywords() {
-        let tokens = collect_tokens("import var pr fn run env log cd switch case");
+        let tokens = collect_tokens("import var project fn run env log cd switch case");
         assert_eq!(
             tokens,
             vec![
                 TokenType::Import,
                 TokenType::Var,
-                TokenType::Pr,
+                TokenType::Project,
                 TokenType::Fn,
                 TokenType::Run,
                 TokenType::Env,

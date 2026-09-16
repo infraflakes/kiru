@@ -127,7 +127,7 @@ mod tests {
     use crate::syntax::source::ArmPattern;
 
     /// Parse a wrapped function body: tests describe `fn` bodies, which the
-    /// grammar only allows inside a `pr` block.
+    /// grammar only allows inside a `project` block.
     fn parse_fn_body(input: &str) -> Vec<FnStmt> {
         let prog = parse_program(input).unwrap();
         match &prog.top_level_items[0] {
@@ -142,7 +142,7 @@ mod tests {
     #[test]
     fn test_fn_body_with_log_exec() {
         let body = parse_fn_body(
-            "pr t {\
+            "project t {\
               fn build {\
                 log (compiling);\
                 $(cargo build);\
@@ -155,7 +155,7 @@ mod tests {
     #[test]
     fn test_fn_body_orders() {
         let body = parse_fn_body(
-            "pr t {\
+            "project t {\
               fn deploy {\
                 env { CGO_ENABLED = (0); } {\
                   $(deploy);\
@@ -175,7 +175,7 @@ mod tests {
     #[test]
     fn test_env_block_contents() {
         let body = parse_fn_body(
-            "pr t {\
+            "project t {\
               fn test {\
                 env { X = (1); } {\
                   $(run tests);\
@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn test_switch_branches() {
         let body = parse_fn_body(
-            "pr t {\
+            "project t {\
               fn deploy {\
                 switch @(target) {\
                   case (production) { $(deploy-prod); };\
@@ -218,7 +218,7 @@ mod tests {
     #[test]
     fn test_case_pattern_must_be_literal() {
         let result = parse_program(
-            "pr t {\
+            "project t {\
               fn d {\
                 switch @(t) {\
                   case @(v) { log (x); };\
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn test_case_command_pattern_rejected() {
         let result = parse_program(
-            "pr t {\
+            "project t {\
               fn d {\
                 switch @(t) {\
                   case $(cmd) { log (x); };\
@@ -252,20 +252,20 @@ mod tests {
 
     #[test]
     fn test_cd_statement() {
-        let body = parse_fn_body("pr t { fn build { cd (./src); }; };");
+        let body = parse_fn_body("project t { fn build { cd (./src); }; };");
         assert_eq!(body.len(), 1);
         assert!(matches!(body[0], FnStmt::Cd(_)));
     }
 
     #[test]
     fn test_log_must_end_with_semicolon() {
-        let result = parse_program("pr t { fn x { log (hi) }; };");
+        let result = parse_program("project t { fn x { log (hi) }; };");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_fn_decl_requires_semicolon() {
-        let result = parse_program("pr t { fn x { log (hi); } };");
+        let result = parse_program("project t { fn x { log (hi); } };");
         assert!(result.is_err());
     }
 }

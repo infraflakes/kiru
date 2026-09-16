@@ -1,4 +1,4 @@
-pr kiru {
+project kiru {
   fn update {
     log (Updating dependencies);
     $(cargo update);

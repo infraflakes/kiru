@@ -12,10 +12,10 @@ pub(crate) enum Stmt {
         offset: usize,
         len: usize,
     },
-    /// A project declaration: `pr name { var; fn; }`. Contains behavioral
+    /// A project declaration: `project name { var; fn; }`. Contains behavioral
     /// definitions only (repo config lives in `kiru.toml`).
     Project { name: String, body: Vec<Stmt> },
-    /// A function definition (`fn name { ... }`), only valid inside a `pr`
+    /// A function definition (`fn name { ... }`), only valid inside a `project`
     /// block (a top-level `fn` is a parse error).
     Fn {
         name: String,
@@ -23,7 +23,7 @@ pub(crate) enum Stmt {
         offset: usize,
         len: usize,
     },
-    /// A run block definition: `run name { pr::fn => pr::fn; pr::fn; }`.
+    /// A run block definition: `run name { project::fn => project::fn; project::fn; }`.
     ///
     /// `calls` is an ordered list of chains. Calls joined by `=>` form one
     /// sequential chain (each runs after the previous); `;` separates chains,

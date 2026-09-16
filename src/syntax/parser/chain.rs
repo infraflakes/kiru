@@ -1,11 +1,11 @@
-//! Run-block parser: resolves `run name { pr::fn => pr::fn; pr::fn; }`
+//! Run-block parser: resolves `run name { project::fn => project::fn; project::fn; }`
 //! chain syntax into ordered lists of project-function calls.
 
 use super::*;
 use crate::syntax::token::format_token_type;
 
 impl Parser {
-    /// Parses `run name { pr::fn => pr::fn; pr::fn; }`.
+    /// Parses `run name { project::fn => project::fn; project::fn; }`.
     ///
     /// References are `project::function` calls. A `=>` appends the call to the
     /// current chain so it runs sequentially after the previous call in that

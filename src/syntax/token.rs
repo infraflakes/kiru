@@ -25,10 +25,10 @@ pub(crate) enum TokenType {
     Env,
     Log,
     Cd,
-    Pr,
+    Project,
     Switch,
     Case,
-    /// `::` separator used in run-block references (`pr::fn`).
+    /// `::` separator used in run-block references (`project::fn`).
     NamespaceSep,
 }
 
@@ -55,7 +55,7 @@ impl Token {
 const KEYWORDS: &[(&str, TokenType)] = &[
     ("import", TokenType::Import),
     ("var", TokenType::Var),
-    ("pr", TokenType::Pr),
+    ("project", TokenType::Project),
     ("fn", TokenType::Fn),
     ("run", TokenType::Run),
     ("env", TokenType::Env),
@@ -97,7 +97,7 @@ pub(crate) fn format_token_type(ty: &TokenType) -> String {
         | TokenType::Var
         | TokenType::Fn
         | TokenType::Run
-        | TokenType::Pr
+        | TokenType::Project
         | TokenType::Log
         | TokenType::Env
         | TokenType::Cd

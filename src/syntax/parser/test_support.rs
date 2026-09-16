@@ -27,7 +27,7 @@ pub(crate) fn count_stmt_types(program: &Program) -> Vec<&'static str> {
         .iter()
         .map(|s| match s {
             TopLevel::Stmt(Stmt::Var { .. }) => "var",
-            TopLevel::Stmt(Stmt::Project { .. }) => "pr",
+            TopLevel::Stmt(Stmt::Project { .. }) => "project",
             TopLevel::Stmt(Stmt::Fn { .. }) => "fn",
             TopLevel::Stmt(Stmt::Run { .. }) => "run",
             TopLevel::Import(_) => "import",

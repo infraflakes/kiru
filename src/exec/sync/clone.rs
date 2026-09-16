@@ -8,35 +8,35 @@ use crate::exec::{
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// A plain repo configuration read from `kiru.toml`, used by sync.
+/// A plain project configuration read from `kiru.toml`, used by sync.
 #[derive(Debug, Clone)]
-pub(crate) struct RepoSync {
+pub(crate) struct ProjectSync {
     pub(crate) name: String,
     pub(crate) url: String,
     pub(crate) dir: String,
     pub(crate) branch: String,
 }
 
-/// Git-clone a single project's repo into `repo.dir`, or fast-forward it to its
+/// Git-clone a single project's repo into `project.dir`, or fast-forward it to its
 /// remote when the repo already exists. Progress lines go to `output` for
 /// display or forwarding. `kill` registers the git process group so a keyboard
 /// cancel can stop the clone.
 fn run_sync_clone_or_update(
-    repo: &RepoSync,
+    project: &ProjectSync,
     kill: &RunKillSwitch,
     mut output: impl FnMut(&str),
 ) -> Result<(), RuntimeError> {
-    let target_dir = PathBuf::from(&repo.dir);
+    let target_dir = PathBuf::from(&project.dir);
     let target_dir_str = target_dir.to_string_lossy().to_string();
 
     if target_dir.join(".git").exists() {
         output(&format!(
             "{} {} -> {}",
             colors::SYNC_UPDATE_PREFIX,
-            repo.name,
+            project.name,
             target_dir.display()
         ));
-        let args: Vec<&str> = if repo.branch.is_empty() {
+        let args: Vec<&str> = if project.branch.is_empty() {
             vec!["-C", &target_dir_str, "pull", "--ff-only"]
         } else {
             vec![
@@ -45,24 +45,30 @@ fn run_sync_clone_or_update(
                 "pull",
                 "--ff-only",
                 "origin",
-                &repo.branch,
+                &project.branch,
             ]
         };
-        return run_git_with_output("git pull", &args, &repo.name, kill, &mut output);
+        return run_git_with_output("git pull", &args, &project.name, kill, &mut output);
     }
 
     output(&format!(
         "{} {} -> {}",
         colors::SYNC_CLONE_PREFIX,
-        repo.name,
+        project.name,
         target_dir.display()
     ));
-    let args: Vec<&str> = if repo.branch.is_empty() {
-        vec!["clone", &repo.url, &target_dir_str]
+    let args: Vec<&str> = if project.branch.is_empty() {
+        vec!["clone", &project.url, &target_dir_str]
     } else {
-        vec!["clone", "-b", &repo.branch, &repo.url, &target_dir_str]
+        vec![
+            "clone",
+            "-b",
+            &project.branch,
+            &project.url,
+            &target_dir_str,
+        ]
     };
-    run_git_with_output("git clone", &args, &repo.name, kill, &mut output)
+    run_git_with_output("git clone", &args, &project.name, kill, &mut output)
 }
 
 /// Spawn a `git` invocation through the shared subprocess runner, forward its
@@ -104,17 +110,17 @@ fn run_git_with_output(
 
 /// Run sync for all projects through the TUI.
 ///
-/// The sync chain list is derived from the repo list itself: every project is
+/// The sync chain list is derived from the project list itself: every project is
 /// its own single-step chain labelled by its name, so the CLI cannot pass a
 /// chain list that disagrees with the projects being synced. Each project runs
 /// in its own blocking task that reports its own outcome, and
 /// `await_tasks_and_report` reduces the results to a single outcome
 /// (also surfacing any task panic).
-pub(crate) fn run_sync_for_projects(repos: Vec<RepoSync>) -> Result<(), TaskRunError> {
-    let chain_pairs: Vec<(String, Vec<String>)> = repos
+pub(crate) fn run_sync_for_projects(projects: Vec<ProjectSync>) -> Result<(), TaskRunError> {
+    let chain_pairs: Vec<(String, Vec<String>)> = projects
         .iter()
-        .map(|repo| {
-            let name = repo.name.clone();
+        .map(|project| {
+            let name = project.name.clone();
             (name.clone(), vec![name])
         })
         .collect();
@@ -130,7 +136,7 @@ pub(crate) fn run_sync_for_projects(repos: Vec<RepoSync>) -> Result<(), TaskRunE
         move |tx| async move {
             let mut task_handles = Vec::new();
 
-            for (project_index, repo) in repos.into_iter().enumerate() {
+            for (project_index, project) in projects.into_iter().enumerate() {
                 let tx_cb = tx.clone();
                 let kill = Arc::clone(&kill);
 
@@ -139,7 +145,7 @@ pub(crate) fn run_sync_for_projects(repos: Vec<RepoSync>) -> Result<(), TaskRunE
                         &tx_cb,
                         TuiEvent::UpdateStatus(project_index, TaskStatus::Running),
                     );
-                    let result = run_sync_clone_or_update(&repo, &kill, |line: &str| {
+                    let result = run_sync_clone_or_update(&project, &kill, |line: &str| {
                         crate::exec::send_tui_event(
                             &tx_cb,
                             TuiEvent::AppendOutput(project_index, line.to_string()),

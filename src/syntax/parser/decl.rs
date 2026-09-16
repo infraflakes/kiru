@@ -1,5 +1,5 @@
 //! Top-level declaration parsers: `var`, `fn`, and project-level
-//! `var`/`fn` inside `pr` bodies.
+//! `var`/`fn` inside `project` bodies.
 
 use super::*;
 
@@ -86,7 +86,7 @@ mod tests {
 
     #[test]
     fn test_unclosed_fn_brace() {
-        let result = parse_program("pr t { fn bad { log (hi); };");
+        let result = parse_program("project t { fn bad { log (hi); };");
         assert!(result.is_err());
     }
 

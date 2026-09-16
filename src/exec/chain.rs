@@ -2,7 +2,7 @@
 //! through the TUI, reporting each step's status as it completes.
 
 use crate::exec::error::RuntimeError;
-use crate::exec::executor::RepoExec;
+use crate::exec::executor::ProjectExec;
 use crate::exec::subprocess::RunKillSwitch;
 use crate::exec::{
     Executor, TaskOutcome, TaskRunError, TaskStatus, TuiEvent, await_tasks_and_report,
@@ -22,7 +22,7 @@ struct ChainConfig {
     /// Working directory and direnv setup per project; the executor
     /// resolves the project's starting directory from this, falling back
     /// to the invocation cwd.
-    repos: Arc<BTreeMap<String, RepoExec>>,
+    projects: Arc<BTreeMap<String, ProjectExec>>,
     invocation_cwd: PathBuf,
     /// Run-level kill switch: one failing chain stops the whole run.
     kill: Arc<RunKillSwitch>,
@@ -66,7 +66,7 @@ fn execute_single_chain(
         };
         let mut executor = Executor::new(
             config.ir.clone(),
-            Arc::clone(&config.repos),
+            Arc::clone(&config.projects),
             config.invocation_cwd.clone(),
             config.shell.clone(),
             config.timeout,
@@ -112,7 +112,7 @@ fn execute_single_chain(
 pub(crate) fn execute_task_chains(
     ir: Arc<Ir>,
     chains: Vec<Vec<Call>>,
-    repos: Arc<BTreeMap<String, RepoExec>>,
+    projects: Arc<BTreeMap<String, ProjectExec>>,
     invocation_cwd: PathBuf,
     shell: String,
     timeout: Option<std::time::Duration>,
@@ -131,7 +131,7 @@ pub(crate) fn execute_task_chains(
         ir,
         shell,
         timeout,
-        repos,
+        projects,
         invocation_cwd,
         kill: Arc::new(RunKillSwitch::new()),
     });

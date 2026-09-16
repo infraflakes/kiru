@@ -31,12 +31,12 @@ This puts `kiru` in `~/.local/bin`. Make sure that directory is on your `PATH`.
 
 Everything lives in `~/.config/kiru/`, in two files you write.
 
-**`main.kiru`** - the work. Projects (`pr`), their functions (`fn`), and the pipelines (`run`) that call them. This one travels well, so keep it under version control.
+**`main.kiru`** - the work. Projects (`project`), their functions (`fn`), and the pipelines (`run`) that call them. This one travels well, so keep it under version control.
 
 ```kiru
 var app = (todo);
 
-pr todo {
+project todo {
   fn build {
     log (Building @(app)...);
     $(go build -o bin/@(app) .);
@@ -52,20 +52,19 @@ run ci {
 };
 ```
 
-**`kiru.toml`** - your machine. Which shell to use, an optional command timeout, and which repos kiru should clone for you.
+**`kiru.toml`** - your machine. Which shell to use, an optional command timeout, and which repos kiru should clone for you. Projects are keyed by project name, matching `project <name>` in the DSL.
 
 ```toml
 shell = "sh"
 timeout = 300           # optional, seconds per command
 
-[[repos]]
-name = "todo"
-url  = "git@github.com:you/todo.git"
-dir  = "~/projects/todo"
-direnv = true
+[project.todo]
+url     = "git@github.com:you/todo.git"
+dir     = "~/projects/todo"
+direnv  = true
 ```
 
-Set `direnv = true` on a repo entry to run that project's commands through `direnv exec`. Before a function of the project runs, kiru calls `direnv allow` on the repo directory for you, so the environment always loads. Everything else is direnv's business: a missing binary, a failing `.envrc`, or a directory without one fails the command with direnv's own error. Repos without the flag run their commands plain.
+Set `direnv = true` on a project entry to run that project's commands through `direnv exec`. Before a function of the project runs, kiru calls `direnv allow` on the repo directory for you, so the environment always loads. Everything else is direnv's business: a missing binary, a failing `.envrc`, or a directory without one fails the command with direnv's own error. Projects without the flag run their commands plain.
 
 ## Compile and run
 

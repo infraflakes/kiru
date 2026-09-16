@@ -50,7 +50,7 @@ literal_template = "(" { lit_text } ")" ;
 (*  PROJECT - declares a scope for vars and functions                *)
 (* ================================================================= *)
 
-project_decl     = "pr" ident "{" { project_stmt } "}" ";" ;
+project_decl     = "project" ident "{" { project_stmt } "}" ";" ;
 project_stmt     = var_decl | fn_decl ;
 
 (* ================================================================= *)
@@ -91,10 +91,10 @@ ident            = ( letter | "_" ) { letter | digit | "_" } ;
 letter           = "A" | "B" | ... | "Z" | "a" | "b" | ... | "z" ;
 digit            = "0" | "1" | ... | "9" ;
 
-(* Keywords (reserved, cannot be used as identifiers):               *)
-(*   import var pr fn run log cd env switch case                     *)
-(*                                                                   *)
-(* Comments start with # and run to end of line.                     *)
-(* Every declaration ends with a semicolon: var, fn, pr, run,        *)
-(* import, and each statement inside fn and pr bodies.               *)
+(* Keywords (reserved, cannot be used as identifiers):              *)
+(*   import var project fn run log cd env switch case               *)
+(*                                                                  *)
+(* Comments start with # and run to end of line.                    *)
+(* Every declaration ends with a semicolon: var, fn, project, run,  *)
+(* import, and each statement inside fn and project bodies.         *)
 (* ----------------------------------------------------------------- *)

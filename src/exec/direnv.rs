@@ -1,8 +1,8 @@
-//! direnv integration: per-repo opt-in wrapping of `$(command)` execution
+//! direnv integration: per-project opt-in wrapping of `$(command)` execution
 //! in `direnv exec <dir>` so the project environment applies to shell
 //! commands.
 //!
-//! A repo that sets `direnv = true` in its `kiru.toml` entry opts into
+//! A project that sets `direnv = true` in its `kiru.toml` entry opts into
 //! trusting the repository's rc completely: before a function of the
 //! project runs, kiru executes `direnv allow <dir>` so the rc is always
 //! approved, then every shell command is prefixed with `direnv exec <dir>`.
@@ -26,7 +26,7 @@ pub(crate) const DIRENV_PROGRAM: &str = "direnv";
 
 /// Approve the rc of `project_dir` with `direnv allow <dir>`, so the later
 /// `direnv exec` wrapping is never rejected as untrusted. direnv's own
-/// output is folded into the error message when the command fails: a repo
+/// output is folded into the error message when the command fails: a project
 /// that opted into direnv must have a working direnv, there is no fallback
 /// to plain execution. `env_overrides` follows the spawn convention of
 /// [`subprocess::run_subprocess`].

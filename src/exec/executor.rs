@@ -9,9 +9,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// The per-project execution setup derived from a `kiru.toml` repo entry:
+/// The per-project execution setup derived from a `kiru.toml` project entry:
 /// where its commands run and whether they are wrapped in direnv.
-pub(crate) struct RepoExec {
+pub(crate) struct ProjectExec {
     /// Local working directory of the project. Supports `~` expansion,
     /// already applied by the config loader.
     pub(crate) dir: PathBuf,
@@ -25,8 +25,8 @@ pub(crate) struct Executor {
     ir: Arc<Ir>,
     /// Working directory and direnv setup per project name. Projects
     /// without an entry run at the invocation cwd, plain.
-    repos: Arc<BTreeMap<String, RepoExec>>,
-    /// Working directory for projects without a repo entry.
+    projects: Arc<BTreeMap<String, ProjectExec>>,
+    /// Working directory for projects without a project entry.
     invocation_cwd: PathBuf,
     shell: String,
     timeout: Option<Duration>,
@@ -40,7 +40,7 @@ impl Executor {
     /// Create an executor that forwards every emitted output line to `output`.
     pub(crate) fn new(
         ir: Arc<Ir>,
-        repos: Arc<BTreeMap<String, RepoExec>>,
+        projects: Arc<BTreeMap<String, ProjectExec>>,
         invocation_cwd: PathBuf,
         shell: String,
         timeout: Option<Duration>,
@@ -49,7 +49,7 @@ impl Executor {
     ) -> Self {
         Executor {
             ir,
-            repos,
+            projects,
             invocation_cwd,
             shell,
             timeout,
@@ -59,12 +59,12 @@ impl Executor {
     }
 
     /// Resolve the starting directory and direnv wrap of a project call.
-    /// Unlisted projects (or repos without a directory) run at the
+    /// Unlisted projects (or projects without a directory) run at the
     /// invocation cwd, plain.
     fn resolve_project_env(&self, project_name: &str) -> (PathBuf, bool) {
-        self.repos
+        self.projects
             .get(project_name)
-            .map(|repo| (repo.dir.clone(), repo.direnv))
+            .map(|project| (project.dir.clone(), project.direnv))
             .unwrap_or_else(|| (self.invocation_cwd.clone(), false))
     }
 

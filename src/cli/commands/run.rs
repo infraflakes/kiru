@@ -5,7 +5,7 @@ use crate::cli::CliError;
 use crate::cli::kiru_toml;
 use crate::cli::load_config;
 use crate::exec;
-use crate::exec::RepoExec;
+use crate::exec::ProjectExec;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -17,20 +17,20 @@ pub(crate) fn execute_run_block(
 ) -> Result<(), CliError> {
     let config = load_config(kirufile_arg).map_err(CliError::message)?;
 
-    // A missing kiru.toml is the all-defaults configuration: no repos, so
+    // A missing kiru.toml is the all-defaults configuration: no projects, so
     // every chain runs at the invocation cwd.
     let toml = kiru_toml::load_kiru_toml_or_default(&crate::cli::get_toml_path(config_arg))
         .map_err(CliError::message)?;
     let mut toml_expanded = toml.clone();
-    kiru_toml::expand_repo_dirs(&mut toml_expanded);
-    let mut repos = BTreeMap::new();
-    for repo in &toml_expanded.repos {
-        if !repo.dir.is_empty() {
-            repos.insert(
-                repo.name.clone(),
-                RepoExec {
-                    dir: PathBuf::from(&repo.dir),
-                    direnv: repo.direnv,
+    kiru_toml::expand_project_dirs(&mut toml_expanded);
+    let mut projects = BTreeMap::new();
+    for (project_name, project) in &toml_expanded.projects {
+        if !project.dir.is_empty() {
+            projects.insert(
+                project_name.clone(),
+                ProjectExec {
+                    dir: PathBuf::from(&project.dir),
+                    direnv: project.direnv,
                 },
             );
         }
@@ -49,7 +49,7 @@ pub(crate) fn execute_run_block(
     exec::chain::execute_task_chains(
         Arc::new(config),
         chains,
-        Arc::new(repos),
+        Arc::new(projects),
         invocation_cwd,
         toml.shell.unwrap_or_else(|| "sh".to_string()),
         timeout,

@@ -3,7 +3,7 @@ fn test_compile_basic_project() {
     let ir = crate::compile::test_support::compile_str(
         "\
 var home_dir = $(echo /home/user);
-pr nix {
+project nix {
     var channel = (unstable);
     fn eval { log (evaluating @(channel)); };
 };
@@ -38,7 +38,7 @@ fn test_compile_unknown_run_reference_fails() {
     let file = std::env::temp_dir().join(format!("kiru_test_err_{}.kiru", std::process::id()));
     std::fs::write(
         &file,
-        "pr nix { fn eval { log (x); }; } run bad { nix::missing; };",
+        "project nix { fn eval { log (x); }; } run bad { nix::missing; };",
     )
     .unwrap();
     let result = crate::compile::compile_path(&file);
@@ -50,7 +50,7 @@ fn test_compile_unknown_run_reference_fails() {
 fn test_compile_switch_lowering() {
     let ir = crate::compile::test_support::compile_str(
         "\
-pr p {
+project p {
     var os = (linux);
     fn pick {
         switch @(os) {

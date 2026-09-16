@@ -1,8 +1,9 @@
-//! `kiru.toml` holds per-machine settings (repos, shell, timeout).
+//! `kiru.toml` holds per-machine settings (projects, shell, timeout).
 //! Kept separate from the DSL (`main.kiru`) so the DSL stays portable
 //! and only the machine-specific bits live here.
 
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// The top-level `kiru.toml` schema. Unknown keys are rejected so a typo
@@ -21,18 +22,18 @@ pub(crate) struct KiruToml {
     #[serde(default)]
     pub(crate) timeout: Option<u64>,
 
-    /// Repository declarations that `kiru sync` clones/pulls and that the
-    /// executor uses to resolve project working directories.
-    #[serde(default)]
-    pub(crate) repos: Vec<Repo>,
+    /// Project declarations that `kiru sync` clones/pulls and that the
+    /// executor uses to resolve project working directories, keyed by
+    /// project name. The key is the name, matching `project <name>` in the
+    /// DSL, so TOML itself rejects duplicate projects.
+    #[serde(default, rename = "project")]
+    pub(crate) projects: BTreeMap<String, TomlProject>,
 }
 
-/// A single repository declaration in `kiru.toml`.
+/// A single project declaration in `kiru.toml`, under
+/// `[project.<project name>]`.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
-pub(crate) struct Repo {
-    /// Project name, matching `pr <name>` in the DSL.
-    pub(crate) name: String,
-
+pub(crate) struct TomlProject {
     /// Git remote URL. Empty string means no remote (skip sync).
     #[serde(default)]
     pub(crate) url: String,
@@ -46,13 +47,13 @@ pub(crate) struct Repo {
     #[serde(default)]
     pub(crate) branch: String,
 
-    /// Opt-in direnv integration for this repository: before a function of
+    /// Opt-in direnv integration for this project: before a function of
     /// the project runs, kiru executes `direnv allow <dir>` so the rc is
     /// always approved, then every shell command of the project is wrapped
     /// in `direnv exec <dir>`. There are no further checks on kiru's side:
     /// a missing direnv binary, a failing rc, or a directory without an
     /// `.envrc` fails the command through direnv itself. Disabled by
-    /// default; commands of unflagged repos run plain.
+    /// default; commands of unflagged projects run plain.
     #[serde(default)]
     pub(crate) direnv: bool,
 }
@@ -108,22 +109,21 @@ fn validate_kiru_toml(config: &KiruToml) -> Result<(), String> {
     {
         return Err("timeout must be greater than zero when set".to_string());
     }
-    for repo in &config.repos {
-        if repo.direnv && repo.dir.is_empty() {
+    for (project_name, project) in &config.projects {
+        if project.direnv && project.dir.is_empty() {
             return Err(format!(
-                "project {}: direnv requires a dir (direnv exec runs commands there)",
-                repo.name
+                "project {project_name}: direnv requires a dir (direnv exec runs commands there)"
             ));
         }
     }
     Ok(())
 }
 
-/// Expand `~` in all repo `dir` fields. Must be called after loading
+/// Expand `~` in all project `dir` fields. Must be called after loading
 /// and before using the paths.
-pub(crate) fn expand_repo_dirs(config: &mut KiruToml) {
-    for repo in &mut config.repos {
-        repo.dir = expand_home(&repo.dir);
+pub(crate) fn expand_project_dirs(config: &mut KiruToml) {
+    for project in config.projects.values_mut() {
+        project.dir = expand_home(&project.dir);
     }
 }
 
@@ -169,7 +169,7 @@ mod tests {
         let config = load_kiru_toml_or_default(&path).unwrap();
         assert_eq!(config.shell, None);
         assert_eq!(config.timeout, None);
-        assert!(config.repos.is_empty());
+        assert!(config.projects.is_empty());
     }
 
     #[test]
@@ -185,60 +185,73 @@ mod tests {
         let config = KiruToml {
             shell: None,
             timeout: Some(0),
-            repos: vec![],
+            projects: BTreeMap::new(),
         };
         assert!(validate_kiru_toml(&config).is_err());
     }
 
     #[test]
-    fn test_repo_direnv_defaults_to_disabled() {
-        // A repo without a `direnv` key must deserialize with the
-        // integration off.
+    fn test_project_keyed_by_project_name() {
         let config: KiruToml = toml::from_str(
             r#"
-            [[repos]]
-            name = "todo"
-            dir = "~/projects/todo"
-            "#,
-        )
-        .unwrap();
-        assert!(!config.repos[0].direnv);
-    }
-
-    #[test]
-    fn test_repo_direnv_opt_in_parses() {
-        let config: KiruToml = toml::from_str(
-            r#"
-            [[repos]]
-            name = "todo"
+            [project.todo]
             dir = "~/projects/todo"
             direnv = true
             "#,
         )
         .unwrap();
-        assert!(config.repos[0].direnv);
+        assert!(config.projects["todo"].direnv);
+
+        // A project without a `direnv` key must deserialize with the
+        // integration off.
+        let config: KiruToml = toml::from_str(
+            r#"
+            [project.todo]
+            dir = "~/projects/todo"
+            "#,
+        )
+        .unwrap();
+        assert!(!config.projects["todo"].direnv);
+    }
+
+    #[test]
+    fn test_duplicate_project_tables_are_rejected() {
+        // The project name is the table key, so two projects with the same
+        // name are a parse error, not a silent collision.
+        let result = toml::from_str::<KiruToml>(
+            r#"
+            [project.todo]
+            dir = "~/a"
+
+            [project.todo]
+            dir = "~/b"
+            "#,
+        );
+        assert!(result.is_err());
     }
 
     #[test]
     fn test_unknown_top_level_key_is_rejected() {
-        // A retired top-level `direnv` (now per repo) or any typo must be
+        // A retired top-level `direnv` (now per project) or any typo must be
         // a hard error, not a silently ignored setting.
         let result = toml::from_str::<KiruToml>("direnv = true");
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_repo_direnv_without_dir_is_rejected() {
+    fn test_project_direnv_without_dir_is_rejected() {
         let config = KiruToml {
             shell: None,
             timeout: None,
-            repos: vec![Repo {
-                name: "todo".to_string(),
-                url: String::new(),
-                dir: String::new(),
-                branch: String::new(),
-                direnv: true,
-            }],
+            projects: BTreeMap::from([(
+                "todo".to_string(),
+                TomlProject {
+                    url: String::new(),
+                    dir: String::new(),
+                    branch: String::new(),
+                    direnv: true,
+                },
+            )]),
         };
         assert!(validate_kiru_toml(&config).is_err());
     }
@@ -250,7 +263,7 @@ mod tests {
         let config: KiruToml = toml::from_str("").unwrap();
         assert_eq!(config.shell, None);
         assert_eq!(config.timeout, None);
-        assert!(config.repos.is_empty());
+        assert!(config.projects.is_empty());
     }
 
     #[test]

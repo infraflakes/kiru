@@ -1,4 +1,4 @@
-//! `kiru status` renderer: shows the `kiru.toml` options and repos, plus the
+//! `kiru status` renderer: shows the `kiru.toml` options and projects, plus the
 //! compiled run blocks from the kirufile when one exists. Nothing here runs
 //! anything; the sections mirror the two input files so what is displayed is
 //! exactly what is configured.
@@ -27,7 +27,7 @@ pub(crate) fn run_status_command(
     let toml = kiru_toml::load_kiru_toml_or_default(&toml_path)
         .map_err(|e| CliError::message(format!("cannot show status: {e}")))?;
     let mut toml = toml;
-    kiru_toml::expand_repo_dirs(&mut toml);
+    kiru_toml::expand_project_dirs(&mut toml);
     let has_toml = toml_path.exists();
 
     // The kirufile is optional: without one there are simply no runs to
@@ -44,7 +44,7 @@ pub(crate) fn run_status_command(
     Ok(())
 }
 
-/// Render the whole status: the kiru.toml options and repos when a
+/// Render the whole status: the kiru.toml options and projects when a
 /// kiru.toml exists, and the run blocks when a kirufile exists. Absent
 /// files render nothing, so the output shows exactly what is configured.
 pub(crate) fn format_status_tree(toml: Option<&KiruToml>, runs: Option<&Ir>) -> String {
@@ -100,36 +100,36 @@ fn draw_option(out: &mut String, last: bool, key: &str, value: &str) {
     ));
 }
 
-/// Draw the configured repositories from `kiru.toml`, in file order. Each
-/// repo shows the fields it actually sets.
+/// Draw the configured projects from `kiru.toml`, in name order. Each
+/// project shows the fields it actually sets.
 fn draw_projects(out: &mut String, toml: &KiruToml) {
     out.push_str(&format!(
         "\n  {}  {}\n\n",
         style!(BOLD, "Projects"),
-        style!(YELLOW, "{}", toml.repos.len())
+        style!(YELLOW, "{}", toml.projects.len())
     ));
 
-    let count = toml.repos.len();
-    for (index, repo) in toml.repos.iter().enumerate() {
+    let count = toml.projects.len();
+    for (index, (name, project)) in toml.projects.iter().enumerate() {
         let last = index == count - 1;
         let branch = if last { "└" } else { "├" };
         out.push_str(&format!(
             "  {}── {}\n",
             branch,
-            style!(BOLD_CYAN, "{}", repo.name)
+            style!(BOLD_CYAN, "{}", name)
         ));
         let indent = if last { "   " } else { "│  " };
 
         let fields: [(&str, &str); 3] = [
-            ("url", repo.url.as_str()),
-            ("dir", repo.dir.as_str()),
-            ("branch", repo.branch.as_str()),
+            ("url", project.url.as_str()),
+            ("dir", project.dir.as_str()),
+            ("branch", project.branch.as_str()),
         ];
         let mut shown_fields: Vec<(&str, &str)> = fields
             .into_iter()
             .filter(|(_, value)| !value.is_empty())
             .collect();
-        if repo.direnv {
+        if project.direnv {
             shown_fields.push(("direnv", "true"));
         }
         for (field_idx, (key, value)) in shown_fields.iter().enumerate() {
@@ -193,13 +193,15 @@ mod tests {
         KiruToml {
             shell: Some("zsh".to_string()),
             timeout: Some(300),
-            repos: vec![kiru_toml::Repo {
-                name: "kiru".to_string(),
-                url: "https://github.com/infraflakes/kiru.git".to_string(),
-                dir: "~/Projects/kiru".to_string(),
-                branch: "dev".to_string(),
-                direnv: true,
-            }],
+            projects: BTreeMap::from([(
+                "kiru".to_string(),
+                kiru_toml::TomlProject {
+                    url: "https://github.com/infraflakes/kiru.git".to_string(),
+                    dir: "~/Projects/kiru".to_string(),
+                    branch: "dev".to_string(),
+                    direnv: true,
+                },
+            )]),
         }
     }
 
@@ -240,7 +242,7 @@ mod tests {
         let mut toml = sample_toml();
         toml.shell = None;
         toml.timeout = None;
-        toml.repos[0].direnv = false;
+        toml.projects.get_mut("kiru").unwrap().direnv = false;
         let tree = format_status_tree(Some(&toml), None);
         assert!(!tree.contains("Config"), "{tree}");
         assert!(!tree.contains("shell"), "{tree}");
