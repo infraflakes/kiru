@@ -60,13 +60,16 @@ Every statement is a call, and the keyword and its call parens must be adjacent 
 
 A `fn` at the top level (outside any project) is a global function: a reusable template that is never run directly. There are two ways to reference it. Inside a project body, `name();` binds it into the project as a function of that name, resolved against the project's vars, so a run block can reach it as `project::name`. Inside any function body, `name();` splices the body right there, carbon-copy. Resolution follows the including project: `@(app)` inside the template finds the project's `app` first, then a global var, then fails; calls inside the template resolve the same way, so a project function shadows a global function of the same name. Calls take no arguments - everything the callee needs comes from the scope it is expanded into - and recursive calls are a compile error.
 
-**`kiru.toml`** - your machine. Which shell to use, an optional command timeout, and which repos kiru should clone for you. Projects are keyed by project name, matching `project <name>` in the DSL.
+**`kiru.toml`** - your machine, organized as profiles. The top level declares only `[profile.<name>]` tables; each profile is a complete unit: where to compile from (`source`), where the compiled IR goes (`output`), the shell, an optional command timeout, and the projects. `source` and `output` are file paths - relative to the `kiru.toml`, or `~/...`, or absolute; the output name is yours to choose, kiru just uses it. Projects are keyed by project name, matching `project <name>` in the DSL.
 
 ```toml
-shell = "sh"
-timeout = 300           # optional, seconds per command
+[profile.default]
+source = "main.kiru"     # compile input, relative to this file
+output = "kirufile"      # where the IR goes, filename included
+shell   = "sh"
+timeout = 300            # optional, seconds per command
 
-[project.todo]
+[profile.default.project.todo]
 url     = "git@github.com:you/todo.git"
 dir     = "~/projects/todo"
 direnv  = true
@@ -74,29 +77,35 @@ direnv  = true
 
 Set `direnv = true` on a project entry to run that project's commands through `direnv exec`. Before a function of the project runs, kiru calls `direnv allow` on the repo directory for you, so the environment always loads. Everything else is direnv's business: a missing binary, a failing `.envrc`, or a directory without one fails the command with direnv's own error. Projects without the flag run their commands plain.
 
-## Compile and run
+A repo can ship its own `kiru.toml` and pass it with `-c`, which makes CI/CD one command per step with no flags to guess at:
 
-kiru does not read `main.kiru` directly. First, compile it into the `kirufile` that the rest of the commands use:
-
-```bash
-kiru compile -c main.kiru -o ~/.config/kiru
+```toml
+[profile.ci]
+source = "src/main.kiru"
+output = "dist/ci/kirufile"
 ```
 
-Compile parses and checks `main.kiru`, then writes `kirufile` into the output directory. If it reports errors, fix them and compile again. Every edit to `main.kiru` needs a fresh `kiru compile` before the other commands see it.
+## Compile and run
+
+kiru does not read the `.kiru` source directly. First, compile the profile's `source` into its `output`:
+
+```bash
+kiru compile -c kiru.toml -p ci
+```
+
+Compile parses and checks `source`, creates missing parent directories of `output`, and writes the IR there. If it reports errors, fix them and compile again. Every edit to the source needs a fresh `kiru compile` before the other commands see it; nothing compiles implicitly.
 
 | command | what it does |
 |---------|-------------|
-| `kiru compile -c main.kiru -o DIR` | turn a `main.kiru` into the `kirufile` |
-| `kiru status` | show the kiru.toml config and the compiled run blocks |
-| `kiru run ci` | run the `ci` pipeline |
-| `kiru sync` | clone or update the repos in `kiru.toml` |
+| `kiru compile` | compile the profile's `source` into its `output` |
+| `kiru status` | show the profile, its projects, and the compiled run blocks |
+| `kiru run ci` | run the `ci` pipeline from the profile's `output` IR |
+| `kiru sync` | clone or update the profile's repos |
 | `kiru version` | print the version |
 
 Start with `kiru status`. It never runs anything, just tells you whether your config is sound.
 
-`kiru run` works without a `kiru.toml` too: commands then run in the directory you invoke kiru from, with the default shell. The one command that requires the toml is `kiru sync` - it has nothing to do without repos to clone.
-
-Flags follow one rule: `-c` points at a config, `-p` at a `kirufile`. Only the flags a command actually needs exist. Defaults are `~/.config/kiru/kiru.toml` for `-c` and `~/.config/kiru/kirufile` for `-p`; `compile -c` defaults to `~/.config/kiru/main.kiru`.
+Flags follow one rule: `-c/--config` points at a `kiru.toml` (defaulting to `~/.config/kiru/kiru.toml`), `-p/--profile` selects the `[profile.<name>]` to use and is mandatory for every command except `version`. An unknown profile is an error listing the available ones.
 
 ## Learn the DSL
 

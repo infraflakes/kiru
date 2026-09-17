@@ -1,12 +1,12 @@
-//! `kiru status` renderer: shows the `kiru.toml` options and projects, plus the
-//! compiled run blocks from the kirufile when one exists. Nothing here runs
-//! anything; the sections mirror the two input files so what is displayed is
-//! exactly what is configured.
+//! `kiru status` renderer: shows the selected profile (source, output,
+//! shell, timeout), its projects, and the compiled run blocks from the IR
+//! when one has been compiled. Nothing here runs anything; the sections
+//! mirror the input files so what is displayed is exactly what is
+//! configured.
 
 use super::CliError;
 use super::pager;
-use crate::cli::kiru_toml;
-use crate::cli::kiru_toml::KiruToml;
+use crate::cli::kiru_toml::ResolvedProfile;
 use crate::exec::colors::{BOLD, BOLD_CYAN, CYAN, GRAY_ANSI, RESET, YELLOW};
 use crate::ir::Ir;
 use std::path::PathBuf;
@@ -19,42 +19,33 @@ macro_rules! style {
 
 pub(crate) fn run_status_command(
     config_arg: Option<PathBuf>,
-    kirufile_arg: Option<PathBuf>,
+    profile_arg: Option<&str>,
 ) -> Result<(), CliError> {
-    let toml_path = super::get_toml_path(config_arg);
-    // A missing kiru.toml means no config and no projects to show; a
-    // malformed one is an error, status validates it.
-    let toml = kiru_toml::load_kiru_toml_or_default(&toml_path)
-        .map_err(|e| CliError::message(format!("cannot show status: {e}")))?;
-    let mut toml = toml;
-    kiru_toml::expand_project_dirs(&mut toml);
-    let has_toml = toml_path.exists();
+    let (profile, _) = super::resolve_selected_profile(config_arg, profile_arg)?;
 
-    // The kirufile is optional: without one there are simply no runs to
-    // show. A malformed kirufile is still an error, status validates it.
-    let runs = match super::load_config(kirufile_arg) {
+    // The IR is optional: without a compiled kirufile there are simply no
+    // runs to show. A malformed one is still an error, status validates it.
+    let runs = match super::load_config(&profile.output) {
         Ok(config) => Some(config),
         Err(message) if message.contains("failed to read") => None,
         Err(message) => return Err(CliError::message(message)),
     };
 
-    let rendered_status_tree = format_status_tree(has_toml.then_some(&toml), runs.as_ref());
+    let rendered_status_tree = format_status_tree(&profile, runs.as_ref());
     pager::display_output_through_pager(&rendered_status_tree)
         .map_err(|e| CliError::message(format!("failed to display output: {}", e)))?;
     Ok(())
 }
 
-/// Render the whole status: the kiru.toml options and projects when a
-/// kiru.toml exists, and the run blocks when a kirufile exists. Absent
-/// files render nothing, so the output shows exactly what is configured.
-pub(crate) fn format_status_tree(toml: Option<&KiruToml>, runs: Option<&Ir>) -> String {
+/// Render the whole status: the selected profile (paths and options), its
+/// projects, and the run blocks when a compiled IR exists. Without one,
+/// the output shows exactly what is configured.
+pub(crate) fn format_status_tree(profile: &ResolvedProfile, runs: Option<&Ir>) -> String {
     let mut out = String::new();
     out.push('\n');
 
-    if let Some(toml) = toml {
-        draw_options(&mut out, toml);
-        draw_projects(&mut out, toml);
-    }
+    draw_profile(&mut out, profile);
+    draw_projects(&mut out, profile);
     if let Some(runs) = runs {
         draw_runs(&mut out, runs);
     }
@@ -62,31 +53,26 @@ pub(crate) fn format_status_tree(toml: Option<&KiruToml>, runs: Option<&Ir>) -> 
     out
 }
 
-/// Draw the kiru.toml options. Only fields explicitly set in the file are
-/// shown: unset options stay invisible.
-fn draw_options(out: &mut String, toml: &KiruToml) {
-    let has_any = toml.shell.is_some() || toml.timeout.is_some();
-    if !has_any {
-        return;
-    }
-
+/// Draw the selected profile: its name, the resolved compile paths, and
+/// the options it sets. Unset options stay invisible.
+fn draw_profile(out: &mut String, profile: &ResolvedProfile) {
     out.push_str(&format!(
         "\n  {}  {}\n\n",
-        style!(BOLD, "Config"),
-        style!(YELLOW, "")
+        style!(BOLD, "Profile"),
+        style!(YELLOW, "{}", profile.name)
     ));
-    let last_index = [toml.shell.is_some(), toml.timeout.is_some()]
-        .iter()
-        .filter(|shown| **shown)
-        .count()
-        - 1;
-    let mut shown = 0;
-    if let Some(shell) = &toml.shell {
-        draw_option(out, shown == last_index, "shell", shell);
-        shown += 1;
+    let mut shown: Vec<(&str, String)> = Vec::new();
+    shown.push(("source", profile.source.display().to_string()));
+    shown.push(("output", profile.output.display().to_string()));
+    if let Some(shell) = &profile.shell {
+        shown.push(("shell", shell.clone()));
     }
-    if let Some(timeout) = &toml.timeout {
-        draw_option(out, shown == last_index, "timeout", &timeout.to_string());
+    if let Some(timeout) = profile.timeout {
+        shown.push(("timeout", timeout.to_string()));
+    }
+    let count = shown.len();
+    for (index, (key, value)) in shown.iter().enumerate() {
+        draw_option(out, index == count - 1, key, value);
     }
 }
 
@@ -100,17 +86,17 @@ fn draw_option(out: &mut String, last: bool, key: &str, value: &str) {
     ));
 }
 
-/// Draw the configured projects from `kiru.toml`, in name order. Each
-/// project shows the fields it actually sets.
-fn draw_projects(out: &mut String, toml: &KiruToml) {
+/// Draw the profile's projects, in name order. Each project shows the
+/// fields it actually sets.
+fn draw_projects(out: &mut String, profile: &ResolvedProfile) {
     out.push_str(&format!(
         "\n  {}  {}\n\n",
         style!(BOLD, "Projects"),
-        style!(YELLOW, "{}", toml.projects.len())
+        style!(YELLOW, "{}", profile.projects.len())
     ));
 
-    let count = toml.projects.len();
-    for (index, (name, project)) in toml.projects.iter().enumerate() {
+    let count = profile.projects.len();
+    for (index, (name, project)) in profile.projects.iter().enumerate() {
         let last = index == count - 1;
         let branch = if last { "└" } else { "├" };
         out.push_str(&format!(
@@ -145,7 +131,7 @@ fn draw_projects(out: &mut String, toml: &KiruToml) {
     }
 }
 
-/// Draw the compiled run blocks. Only called when a kirufile exists.
+/// Draw the compiled run blocks. Only called when an IR exists.
 fn draw_runs(out: &mut String, runs: &Ir) {
     out.push_str(&format!(
         "\n  {}  {}\n",
@@ -186,11 +172,14 @@ fn draw_runs(out: &mut String, runs: &Ir) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{Call, Ir};
+    use crate::cli::kiru_toml;
     use std::collections::BTreeMap;
 
-    fn sample_toml() -> KiruToml {
-        KiruToml {
+    fn sample_profile(name: &str, source: &str, output: &str) -> ResolvedProfile {
+        ResolvedProfile {
+            name: name.to_string(),
+            source: PathBuf::from(source),
+            output: PathBuf::from(output),
             shell: Some("zsh".to_string()),
             timeout: Some(300),
             projects: BTreeMap::from([(
@@ -209,7 +198,7 @@ mod tests {
         let mut chains = BTreeMap::new();
         chains.insert(
             "ci".to_string(),
-            vec![vec![Call {
+            vec![vec![crate::ir::Call {
                 project: "kiru".to_string(),
                 function: "test".to_string(),
             }]],
@@ -221,14 +210,17 @@ mod tests {
     }
 
     #[test]
-    fn tree_shows_config_projects_and_runs() {
-        let tree = format_status_tree(Some(&sample_toml()), Some(&sample_runs()));
-        assert!(tree.contains("Config"), "{tree}");
+    fn tree_shows_profile_projects_and_runs() {
+        let profile = sample_profile("ci", "src/main.kiru", "dist/ci/kirufile");
+        let tree = format_status_tree(&profile, Some(&sample_runs()));
+        assert!(tree.contains("Profile") && tree.contains("ci"), "{tree}");
+        assert!(tree.contains("src/main.kiru"), "{tree}");
+        assert!(tree.contains("dist/ci/kirufile"), "{tree}");
         assert!(tree.contains("shell") && tree.contains("zsh"), "{tree}");
         assert!(tree.contains("timeout") && tree.contains("300"), "{tree}");
-        assert!(tree.contains("direnv") && tree.contains("true"), "{tree}");
         assert!(tree.contains("Projects"), "{tree}");
         assert!(tree.contains("kiru") && tree.contains("dev"), "{tree}");
+        assert!(tree.contains("direnv") && tree.contains("true"), "{tree}");
         assert!(tree.contains("Runs"), "{tree}");
         assert!(tree.contains("ci") && tree.contains("kiru::test"), "{tree}");
         // Functions are dead display weight since `kiru fn` was removed.
@@ -238,27 +230,12 @@ mod tests {
     }
 
     #[test]
-    fn unset_options_render_nothing() {
-        let mut toml = sample_toml();
-        toml.shell = None;
-        toml.timeout = None;
-        toml.projects.get_mut("kiru").unwrap().direnv = false;
-        let tree = format_status_tree(Some(&toml), None);
-        assert!(!tree.contains("Config"), "{tree}");
-        assert!(!tree.contains("shell"), "{tree}");
-        assert!(!tree.contains("timeout"), "{tree}");
-        assert!(!tree.contains("direnv"), "{tree}");
+    fn missing_ir_renders_no_runs() {
+        let profile = sample_profile("ci", "src/main.kiru", "dist/ci/kirufile");
+        let tree = format_status_tree(&profile, None);
+        assert!(tree.contains("Profile"), "{tree}");
         assert!(tree.contains("Projects"), "{tree}");
-        // No kirufile: no runs section at all, no warning line.
+        // No IR: no runs section at all, no warning line.
         assert!(!tree.contains("Runs"), "{tree}");
-    }
-
-    #[test]
-    fn missing_toml_renders_only_runs() {
-        let tree = format_status_tree(None, Some(&sample_runs()));
-        assert!(!tree.contains("Config"), "{tree}");
-        assert!(!tree.contains("Projects"), "{tree}");
-        assert!(tree.contains("Runs"), "{tree}");
-        assert!(tree.contains("ci"), "{tree}");
     }
 }

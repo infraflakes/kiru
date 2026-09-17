@@ -1,24 +1,17 @@
-//! `kiru sync` command: clones or fast-forward-pulls each project declared in
-//! `kiru.toml` into its directory. Reads the default `kiru.toml`, or the one
-//! given with `-c`.
+//! `kiru sync` command: clones or fast-forward-pulls each repo declared in
+//! the selected profile. Reads the default `kiru.toml`, or the one given
+//! with `-c`.
 
 use crate::cli::CliError;
-use crate::cli::get_toml_path;
-use crate::cli::kiru_toml;
 use crate::exec::ProjectSync;
 
-pub(crate) fn run_sync_command(config_arg: Option<std::path::PathBuf>) -> Result<(), CliError> {
-    let toml_path = get_toml_path(config_arg);
-    if !toml_path.exists() {
-        return Err(CliError::message(format!(
-            "kiru sync requires kiru.toml (not found at {})",
-            toml_path.display()
-        )));
-    }
-    let mut toml = kiru_toml::load_kiru_toml_at(&toml_path).map_err(CliError::message)?;
-    kiru_toml::expand_project_dirs(&mut toml);
+pub(crate) fn run_sync_command(
+    config_arg: Option<std::path::PathBuf>,
+    profile_arg: Option<&str>,
+) -> Result<(), CliError> {
+    let (profile, _) = crate::cli::resolve_selected_profile(config_arg, profile_arg)?;
 
-    let projects: Vec<ProjectSync> = toml
+    let repos: Vec<ProjectSync> = profile
         .projects
         .into_iter()
         .filter_map(|(name, project)| {
@@ -45,10 +38,10 @@ pub(crate) fn run_sync_command(config_arg: Option<std::path::PathBuf>) -> Result
         })
         .collect();
 
-    if projects.is_empty() {
+    if repos.is_empty() {
         eprintln!("Warning: no projects to sync");
         return Ok(());
     }
 
-    crate::exec::run_sync_for_projects(projects).map_err(CliError::from)
+    crate::exec::run_sync_for_projects(repos).map_err(CliError::from)
 }

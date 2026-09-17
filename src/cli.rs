@@ -11,7 +11,7 @@ use crate::compile::CompileError;
 use crate::exec::TaskRunError;
 use crate::ir::Ir;
 use clap::Parser;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub(crate) mod compile;
 
@@ -57,28 +57,48 @@ pub(crate) fn compile_error_to_cli_error(e: CompileError) -> CliError {
     }
 }
 
-/// Load the IR by reading and parsing a `kirufile` (the compiled form of
-/// the DSL that `status` and `run` work against).
-pub(crate) fn load_config(kirufile_arg: Option<PathBuf>) -> Result<Ir, String> {
-    let config_path = kirufile_arg.unwrap_or_else(|| kiru_config_dir().join("kirufile"));
-    let text = std::fs::read_to_string(&config_path)
-        .map_err(|e| format!("failed to read kirufile {}: {}", config_path.display(), e))?;
+/// Load the IR by reading and parsing the compiled kirufile (the compiled
+/// form of the DSL that `status` and `run` work against). The path comes
+/// from the profile's `output`.
+pub(crate) fn load_config(ir_path: &Path) -> Result<Ir, String> {
+    let text = std::fs::read_to_string(ir_path)
+        .map_err(|e| format!("failed to read kirufile {}: {}", ir_path.display(), e))?;
     Ir::deserialize(&text)
-        .map_err(|e| format!("failed to parse kirufile {}: {}", config_path.display(), e))
+        .map_err(|e| format!("failed to parse kirufile {}: {}", ir_path.display(), e))
+}
+
+/// Resolve the `kiru.toml` path from `-c`, falling back to the canonical
+/// `~/.config/kiru/kiru.toml`.
+pub(crate) fn get_toml_path(config_arg: Option<PathBuf>) -> PathBuf {
+    config_arg.unwrap_or_else(kiru_toml::get_kiru_toml_path)
+}
+
+/// Resolve the `-p` profile selection into a [`ResolvedProfile`]. Every
+/// command except `version` requires a profile; the error names the flag
+/// so the fix is obvious.
+pub(crate) fn resolve_selected_profile(
+    config_arg: Option<PathBuf>,
+    profile_arg: Option<&str>,
+) -> Result<(kiru_toml::ResolvedProfile, PathBuf), CliError> {
+    let profile_name = profile_arg
+        .ok_or_else(|| CliError::message("a profile is required: pass -p/--profile <name>"))?;
+    let toml_path = get_toml_path(config_arg);
+    let profile =
+        kiru_toml::resolve_profile(&toml_path, profile_name).map_err(CliError::message)?;
+    Ok((profile, toml_path))
 }
 
 pub(crate) fn run_cli() -> Result<(), CliError> {
     let parsed_cli = Cli::parse();
+    let profile_arg = parsed_cli.profile.as_deref();
 
     match parsed_cli.command {
-        Commands::Status { config, kirufile } => status::run_status_command(config, kirufile),
-        Commands::Sync { config } => sync::run_sync_command(config),
-        Commands::Run {
-            name,
-            config,
-            kirufile,
-        } => commands::run::execute_run_block(config, kirufile, name),
-        Commands::Compile { config, output } => compile::run_compile_command(config, output),
+        Commands::Status => status::run_status_command(parsed_cli.config, profile_arg),
+        Commands::Sync => sync::run_sync_command(parsed_cli.config, profile_arg),
+        Commands::Run { name } => {
+            commands::run::execute_run_block(parsed_cli.config, profile_arg, name)
+        }
+        Commands::Compile => compile::run_compile_command(parsed_cli.config, profile_arg),
         Commands::Version => {
             println!("kiru {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -92,10 +112,4 @@ pub(crate) fn kiru_config_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".config")
         .join("kiru")
-}
-
-/// Resolve the `kiru.toml` path from `-c`, falling back to the canonical
-/// `~/.config/kiru/kiru.toml`.
-pub(crate) fn get_toml_path(config_arg: Option<PathBuf>) -> PathBuf {
-    config_arg.unwrap_or_else(kiru_toml::get_kiru_toml_path)
 }
