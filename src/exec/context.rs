@@ -21,7 +21,6 @@ pub(crate) struct ExecContext<'a> {
     output: &'a mut OutputCallback,
     cwd: PathBuf,
     env_layers: Vec<BTreeMap<String, String>>,
-    system_env: Vec<(String, String)>,
     shell: String,
     timeout: Option<Duration>,
     /// Commands run via `direnv exec <starting directory>` when the project
@@ -51,7 +50,6 @@ impl<'a> ExecContext<'a> {
             output,
             cwd,
             env_layers: Vec::new(),
-            system_env: std::env::vars().collect(),
             shell,
             timeout,
             direnv_wrap,
@@ -211,9 +209,11 @@ impl<'a> ExecContext<'a> {
         })
     }
 
-    /// Combine system env vars with every active env-block layer.
+    /// The environment deltas of every active env-block layer, later layers
+    /// winning. The child inherits the rest of the environment from kiru's
+    /// own process, so only the overrides are passed to the spawn.
     fn env_overrides(&self) -> HashMap<String, String> {
-        let mut env: HashMap<String, String> = self.system_env.iter().cloned().collect();
+        let mut env = HashMap::new();
         for layer in &self.env_layers {
             for (k, v) in layer {
                 env.insert(k.clone(), v.clone());

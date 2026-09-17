@@ -276,20 +276,36 @@ pub(crate) fn run_subprocess(
     drop(line_sender);
 
     let start = Instant::now();
+    // Partial output exists only to describe a timeout; without one the
+    // streams are forwarded untouched instead of duplicated into memory.
+    let keep_partial = timeout.is_some();
     let mut partial_stdout = String::new();
     let mut partial_stderr = String::new();
 
     loop {
-        match line_receiver.recv_timeout(Duration::from_millis(50)) {
-            Ok(SubprocessLine::Stdout(line)) => {
-                partial_stdout.push_str(&line);
-                partial_stdout.push('\n');
-                on_line(SubprocessLine::Stdout(line));
+        let received = match timeout {
+            // No time limit: block until a line arrives or every reader hit
+            // EOF and closed the channel (the only `RecvError` cause). No
+            // polling.
+            None => line_receiver
+                .recv()
+                .map_err(|_| mpsc::RecvTimeoutError::Disconnected),
+            Some(_) => line_receiver.recv_timeout(Duration::from_millis(50)),
+        };
+        match received {
+            Ok(SubprocessLine::Stdout(text)) => {
+                if keep_partial {
+                    partial_stdout.push_str(&text);
+                    partial_stdout.push('\n');
+                }
+                on_line(SubprocessLine::Stdout(text));
             }
-            Ok(SubprocessLine::Stderr(line)) => {
-                partial_stderr.push_str(&line);
-                partial_stderr.push('\n');
-                on_line(SubprocessLine::Stderr(line));
+            Ok(SubprocessLine::Stderr(text)) => {
+                if keep_partial {
+                    partial_stderr.push_str(&text);
+                    partial_stderr.push('\n');
+                }
+                on_line(SubprocessLine::Stderr(text));
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {
