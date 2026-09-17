@@ -2,7 +2,6 @@
 //! import candidates (direct, basename, directory glob), and compiles them
 //! into the lowering state.
 
-use crate::diagnostics::{Diagnostic, Span};
 use crate::syntax::lexer::Lexer;
 use crate::syntax::{Part as DslPart, Program, Template};
 use std::path::{Path, PathBuf};
@@ -27,14 +26,10 @@ pub(super) fn parse_source(
 ) -> Result<Program, CompileError> {
     let mut parser = crate::syntax::Parser::new(Lexer::new(source_text.clone()));
     let mut program = Program::new_with_source(source_name, source_text);
-    while let Some(toplevel) = parser.parse_toplevel().map_err(|e| {
-        CompileError::diagnostic(Diagnostic::new(
-            program.source_name.clone(),
-            e.span,
-            e.msg,
-            program.source_text.clone(),
-        ))
-    })? {
+    while let Some(toplevel) = parser
+        .parse_toplevel()
+        .map_err(|e| super::error_at(&program.source_name, &program.source_text, e.span, e.msg))?
+    {
         program.top_level_items.push(toplevel);
     }
     Ok(program)
@@ -83,15 +78,12 @@ pub(super) fn load_import(
 
     // Missing import: non-fatal. Report and continue so `status` works even
     // when optional imports are absent.
-    let diag = Diagnostic::new(
-        program.source_name.to_string(),
-        Span::new(path.offset, path.len.max(1)),
+    let diag = super::diagnostic_in(
+        &state.source_texts,
+        &program.source_name,
+        path.offset,
+        path.len.max(1),
         format!("import target '{}' does not exist, skipping", path_str),
-        state
-            .source_texts
-            .get(&program.source_name)
-            .cloned()
-            .unwrap_or_default(),
     );
     crate::diagnostics::print_diagnostic(&diag);
     Ok(())

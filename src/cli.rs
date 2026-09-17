@@ -1,7 +1,7 @@
 mod args;
-mod commands;
 pub(crate) mod kiru_toml;
 mod pager;
+mod run;
 mod status;
 mod sync;
 
@@ -95,9 +95,7 @@ pub(crate) fn run_cli() -> Result<(), CliError> {
     match parsed_cli.command {
         Commands::Status => status::run_status_command(parsed_cli.config, profile_arg),
         Commands::Sync => sync::run_sync_command(parsed_cli.config, profile_arg),
-        Commands::Run { name } => {
-            commands::run::execute_run_block(parsed_cli.config, profile_arg, name)
-        }
+        Commands::Run { name } => run::execute_run_block(parsed_cli.config, profile_arg, name),
         Commands::Compile => compile::run_compile_command(parsed_cli.config, profile_arg),
         Commands::Version => {
             println!("kiru {}", env!("CARGO_PKG_VERSION"));

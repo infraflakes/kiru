@@ -115,18 +115,61 @@ impl CompileState {
         offset: usize,
         len: usize,
     ) -> CompileError {
-        let src = self
-            .source_texts
-            .get(source_name)
-            .cloned()
-            .unwrap_or_default();
-        CompileError::diagnostic(Diagnostic::new(
-            source_name.to_string(),
-            Span::new(offset, len),
-            msg,
-            src,
-        ))
+        error_in(&self.source_texts, source_name, offset, len, msg)
     }
+}
+
+/// Build a diagnostic anchored at a span in a source text. The single
+/// constructor for the "diagnostic with rendered source" shape; the error
+/// wrappers below build on it.
+pub(super) fn diagnostic_at(
+    source_name: &str,
+    source_text: &str,
+    span: Span,
+    msg: impl Into<String>,
+) -> Diagnostic {
+    Diagnostic::new(
+        source_name.to_string(),
+        span,
+        msg.into(),
+        source_text.to_string(),
+    )
+}
+
+/// Build a compile error anchored at a span in a source text.
+pub(super) fn error_at(
+    source_name: &str,
+    source_text: &str,
+    span: Span,
+    msg: impl Into<String>,
+) -> CompileError {
+    CompileError::diagnostic(diagnostic_at(source_name, source_text, span, msg))
+}
+
+/// Build a diagnostic anchored at a span in a registered source, looked up
+/// by name in the `source_texts` map. The lookup falls back to an empty
+/// text so the constructor stays total; a missing entry cannot happen for
+/// parsed sources.
+pub(super) fn diagnostic_in(
+    sources: &HashMap<String, String>,
+    source_name: &str,
+    offset: usize,
+    len: usize,
+    msg: impl Into<String>,
+) -> Diagnostic {
+    let source_text = sources.get(source_name).cloned().unwrap_or_default();
+    diagnostic_at(source_name, &source_text, Span::new(offset, len), msg)
+}
+
+/// Build a compile error anchored at a span in a registered source.
+pub(super) fn error_in(
+    sources: &HashMap<String, String>,
+    source_name: &str,
+    offset: usize,
+    len: usize,
+    msg: impl Into<String>,
+) -> CompileError {
+    CompileError::diagnostic(diagnostic_in(sources, source_name, offset, len, msg))
 }
 
 /// Resolve a path to an absolute, canonical location.

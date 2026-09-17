@@ -1,7 +1,6 @@
 //! IR builder: consumes the accumulated `CompileState` and produces
 //! the final [`Ir`] with resolved projects and run blocks.
 
-use crate::diagnostics::{Diagnostic, Span};
 use crate::ir::{Ir, Project};
 use std::collections::BTreeMap;
 
@@ -58,12 +57,13 @@ pub(super) fn build_ir(state: CompileState) -> Result<Ir, CompileError> {
                     )),
                 };
                 if let Some(message) = error_message {
-                    return Err(CompileError::diagnostic(Diagnostic::new(
-                        source_name.clone(),
-                        Span::new(offset, len.max(1)),
+                    return Err(super::error_in(
+                        &source_texts,
+                        &source_name,
+                        offset,
+                        len.max(1),
                         message,
-                        source_texts.get(&source_name).cloned().unwrap_or_default(),
-                    )));
+                    ));
                 }
             }
         }

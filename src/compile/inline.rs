@@ -1,4 +1,3 @@
-use crate::diagnostics::{Diagnostic, Span};
 use crate::ir::{Arm, ArmPattern, EnvPair, Instruction, Segment, Template as IrTemplate};
 use crate::syntax::source::ArmPattern as DslArmPattern;
 use crate::syntax::{Part as DslPart, Template};
@@ -37,20 +36,22 @@ pub(super) fn inline_dsl_parts(
             DslPart::Lit(s) => out.push(DslPart::Lit(s.clone())),
             DslPart::Var(name) => {
                 if stack.contains(name) {
-                    return Err(CompileError::diagnostic(Diagnostic::new(
-                        source_name.to_string(),
-                        Span::new(tmpl.offset, tmpl.len.max(1)),
+                    return Err(super::error_in(
+                        sources,
+                        source_name,
+                        tmpl.offset,
+                        tmpl.len.max(1),
                         format!("circular variable reference: {}", name),
-                        sources.get(source_name).cloned().unwrap_or_default(),
-                    )));
+                    ));
                 }
                 let var_tmpl = scope.get(name).ok_or_else(|| {
-                    CompileError::diagnostic(Diagnostic::new(
-                        source_name.to_string(),
-                        Span::new(tmpl.offset, tmpl.len.max(1)),
+                    super::error_in(
+                        sources,
+                        source_name,
+                        tmpl.offset,
+                        tmpl.len.max(1),
                         format!("undefined variable: {}", name),
-                        sources.get(source_name).cloned().unwrap_or_default(),
-                    ))
+                    )
                 })?;
                 stack.push(name.clone());
                 let inlined = inline_dsl_parts(var_tmpl, scope, sources, source_name, stack)?;
@@ -156,12 +157,13 @@ pub(super) fn compile_fn_stmts(
                     .iter()
                     .any(|s| matches!(s, crate::ir::Segment::Cmd(_)));
                 if !has_cmd {
-                    return Err(crate::compile::CompileError::diagnostic(Diagnostic::new(
-                        source_name.to_string(),
-                        Span::new(value.offset, value.len.max(1)),
+                    return Err(super::error_in(
+                        sources,
+                        source_name,
+                        value.offset,
+                        value.len.max(1),
                         "bare template is not a statement, wrap the command in $(...) or prefix with log, cd, var, env or switch",
-                        sources.get(source_name).cloned().unwrap_or_default(),
-                    )));
+                    ));
                 }
                 out.push(Instruction::RunShellCmd { value: ir });
             }
@@ -213,25 +215,27 @@ pub(super) fn compile_fn_stmts(
                         .map(|entry| (entry.body.as_slice(), entry.source_name.as_str())),
                 };
                 let Some((target_body, target_source)) = target else {
-                    return Err(CompileError::diagnostic(Diagnostic::new(
-                        source_name.to_string(),
-                        Span::new(*offset, (*len).max(1)),
+                    return Err(super::error_in(
+                        sources,
+                        source_name,
+                        *offset,
+                        (*len).max(1),
                         format!(
                             "undefined function: `{name}` (not a function of project `{project_name}`, and not a global function)"
                         ),
-                        sources.get(source_name).cloned().unwrap_or_default(),
-                    )));
+                    ));
                 };
                 if cycle_stack.contains(name) {
                     let mut chain = cycle_stack.join(" -> ");
                     chain.push_str(" -> ");
                     chain.push_str(name);
-                    return Err(CompileError::diagnostic(Diagnostic::new(
-                        source_name.to_string(),
-                        Span::new(*offset, (*len).max(1)),
+                    return Err(super::error_in(
+                        sources,
+                        source_name,
+                        *offset,
+                        (*len).max(1),
                         format!("circular function call: {chain}"),
-                        sources.get(source_name).cloned().unwrap_or_default(),
-                    )));
+                    ));
                 }
                 cycle_stack.push(name.clone());
                 let mut inner = scope.clone();

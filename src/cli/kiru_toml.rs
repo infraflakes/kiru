@@ -146,7 +146,7 @@ pub(crate) fn load_kiru_toml_at(path: &Path) -> Result<KiruToml, String> {
 /// Validate a `KiruToml` after parsing.
 fn validate_kiru_toml(config: &KiruToml) -> Result<(), String> {
     for (profile_name, profile) in &config.profile {
-        if let Some(timeout) = config.profile[profile_name].timeout
+        if let Some(timeout) = profile.timeout
             && timeout == 0
         {
             return Err(format!(
