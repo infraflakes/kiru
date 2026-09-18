@@ -1,13 +1,13 @@
 //! `kiru status` renderer: shows the selected profile (source, output,
-//! shell, timeout), its projects, and the compiled run blocks from the IR
-//! when one has been compiled. Nothing here runs anything; the sections
-//! mirror the input files so what is displayed is exactly what is
+//! shell, timeout), its projects, and the names of the compiled run blocks
+//! from the IR when one has been compiled. Nothing here runs anything; the
+//! sections mirror the input files so what is displayed is exactly what is
 //! configured.
 
 use super::CliError;
 use super::pager;
 use crate::cli::kiru_toml::ResolvedProfile;
-use crate::exec::colors::{BOLD, BOLD_CYAN, CYAN, GRAY_ANSI, RESET, YELLOW};
+use crate::exec::colors::{BOLD, BOLD_CYAN, CYAN, RESET, YELLOW};
 use crate::ir::Ir;
 use std::path::PathBuf;
 
@@ -131,7 +131,8 @@ fn draw_projects(out: &mut String, profile: &ResolvedProfile) {
     }
 }
 
-/// Draw the compiled run blocks. Only called when an IR exists.
+/// Draw the compiled run blocks: their names only. What each run contains
+/// belongs to `kiru run`, not to the profile overview.
 fn draw_runs(out: &mut String, runs: &Ir) {
     out.push_str(&format!(
         "\n  {}  {}\n",
@@ -141,27 +142,12 @@ fn draw_runs(out: &mut String, runs: &Ir) {
 
     let count = runs.runs.len();
     for (run_idx, name) in runs.runs.keys().enumerate() {
-        let is_last_run = run_idx == count - 1;
-        let run_connector = if is_last_run { "└" } else { "├" };
+        let run_connector = if run_idx == count - 1 { "└" } else { "├" };
         out.push_str(&format!(
             "  {}── {}\n",
             style!(BOLD, "{}", run_connector),
             style!(BOLD, "{}", name)
         ));
-
-        let run_indent = if is_last_run { "   " } else { "│  " };
-        // One line per step or switch arm; the plan's tree prefixes carry
-        // the nesting, the `[project]` annotation carries the context.
-        for line in runs.run_plan(name) {
-            let project = line
-                .project
-                .map(|project| format!(" {}", style!(GRAY_ANSI, "[{project}]")))
-                .unwrap_or_default();
-            out.push_str(&format!(
-                "  {}{}{}{}\n",
-                run_indent, line.prefix, line.label, project
-            ));
-        }
     }
 }
 
@@ -192,14 +178,7 @@ mod tests {
 
     fn sample_runs() -> Ir {
         Ir {
-            runs: BTreeMap::from([(
-                "ci".to_string(),
-                vec![crate::ir::Instruction::Step {
-                    row: 0,
-                    label: "kiru::test".to_string(),
-                    body: Vec::new(),
-                }],
-            )]),
+            runs: BTreeMap::from([("ci".to_string(), Vec::new())]),
         }
     }
 
@@ -216,7 +195,8 @@ mod tests {
         assert!(tree.contains("kiru") && tree.contains("dev"), "{tree}");
         assert!(tree.contains("direnv") && tree.contains("true"), "{tree}");
         assert!(tree.contains("Runs"), "{tree}");
-        assert!(tree.contains("ci") && tree.contains("kiru::test"), "{tree}");
+        // Runs are listed by name; their contents belong to `kiru run`.
+        assert!(!tree.contains("kiru::test"), "{tree}");
         // Functions are dead display weight since `kiru fn` was removed.
         assert!(!tree.contains("fn:"), "{tree}");
         // The footer is gone.

@@ -248,7 +248,7 @@ pub(super) fn compile_fn_stmt(
             let value = compile_template(&inline_dsl_template(t, scope, sources, source_name)?);
             Ok(vec![step(
                 row,
-                format!("log {}", plan_text(&value)),
+                crate::ir::log_label(&plan_text(&value)),
                 vec![Instruction::Log(value)],
             )])
         }
@@ -257,7 +257,7 @@ pub(super) fn compile_fn_stmt(
                 compile_template(&inline_dsl_template(command, scope, sources, source_name)?);
             Ok(vec![step(
                 row,
-                format!("exec {}", plan_text(&value)),
+                crate::ir::exec_label(&plan_text(&value)),
                 vec![Instruction::Exec { command: value }],
             )])
         }
@@ -265,7 +265,7 @@ pub(super) fn compile_fn_stmt(
             let value = compile_template(&inline_dsl_template(t, scope, sources, source_name)?);
             Ok(vec![step(
                 row,
-                format!("cd {}", plan_text(&value)),
+                crate::ir::cd_label(&plan_text(&value)),
                 vec![Instruction::Cd(value)],
             )])
         }
@@ -306,7 +306,7 @@ pub(super) fn compile_fn_stmt(
             )?;
             Ok(vec![Instruction::Step {
                 row: index,
-                label: format!("env({})", keys.join(", ")),
+                label: crate::ir::env_label(&keys.join(", ")),
                 body: vec![Instruction::Env {
                     pairs: ir_pairs,
                     body: inner_body,

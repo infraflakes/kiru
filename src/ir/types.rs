@@ -223,6 +223,7 @@ fn collect_plan_lines(
 fn collect_plan_arms(arms: &[Arm], depth: usize, project: Option<&str>, lines: &mut Vec<PlanLine>) {
     for arm in arms {
         let label = match &arm.pattern {
+            ArmPattern::Lit(pattern) if pattern.is_empty() => "switch case \"\"".to_string(),
             ArmPattern::Lit(pattern) => format!("switch case {pattern}"),
             ArmPattern::Default => "switch default".to_string(),
         };
@@ -238,8 +239,9 @@ fn collect_plan_arms(arms: &[Arm], depth: usize, project: Option<&str>, lines: &
     }
 }
 
-/// The plan preview of a template: literal text with `$(...)` placeholders
-/// kept visible (`@()` references are already inlined at compile time).
+/// The plan preview of a template: its literal text with every `$(command)`
+/// kept verbatim, because parenthesized content is data, not an operator to
+/// summarize. `@()` references are already inlined at compile time.
 pub(crate) fn template_plan_text(template: &Template) -> String {
     template
         .parts
@@ -251,6 +253,27 @@ pub(crate) fn template_plan_text(template: &Template) -> String {
         .collect()
 }
 
+/// The display label of a `log` statement: one definition shared by the
+/// compile-time plan and the runtime resolved-label update.
+pub(crate) fn log_label(text: &str) -> String {
+    format!("log: {text}")
+}
+
+/// The display label of an `exec` statement.
+pub(crate) fn exec_label(text: &str) -> String {
+    format!("exec: {text}")
+}
+
+/// The display label of a `cd` statement.
+pub(crate) fn cd_label(text: &str) -> String {
+    format!("cd: {text}")
+}
+
+/// The display label of an `env` block.
+pub(crate) fn env_label(keys: &str) -> String {
+    format!("env: {keys}")
+}
+
 /// The `[project]` annotation for a context name template: the literal name
 /// when compile-time known, otherwise the unresolved template text (the IR
 /// is portable; shells are not).
@@ -258,40 +281,52 @@ fn project_annotation(project: &Template) -> String {
     template_plan_text(project)
 }
 
-/// Assign tree-branch prefixes to the flat, pre-order plan lines.
+/// Compute tree-branch prefixes for a flat, pre-order sequence of depths.
 ///
 /// A line is the last child of its parent when the next line at its depth or
 /// shallower closes its subtree; ancestor continuation bars come from the
-/// open lines above it. Computed once here so the TUI, the final dump, and
-/// `status` never re-derive the structure.
-fn assign_tree_prefixes(lines: &mut [PlanLine]) {
-    let count = lines.len();
+/// open lines above it. One implementation shared by the static plan, the
+/// live TUI, and the final dump, so the views never re-derive the structure.
+///
+/// Returns `(prefix, output_prefix)` per line: the connector-prefixed label
+/// ledger and the bar-aligned indent for its output block.
+pub(crate) fn tree_prefixes(depths: &[usize]) -> Vec<(String, String)> {
+    let count = depths.len();
     let mut is_last = vec![false; count];
-    for (index, line) in lines.iter().enumerate() {
-        let depth = line.depth;
+    for (index, depth) in depths.iter().enumerate() {
         let mut next = index + 1;
-        while next < count && lines[next].depth > depth {
+        while next < count && depths[next] > *depth {
             next += 1;
         }
-        is_last[index] = next >= count || lines[next].depth < depth;
+        is_last[index] = next >= count || depths[next] < *depth;
     }
 
     let mut open: Vec<bool> = Vec::new();
-    for (index, line) in lines.iter_mut().enumerate() {
+    let mut prefixes = Vec::with_capacity(count);
+    for (index, depth) in depths.iter().enumerate() {
         // Close every line whose subtree ended before this one.
-        open.truncate(line.depth);
+        open.truncate(*depth);
         let mut prefix = String::new();
         for last in &open {
             prefix.push_str(if *last { "   " } else { "│  " });
         }
-        line.output_prefix = format!("{prefix}{}", if is_last[index] { "   " } else { "│  " });
+        let output_prefix = format!("{prefix}{}", if is_last[index] { "   " } else { "│  " });
         // The outermost level is the run body itself: no branch there, the
         // statements just list top-down. Deeper levels draw connectors.
-        if line.depth > 0 {
+        if *depth > 0 {
             prefix.push_str(if is_last[index] { "└─ " } else { "├─ " });
         }
-        line.prefix = prefix;
-        line.output_prefix.push_str("  ");
+        prefixes.push((prefix, format!("{output_prefix}  ")));
         open.push(is_last[index]);
+    }
+    prefixes
+}
+
+/// Assign the computed tree prefixes to the flat, pre-order plan lines.
+fn assign_tree_prefixes(lines: &mut [PlanLine]) {
+    let depths: Vec<usize> = lines.iter().map(|line| line.depth).collect();
+    for (line, (prefix, output_prefix)) in lines.iter_mut().zip(tree_prefixes(&depths)) {
+        line.prefix = prefix;
+        line.output_prefix = output_prefix;
     }
 }

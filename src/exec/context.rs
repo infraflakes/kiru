@@ -1,7 +1,6 @@
 use super::subprocess;
 use super::subprocess::RunKillSwitch;
 use crate::exec::TaskStatus;
-use crate::exec::colors;
 use crate::exec::error::RuntimeError;
 use crate::ir::{ArmPattern, EnvPair, Instruction, Segment, Template};
 use std::collections::{BTreeMap, HashMap};
@@ -24,6 +23,24 @@ pub(crate) type OutputCallback = Arc<dyn Fn(Option<usize>, String) + Send + Sync
 /// Reports a display row's status. Row indices are assigned at compile time
 /// (`Instruction::Step`), so every callback call names its row.
 pub(crate) type StatusCallback = Arc<dyn Fn(usize, TaskStatus) + Send + Sync>;
+
+/// Reports a row's resolved label: the runtime values are known, so the
+/// display text is the executed data, not its source template.
+pub(crate) type LabelCallback = Arc<dyn Fn(usize, String) + Send + Sync>;
+
+/// Reports the resolved project annotation of a row. Project names are
+/// templates, so dynamic contexts only know their name at entry.
+pub(crate) type ProjectCallback = Arc<dyn Fn(usize, String) + Send + Sync>;
+
+/// Every per-row event sink of one run, grouped so the executor carries one
+/// handle and [`ExecContext::fork`] clones one field.
+#[derive(Clone)]
+pub(crate) struct RowReporter {
+    pub(crate) output: OutputCallback,
+    pub(crate) status: StatusCallback,
+    pub(crate) label: LabelCallback,
+    pub(crate) project: ProjectCallback,
+}
 
 /// The per-project execution setup derived from a `kiru.toml` project entry:
 /// where its commands run and whether they are wrapped in direnv.
@@ -59,6 +76,8 @@ pub(crate) struct ExecContext {
     run: Arc<RunContext>,
     output: OutputCallback,
     status: StatusCallback,
+    label: LabelCallback,
+    project: ProjectCallback,
     cwd: PathBuf,
     env_layers: Vec<BTreeMap<String, String>>,
     /// The display row currently being executed, if any. Every line and
@@ -75,15 +94,16 @@ impl ExecContext {
     /// directory and every display row starts unset.
     pub(crate) fn new(
         run: Arc<RunContext>,
-        output: OutputCallback,
-        status: StatusCallback,
+        reporter: RowReporter,
         cwd: PathBuf,
         direnv_wrap: bool,
     ) -> Self {
         ExecContext {
             run,
-            output,
-            status,
+            output: reporter.output,
+            status: reporter.status,
+            label: reporter.label,
+            project: reporter.project,
             cwd,
             env_layers: Vec::new(),
             row: None,
@@ -99,6 +119,8 @@ impl ExecContext {
             run: Arc::clone(&self.run),
             output: Arc::clone(&self.output),
             status: Arc::clone(&self.status),
+            label: Arc::clone(&self.label),
+            project: Arc::clone(&self.project),
             cwd: self.cwd.clone(),
             env_layers: self.env_layers.clone(),
             row: self.row,
@@ -118,6 +140,13 @@ impl ExecContext {
             Some(self.cwd.to_string_lossy().into_owned())
         } else {
             None
+        }
+    }
+
+    /// Rename the row currently executing with its resolved label.
+    fn rename(&self, label: String) {
+        if let Some(row) = self.row {
+            (self.label)(row, label);
         }
     }
 
@@ -181,19 +210,7 @@ impl ExecContext {
         let work_dir = &self.cwd;
         let env_overrides: HashMap<String, String> = self.env_overrides();
         let direnv_dir = self.direnv_dir();
-        let output_indent = "  ".repeat(self.env_layers.len() + 1);
-        let shell_indent = "  ".repeat(self.env_layers.len());
         let shell = &self.run.shell;
-
-        // Echo: "{shell}  {cmd}" in blue at log indent level.
-        (self.output)(
-            self.row,
-            format!(
-                "{shell_indent}{}{shell}  {cmd}{}",
-                colors::CMD_ANSI,
-                colors::RESET
-            ),
-        );
 
         let argv = self.shell_argv(shell, cmd, direnv_dir.as_deref());
         let exit = subprocess::run_subprocess(
@@ -206,7 +223,7 @@ impl ExecContext {
             &mut |line| match line {
                 subprocess::SubprocessLine::Stdout(text)
                 | subprocess::SubprocessLine::Stderr(text) => {
-                    (self.output)(self.row, format!("{output_indent}{}", text.trim_start()));
+                    (self.output)(self.row, text.trim_start().to_string());
                 }
             },
         );
@@ -231,9 +248,7 @@ impl ExecContext {
                 let timeout_secs = self.run.timeout.map_or(0, |d| d.as_secs());
                 (self.output)(
                     self.row,
-                    format!(
-                        "{output_indent}Error: timeout: command timed out after {timeout_secs}s: {command}"
-                    ),
+                    format!("Error: timeout: command timed out after {timeout_secs}s: {command}"),
                 );
                 Err(RuntimeError::Timeout {
                     cmd: command,
@@ -280,12 +295,6 @@ impl ExecContext {
             }
         }
         env
-    }
-
-    /// Emit one output line: indent, prefix, then payload.
-    fn emit(&mut self, indent_extra: usize, prefix: &str, payload: &str) {
-        let indent = "  ".repeat(self.env_layers.len() + indent_extra);
-        (self.output)(self.row, format!("{indent}{prefix}{payload}"));
     }
 
     /// Run a sequence of resolved instructions sequentially, joining the
@@ -361,27 +370,35 @@ impl ExecContext {
             let result = match stmt {
                 Instruction::Step { row, body, .. } => self.exec_step(*row, body, spawned),
                 Instruction::Async { body } => self.exec_async(body, spawned),
-                Instruction::Context { project, body } => {
-                    let result = self.exec_context(project, body);
-                    if let Err(error) = &result {
-                        report_context_failure(&self.status, &self.output, body, error);
-                    }
-                    result
-                }
+                Instruction::Context { project, body } => self.exec_context(project, body),
                 Instruction::Log(t) => {
-                    let resolved = self.resolve(t, false)?;
-                    self.emit(0, colors::LOG_PREFIX, &resolved);
+                    // A fully literal log already names itself on the step
+                    // line; a dynamic one resolves here and renames it, so
+                    // the line shows the logged data.
+                    if template_is_dynamic(t) {
+                        let resolved = self.resolve(t, false)?;
+                        self.rename(crate::ir::log_label(&resolved));
+                    }
                     Ok(())
                 }
                 Instruction::Exec { command } => {
                     // One rule: substitutions resolve first, then the
-                    // resulting text runs strictly with live output.
+                    // resulting text runs strictly with live output. The
+                    // resolved text renames the row, so the display shows
+                    // what actually ran.
                     let cmd = self.resolve(command, false)?;
+                    if template_is_dynamic(command) {
+                        self.rename(crate::ir::exec_label(&cmd));
+                    }
                     self.run_live(&cmd)
                 }
                 Instruction::Cd(t) => {
                     let target = self.resolve(t, false)?;
-                    self.exec_cd(&target)
+                    self.exec_cd(&target)?;
+                    if template_is_dynamic(t) {
+                        self.rename(crate::ir::cd_label(&target));
+                    }
+                    Ok(())
                 }
                 Instruction::Env { pairs, body } => self.exec_env_block(pairs, body),
                 Instruction::Switch { subject, arms } => {
@@ -484,6 +501,36 @@ impl ExecContext {
         project: &Template,
         body: &[Instruction],
     ) -> Result<(), RuntimeError> {
+        // A failure to enter the context happens before any row of the body
+        // runs, so it is reported on the body's first row here. Once the
+        // body runs, every failure carries the row that produced it and
+        // must not be re-reported.
+        let (name, entry) = match self.enter_context(project) {
+            Ok(entry) => entry,
+            Err(error) => {
+                report_context_failure(&self.status, &self.output, body, &error);
+                return Err(error);
+            }
+        };
+        // A dynamic project name is only known here, so every row of the
+        // body is annotated with the resolved name it actually ran under.
+        if template_is_dynamic(project) {
+            for row in rows_in(body) {
+                (self.project)(row, name.clone());
+            }
+        }
+        let previous_cwd = std::mem::replace(&mut self.cwd, entry.dir);
+        let previous_wrap = self.direnv_wrap;
+        self.direnv_wrap = entry.direnv;
+        let result = self.exec_stmts(body);
+        self.cwd = previous_cwd;
+        self.direnv_wrap = previous_wrap;
+        result
+    }
+
+    /// Resolve the project name and approve its direnv environment, without
+    /// entering the directory yet. Returns the resolved name with its entry.
+    fn enter_context(&mut self, project: &Template) -> Result<(String, ProjectExec), RuntimeError> {
         let name = self.resolve(project, false)?;
         if name.is_empty() {
             return Err(RuntimeError::Lookup(
@@ -503,13 +550,7 @@ impl ExecContext {
                 None,
             )?;
         }
-        let previous_cwd = std::mem::replace(&mut self.cwd, entry.dir);
-        let previous_wrap = self.direnv_wrap;
-        self.direnv_wrap = entry.direnv;
-        let result = self.exec_stmts(body);
-        self.cwd = previous_cwd;
-        self.direnv_wrap = previous_wrap;
-        result
+        Ok((name, entry))
     }
 
     fn exec_cd(&mut self, target: &str) -> Result<(), RuntimeError> {
@@ -526,7 +567,6 @@ impl ExecContext {
             )));
         }
         self.cwd = candidate;
-        self.emit(0, colors::CD_PREFIX, target);
         Ok(())
     }
 
@@ -539,8 +579,6 @@ impl ExecContext {
         for pair in pairs {
             layer.insert(pair.key.clone(), self.resolve(&pair.value, false)?);
         }
-        let keys: Vec<&str> = pairs.iter().map(|p| p.key.as_str()).collect();
-        self.emit(0, colors::ENV_PREFIX, &keys.join(", "));
         self.env_layers.push(layer);
         let result = self.exec_stmts(body);
         self.env_layers.pop();
@@ -548,43 +586,75 @@ impl ExecContext {
     }
 }
 
-/// Mark every display row in `body` that has not run yet as cancelled,
-/// descending through async groups, project contexts, and switch arms.
-fn cancel_rows_in(status: &StatusCallback, body: &[Instruction]) {
+/// Every display row reachable in `body`, in pre-order: step rows and
+/// switch arm rows, descending through nested bodies.
+fn rows_in(body: &[Instruction]) -> Vec<usize> {
+    fn collect(body: &[Instruction], rows: &mut Vec<usize>) {
+        for stmt in body {
+            match stmt {
+                Instruction::Step { row, body, .. } => {
+                    rows.push(*row);
+                    collect(body, rows);
+                }
+                Instruction::Switch { arms, .. } => {
+                    for arm in arms {
+                        rows.push(arm.row);
+                        collect(&arm.body, rows);
+                    }
+                }
+                Instruction::Async { body } | Instruction::Context { body, .. } => {
+                    collect(body, rows);
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut rows = Vec::new();
+    collect(body, &mut rows);
+    rows
+}
+
+/// Whether a template resolves at runtime: any `$()` part means its value
+/// is not visible on the step line, so it renames the row once resolved.
+fn template_is_dynamic(template: &Template) -> bool {
+    template
+        .parts
+        .iter()
+        .any(|segment| matches!(segment, Segment::Cmd(_)))
+}
+
+/// Mark every display row reachable in `body` with `status`, descending
+/// through step bodies, switch arms, async groups, and project contexts.
+fn mark_rows(status: &StatusCallback, body: &[Instruction], task_status: TaskStatus) {
     for stmt in body {
         match stmt {
-            Instruction::Step { row, .. } => (status)(*row, TaskStatus::Cancelled),
+            Instruction::Step { row, body, .. } => {
+                (status)(*row, task_status);
+                mark_rows(status, body, task_status);
+            }
             Instruction::Switch { arms, .. } => {
                 for arm in arms {
-                    (status)(arm.row, TaskStatus::Cancelled);
-                    cancel_rows_in(status, &arm.body);
+                    (status)(arm.row, task_status);
+                    mark_rows(status, &arm.body, task_status);
                 }
             }
             Instruction::Async { body } | Instruction::Context { body, .. } => {
-                cancel_rows_in(status, body);
+                mark_rows(status, body, task_status);
             }
             _ => {}
         }
     }
 }
 
+/// Mark every display row in `body` that has not run yet as cancelled.
+fn cancel_rows_in(status: &StatusCallback, body: &[Instruction]) {
+    mark_rows(status, body, TaskStatus::Cancelled);
+}
+
 /// Mark an untaken switch arm and every step it contains as skipped.
 fn skip_rows_in(status: &StatusCallback, arm_row: usize, body: &[Instruction]) {
     (status)(arm_row, TaskStatus::Skipped);
-    for stmt in body {
-        match stmt {
-            Instruction::Step { row, .. } => (status)(*row, TaskStatus::Skipped),
-            Instruction::Switch { arms, .. } => {
-                for arm in arms {
-                    skip_rows_in(status, arm.row, &arm.body);
-                }
-            }
-            Instruction::Async { body } | Instruction::Context { body, .. } => {
-                skip_rows_in(status, arm_row, body);
-            }
-            _ => {}
-        }
-    }
+    mark_rows(status, body, TaskStatus::Skipped);
 }
 
 /// Report a failure to enter a project context: there is no row for the
@@ -596,25 +666,7 @@ fn report_context_failure(
     body: &[Instruction],
     error: &RuntimeError,
 ) {
-    fn rows_in(body: &[Instruction], rows: &mut Vec<usize>) {
-        for stmt in body {
-            match stmt {
-                Instruction::Step { row, .. } => rows.push(*row),
-                Instruction::Switch { arms, .. } => {
-                    for arm in arms {
-                        rows.push(arm.row);
-                        rows_in(&arm.body, rows);
-                    }
-                }
-                Instruction::Async { body } | Instruction::Context { body, .. } => {
-                    rows_in(body, rows);
-                }
-                _ => {}
-            }
-        }
-    }
-    let mut rows = Vec::new();
-    rows_in(body, &mut rows);
+    let rows = rows_in(body);
     let Some((first, rest)) = rows.split_first() else {
         return;
     };
@@ -628,7 +680,7 @@ fn report_context_failure(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{Arm, Instruction, Template};
+    use crate::ir::{Arm, Instruction, Segment, Template};
 
     fn lit(s: &str) -> Template {
         Template {
@@ -636,9 +688,18 @@ mod tests {
         }
     }
 
+    /// A reporter whose row events are dropped; tests that assert on events
+    /// build their own.
+    fn silent_reporter() -> RowReporter {
+        RowReporter {
+            output: Arc::new(|_, _| {}),
+            status: Arc::new(|_, _| {}),
+            label: Arc::new(|_, _| {}),
+            project: Arc::new(|_, _| {}),
+        }
+    }
+
     fn test_context(projects: BTreeMap<String, ProjectExec>) -> ExecContext {
-        let output: OutputCallback = Arc::new(|_, _| {});
-        let status: StatusCallback = Arc::new(|_, _| {});
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
         let run = Arc::new(RunContext {
             shell: "sh".to_string(),
@@ -646,7 +707,7 @@ mod tests {
             kill: None,
             projects: Arc::new(projects),
         });
-        ExecContext::new(run, output, status, cwd, false)
+        ExecContext::new(run, silent_reporter(), cwd, false)
     }
 
     #[test]
@@ -743,7 +804,13 @@ mod tests {
             kill: None,
             projects: Arc::new(BTreeMap::new()),
         });
-        let mut ctx = ExecContext::new(run, output, status, cwd, false);
+        let reporter = RowReporter {
+            output,
+            status,
+            label: Arc::new(|_, _| {}),
+            project: Arc::new(|_, _| {}),
+        };
+        let mut ctx = ExecContext::new(run, reporter, cwd, false);
 
         let body: [Instruction; 1] = [Instruction::Context {
             project: lit("missing"),
@@ -796,11 +863,17 @@ mod tests {
             kill: None,
             projects: Arc::new(BTreeMap::new()),
         });
-        let mut ctx = ExecContext::new(run, output, status, cwd, false);
+        let reporter = RowReporter {
+            output,
+            status,
+            label: Arc::new(|_, _| {}),
+            project: Arc::new(|_, _| {}),
+        };
+        let mut ctx = ExecContext::new(run, reporter, cwd, false);
 
         let log = |row: usize, text: &str| Instruction::Step {
             row,
-            label: format!("log {text}"),
+            label: format!("log: {text}"),
             body: vec![Instruction::Log(lit(text))],
         };
         let body: [Instruction; 1] = [Instruction::Switch {
@@ -836,6 +909,128 @@ mod tests {
         assert!(
             !statuses.contains(&(3, TaskStatus::Running)),
             "skipped steps never run: {statuses:?}"
+        );
+    }
+
+    /// Parenthesized content is data: a dynamic template resolves when it
+    /// executes and replaces the row's plan label with the data.
+    #[test]
+    fn test_dynamic_labels_resolve_at_runtime() {
+        let labels: Arc<std::sync::Mutex<Vec<(usize, String)>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let outputs: Arc<std::sync::Mutex<Vec<(Option<usize>, String)>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let label_recorder = Arc::clone(&labels);
+        let output_recorder = Arc::clone(&outputs);
+        let reporter = RowReporter {
+            output: Arc::new(move |row, line| {
+                output_recorder.lock().unwrap().push((row, line));
+            }),
+            status: Arc::new(|_, _| {}),
+            label: Arc::new(move |row, name| {
+                label_recorder.lock().unwrap().push((row, name));
+            }),
+            project: Arc::new(|_, _| {}),
+        };
+
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+        let run = Arc::new(RunContext {
+            shell: "sh".to_string(),
+            timeout: Some(Duration::from_secs(30)),
+            kill: None,
+            projects: Arc::new(BTreeMap::new()),
+        });
+        let mut ctx = ExecContext::new(run, reporter, cwd, false);
+
+        let dynamic = || Template {
+            parts: vec![
+                Segment::Lit("echo ".to_string()),
+                Segment::Cmd(lit("printf hi")),
+            ],
+        };
+        let body: [Instruction; 2] = [
+            Instruction::Step {
+                row: 0,
+                label: "exec: echo $(printf hi)".to_string(),
+                body: vec![Instruction::Exec { command: dynamic() }],
+            },
+            Instruction::Step {
+                row: 1,
+                label: "log: $(printf hi)".to_string(),
+                body: vec![Instruction::Log(Template {
+                    parts: vec![Segment::Cmd(lit("printf hi"))],
+                })],
+            },
+        ];
+        ctx.exec_stmts(&body).unwrap();
+
+        let labels = labels.lock().unwrap();
+        assert!(
+            labels.contains(&(0, "exec: echo hi".to_string())),
+            "the executed command renames its row: {labels:?}"
+        );
+        assert!(
+            labels.contains(&(1, "log: hi".to_string())),
+            "the logged data renames its row: {labels:?}"
+        );
+        let outputs = outputs.lock().unwrap();
+        assert!(
+            !outputs.iter().any(|(row, _)| *row == Some(1)),
+            "a resolved log is its label, not an output line: {outputs:?}"
+        );
+    }
+
+    /// A dynamic project name is only known at entry; every row of the body
+    /// is annotated with the name it actually ran under.
+    #[test]
+    fn test_dynamic_project_name_annotates_body_rows() {
+        let updates: Arc<std::sync::Mutex<Vec<(usize, String)>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let update_recorder = Arc::clone(&updates);
+        let reporter = RowReporter {
+            output: Arc::new(|_, _| {}),
+            status: Arc::new(|_, _| {}),
+            label: Arc::new(|_, _| {}),
+            project: Arc::new(move |row, name| {
+                update_recorder.lock().unwrap().push((row, name));
+            }),
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut projects = BTreeMap::new();
+        projects.insert(
+            "app".to_string(),
+            ProjectExec {
+                dir: dir.path().to_path_buf(),
+                direnv: false,
+            },
+        );
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+        let run = Arc::new(RunContext {
+            shell: "sh".to_string(),
+            timeout: Some(Duration::from_secs(30)),
+            kill: None,
+            projects: Arc::new(projects),
+        });
+        let mut ctx = ExecContext::new(run, reporter, cwd, false);
+
+        let body: [Instruction; 1] = [Instruction::Context {
+            project: Template {
+                parts: vec![Segment::Cmd(lit("printf app"))],
+            },
+            body: vec![Instruction::Step {
+                row: 0,
+                label: "log: inside".to_string(),
+                body: vec![],
+            }],
+        }];
+        ctx.exec_stmts(&body).unwrap();
+
+        let updates = updates.lock().unwrap();
+        assert_eq!(
+            *updates,
+            vec![(0, "app".to_string())],
+            "the body row is annotated with the resolved name"
         );
     }
 

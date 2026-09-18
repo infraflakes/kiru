@@ -6,7 +6,10 @@
 //! started it, so a run is structured: nothing keeps running behind a
 //! finished or failed body.
 
-use super::context::{ExecContext, OutputCallback, ProjectExec, RunContext, StatusCallback};
+use super::context::{
+    ExecContext, LabelCallback, OutputCallback, ProjectCallback, ProjectExec, RowReporter,
+    RunContext, StatusCallback,
+};
 use super::subprocess::RunKillSwitch;
 use super::{TaskRunError, format_final_output, render_run_output, send_tui_event};
 use crate::exec::error::RuntimeError;
@@ -42,7 +45,9 @@ pub(crate) fn execute_run(
 
     let worker = move |tx: mpsc::UnboundedSender<super::TuiEvent>| async move {
         let output_tx = tx.clone();
-        let status_tx = tx;
+        let status_tx = tx.clone();
+        let label_tx = tx.clone();
+        let project_tx = tx;
         let worker = tokio::task::spawn_blocking(move || {
             let output: OutputCallback = Arc::new(move |row, line| {
                 if let Some(row) = row {
@@ -52,7 +57,19 @@ pub(crate) fn execute_run(
             let status: StatusCallback = Arc::new(move |row, status| {
                 send_tui_event(&status_tx, super::TuiEvent::UpdateStatus(row, status));
             });
-            let root = ExecContext::new(run, output, status, invocation_cwd, false);
+            let label: LabelCallback = Arc::new(move |row, name| {
+                send_tui_event(&label_tx, super::TuiEvent::UpdateLabel(row, name));
+            });
+            let project: ProjectCallback = Arc::new(move |row, name| {
+                send_tui_event(&project_tx, super::TuiEvent::UpdateProject(row, name));
+            });
+            let reporter = RowReporter {
+                output,
+                status,
+                label,
+                project,
+            };
+            let root = ExecContext::new(run, reporter, invocation_cwd, false);
             let mut root = root;
             root.exec_stmts(&body)
         });

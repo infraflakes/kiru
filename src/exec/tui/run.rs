@@ -20,14 +20,15 @@ pub(crate) fn render_run_output(frame: &mut Frame, model: &Model, spinner_idx: u
     }
 
     let bottom = area.y + area.height;
-    for (y_pos, task) in (area.y..).zip(model.tasks.iter()) {
+    for (y_pos, row) in (area.y..).zip(model.visible_rows().iter()) {
         if y_pos >= bottom {
             break;
         }
+        let task = row.task;
         let tcolor = status_color(task.status);
         let line = format!(
             "{}{} {}{}",
-            task.prefix,
+            row.prefix,
             status_glyph(task.status, spinner_idx),
             task.name,
             task.project
@@ -44,7 +45,7 @@ pub(crate) fn render_run_output(frame: &mut Frame, model: &Model, spinner_idx: u
 
 /// Append one line's final output (status marker, label, and output lines)
 /// to the buffer, prefixed so the tree structure stays visible.
-fn format_task_output(buf: &mut String, task: &TaskRow) {
+fn format_task_output(buf: &mut String, task: &TaskRow, prefix: &str, output_prefix: &str) {
     let color = match task.status {
         TaskStatus::Success => colors::OK_ANSI,
         TaskStatus::Running => colors::BRIGHT_YELLOW_ANSI,
@@ -60,7 +61,7 @@ fn format_task_output(buf: &mut String, task: &TaskRow) {
         .map(|project| format!(" [{project}]"))
         .unwrap_or_default();
 
-    buf.push_str(&task.prefix);
+    buf.push_str(prefix);
     buf.push_str(color);
     buf.push_str(&marker);
     buf.push_str(colors::RESET);
@@ -75,7 +76,7 @@ fn format_task_output(buf: &mut String, task: &TaskRow) {
         let hidden_lines = total - visible_lines;
 
         if hidden_lines > 0 {
-            buf.push_str(&task.output_prefix);
+            buf.push_str(output_prefix);
             buf.push_str(colors::GRAY_ANSI);
             buf.push('↑');
             buf.push(' ');
@@ -86,7 +87,7 @@ fn format_task_output(buf: &mut String, task: &TaskRow) {
         }
 
         for output_line in task.output.iter().rev().take(visible_lines).rev() {
-            buf.push_str(&task.output_prefix);
+            buf.push_str(output_prefix);
             buf.push_str(&colors::colored_line_string(output_line));
             buf.push('\n');
         }
@@ -94,15 +95,15 @@ fn format_task_output(buf: &mut String, task: &TaskRow) {
 }
 
 /// Build the final ANSI-colored text dump after all tasks complete: the
-/// whole structure (every line, including `async`/`env`/switch arms) with
-/// statuses and each line's output hanging underneath. The branches are
-/// what make concurrency and nesting visible.
+/// executed structure (`async`/`env` groups and the taken switch arms) with
+/// statuses and each line's output hanging underneath. The branches are what
+/// make concurrency and nesting visible.
 pub(crate) fn format_final_output(model: &Model) -> String {
     let mut buf = String::new();
     buf.push('\n');
 
-    for task in &model.tasks {
-        format_task_output(&mut buf, task);
+    for row in model.visible_rows() {
+        format_task_output(&mut buf, row.task, &row.prefix, &row.output_prefix);
     }
 
     buf

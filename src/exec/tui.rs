@@ -54,10 +54,14 @@ impl Drop for RawMode {
 ///
 /// - `UpdateStatus(i, s)`, set task at index `i` to status `s`.
 /// - `AppendOutput(i, line)`, append a line of output to task `i`.
+/// - `UpdateLabel(i, name)`, replace task `i`'s label with its resolved text.
+/// - `UpdateProject(i, name)`, set the resolved project annotation of task `i`.
 #[derive(Debug, Clone)]
 pub(crate) enum TuiEvent {
     UpdateStatus(usize, TaskStatus),
     AppendOutput(usize, String),
+    UpdateLabel(usize, String),
+    UpdateProject(usize, String),
 }
 
 /// Drain all available events from the channel, updating the model.
@@ -79,6 +83,18 @@ fn drain_events(
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .append_output(idx, line);
+            }
+            Ok(TuiEvent::UpdateLabel(idx, name)) => {
+                model
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .update_task_label(idx, name);
+            }
+            Ok(TuiEvent::UpdateProject(idx, name)) => {
+                model
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .update_task_project(idx, name);
             }
             Err(mpsc::error::TryRecvError::Empty) => return false,
             Err(mpsc::error::TryRecvError::Disconnected) => return true,

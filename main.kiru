@@ -5,6 +5,13 @@ fn build_kiru {
   };
 };
 
+fn nix_kiru {
+  project(kiru) {
+    log(Building kiru with nix...);
+    exec(nix build .#default);
+  };
+};
+
 fn clean_kiru {
   project(kiru) {
     log(Cleaning up artifacts...);
@@ -32,11 +39,9 @@ run update_kiru {
 };
 
 run fail_kiru {
-  project(kiru) {
-    log(Failing the task!);
-    env(CGO_ENABLED = (0); GOOS = (linux);) {
-      exec(go build ./...);
-    };
+  log(Failing the task!);
+  env(CGO_ENABLED = (0); GOOS = (linux);) {
+    exec(go build ./...);
   };
 };
 
@@ -63,18 +68,16 @@ run build_container_kiru {
 run test_kiru {
   async() {
     project(kiru) {
-      env(PROJECT_NAME = (fuck);) {
       log(Formatting the codebase...);
       exec(cargo clippy --fix --allow-dirty);
       exec(cargo fmt);
-      };
     };
     test_kiru();
   };
-  log(this is main thread);
   async() {
     clean_kiru();
     build_kiru();
+    nix_kiru();
   };
 };
 

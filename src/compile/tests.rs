@@ -157,7 +157,7 @@ run ci { build(); };
         .into_iter()
         .map(|line| line.label)
         .collect();
-    assert_eq!(rows, vec!["log before", "log step-run", "log after"]);
+    assert_eq!(rows, vec!["log: before", "log: step-run", "log: after"]);
     for (row, expected) in [(0, "before"), (1, "step-run"), (2, "after")] {
         match task_body(&ir, "ci", row).first() {
             Some(Instruction::Log(t)) => assert_eq!(template_text(t), expected),
@@ -214,10 +214,10 @@ run d {
     assert_eq!(
         plan,
         vec![
-            (0, "log a".to_string()),
+            (0, "log: a".to_string()),
             (0, "async".to_string()),
-            (1, "log b".to_string()),
-            (1, "log a".to_string()),
+            (1, "log: b".to_string()),
+            (1, "log: a".to_string()),
         ]
     );
     // Every planned row exists in the instruction tree.
