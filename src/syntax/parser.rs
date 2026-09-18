@@ -1,5 +1,4 @@
 use crate::diagnostics::Span;
-use crate::syntax::ast::Call;
 #[cfg(test)]
 use crate::syntax::ast::Program;
 use crate::syntax::error::ParseError;
@@ -11,7 +10,6 @@ mod body;
 mod chain;
 mod decl;
 mod expr;
-mod project;
 
 #[cfg(test)]
 mod test_support;
@@ -153,48 +151,6 @@ impl Parser {
         Ok(name)
     }
 
-    /// Reads one identifier part of a qualified `project::function` reference,
-    /// rejecting reserved keywords, and advances past it.
-    fn parse_ident_part(&mut self, expected: &'static str) -> Result<String, ParseError> {
-        match &self.current_token().token_type {
-            TokenType::Ident(part) => {
-                let part = part.clone();
-                self.advance();
-                Ok(part)
-            }
-            ty if is_keyword_token(ty) => Err(ParseError::new(
-                self.eof_aware_span(),
-                format!(
-                    "{}, found {} (reserved keyword)",
-                    expected,
-                    format_token(self.current_token())
-                ),
-            )),
-            _ => Err(ParseError::new(self.eof_aware_span(), expected.to_string())),
-        }
-    }
-
-    /// Parses a `project::function` reference at the current token. Both parts
-    /// must be plain identifiers. Returns the project, the function, and the
-    /// function's end offset (for span construction).
-    fn parse_qualified_ref(
-        &mut self,
-        expected_project: &'static str,
-        expected_function: &'static str,
-    ) -> Result<(String, String, usize), ParseError> {
-        let project = self.parse_ident_part(expected_project)?;
-        if self.current_token().token_type != TokenType::NamespaceSep {
-            return Err(ParseError::new(
-                self.eof_aware_span(),
-                "run reference must be `project::function`".to_string(),
-            ));
-        }
-        self.advance();
-        let function = self.parse_ident_part(expected_function)?;
-        let function_end = self.current_token().offset + self.current_token().len;
-        Ok((project, function, function_end))
-    }
-
     /// Builds the error for an unexpected token. The found token carries the
     /// message (`unexpected `switch``) - what is grammatically expected in
     /// each position is the grammar's business, not a list of alternatives
@@ -215,8 +171,8 @@ impl Parser {
             return Ok(None);
         }
         match &self.current_token().token_type {
-            TokenType::Import(Some(path)) => {
-                let path = path.clone();
+            TokenType::Import(Some(args)) => {
+                let path = self.single_argument(args.clone(), "import")?;
                 self.advance();
                 self.expect_with_context(TokenType::Semicolon, "after import path")?;
                 Ok(Some(TopLevel::Import(path)))
@@ -226,6 +182,29 @@ impl Parser {
             _ => self
                 .parse_top_level_stmt()
                 .map(|stmt| Some(TopLevel::Stmt(stmt))),
+        }
+    }
+
+    /// Extract the single argument a one-argument builtin (`log`, `cd`,
+    /// `switch`, `case`, `import`) expects. `()` is the empty template for
+    /// these builtins (`case()` matches the empty string), while any other
+    /// count is a parse error naming the builtin.
+    fn single_argument(
+        &self,
+        mut args: Vec<crate::syntax::source::Template>,
+        keyword: &str,
+    ) -> Result<crate::syntax::source::Template, ParseError> {
+        match args.len() {
+            0 => Ok(crate::syntax::source::Template {
+                parts: Vec::new(),
+                offset: self.current_token().offset,
+                len: self.current_token().len,
+            }),
+            1 => Ok(args.remove(0)),
+            _ => Err(ParseError::new(
+                self.eof_aware_span(),
+                format!("`{keyword}` takes exactly one argument"),
+            )),
         }
     }
 
@@ -256,10 +235,8 @@ impl Parser {
     fn parse_top_level_stmt(&mut self) -> Result<Stmt, ParseError> {
         match self.current_token().token_type {
             TokenType::Var => self.parse_var_decl(),
-            TokenType::Project => self.parse_project_decl(),
-            // A top-level `fn` is a global function: an AST template that
-            // project functions splice in by calling it (`name();`). It is
-            // never executable directly and never referenced from run blocks.
+            // Functions are global named bundles: callable from any body,
+            // importable across files, and parameterized by positional args.
             TokenType::Fn => self.parse_fn_decl(),
             TokenType::Run => self.parse_run_decl(),
             _ => Err(self.unexpected_token_error()),
@@ -275,7 +252,7 @@ impl Parser {
                 Semicolon | RBrace => {
                     self.advance();
                 }
-                Var | Project | Fn | Run => break,
+                Var | Fn | Run => break,
                 _ => self.advance(),
             }
         }
@@ -302,17 +279,17 @@ impl Parser {
     /// unexpected-statement error.
     pub(crate) fn parse_fn_stmt(&mut self) -> Result<FnStmt, ParseError> {
         match &self.current_token().token_type {
-            TokenType::Log(Some(template)) => {
-                let template = template.clone();
+            TokenType::Log(Some(args)) => {
+                let message = self.single_argument(args.clone(), "log")?;
                 self.advance();
                 self.expect_with_context(TokenType::Semicolon, "after `log`")?;
-                Ok(FnStmt::Log(template))
+                Ok(FnStmt::Log(message))
             }
-            TokenType::Cd(Some(template)) => {
-                let template = template.clone();
+            TokenType::Cd(Some(args)) => {
+                let path = self.single_argument(args.clone(), "cd")?;
                 self.advance();
                 self.expect_with_context(TokenType::Semicolon, "after `cd`")?;
-                Ok(FnStmt::Cd(template))
+                Ok(FnStmt::Cd(path))
             }
             TokenType::Var => {
                 let (name, value) = self.parse_var_decl_common()?;
@@ -320,8 +297,10 @@ impl Parser {
             }
             TokenType::EnvOpen => self.parse_env_block(),
             TokenType::Switch(Some(_)) => self.parse_switch_stmt(),
+            TokenType::Async(Some(_)) => self.parse_async_block(),
+            TokenType::Exec(Some(_)) => self.parse_exec_stmt(),
+            TokenType::Project(Some(_)) => self.parse_project_block(),
             TokenType::Call { .. } => self.parse_call_stmt(),
-            TokenType::Template(_) => self.parse_run_shell_cmd_stmt(),
             TokenType::Semicolon => Err(ParseError::new(
                 self.eof_aware_span(),
                 "unexpected `;` (empty statement)".to_string(),
@@ -363,10 +342,10 @@ mod tests {
     #[test]
     fn test_multiple_top_level_statements() {
         let input = "var x = (hello);\n\
-                      project p { fn b { log(x); }; };\n\
-                      run s { p::b; };";
+                      fn b { log(x); };\n\
+                      run s { b(); };";
         let prog = parse_program(input).unwrap();
-        assert_eq!(count_stmt_types(&prog), vec!["var", "project", "run"]);
+        assert_eq!(count_stmt_types(&prog), vec!["var", "fn", "run"]);
     }
 
     #[test]
@@ -383,12 +362,31 @@ mod tests {
     }
 
     #[test]
+    fn test_toplevel_fn_is_a_function() {
+        let prog = parse_program("fn f { log(hi); };").unwrap();
+        assert_eq!(count_stmt_types(&prog), vec!["fn"]);
+    }
+
+    #[test]
+    fn test_underscore_is_an_ordinary_identifier() {
+        // `_` is a plain identifier; a bare `_` statement is rejected
+        // generically.
+        let result = parse_program("fn test { log(hi); _; };");
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.to_string().contains("unexpected `_`")),
+            "got: {:?}",
+            errs
+        );
+    }
+
+    #[test]
     fn test_spaced_statement_form_is_rejected_generically() {
         // The keyword and its call parens must be adjacent; a spaced
         // statement arrives as a bare keyword and is rejected like any
         // other unexpected token, without enumerating the alternatives.
-        let result =
-            parse_program("project t { fn x { switch @(v) { case(v) { log(x); }; }; }; };");
+        let result = parse_program("fn x { switch @(v) { case(v) { log(x); }; }; };");
         let errs = result.unwrap_err();
         assert!(
             errs.iter()
@@ -408,73 +406,41 @@ mod tests {
     }
 
     #[test]
-    fn test_toplevel_fn_is_global_function() {
-        let prog = parse_program("fn f { log(hi); };").unwrap();
-        assert_eq!(count_stmt_types(&prog), vec!["fn"]);
-    }
-
-    #[test]
-    fn test_underscore_is_an_ordinary_identifier() {
-        // The wildcard arm is the bare `default` keyword now; `_` is a
-        // plain identifier and a bare `_` statement is rejected generically.
-        let result = parse_program("project t { fn test { log(hi); _; }; };");
-        let errs = result.unwrap_err();
-        assert!(
-            errs.iter()
-                .any(|e| e.to_string().contains("unexpected `_`")),
-            "got: {:?}",
-            errs
-        );
-    }
-
-    #[test]
     fn test_default_is_a_bare_wildcard_arm() {
         // `default` takes no pattern, so it has no call parens; the
-        // parenthesized spelling is rejected generically like any other
-        // invalid arm.
+        // parenthesized spelling is rejected like any other invalid arm.
         let prog = parse_program(
-            "project t {\
-              fn x {\
+            "fn x {\
                 switch(@(v)) {\
                   case(a) { log(a); };\
                   default { log(other); };\
                 };\
-              };\
             };",
         )
         .unwrap();
         match &prog.top_level_items[0] {
-            crate::syntax::TopLevel::Stmt(crate::syntax::Stmt::Project { body, .. }) => {
-                match &body[0] {
-                    crate::syntax::Stmt::Fn { body: fn_body, .. } => {
-                        assert!(
-                            matches!(
-                                &fn_body[0],
-                                crate::syntax::FnStmt::Switch { arms, .. }
-                                    if matches!(arms[1].pattern, crate::syntax::source::ArmPattern::Default)
-                            ),
-                            "got: {:?}",
-                            fn_body[0]
-                        );
-                    }
-                    other => panic!("expected fn, got {:?}", other),
-                }
+            crate::syntax::TopLevel::Stmt(crate::syntax::Stmt::Fn { body, .. }) => {
+                assert!(
+                    matches!(
+                        &body[0],
+                        crate::syntax::FnStmt::Switch { arms, .. }
+                            if matches!(arms[1].pattern, crate::syntax::source::ArmPattern::Default)
+                    ),
+                    "got: {:?}",
+                    body[0]
+                );
             }
-            other => panic!("expected project, got {:?}", other),
+            other => panic!("expected fn, got {:?}", other),
         }
 
         let result = parse_program(
-            "project t {\
-              fn x {\
+            "fn x {\
                 switch(@(v)) {\
                   default() { log(other); };\
                 };\
-              };\
             };",
         );
         let errs = result.unwrap_err();
-        // `default` takes no pattern, so `default()` commits to the wildcard
-        // arm and the stray `(...)` reads as a missing `{`.
         assert!(
             errs.iter()
                 .any(|e| { e.to_string().contains("expected `{` after switch pattern") }),

@@ -28,7 +28,7 @@ fn sync_message(line: &str) -> &str {
 
 /// Return the most recent output line of a task, extracted to its
 /// meaningful message via `sync_message`.
-fn current_display(task: &super::TaskRow) -> String {
+fn current_display(task: &super::model::TaskRow) -> String {
     task.output
         .last()
         .map(|line| sync_message(line).to_string())
@@ -57,7 +57,10 @@ pub(crate) fn render_sync_output(frame: &mut Frame, model: &Model, spinner_idx: 
             .filter(|t| {
                 matches!(
                     t.status,
-                    TaskStatus::Success | TaskStatus::Error | TaskStatus::Cancelled
+                    TaskStatus::Success
+                        | TaskStatus::Error
+                        | TaskStatus::Cancelled
+                        | TaskStatus::Skipped
                 )
             })
             .count();
@@ -75,27 +78,24 @@ pub(crate) fn render_sync_output(frame: &mut Frame, model: &Model, spinner_idx: 
         y_pos += 1;
     }
 
-    for (chain_idx, chain) in model.chains.iter().enumerate() {
+    let count = model.tasks.len();
+    for (index, task) in model.tasks.iter().enumerate() {
         if y_pos >= area.y + area.height {
             break;
         }
 
-        let conn = if chain_idx == model.chains.len() - 1 {
+        let conn = if index == count - 1 {
             "└──"
         } else {
             "├──"
         };
-
-        if let Some(task) = model.tasks.get(chain.task_start) {
-            let color = render::status_color(task.status);
-            let display = current_display(task);
-            let line = format!("{} [{}]  {}", conn, task.name, display);
-            let span = Span::styled(line, Style::default().fg(color));
-            frame.render_widget(
-                Paragraph::new(Line::from(span)),
-                Rect::new(area.x, y_pos, area.width, 1),
-            );
-        }
+        let color = render::status_color(task.status);
+        let display = current_display(task);
+        let line = format!("{} [{}]  {}", conn, task.name, display);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(line, Style::default().fg(color)))),
+            Rect::new(area.x, y_pos, area.width, 1),
+        );
         y_pos += 1;
     }
 }

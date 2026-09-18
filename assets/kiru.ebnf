@@ -6,42 +6,59 @@
 (* a statement keyword and its call parens must be adjacent           *)
 (* (log(x), never log (x)). The adjacency is what the lexer fuses     *)
 (* into one call-shaped token, so `word(...)` is always one unit.     *)
+(* Argument lists are `;`-separated, with an optional trailing `;`.   *)
 
 (* ================================================================= *)
 (*  PROGRAM                                                          *)
 (* ================================================================= *)
 
 program          = { statement } ;
-statement        = import_decl | var_decl
-                 | fn_decl | project_decl | run_decl ;
-(* A top-level `fn` is a global function template: never executable on
-   its own, expanded (carbon-copy) wherever a project function calls
-   it. `fn` inside a project body declares a callable project function. *)
+statement        = import_decl | var_decl | fn_decl | run_decl ;
+(* Functions are global named bundles: callable from any body and
+   importable across files. A run block is an entry point (main()),
+   invoked from the command line.                                   *)
 
 (* ================================================================= *)
-(*  GLOBAL DECLARATIONS                                              *)
+(*  DECLARATIONS                                                     *)
 (* ================================================================= *)
 
 import_decl      = "import" "(" template ")" ";" ;
 var_decl         = "var" ident "=" template ";" ;
+fn_decl          = "fn" ident [ params ] "{" { fn_stmt } "}" ";" ;
+params           = "(" [ ident { ";" ident } [ ";" ] ] ")" ;
 
 (* ================================================================= *)
-(*  FUNCTIONS                                                        *)
+(*  FUNCTION BODIES                                                  *)
 (* ================================================================= *)
 
-fn_decl          = "fn" ident "{" { fn_stmt } "}" ";" ;
-fn_stmt          = log_stmt | exec_stmt | cd_stmt
-                 | var_decl | env_block | switch_stmt | call_stmt ;
+fn_stmt          = log_stmt | exec_stmt | cd_stmt | var_decl
+                 | env_block | switch_stmt | call_stmt | async_stmt
+                 | project_block ;
 
 log_stmt         = "log" "(" template ")" ";" ;
-(* A bare statement: the template must contain at least one $(command). *)
-exec_stmt        = template ";" ;
+(* Run the resolved template as a shell command with live output; a
+   non-zero exit aborts. The argument is raw text: every `;` is
+   literal shell text, only @() and $() are special.                *)
+exec_stmt        = "exec" "(" template ")" ";" ;
 cd_stmt          = "cd" "(" template ")" ";" ;
 
-(* A call to a sibling function of the enclosing project or to a global
-   function. The parens are part of the fused call token and must be
-   empty; everything the callee needs comes from the expanding scope. *)
-call_stmt        = ident "(" ")" ";" ;
+(* A call to another function. Arguments are positional templates,
+   bound to the callee's params at compile time. The call runs in the
+   innermost enclosing project context, or at the invocation context. *)
+call_stmt        = ident "(" [ argument { ";" argument } [ ";" ] ] ")" ";" ;
+
+(* -- project block ------------------------------------------------- *)
+
+(* Run the body in a project's context: its directory and direnv
+   setting from kiru.toml, restored when the block ends. The name is
+   a template: @() inlines at compile time, $() resolves at runtime. *) 
+project_block    = "project" "(" template ")" "{" { fn_stmt } "}" ";" ;
+
+(* -- async block --------------------------------------------------- *)
+
+(* Start this body now and join it at the end of the enclosing body.
+   It runs on a copy of the context, so changes never leak out.     *)
+async_stmt       = "async" "(" ")" "{" { fn_stmt } "}" ";" ;
 
 (* -- env block ---------------------------------------------------- *)
 
@@ -53,33 +70,24 @@ env_pair         = ident "=" template ;
 
 switch_stmt      = "switch" "(" template ")" "{" { switch_arm } "}" ";" ;
 switch_arm       = case_arm | default_arm ;
-case_arm         = "case" "(" literal_template ")" "{" { fn_stmt } "}" ";" ;
-(* Literal match only: @(var) and $(cmd) are rejected in a pattern.  *)
+case_arm         = "case" "(" template ")" "{" { fn_stmt } "}" ";" ;
+(* Patterns match the resolved subject, so they must reduce to literal
+   text: @(var) is allowed (inlined at compile time), $(cmd) is not. *)
 default_arm      = "default" "{" { fn_stmt } "}" ";" ;
 
 (* ================================================================= *)
-(*  PROJECT - declares a scope for vars and functions                *)
+(*  RUN BLOCKS - entry points                                        *)
 (* ================================================================= *)
 
-project_decl     = "project" ident "{" { project_stmt } "}" ";" ;
-project_stmt     = var_decl | fn_decl | call_stmt ;
-(* A project-body `call_stmt` binds a global function template into the
-   project under that name, so run blocks reach it as project::name.   *)
-
-(* ================================================================= *)
-(*  RUN BLOCK - orchestrates functions across projects               *)
-(* ================================================================= *)
-
-run_decl         = "run" ident "{" { chain } "}" ";" ;
-chain            = qualified_fn_ref { "=>" qualified_fn_ref } [ ";" ] ;
-qualified_fn_ref = ident "::" ident ;     (* project::function      *)
-(* Run blocks only reach project functions; a global function cannot
-   be called from a run block.                                       *)
-(* The `;` after the last chain of a block is optional.             *)
+run_decl         = "run" ident "{" { fn_stmt } "}" ";" ;
+(* A run body is a normal statement list, executed by `kiru run <name>`.
+   `;` always means "then"; concurrency is the `async` primitive.    *)
 
 (* ================================================================= *)
 (*  TEMPLATES / EXPRESSIONS                                         *)
 (* ================================================================= *)
+
+argument         = template ;
 
 (* a template is (text), @(name) to interpolate a variable, or       *)
 (* $(command) to run one                                             *)
@@ -107,11 +115,11 @@ letter           = "A" | "B" | ... | "Z" | "a" | "b" | ... | "z" ;
 digit            = "0" | "1" | ... | "9" ;
 
 (* Keywords (reserved: they cannot be used as identifiers, variable
-   names, or function names; this is what keeps bar() unambiguous
-   against the built-in primitives):                                *)
-(*   import var project fn run log cd env switch case default       *)
+   names, parameters, or function names; this is what keeps foo()
+   unambiguous against the built-in primitives):                    *)
+(*   import var fn run project log exec cd env switch case default async *)
 (*                                                                  *)
 (* Comments start with # and run to end of line.                    *)
-(* Every declaration ends with a semicolon: var, fn, project, run,  *)
-(* import, and each statement inside fn and project bodies.         *)
+(* Every declaration ends with a semicolon: var, fn, run, import,   *)
+(* and each statement inside every body.                            *)
 (* ----------------------------------------------------------------- *)

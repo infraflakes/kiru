@@ -3,10 +3,6 @@ use super::model::TaskStatus;
 use crate::exec::colors;
 use ratatui::style::Color;
 
-/// Width in characters of the separator line drawn between chain sections
-/// in the final text output.
-pub(crate) const SEPARATOR_WIDTH: usize = 78;
-
 /// Return a single-character visual marker for a task status: spinning
 /// frames for running, checkmark/cross for success/error, a filled square
 /// for cancelled, a middle dot for pending.
@@ -15,20 +11,9 @@ pub(crate) fn status_glyph(status: TaskStatus, spinner_idx: usize) -> String {
         TaskStatus::Success => "✓".to_string(),
         TaskStatus::Error => "✗".to_string(),
         TaskStatus::Cancelled => "■".to_string(),
+        TaskStatus::Skipped => "-".to_string(),
         TaskStatus::Pending => "·".to_string(),
         TaskStatus::Running => SPINNER_FRAMES[spinner_idx].to_string(),
-    }
-}
-
-/// Return a short human-readable label for a task status
-/// (e.g. "ok", "running", "pending", "failed", "cancelled").
-pub(crate) fn status_label(status: TaskStatus) -> &'static str {
-    match status {
-        TaskStatus::Success => "ok",
-        TaskStatus::Running => "running",
-        TaskStatus::Pending => "pending",
-        TaskStatus::Error => "failed",
-        TaskStatus::Cancelled => "cancelled",
     }
 }
 
@@ -42,25 +27,6 @@ pub(crate) fn status_color(status: TaskStatus) -> Color {
         TaskStatus::Pending => colors::PENDING,
         TaskStatus::Error => colors::FAILED,
         TaskStatus::Cancelled => colors::CANCELLED,
+        TaskStatus::Skipped => colors::PENDING,
     }
-}
-
-/// Write a horizontal separator line with a centered label into `buf`,
-/// using 78-character width defined by `SEPARATOR_WIDTH`.
-pub(crate) fn write_separator(buf: &mut String, label: &str) {
-    let sep_len = SEPARATOR_WIDTH.saturating_sub(label.len() + 4);
-    let left = sep_len / 2;
-    let right = sep_len - left;
-    buf.push_str(colors::GRAY_ANSI);
-    for _ in 0..left {
-        buf.push('─');
-    }
-    buf.push(' ');
-    buf.push_str(label);
-    buf.push(' ');
-    for _ in 0..right {
-        buf.push('─');
-    }
-    buf.push_str(colors::RESET);
-    buf.push('\n');
 }

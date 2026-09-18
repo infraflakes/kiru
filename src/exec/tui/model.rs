@@ -6,63 +6,53 @@ pub(crate) enum TaskStatus {
     Success,
     Error,
     /// The task did not fail on its own: the run was already lost to
-    /// another chain's failure, so its processes were killed (or it never
+    /// another task's failure, so its processes were killed (or it never
     /// started). Distinct from `Error` so the root cause stays visible.
     Cancelled,
+    /// The task never ran by design: a switch arm that was not taken.
+    Skipped,
 }
 
-/// A single task within a chain: tracks its name, current status, and
-/// accumulated output lines.
+/// One rendered line of a run: a step or a switch arm. Tracks its display
+/// metadata, current status, and accumulated output lines.
 #[derive(Debug, Clone)]
 pub(crate) struct TaskRow {
     pub(crate) name: String,
     pub(crate) status: TaskStatus,
     pub(crate) output: Vec<String>,
+    /// Tree-branch prefix from the display plan.
+    pub(crate) prefix: String,
+    /// Prefix for this line's output block, in the final dump.
+    pub(crate) output_prefix: String,
+    /// The `[project]` annotation this line executes under, when any.
+    pub(crate) project: Option<String>,
 }
 
-/// A chain of sequential tasks. Tasks are stored contiguously in `Model::tasks`
-/// so `task_start`/`task_count` index into that flat vector.
-#[derive(Debug, Clone)]
-pub(crate) struct Chain {
-    pub(crate) label: String,
-    pub(crate) task_start: usize,
-    pub(crate) task_count: usize,
-}
-
-/// All state tracked during a TUI session: a flat list of tasks with an
-/// index structure (chains) that groups them into sequential groups.
+/// All state tracked during a TUI session: a flat list of display lines in
+/// row order. Line position equals the compile-assigned row index, so
+/// status and output events address lines directly.
 #[derive(Debug, Clone)]
 pub(crate) struct Model {
     pub(crate) tasks: Vec<TaskRow>,
-    pub(crate) chains: Vec<Chain>,
 }
 
 impl Model {
-    /// Create an empty model with no tasks or chains.
-    pub(crate) fn new() -> Self {
+    /// Build the model from a run's display plan. Every line starts
+    /// `Pending`, in compile-assigned row order.
+    pub(crate) fn from_plan(plan: Vec<crate::ir::PlanLine>) -> Self {
         Self {
-            tasks: Vec::new(),
-            chains: Vec::new(),
+            tasks: plan
+                .into_iter()
+                .map(|line| TaskRow {
+                    name: line.label,
+                    status: TaskStatus::Pending,
+                    output: Vec::new(),
+                    prefix: line.prefix,
+                    output_prefix: line.output_prefix,
+                    project: line.project,
+                })
+                .collect(),
         }
-    }
-
-    /// Register a new chain of sequential tasks by their display names.
-    /// Each task starts in `Pending` status.
-    pub(crate) fn add_chain(&mut self, label: String, task_names: Vec<String>) {
-        let task_start = self.tasks.len();
-        let task_count = task_names.len();
-        for name in task_names {
-            self.tasks.push(TaskRow {
-                name,
-                status: TaskStatus::Pending,
-                output: Vec::new(),
-            });
-        }
-        self.chains.push(Chain {
-            label,
-            task_start,
-            task_count,
-        });
     }
 
     /// Update the status of the task at `index`.
@@ -79,79 +69,77 @@ impl Model {
         }
     }
 
-    /// True when every task has reached a terminal status (Success, Error,
-    /// or Cancelled).
+    /// True when every line has reached a terminal status (Success, Error,
+    /// Cancelled, or Skipped).
     pub(crate) fn all_done(&self) -> bool {
         self.tasks.iter().all(|t| {
             matches!(
                 t.status,
-                TaskStatus::Success | TaskStatus::Error | TaskStatus::Cancelled
+                TaskStatus::Success
+                    | TaskStatus::Error
+                    | TaskStatus::Cancelled
+                    | TaskStatus::Skipped
             )
         })
-    }
-
-    /// Aggregate status for an entire chain, derived from the same statuses
-    /// its rows display so the header can never contradict them: Error if
-    /// any task genuinely failed, Cancelled if the chain was stopped
-    /// without a real failure, Running/Pending while work is outstanding,
-    /// Success otherwise.
-    pub(crate) fn chain_status(&self, chain: &Chain) -> TaskStatus {
-        let mut has_error = false;
-        let mut has_cancelled = false;
-        let mut has_running = false;
-        let mut has_pending = false;
-        for i in chain.task_start..chain.task_start + chain.task_count {
-            if let Some(task) = self.tasks.get(i) {
-                match task.status {
-                    TaskStatus::Error => has_error = true,
-                    TaskStatus::Cancelled => has_cancelled = true,
-                    TaskStatus::Running => has_running = true,
-                    TaskStatus::Pending => has_pending = true,
-                    _ => {}
-                }
-            }
-        }
-        if has_error {
-            TaskStatus::Error
-        } else if has_running {
-            TaskStatus::Running
-        } else if has_pending {
-            TaskStatus::Pending
-        } else if has_cancelled {
-            TaskStatus::Cancelled
-        } else {
-            TaskStatus::Success
-        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ir::PlanLine;
 
     #[test]
-    fn cancelled_chain_shows_cancelled_not_failed() {
-        let mut model = Model::new();
-        model.add_chain("a".to_string(), vec!["a1".to_string(), "a2".to_string()]);
-        // Both tasks were victims of the fail-fast kill.
-        model.update_task_status(0, TaskStatus::Cancelled);
-        model.update_task_status(1, TaskStatus::Cancelled);
-
-        // A cancelled task is terminal: the run can end.
-        assert!(model.all_done());
-        // The chain was stopped, not failed: its header must not claim a
-        // failure its own rows never show.
-        assert_eq!(model.chain_status(&model.chains[0]), TaskStatus::Cancelled);
+    fn skipped_lines_are_terminal() {
+        let mut model = Model::from_plan(vec![
+            PlanLine {
+                row: 0,
+                depth: 0,
+                label: "switch case a".to_string(),
+                project: None,
+                prefix: "├─ ".to_string(),
+                output_prefix: "│    ".to_string(),
+            },
+            PlanLine {
+                row: 1,
+                depth: 0,
+                label: "switch default".to_string(),
+                project: None,
+                prefix: "└─ ".to_string(),
+                output_prefix: "     ".to_string(),
+            },
+        ]);
+        model.update_task_status(0, TaskStatus::Success);
+        model.update_task_status(1, TaskStatus::Skipped);
+        assert!(
+            model.all_done(),
+            "a skipped switch arm is terminal, not pending"
+        );
     }
 
     #[test]
-    fn a_real_failure_dominates_cancelled_members() {
-        let mut model = Model::new();
-        model.add_chain("a".to_string(), vec!["a1".to_string(), "a2".to_string()]);
-        model.update_task_status(0, TaskStatus::Error);
-        model.update_task_status(1, TaskStatus::Cancelled);
-
-        assert!(model.all_done());
-        assert_eq!(model.chain_status(&model.chains[0]), TaskStatus::Error);
+    fn model_lines_carry_prefix_and_project() {
+        let plan = vec![
+            PlanLine {
+                row: 0,
+                depth: 0,
+                label: "async".to_string(),
+                project: Some("kiru".to_string()),
+                prefix: "└─ ".to_string(),
+                output_prefix: "     ".to_string(),
+            },
+            PlanLine {
+                row: 1,
+                depth: 1,
+                label: "exec cargo test".to_string(),
+                project: Some("kiru".to_string()),
+                prefix: "   └─ ".to_string(),
+                output_prefix: "        ".to_string(),
+            },
+        ];
+        let model = Model::from_plan(plan);
+        assert_eq!(model.tasks[1].prefix, "   └─ ");
+        assert_eq!(model.tasks[1].project.as_deref(), Some("kiru"));
+        assert_eq!(model.tasks.len(), 2, "line position equals row index");
     }
 }

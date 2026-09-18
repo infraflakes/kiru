@@ -16,10 +16,10 @@ pub(crate) enum FnStmt {
     /// compile time; no `Instruction` is emitted and execution is deferred
     /// to each use site.
     Bind { name: String, value: Template },
-    /// A bare `$(cmd);` statement. Must contain at least one `Cmd` segment
-    /// (bare `()` / `@()` as a standalone statement is a parse error). The
-    /// resolved template is run strictly (non-zero aborts).
-    RunShellCmd(Template),
+    /// `exec(cmd);` - run the resolved template as a shell command with
+    /// live output (non-zero exit aborts). `$()`/`@()` inside the argument
+    /// are substituted first; the resulting text is the command.
+    Exec(Template),
     /// `cd (template);`, change the working directory for subsequent commands.
     Cd(Template),
     /// `env { pairs } { body }`, export `pairs` to the command subprocess
@@ -31,14 +31,24 @@ pub(crate) enum FnStmt {
     /// `switch cond { case (pat) { ... } default() { ... } }` with the subject
     /// written inside the call parens.
     Switch { subject: Template, arms: Vec<Arm> },
-    /// `name();` - a call to a sibling function of the enclosing project or
-    /// to a global function. Statements are spliced in at compile time
-    /// (carbon-copy inlining); the call's parens must be empty.
+    /// `name(args);` - a call to another function. Arguments are positional
+    /// templates bound to the callee's params at compile time; the call runs
+    /// in the context of the innermost enclosing `project(...)` block, or at
+    /// the invocation context.
     Call {
         name: String,
+        args: Vec<Template>,
         offset: usize,
         len: usize,
     },
+    /// `project(name) { ... }` - execute the body in a project's context:
+    /// the directory and direnv setting from `kiru.toml`, restored when the
+    /// body finishes. The name is a template, so it may resolve at runtime.
+    Project { name: Template, body: Vec<FnStmt> },
+    /// `async() { ... }` - start the body now and join it at the end of the
+    /// enclosing body (structured concurrency). The body runs on a copy of
+    /// the current context, so changes inside it never leak out.
+    Async { body: Vec<FnStmt> },
 }
 
 /// A single arm of a `switch` block.

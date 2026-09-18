@@ -52,14 +52,6 @@ impl Lexer {
         Token::new(ty, start_byte_offset, self.byte_offset - start_byte_offset)
     }
 
-    /// Consume the current character plus the peeked one and produce a
-    /// two-character token.
-    fn two_char_token(&mut self, ty: TokenType, start_byte_offset: usize) -> Token {
-        self.read_char();
-        self.read_char();
-        Token::new(ty, start_byte_offset, self.byte_offset - start_byte_offset)
-    }
-
     /// Build the error for a character (or template) that cannot form a token.
     fn unexpected(&self, msg: String, start_byte_offset: usize) -> ParseError {
         ParseError::new(
@@ -93,13 +85,7 @@ impl Lexer {
             Some('(') => self.read_template_token(start_byte_offset),
             Some(')') => Ok(self.single_char_token(TokenType::RParen, start_byte_offset)),
             Some(';') => Ok(self.single_char_token(TokenType::Semicolon, start_byte_offset)),
-            Some('=') if self.peek_next() == Some('>') => {
-                Ok(self.two_char_token(TokenType::ChainArrow, start_byte_offset))
-            }
             Some('=') => Ok(self.single_char_token(TokenType::Assign, start_byte_offset)),
-            Some(':') if self.peek_next() == Some(':') => {
-                Ok(self.two_char_token(TokenType::NamespaceSep, start_byte_offset))
-            }
             Some('$') if self.peek_next() == Some('(') => {
                 self.read_template_token(start_byte_offset)
             }
@@ -168,7 +154,6 @@ mod tests {
             ("}", TokenType::RBrace),
             (";", TokenType::Semicolon),
             (")", TokenType::RParen),
-            ("=>", TokenType::ChainArrow),
         ];
         for (input, expected) in cases {
             let mut lexer = Lexer::new(input.to_string());
@@ -192,13 +177,12 @@ mod tests {
 
     #[test]
     fn test_keywords() {
-        let tokens = collect_tokens("import var project fn run env log cd switch case default");
+        let tokens = collect_tokens("import var fn run env log cd switch case default async");
         assert_eq!(
             tokens,
             vec![
                 TokenType::Import(None),
                 TokenType::Var,
-                TokenType::Project,
                 TokenType::Fn,
                 TokenType::Run,
                 TokenType::Env,
@@ -207,6 +191,7 @@ mod tests {
                 TokenType::Switch(None),
                 TokenType::Case(None),
                 TokenType::Default,
+                TokenType::Async(None),
             ]
         );
     }
@@ -218,11 +203,11 @@ mod tests {
         let mut lexer = Lexer::new("log(hi);".to_string());
         assert_eq!(
             lexer.next_token().unwrap().token_type,
-            TokenType::Log(Some(crate::syntax::source::Template {
+            TokenType::Log(Some(vec![crate::syntax::source::Template {
                 parts: vec![crate::syntax::source::Part::Lit("hi".to_string())],
-                offset: 3,
-                len: 4,
-            }))
+                offset: 4,
+                len: 3,
+            }]))
         );
         assert_eq!(lexer.next_token().unwrap().token_type, TokenType::Semicolon);
 
@@ -334,23 +319,6 @@ mod tests {
         // Nesting commands and references inside one template must keep working.
         let errors = extract_errors("($(echo @(name))suffix)");
         assert!(errors.is_empty(), "got {:?}", errors);
-    }
-
-    #[test]
-    fn test_namespace_sep() {
-        let mut lexer = Lexer::new("a::b".to_string());
-        assert_eq!(
-            lexer.next_token().unwrap().token_type,
-            TokenType::Ident("a".to_string())
-        );
-        assert_eq!(
-            lexer.next_token().unwrap().token_type,
-            TokenType::NamespaceSep
-        );
-        assert_eq!(
-            lexer.next_token().unwrap().token_type,
-            TokenType::Ident("b".to_string())
-        );
     }
 
     #[test]

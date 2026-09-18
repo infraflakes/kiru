@@ -33,19 +33,20 @@ pub(crate) fn execute_run_block(
         }
     }
 
-    let chains = match ir.execution_chains.get(&name) {
-        Some(stages) => stages.clone(),
+    let body = match ir.runs.get(&name) {
+        Some(body) => body.clone(),
         None => {
             return Err(CliError::message(format!("unknown run block '{}'", name)));
         }
     };
+    let plan = ir.run_plan(&name);
 
     let invocation_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
     let timeout = profile.timeout.map(std::time::Duration::from_secs);
 
-    exec::chain::execute_task_chains(
-        Arc::new(ir),
-        chains,
+    exec::execute_run(
+        body,
+        plan,
         Arc::new(repos),
         invocation_cwd,
         profile.shell.unwrap_or_else(|| "sh".to_string()),

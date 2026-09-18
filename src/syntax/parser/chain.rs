@@ -1,61 +1,33 @@
-//! Run-block parser: resolves `run name { project::fn => project::fn; project::fn; }`
-//! chain syntax into ordered lists of project-function calls.
+//! Run-block parser: `run name { ... };` - entry points whose bodies are
+//! ordinary statement lists, exactly like function bodies. Concurrency is
+//! expressed with the `async() { ... };` primitive, not by separators.
 
 use super::*;
-use crate::syntax::token::format_token_type;
 
 impl Parser {
-    /// Parses `run name { project::fn => project::fn; project::fn; }`.
+    /// Parses `run name { statement; ... };`.
     ///
-    /// References are `project::function` calls. A `=>` appends the call to the
-    /// current chain so it runs sequentially after the previous call in that
-    /// chain; a `;` closes the current chain and opens a new one that runs
-    /// concurrently with the others. A trailing `;` before `}` is optional.
+    /// A run body is a normal body: primitives, calls, and `async` blocks,
+    /// executed top-down. `;` always means "then"; `async` starts its body
+    /// concurrently and joins at the end of the enclosing body.
     pub(crate) fn parse_run_decl(&mut self) -> Result<Stmt, ParseError> {
         let start_offset = self.current_token().offset;
         self.advance(); // skip `run`
 
         let name = self.parse_ident_name("run block name")?;
-        self.expect_with_context(TokenType::LBrace, "after run block name")?;
 
-        let mut chains: Vec<Vec<Call>> = Vec::new();
-        let mut current_chain: Vec<Call> = Vec::new();
-        while self.current_token().token_type != TokenType::RBrace {
-            let (project, function, _) = self.parse_qualified_ref(
-                "expected project namespace in run reference",
-                "expected function name after `::` in run reference",
-            )?;
-            current_chain.push(Call { project, function });
-            match self.current_token().token_type.clone() {
-                TokenType::ChainArrow => self.advance(),
-                TokenType::Semicolon => {
-                    self.advance();
-                    chains.push(std::mem::take(&mut current_chain));
-                }
-                TokenType::RBrace => break,
-                other => {
-                    return Err(ParseError::new(
-                        self.eof_aware_span(),
-                        format!(
-                            "expected `;`, `=>`, or `}}` after run reference, found {}",
-                            format_token_type(&other)
-                        ),
-                    ));
-                }
-            }
-        }
-        // A dangling final chain (no trailing `;`) is still part of the block.
-        if !current_chain.is_empty() {
-            chains.push(current_chain);
-        }
+        let body = self.parse_braced_block(
+            "after run block name",
+            "to close run body",
+            Self::parse_fn_stmt,
+        )?;
 
         let end_offset = self.current_token().offset + self.current_token().len;
-        self.expect_with_context(TokenType::RBrace, "to close run block")?;
         self.expect_with_context(TokenType::Semicolon, "after run declaration")?;
 
         Ok(Stmt::Run {
             name,
-            calls: chains,
+            body,
             offset: start_offset,
             len: end_offset - start_offset,
         })
@@ -64,93 +36,80 @@ impl Parser {
 
 #[cfg(test)]
 mod tests {
-    use crate::syntax::ast::Call;
+    use crate::syntax::fnstmt::FnStmt;
     use crate::syntax::parser::test_support::*;
     use crate::syntax::{Stmt, TopLevel};
 
-    #[test]
-    fn test_run_single_ref() {
-        let input = "run b { p::build; };";
+    fn run_body(input: &str) -> Vec<FnStmt> {
         let prog = parse_program(input).unwrap();
         match &prog.top_level_items[0] {
-            TopLevel::Stmt(Stmt::Run { calls, .. }) => {
-                assert_eq!(calls.len(), 1);
-                assert_eq!(calls[0].len(), 1);
-                assert_eq!(
-                    calls[0][0],
-                    Call {
-                        project: "p".into(),
-                        function: "build".into()
-                    }
-                );
-            }
-            _ => panic!("expected Run"),
+            TopLevel::Stmt(Stmt::Run { body, .. }) => body.clone(),
+            other => panic!("expected Run, got {:?}", other),
         }
     }
 
     #[test]
-    fn test_run_multiple_semicolon_is_separate_chains() {
-        let input = "run d { p::build; p::deploy; p::notify; };";
-        let prog = parse_program(input).unwrap();
-        match &prog.top_level_items[0] {
-            TopLevel::Stmt(Stmt::Run { calls, .. }) => {
-                assert_eq!(calls.len(), 3, "each `;` call is its own concurrent chain");
-                assert_eq!(calls[0][0].project, "p");
-                assert_eq!(calls[0][0].function, "build");
-                assert_eq!(calls[2][0].function, "notify");
+    fn test_run_body_is_sequential_statements() {
+        let body = run_body("run d { a(); b(); };");
+        assert_eq!(count_fn_stmt_types(&body), vec!["call", "call"]);
+    }
+
+    #[test]
+    fn test_run_call_arguments() {
+        let body = run_body("run d { deploy(app; $(git rev-parse HEAD)); };");
+        match &body[0] {
+            FnStmt::Call { name, args, .. } => {
+                assert_eq!(name, "deploy");
+                assert_eq!(args.len(), 2, "arguments are carried with the call");
             }
-            _ => panic!("expected Run"),
+            other => panic!("expected Call, got {:?}", other),
         }
     }
 
     #[test]
-    fn test_run_arrow_is_sequential_chain() {
-        let input = "run d { p::a => p::b => p::c; };";
-        let prog = parse_program(input).unwrap();
-        match &prog.top_level_items[0] {
-            TopLevel::Stmt(Stmt::Run { calls, .. }) => {
-                assert_eq!(calls.len(), 1, "`=>` joins one sequential chain");
-                assert_eq!(calls[0].len(), 3);
-                assert_eq!(calls[0][0].function, "a");
-                assert_eq!(calls[0][1].function, "b");
-                assert_eq!(calls[0][2].function, "c");
+    fn test_project_block_is_a_statement() {
+        let body = run_body("run d { project(p) { build(); }; };");
+        match &body[0] {
+            FnStmt::Project { name, body } => {
+                assert_eq!(name.literal_text(), "p");
+                assert_eq!(count_fn_stmt_types(body), vec!["call"]);
             }
-            _ => panic!("expected Run"),
+            other => panic!("expected Project, got {:?}", other),
         }
     }
 
     #[test]
-    fn test_run_mixed_chains() {
-        let input = "run d { p::a; p::b => p::c; p::d; };";
-        let prog = parse_program(input).unwrap();
-        match &prog.top_level_items[0] {
-            TopLevel::Stmt(Stmt::Run { calls, .. }) => {
-                assert_eq!(calls.len(), 3, "two `;` boundaries make three chains");
-                assert_eq!(calls[0].len(), 1);
-                assert_eq!(calls[1].len(), 2);
-                assert_eq!(calls[1][0].function, "b");
-                assert_eq!(calls[1][1].function, "c");
-                assert_eq!(calls[2][0].function, "d");
+    fn test_project_requires_a_name() {
+        let result = parse_program("run d { project() { a(); }; };");
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.to_string().contains("`project` requires a project name")),
+            "got: {:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn test_async_block_is_a_statement() {
+        let body = run_body("run d { async() { a(); b(); }; };");
+        match &body[0] {
+            FnStmt::Async { body } => {
+                assert_eq!(count_fn_stmt_types(body), vec!["call", "call"]);
             }
-            _ => panic!("expected Run"),
+            other => panic!("expected Async, got {:?}", other),
         }
     }
 
     #[test]
-    fn test_run_requires_separator_between_calls() {
-        let result = parse_program("run r { p::a p::b; };");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_run_requires_namespace() {
-        let result = parse_program("run r { build; };");
+    fn test_async_rejects_arguments() {
+        let result = parse_program("run d { async(x) { a(); }; };");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_run_decl_requires_semicolon() {
-        let result = parse_program("run r { p::a; }");
+        let result = parse_program("run r { a(); }");
         assert!(result.is_err());
     }
 }

@@ -6,7 +6,7 @@ use super::Lexer;
 use crate::syntax::error::ParseError;
 use crate::syntax::source::{Part, Template};
 use crate::syntax::token::{
-    KeywordForm, Token, TokenType, fuse_call_token, keyword_shape, lookup_ident,
+    KeywordForm, Token, TokenType, fuse_call_arguments, keyword_shape, lookup_ident,
 };
 
 impl Lexer {
@@ -62,18 +62,22 @@ impl Lexer {
 
         let token_type = if self.ch == Some('(') {
             match (&token_type, keyword_shape(&token_type)) {
-                // A user function call: `name(...)`.
+                // A user function call: `name(args)`.
                 (TokenType::Ident(_), _) => {
-                    let template = self.read_fused_template()?;
-                    TokenType::Call {
-                        name: ident,
-                        template,
-                    }
+                    let args = self.read_call_arguments()?;
+                    TokenType::Call { name: ident, args }
                 }
-                // Template-taking keywords: the template fuses into the token.
+                // Call-form keywords: the argument list fuses into the token.
                 (_, Some(KeywordForm::TemplateCall)) => {
-                    let template = self.read_fused_template()?;
-                    fuse_call_token(token_type, template)
+                    let args = self.read_call_arguments()?;
+                    fuse_call_arguments(token_type, args)
+                }
+                // `exec(` fuses the whole region as one raw command
+                // template: `;` is literal shell text, only `@()`/`$()`
+                // are substitutions.
+                (_, Some(KeywordForm::Command)) => {
+                    let args = self.read_command_argument()?;
+                    fuse_call_arguments(token_type, args)
                 }
                 // `env(` opens the pair list; its pairs are ordinary tokens.
                 (_, Some(KeywordForm::PairList)) => {
@@ -96,15 +100,65 @@ impl Lexer {
         ))
     }
 
-    /// Read the template starting at the current `(` (the caller has already
-    /// verified adjacency), returning its payload.
-    fn read_fused_template(&mut self) -> Result<crate::syntax::source::Template, ParseError> {
-        let paren_offset = self.byte_offset;
-        let token = self.read_template_token(paren_offset)?;
-        match token.token_type {
-            TokenType::Template(template) => Ok(template),
-            _ => unreachable!("read_template_token always produces a template token"),
+    /// Read `exec`'s payload: the whole `(...)` region as one raw command
+    /// template (empty for `exec()`), so top-level `;` stays literal.
+    fn read_command_argument(
+        &mut self,
+    ) -> Result<Vec<crate::syntax::source::Template>, ParseError> {
+        let open_offset = self.byte_offset;
+        self.read_char(); // consume '('
+        if self.ch == Some(')') {
+            self.read_char();
+            return Ok(Vec::new());
         }
+        let arg_offset = self.byte_offset;
+        let (parts, _) = self
+            .read_template_parts_until(false)
+            .map_err(|msg| self.unexpected(msg, open_offset))?;
+        Ok(vec![crate::syntax::source::Template {
+            parts,
+            offset: arg_offset,
+            len: self.byte_offset - arg_offset,
+        }])
+    }
+
+    /// Read a call's argument list: the `(...)` region split at top-level
+    /// `;` into templates. Nested `@()`/`$()` parts and command text stay
+    /// atomic; an empty region is zero arguments (`name()`). A trailing `;`
+    /// before `)` does not create an empty argument.
+    fn read_call_arguments(&mut self) -> Result<Vec<crate::syntax::source::Template>, ParseError> {
+        let open_offset = self.byte_offset;
+        self.read_char(); // consume '('
+        if self.ch == Some(')') {
+            self.read_char();
+            return Ok(Vec::new());
+        }
+
+        let mut args = Vec::new();
+        loop {
+            let arg_offset = self.byte_offset;
+            let (parts, ended_on_semicolon) = self
+                .read_template_parts_until(true)
+                .map_err(|msg| self.unexpected(msg, open_offset))?;
+            args.push(crate::syntax::source::Template {
+                parts: trim_argument_parts(parts),
+                offset: arg_offset,
+                len: self.byte_offset - arg_offset,
+            });
+            if !ended_on_semicolon {
+                break;
+            }
+            // A trailing `;` before `)` ends the list without an empty arg.
+            if self.ch == Some(')') {
+                self.read_char();
+                break;
+            }
+        }
+        // `name(a;)` style trailing separators leave no empty tail argument.
+        if args.last().is_some_and(|arg| arg.parts.is_empty()) {
+            args.pop();
+        }
+        Ok(args)
     }
 
     /// Read a template expression starting at the current character. The current
@@ -116,7 +170,7 @@ impl Lexer {
     ) -> Result<Token, ParseError> {
         let start_offset = start_byte_offset;
 
-        let mut parts = match self.ch {
+        let parts = match self.ch {
             Some('$') => {
                 // `$( cmd )` -> a single Cmd part wrapping the inner template.
                 self.read_char(); // consume '$'
@@ -172,14 +226,6 @@ impl Lexer {
         };
 
         let len = self.byte_offset - start_offset;
-        // Coalesce a single trailing/leading empty literal into nothing.
-        if parts.len() == 2
-            && let (Some(Part::Lit(a)), Some(Part::Lit(b))) = (parts.first(), parts.last())
-            && a.is_empty()
-            && b.is_empty()
-        {
-            parts = Vec::new();
-        }
         Ok(Token::new(
             TokenType::Template(Template {
                 parts,
@@ -195,12 +241,24 @@ impl Lexer {
     /// starts a `Var` part (its `)` is mandatory and its name must not be empty)
     /// and `$(` starts a nested `Cmd` part (whose own body is read recursively
     /// and must not be empty). All other characters accumulate into a literal
-    /// part.
+    /// part. With `stop_on_semicolon`, a top-level `;` ends the parts instead
+    /// (call argument lists); the caller learns which terminator was hit.
     ///
     /// Returns `Err(message)` when the template is malformed, so the caller can
     /// emit an `Illegal` token carrying that message instead of a malformed
     /// `Template`.
     fn read_template_parts(&mut self) -> Result<Vec<Part>, String> {
+        self.read_template_parts_until(false)
+            .map(|(parts, _)| parts)
+    }
+
+    /// The shared part reader behind standalone templates and call argument
+    /// lists (see [`Self::read_template_parts`]). Returns the parts and
+    /// whether they ended on a top-level `;` instead of the closing `)`.
+    fn read_template_parts_until(
+        &mut self,
+        stop_on_semicolon: bool,
+    ) -> Result<(Vec<Part>, bool), String> {
         let mut parts: Vec<Part> = Vec::new();
         let mut lit = String::new();
 
@@ -212,7 +270,11 @@ impl Lexer {
                 }
                 Some(')') => {
                     self.read_char();
-                    break;
+                    return Ok((finish_parts(parts, lit), false));
+                }
+                Some(';') if stop_on_semicolon => {
+                    self.read_char();
+                    return Ok((finish_parts(parts, lit), true));
                 }
                 Some('@') if self.peek_next() == Some('(') => {
                     if !lit.is_empty() {
@@ -253,11 +315,6 @@ impl Lexer {
                 }
             }
         }
-
-        if !lit.is_empty() {
-            parts.push(Part::Lit(lit));
-        }
-        Ok(parts)
     }
 
     /// Read an identifier's worth of characters (`[A-Za-z0-9_]`).
@@ -273,6 +330,30 @@ impl Lexer {
         }
         name
     }
+}
+
+/// Fold a trailing literal into a part list (the readers accumulate literal
+/// characters separately and flush them when a non-literal part or the end
+/// of the region appears).
+fn finish_parts(mut parts: Vec<Part>, lit: String) -> Vec<Part> {
+    if !lit.is_empty() {
+        parts.push(Part::Lit(lit));
+    }
+    parts
+}
+
+/// Trim whitespace surrounding an argument template: separators are written
+/// with spaces for readability (`deploy(a; b)`), and those boundary spaces
+/// are layout, not data.
+fn trim_argument_parts(mut parts: Vec<Part>) -> Vec<Part> {
+    if let Some(Part::Lit(first)) = parts.first_mut() {
+        *first = first.trim_start().to_string();
+    }
+    if let Some(Part::Lit(last)) = parts.last_mut() {
+        *last = last.trim_end().to_string();
+    }
+    parts.retain(|part| !matches!(part, Part::Lit(text) if text.is_empty()));
+    parts
 }
 
 /// A command substitution is empty when it contains no variable or nested

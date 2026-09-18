@@ -12,34 +12,23 @@ pub(crate) enum Stmt {
         offset: usize,
         len: usize,
     },
-    /// A project declaration: `project name { var; fn; }`. Contains behavioral
-    /// definitions only (repo config lives in `kiru.toml`).
-    Project { name: String, body: Vec<Stmt> },
-    /// A function definition (`fn name { ... }`), valid inside a `project`
-    /// block or at the top level (a global function template).
+    /// A function definition (`fn name(params) { ... };`): a named bundle of
+    /// statements, callable by name from any body and importable across
+    /// files. Functions are global; project contexts are selected at the
+    /// call site with a qualifier.
     Fn {
         name: String,
+        params: Vec<String>,
         body: Vec<FnStmt>,
         offset: usize,
         len: usize,
     },
-    /// A project-body call `name();`: binds a global function template into
-    /// the project as a function of the same name, so run blocks can reach
-    /// it as `project::name`. The carbon-copy lowering resolves the
-    /// template against this project's vars.
-    Call {
-        name: String,
-        offset: usize,
-        len: usize,
-    },
-    /// A run block definition: `run name { project::fn => project::fn; project::fn; }`.
-    ///
-    /// `calls` is an ordered list of chains. Calls joined by `=>` form one
-    /// sequential chain (each runs after the previous); `;` separates chains,
-    /// and the chains run concurrently with one another.
+    /// A run block definition: `run name { statement; ... };` - an entry
+    /// point whose body is an ordinary statement list. `async() { ... }`
+    /// expresses concurrency; `;` always means "then".
     Run {
         name: String,
-        calls: Vec<Vec<Call>>,
+        body: Vec<FnStmt>,
         offset: usize,
         len: usize,
     },
@@ -70,11 +59,4 @@ impl Program {
             source_text: text,
         }
     }
-}
-
-/// A `project::function` reference inside a `run` block.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Call {
-    pub(crate) project: String,
-    pub(crate) function: String,
 }

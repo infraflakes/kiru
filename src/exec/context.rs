@@ -1,60 +1,114 @@
 use super::subprocess;
 use super::subprocess::RunKillSwitch;
+use crate::exec::TaskStatus;
 use crate::exec::colors;
 use crate::exec::error::RuntimeError;
 use crate::ir::{ArmPattern, EnvPair, Instruction, Segment, Template};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::thread::JoinHandle;
 use std::time::Duration;
 
-/// Callback invoked for each emitted output line. This is the only output
-/// sink: every execution path (the `run` and `sync` TUIs) supplies one, so
-/// there is no separate "write straight to stdout" mode.
-pub(crate) type OutputCallback = Arc<dyn Fn(String) + Send + Sync>;
+/// Async bodies started by one body sequence: each handle remembers the
+/// display row of the `async()` step that started it, so the step can
+/// reflect its child's outcome when the sequence joins.
+type SpawnedAsync = Vec<(Option<usize>, JoinHandle<Result<(), RuntimeError>>)>;
 
-/// Runtime execution context for a resolved function body.
-///
-/// Variables are fully inlined at compile time, so there is no runtime scope
-/// stack: every template here is literal text and `$(command)` substitutions.
-pub(crate) struct ExecContext<'a> {
-    output: &'a mut OutputCallback,
-    cwd: PathBuf,
-    env_layers: Vec<BTreeMap<String, String>>,
-    shell: String,
-    timeout: Option<Duration>,
-    /// Commands run via `direnv exec <starting directory>` when the project
-    /// opted in with `direnv = true`. Decided by the caller (the executor
-    /// runs `direnv allow` first); direnv itself resolves per-directory rc
-    /// rules when it runs.
-    direnv_wrap: bool,
-    /// Run-level kill switch: a failing chain or a keyboard cancel kills
-    /// every live command group of the run.
-    kill: Option<Arc<RunKillSwitch>>,
+/// Emits one output line, tagged with the display row it belongs to
+/// (`None` outside any row). This is the only output sink: every execution
+/// path supplies one, so there is no separate "write straight to stdout"
+/// mode.
+pub(crate) type OutputCallback = Arc<dyn Fn(Option<usize>, String) + Send + Sync>;
+
+/// Reports a display row's status. Row indices are assigned at compile time
+/// (`Instruction::Step`), so every callback call names its row.
+pub(crate) type StatusCallback = Arc<dyn Fn(usize, TaskStatus) + Send + Sync>;
+
+/// The per-project execution setup derived from a `kiru.toml` project entry:
+/// where its commands run and whether they are wrapped in direnv.
+#[derive(Debug, Clone)]
+pub(crate) struct ProjectExec {
+    /// Local working directory of the project. Supports `~` expansion,
+    /// already applied by the config loader.
+    pub(crate) dir: PathBuf,
+    /// When true, every shell command of the project runs through
+    /// `direnv exec <dir>`, with the rc approved beforehand.
+    pub(crate) direnv: bool,
 }
 
-impl<'a> ExecContext<'a> {
-    /// Create a new execution context. `cwd` is the starting working directory;
-    /// when `timeout` is `None`, commands have no time limit. When
-    /// `direnv_wrap` is true every shell command is wrapped in
-    /// `direnv exec <cwd>`, with the rc already approved by the caller.
+/// What every execution context of one run shares: shell, timeout, the
+/// run-level kill switch, the project contexts, and the invocation cwd.
+pub(crate) struct RunContext {
+    pub(crate) shell: String,
+    pub(crate) timeout: Option<Duration>,
+    /// Run-level kill switch: a failing task or a keyboard cancel kills
+    /// every live command group of the run.
+    pub(crate) kill: Option<Arc<RunKillSwitch>>,
+    pub(crate) projects: Arc<BTreeMap<String, ProjectExec>>,
+}
+
+/// Runtime execution state for a resolved body.
+///
+/// Variables and arguments are fully inlined at compile time, so there is
+/// no runtime scope: every template here is literal text and `$(command)`
+/// substitutions. Working directory and environment layers are the
+/// context that `cd` and `env` mutate; `async` bodies fork this state so
+/// their mutations never leak out.
+pub(crate) struct ExecContext {
+    run: Arc<RunContext>,
+    output: OutputCallback,
+    status: StatusCallback,
+    cwd: PathBuf,
+    env_layers: Vec<BTreeMap<String, String>>,
+    /// The display row currently being executed, if any. Every line and
+    /// nested status is attributed to it.
+    row: Option<usize>,
+    /// Commands run via `direnv exec <cwd>` when the project opted in with
+    /// `direnv = true`. Entering a project context approves the rc first;
+    /// direnv itself resolves per-directory rc rules when it runs.
+    direnv_wrap: bool,
+}
+
+impl ExecContext {
+    /// Create the root execution context of a run: `cwd` is the invocation
+    /// directory and every display row starts unset.
     pub(crate) fn new(
-        output: &'a mut OutputCallback,
+        run: Arc<RunContext>,
+        output: OutputCallback,
+        status: StatusCallback,
         cwd: PathBuf,
-        shell: String,
-        timeout: Option<Duration>,
         direnv_wrap: bool,
-        kill: Option<Arc<RunKillSwitch>>,
     ) -> Self {
         ExecContext {
+            run,
             output,
+            status,
             cwd,
             env_layers: Vec::new(),
-            shell,
-            timeout,
+            row: None,
             direnv_wrap,
-            kill,
         }
+    }
+
+    /// A copy of this context for one `async` body: same shared run state
+    /// and sink, but its own working directory, environment layers, and
+    /// direnv wrapping. Mutations on the copy never leak back.
+    fn fork(&self) -> ExecContext {
+        ExecContext {
+            run: Arc::clone(&self.run),
+            output: Arc::clone(&self.output),
+            status: Arc::clone(&self.status),
+            cwd: self.cwd.clone(),
+            env_layers: self.env_layers.clone(),
+            row: self.row,
+            direnv_wrap: self.direnv_wrap,
+        }
+    }
+
+    /// Whether the run has already been lost to a failure elsewhere.
+    fn run_failed(&self) -> bool {
+        self.run.kill.as_ref().is_some_and(|kill| kill.is_failed())
     }
 
     /// The directory argument for `direnv exec` when commands are wrapped,
@@ -129,14 +183,17 @@ impl<'a> ExecContext<'a> {
         let direnv_dir = self.direnv_dir();
         let output_indent = "  ".repeat(self.env_layers.len() + 1);
         let shell_indent = "  ".repeat(self.env_layers.len());
-        let shell = &self.shell;
+        let shell = &self.run.shell;
 
         // Echo: "{shell}  {cmd}" in blue at log indent level.
-        (self.output)(format!(
-            "{shell_indent}{}{shell}  {cmd}{}",
-            colors::CMD_ANSI,
-            colors::RESET
-        ));
+        (self.output)(
+            self.row,
+            format!(
+                "{shell_indent}{}{shell}  {cmd}{}",
+                colors::CMD_ANSI,
+                colors::RESET
+            ),
+        );
 
         let argv = self.shell_argv(shell, cmd, direnv_dir.as_deref());
         let exit = subprocess::run_subprocess(
@@ -144,12 +201,12 @@ impl<'a> ExecContext<'a> {
             &argv,
             Some(work_dir),
             Some(&env_overrides),
-            self.timeout,
-            self.kill.as_deref(),
+            self.run.timeout,
+            self.run.kill.as_deref(),
             &mut |line| match line {
                 subprocess::SubprocessLine::Stdout(text)
                 | subprocess::SubprocessLine::Stderr(text) => {
-                    (self.output)(format!("{output_indent}{}", text.trim_start()));
+                    (self.output)(self.row, format!("{output_indent}{}", text.trim_start()));
                 }
             },
         );
@@ -159,7 +216,7 @@ impl<'a> ExecContext<'a> {
                 // victim, not an independent failure.
                 if exit.killed_by_switch {
                     return Err(RuntimeError::Cancelled(
-                        "stopped because another chain failed".to_string(),
+                        "stopped because another task failed".to_string(),
                     ));
                 }
                 if !exit.status.success() {
@@ -171,10 +228,13 @@ impl<'a> ExecContext<'a> {
                 Ok(())
             }
             Err(subprocess::SubprocessError::Timeout { command, .. }) => {
-                let timeout_secs = self.timeout.map_or(0, |d| d.as_secs());
-                (self.output)(format!(
-                    "{output_indent}Error: timeout: command timed out after {timeout_secs}s: {command}"
-                ));
+                let timeout_secs = self.run.timeout.map_or(0, |d| d.as_secs());
+                (self.output)(
+                    self.row,
+                    format!(
+                        "{output_indent}Error: timeout: command timed out after {timeout_secs}s: {command}"
+                    ),
+                );
                 Err(RuntimeError::Timeout {
                     cmd: command,
                     secs: timeout_secs,
@@ -191,19 +251,19 @@ impl<'a> ExecContext<'a> {
     fn capture(&self, cmd: &str) -> Result<String, RuntimeError> {
         let env_overrides: HashMap<String, String> = self.env_overrides();
         let direnv_dir = self.direnv_dir();
-        let argv = self.shell_argv(self.shell.as_str(), cmd, direnv_dir.as_deref());
+        let argv = self.shell_argv(self.run.shell.as_str(), cmd, direnv_dir.as_deref());
         subprocess::capture_argv(
             &argv,
             cmd,
             Some(&self.cwd),
             Some(&env_overrides),
-            self.timeout,
-            self.kill.as_deref(),
+            self.run.timeout,
+            self.run.kill.as_deref(),
         )
         .map_err(|e| match e {
             subprocess::SubprocessError::Timeout { command, .. } => RuntimeError::Timeout {
                 cmd: command,
-                secs: self.timeout.map_or(0, |d| d.as_secs()),
+                secs: self.run.timeout.map_or(0, |d| d.as_secs()),
             },
             other => RuntimeError::exec_io_error(cmd, other),
         })
@@ -225,47 +285,231 @@ impl<'a> ExecContext<'a> {
     /// Emit one output line: indent, prefix, then payload.
     fn emit(&mut self, indent_extra: usize, prefix: &str, payload: &str) {
         let indent = "  ".repeat(self.env_layers.len() + indent_extra);
-        (self.output)(format!("{indent}{prefix}{payload}"));
+        (self.output)(self.row, format!("{indent}{prefix}{payload}"));
     }
 
-    /// Run a sequence of resolved instructions sequentially. This is the single
-    /// execution entry point used by both `Executor::execute_fn_call` and the
-    /// internal `env`/`switch` constructs (which recurse here for their bodies).
+    /// Run a sequence of resolved instructions sequentially, joining the
+    /// `async` bodies it started when the sequence ends (structured
+    /// concurrency). This is the single execution entry point: `env` and
+    /// `switch` bodies, `async` bodies, and the run body itself all recurse
+    /// here.
+    ///
+    /// A `Step` is a display wrapper, not a join scope: asyncs spawned
+    /// inside a step (the `async() { ... }` statement itself) belong to
+    /// this sequence and are joined here, so sibling statements keep
+    /// running while the thread lives.
+    ///
+    /// Fail-fast: the first genuine failure marks the run failed (killing
+    /// every live command group) and marks all pending display rows of this
+    /// sequence cancelled.
     pub(crate) fn exec_stmts(&mut self, body: &[Instruction]) -> Result<(), RuntimeError> {
-        for stmt in body {
-            match stmt {
-                Instruction::Log(t) => {
-                    let resolved = self.resolve(t, false)?;
-                    self.emit(0, colors::LOG_PREFIX, &resolved);
-                }
-                Instruction::RunShellCmd { value } => {
-                    // Bare `$(cmd);` from a lowered `exec`, execute for side
-                    // effects only; the variable is already inlined everywhere.
-                    self.resolve(value, true)?;
-                }
-                Instruction::Cd(t) => {
-                    let target = self.resolve(t, false)?;
-                    self.exec_cd(&target)?;
-                }
-                Instruction::Env { pairs, body } => {
-                    self.exec_env_block(pairs, body)?;
-                }
-                Instruction::Switch { subject, arms } => {
-                    let condition = self.resolve(subject, false)?;
-                    for arm in arms {
-                        let matched = match &arm.pattern {
-                            ArmPattern::Lit(s) => s == &condition,
-                            ArmPattern::Default => true,
+        let mut spawned: SpawnedAsync = Vec::new();
+        let failure = self.exec_instructions(body, &mut spawned);
+
+        // Structured concurrency: this body is not finished until every
+        // async body it started is finished.
+        let mut child_failure: Option<RuntimeError> = None;
+        for (owner_row, handle) in spawned {
+            match handle.join() {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    // The async header row reflects its child's outcome.
+                    if let Some(row) = owner_row {
+                        let status = match &error {
+                            RuntimeError::Cancelled(_) => TaskStatus::Cancelled,
+                            _ => TaskStatus::Error,
                         };
-                        if matched {
-                            self.exec_stmts(&arm.body)?;
-                            break;
-                        }
+                        (self.status)(row, status);
+                    }
+                    if child_failure.is_none() {
+                        child_failure = Some(error);
+                    }
+                }
+                Err(_) => {
+                    if let Some(row) = owner_row {
+                        (self.status)(row, TaskStatus::Error);
+                    }
+                    if child_failure.is_none() {
+                        child_failure = Some(RuntimeError::exec_io_error("async", "task panicked"));
                     }
                 }
             }
         }
+
+        match (failure, child_failure) {
+            (Err(error), _) => Err(error),
+            (Ok(()), Some(error)) => Err(error),
+            (Ok(()), None) => Ok(()),
+        }
+    }
+
+    /// The sequential statement loop shared by every body. `spawned` is the
+    /// enclosing sequence's async registry, so a step's asyncs outlive the
+    /// step and join at the body end.
+    fn exec_instructions(
+        &mut self,
+        body: &[Instruction],
+        spawned: &mut SpawnedAsync,
+    ) -> Result<(), RuntimeError> {
+        for (index, stmt) in body.iter().enumerate() {
+            if self.run_failed() {
+                cancel_rows_in(&self.status, &body[index..]);
+                return Err(RuntimeError::Cancelled(
+                    "run failed in another task".to_string(),
+                ));
+            }
+            let result = match stmt {
+                Instruction::Step { row, body, .. } => self.exec_step(*row, body, spawned),
+                Instruction::Async { body } => self.exec_async(body, spawned),
+                Instruction::Context { project, body } => {
+                    let result = self.exec_context(project, body);
+                    if let Err(error) = &result {
+                        report_context_failure(&self.status, &self.output, body, error);
+                    }
+                    result
+                }
+                Instruction::Log(t) => {
+                    let resolved = self.resolve(t, false)?;
+                    self.emit(0, colors::LOG_PREFIX, &resolved);
+                    Ok(())
+                }
+                Instruction::Exec { command } => {
+                    // One rule: substitutions resolve first, then the
+                    // resulting text runs strictly with live output.
+                    let cmd = self.resolve(command, false)?;
+                    self.run_live(&cmd)
+                }
+                Instruction::Cd(t) => {
+                    let target = self.resolve(t, false)?;
+                    self.exec_cd(&target)
+                }
+                Instruction::Env { pairs, body } => self.exec_env_block(pairs, body),
+                Instruction::Switch { subject, arms } => {
+                    let condition = self.resolve(subject, false)?;
+                    let taken = arms.iter().position(|arm| match &arm.pattern {
+                        ArmPattern::Lit(pattern) => pattern == &condition,
+                        ArmPattern::Default => true,
+                    });
+                    // Untaken arms end terminal as skipped, so the display
+                    // stops waiting for them.
+                    for (index, arm) in arms.iter().enumerate() {
+                        if Some(index) != taken {
+                            skip_rows_in(&self.status, arm.row, &arm.body);
+                        }
+                    }
+                    let Some(index) = taken else {
+                        return Ok(());
+                    };
+                    let arm = &arms[index];
+                    (self.status)(arm.row, TaskStatus::Running);
+                    let result = self.exec_stmts(&arm.body);
+                    let status = match &result {
+                        Ok(()) => TaskStatus::Success,
+                        Err(RuntimeError::Cancelled(_)) => TaskStatus::Cancelled,
+                        Err(_) => TaskStatus::Error,
+                    };
+                    (self.status)(arm.row, status);
+                    result
+                }
+            };
+
+            if let Err(error) = result {
+                if !matches!(error, RuntimeError::Cancelled(_))
+                    && let Some(kill) = &self.run.kill
+                {
+                    kill.fail();
+                }
+                cancel_rows_in(&self.status, &body[index + 1..]);
+                return Err(error);
+            }
+        }
         Ok(())
+    }
+
+    /// Execute one display row: run `body` with every line and status
+    /// attributed to `row`. Asyncs started inside the step belong to the
+    /// enclosing sequence, not to the step.
+    fn exec_step(
+        &mut self,
+        row: usize,
+        body: &[Instruction],
+        spawned: &mut SpawnedAsync,
+    ) -> Result<(), RuntimeError> {
+        (self.status)(row, TaskStatus::Running);
+        let previous_row = self.row;
+        self.row = Some(row);
+        let result = self.exec_instructions(body, spawned);
+        self.row = previous_row;
+
+        let status = match &result {
+            Ok(()) => TaskStatus::Success,
+            Err(RuntimeError::Cancelled(_)) => TaskStatus::Cancelled,
+            Err(_) => TaskStatus::Error,
+        };
+        if let Err(error) = &result
+            && !error.is_timeout()
+        {
+            // Timeout errors were already emitted by `run_live` with the
+            // right indent; other failures get one rendered line here.
+            (self.output)(Some(row), format!("Error: {error}"));
+        }
+        (self.status)(row, status);
+        result
+    }
+
+    /// Start an `async` body now; the enclosing [`Self::exec_stmts`] joins
+    /// it when the sequence ends. The body runs on a copy of this context.
+    /// The current row (the `async()` step) is recorded so it can reflect
+    /// its child's outcome.
+    fn exec_async(
+        &mut self,
+        body: &[Instruction],
+        spawned: &mut SpawnedAsync,
+    ) -> Result<(), RuntimeError> {
+        let mut child = self.fork();
+        let body = body.to_vec();
+        spawned.push((
+            self.row,
+            std::thread::spawn(move || child.exec_stmts(&body)),
+        ));
+        Ok(())
+    }
+
+    /// Execute a body in a project's context: resolve the name template,
+    /// switch to its directory and direnv setting, then restore both when
+    /// the body finishes, so the context never leaks into sibling
+    /// statements. A `$()` name resolves here, in the enclosing context.
+    fn exec_context(
+        &mut self,
+        project: &Template,
+        body: &[Instruction],
+    ) -> Result<(), RuntimeError> {
+        let name = self.resolve(project, false)?;
+        if name.is_empty() {
+            return Err(RuntimeError::Lookup(
+                "project name resolved to empty".to_string(),
+            ));
+        }
+        let entry = self.run.projects.get(&name).cloned().ok_or_else(|| {
+            RuntimeError::Lookup(format!(
+                "unknown project: `{name}` (no [project.{name}] entry in kiru.toml)"
+            ))
+        })?;
+        if entry.direnv {
+            crate::exec::direnv::allow_project_env(
+                &entry.dir,
+                self.run.timeout,
+                self.run.kill.as_deref(),
+                None,
+            )?;
+        }
+        let previous_cwd = std::mem::replace(&mut self.cwd, entry.dir);
+        let previous_wrap = self.direnv_wrap;
+        self.direnv_wrap = entry.direnv;
+        let result = self.exec_stmts(body);
+        self.cwd = previous_cwd;
+        self.direnv_wrap = previous_wrap;
+        result
     }
 
     fn exec_cd(&mut self, target: &str) -> Result<(), RuntimeError> {
@@ -304,6 +548,83 @@ impl<'a> ExecContext<'a> {
     }
 }
 
+/// Mark every display row in `body` that has not run yet as cancelled,
+/// descending through async groups, project contexts, and switch arms.
+fn cancel_rows_in(status: &StatusCallback, body: &[Instruction]) {
+    for stmt in body {
+        match stmt {
+            Instruction::Step { row, .. } => (status)(*row, TaskStatus::Cancelled),
+            Instruction::Switch { arms, .. } => {
+                for arm in arms {
+                    (status)(arm.row, TaskStatus::Cancelled);
+                    cancel_rows_in(status, &arm.body);
+                }
+            }
+            Instruction::Async { body } | Instruction::Context { body, .. } => {
+                cancel_rows_in(status, body);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Mark an untaken switch arm and every step it contains as skipped.
+fn skip_rows_in(status: &StatusCallback, arm_row: usize, body: &[Instruction]) {
+    (status)(arm_row, TaskStatus::Skipped);
+    for stmt in body {
+        match stmt {
+            Instruction::Step { row, .. } => (status)(*row, TaskStatus::Skipped),
+            Instruction::Switch { arms, .. } => {
+                for arm in arms {
+                    skip_rows_in(status, arm.row, &arm.body);
+                }
+            }
+            Instruction::Async { body } | Instruction::Context { body, .. } => {
+                skip_rows_in(status, arm_row, body);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Report a failure to enter a project context: there is no row for the
+/// context itself, so the first row inside it carries the error and the
+/// rest are cancelled before the run stops.
+fn report_context_failure(
+    status: &StatusCallback,
+    output: &OutputCallback,
+    body: &[Instruction],
+    error: &RuntimeError,
+) {
+    fn rows_in(body: &[Instruction], rows: &mut Vec<usize>) {
+        for stmt in body {
+            match stmt {
+                Instruction::Step { row, .. } => rows.push(*row),
+                Instruction::Switch { arms, .. } => {
+                    for arm in arms {
+                        rows.push(arm.row);
+                        rows_in(&arm.body, rows);
+                    }
+                }
+                Instruction::Async { body } | Instruction::Context { body, .. } => {
+                    rows_in(body, rows);
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut rows = Vec::new();
+    rows_in(body, &mut rows);
+    let Some((first, rest)) = rows.split_first() else {
+        return;
+    };
+    (status)(*first, TaskStatus::Error);
+    (output)(Some(*first), format!("Error: {error}"));
+    for row in rest {
+        (status)(*row, TaskStatus::Cancelled);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,31 +636,227 @@ mod tests {
         }
     }
 
+    fn test_context(projects: BTreeMap<String, ProjectExec>) -> ExecContext {
+        let output: OutputCallback = Arc::new(|_, _| {});
+        let status: StatusCallback = Arc::new(|_, _| {});
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+        let run = Arc::new(RunContext {
+            shell: "sh".to_string(),
+            timeout: Some(Duration::from_secs(30)),
+            kill: None,
+            projects: Arc::new(projects),
+        });
+        ExecContext::new(run, output, status, cwd, false)
+    }
+
     #[test]
     fn test_switch_first_match() {
-        let mut output: OutputCallback = Arc::new(|_| {});
-        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-        let mut ctx = ExecContext::new(
-            &mut output,
-            cwd,
-            "sh".to_string(),
-            Some(Duration::from_secs(30)),
-            false,
-            None,
-        );
+        let mut ctx = test_context(BTreeMap::new());
         let body: [Instruction; 1] = [Instruction::Switch {
             subject: lit("a"),
             arms: vec![
                 Arm {
+                    row: 0,
                     pattern: ArmPattern::Lit("a".to_string()),
-                    body: vec![Instruction::Log(lit("first"))],
+                    body: vec![Instruction::Step {
+                        row: 1,
+                        label: "log first".to_string(),
+                        body: vec![Instruction::Log(lit("first"))],
+                    }],
                 },
                 Arm {
+                    row: 2,
                     pattern: ArmPattern::Default,
-                    body: vec![Instruction::Log(lit("second"))],
+                    body: vec![],
                 },
             ],
         }];
         ctx.exec_stmts(&body).unwrap();
+    }
+
+    #[test]
+    fn test_async_runs_and_joins() {
+        let mut ctx = test_context(BTreeMap::new());
+        let body: [Instruction; 1] = [Instruction::Async {
+            body: vec![Instruction::Step {
+                row: 0,
+                label: "work".to_string(),
+                body: vec![Instruction::Log(lit("async ran"))],
+            }],
+        }];
+        ctx.exec_stmts(&body).unwrap();
+    }
+
+    #[test]
+    fn test_context_unknown_project_errors() {
+        let mut ctx = test_context(BTreeMap::new());
+        let body: [Instruction; 1] = [Instruction::Context {
+            project: lit("missing"),
+            body: vec![],
+        }];
+        let error = ctx.exec_stmts(&body).unwrap_err();
+        assert!(error.to_string().contains("unknown project"), "{error}");
+    }
+
+    #[test]
+    fn test_context_switch_restores_cwd() {
+        let dir = tempfile::tempdir().unwrap();
+        let project_dir = dir.path().join("proj");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        let mut projects = BTreeMap::new();
+        projects.insert(
+            "p".to_string(),
+            ProjectExec {
+                dir: project_dir.clone(),
+                direnv: false,
+            },
+        );
+        let mut ctx = test_context(projects);
+        let body: [Instruction; 1] = [Instruction::Context {
+            project: lit("p"),
+            body: vec![Instruction::Cd(lit("."))],
+        }];
+        ctx.exec_stmts(&body).unwrap();
+        // After the context finishes, the working directory is the
+        // invocation one again.
+        let invocation = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+        assert_eq!(ctx.cwd, invocation, "context cwd must not leak out");
+    }
+
+    #[test]
+    fn test_context_failure_is_reported_on_its_first_row() {
+        let statuses: Arc<std::sync::Mutex<Vec<(usize, TaskStatus)>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let outputs: Arc<std::sync::Mutex<Vec<(Option<usize>, String)>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let status_recorder = Arc::clone(&statuses);
+        let output_recorder = Arc::clone(&outputs);
+        let status: StatusCallback =
+            Arc::new(move |row, status| status_recorder.lock().unwrap().push((row, status)));
+        let output: OutputCallback =
+            Arc::new(move |row, line| output_recorder.lock().unwrap().push((row, line)));
+
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+        let run = Arc::new(RunContext {
+            shell: "sh".to_string(),
+            timeout: Some(Duration::from_secs(30)),
+            kill: None,
+            projects: Arc::new(BTreeMap::new()),
+        });
+        let mut ctx = ExecContext::new(run, output, status, cwd, false);
+
+        let body: [Instruction; 1] = [Instruction::Context {
+            project: lit("missing"),
+            body: vec![
+                Instruction::Step {
+                    row: 0,
+                    label: "a".to_string(),
+                    body: vec![],
+                },
+                Instruction::Step {
+                    row: 1,
+                    label: "b".to_string(),
+                    body: vec![],
+                },
+            ],
+        }];
+        let error = ctx.exec_stmts(&body).unwrap_err();
+        assert!(error.to_string().contains("unknown project"), "{error}");
+        let statuses = statuses.lock().unwrap();
+        assert!(
+            statuses.contains(&(0, TaskStatus::Error)),
+            "first row carries the error: {statuses:?}"
+        );
+        assert!(
+            statuses.contains(&(1, TaskStatus::Cancelled)),
+            "later rows are cancelled: {statuses:?}"
+        );
+        let outputs = outputs.lock().unwrap();
+        assert!(
+            outputs
+                .iter()
+                .any(|(row, line)| *row == Some(0) && line.contains("unknown project")),
+            "the error is rendered on the first row: {outputs:?}"
+        );
+    }
+
+    #[test]
+    fn test_untaken_switch_arms_are_skipped() {
+        let statuses: Arc<std::sync::Mutex<Vec<(usize, TaskStatus)>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let status_recorder = Arc::clone(&statuses);
+        let status: StatusCallback =
+            Arc::new(move |row, status| status_recorder.lock().unwrap().push((row, status)));
+        let output: OutputCallback = Arc::new(|_, _| {});
+
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
+        let run = Arc::new(RunContext {
+            shell: "sh".to_string(),
+            timeout: Some(Duration::from_secs(30)),
+            kill: None,
+            projects: Arc::new(BTreeMap::new()),
+        });
+        let mut ctx = ExecContext::new(run, output, status, cwd, false);
+
+        let log = |row: usize, text: &str| Instruction::Step {
+            row,
+            label: format!("log {text}"),
+            body: vec![Instruction::Log(lit(text))],
+        };
+        let body: [Instruction; 1] = [Instruction::Switch {
+            subject: lit("a"),
+            arms: vec![
+                Arm {
+                    row: 0,
+                    pattern: ArmPattern::Lit("a".to_string()),
+                    body: vec![log(1, "taken")],
+                },
+                Arm {
+                    row: 2,
+                    pattern: ArmPattern::Default,
+                    body: vec![log(3, "untaken")],
+                },
+            ],
+        }];
+        ctx.exec_stmts(&body).unwrap();
+
+        let statuses = statuses.lock().unwrap();
+        assert!(
+            statuses.contains(&(0, TaskStatus::Success)),
+            "taken arm succeeds: {statuses:?}"
+        );
+        assert!(
+            statuses.contains(&(2, TaskStatus::Skipped)),
+            "untaken arm is skipped: {statuses:?}"
+        );
+        assert!(
+            statuses.contains(&(3, TaskStatus::Skipped)),
+            "untaken arm steps are skipped: {statuses:?}"
+        );
+        assert!(
+            !statuses.contains(&(3, TaskStatus::Running)),
+            "skipped steps never run: {statuses:?}"
+        );
+    }
+
+    #[test]
+    fn test_async_context_is_isolated() {
+        let dir = tempfile::tempdir().unwrap();
+        let other = dir.path().join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        let mut ctx = test_context(BTreeMap::new());
+        let before = ctx.cwd.clone();
+        let body: [Instruction; 1] = [Instruction::Async {
+            body: vec![Instruction::Step {
+                row: 0,
+                label: "work".to_string(),
+                body: vec![Instruction::Cd(lit(other.to_str().unwrap()))],
+            }],
+        }];
+        ctx.exec_stmts(&body).unwrap();
+        assert_eq!(
+            ctx.cwd, before,
+            "a cd inside async must not leak into the enclosing context"
+        );
     }
 }

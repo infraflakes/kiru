@@ -33,34 +33,37 @@ This puts `kiru` in `~/.local/bin`. Make sure that directory is on your `PATH`.
 
 Everything lives in `~/.config/kiru/`, in two files you write.
 
-**`main.kiru`** - the work. Projects (`project`), their functions (`fn`), and the pipelines (`run`) that call them. This one travels well, so keep it under version control.
+**`main.kiru`** - the work. Named bundles (`fn`), their parameters, and the entry points (`run`) that call them. This one travels well, so keep it under version control.
 
 ```kiru
 var app = (todo);
 
-project todo {
-  fn build {
-    log(Building @(app)...);
-    $(go build -o bin/@(app) .);
-  };
+fn build {
+  log(Building @(app)...);
+  exec(go build -o bin/@(app) .);
+};
 
-  fn test {
-    $(go test -race ./...);
-  };
+fn test {
+  exec(go test -race ./...);
 };
 
 run ci {
-  todo::test => todo::build;
+  project(todo) {
+    test();
+    build();
+  };
 };
 ```
 
 ## The language in one paragraph
 
-Every statement is a call, and the keyword and its call parens must be adjacent (`log(x)`, never `log (x)`); whitespace between other tokens is free. Three template forms exist: `()` is literal text, `$(command)` runs a command, and `@(name)` interpolates a variable. The built-in primitives (`log`, `cd`, `env`, `switch`, `case`, `default`, and the declaration keywords) are reserved - they cannot be used as identifiers or function names, which is what keeps `bar()` unambiguous against them.
+Every statement is a call, and the keyword and its call parens must be adjacent (`log(x)`, never `log (x)`); whitespace between other tokens is free. Three template forms exist: `()` is literal text, `$(command)` runs a command and substitutes its output, and `@(name)` interpolates a variable. The `exec(cmd);` primitive runs its resolved text as a command with live output. So `$()` and `@()` only ever appear inside templates, and templates only appear as call arguments, `var` values, and `env` pair values. The built-in primitives (`log`, `exec`, `cd`, `async`, `env`, `switch`, `case`, `default`, and the declaration keywords) are reserved - they cannot be used as identifiers or function names, which is what keeps `bar()` unambiguous against them.
 
-A `fn` at the top level (outside any project) is a global function: a reusable template that is never run directly. There are two ways to reference it. Inside a project body, `name();` binds it into the project as a function of that name, resolved against the project's vars, so a run block can reach it as `project::name`. Inside any function body, `name();` splices the body right there, carbon-copy. Resolution follows the including project: `@(app)` inside the template finds the project's `app` first, then a global var, then fails; calls inside the template resolve the same way, so a project function shadows a global function of the same name. Calls take no arguments - everything the callee needs comes from the scope it is expanded into - and recursive calls are a compile error.
+Functions are global named bundles; every file joins one namespace, so names must be unique across imports. Functions take positional parameters (`fn greet(name) { ... };`), calls pass arguments the same way (`greet(world)`) - both `;`-separated - and the arguments are substituted for the parameters when the call is compiled, carbon-copy. Inside a function, `@(name)` resolves to a parameter first, then a global variable, then fails; the callee never sees the caller's local bindings. Recursive calls are a compile error.
 
-**`kiru.toml`** - your machine, organized as profiles. The top level declares only `[profile.<name>]` tables; each profile is a complete unit: where to compile from (`source`), where the compiled IR goes (`output`), the shell, an optional command timeout, and the projects. `source` and `output` are file paths - relative to the `kiru.toml`, or `~/...`, or absolute; the output name is yours to choose, kiru just uses it. Projects are keyed by project name, matching `project <name>` in the DSL.
+A run block is the entry point, like `main()` in other languages: a body of statements executed by `kiru run <name>`. A `project(name) { ... }` block runs its body in that project's context - its directory and direnv setting from `kiru.toml`, restored when the block ends; calls outside every block run at the invocation context. A semicolon always means "then"; concurrency is the `async() { ... };` primitive, whose body starts right away and is joined when the enclosing body ends, on a copy of the context so changes inside never leak out.
+
+**`kiru.toml`** - your machine, organized as profiles. The top level declares only `[profile.<name>]` tables; each profile is a complete unit: where to compile from (`source`), where the compiled IR goes (`output`), the shell, an optional command timeout, and the projects. `source` and `output` are file paths - relative to the `kiru.toml`, or `~/...`, or absolute; the output name is yours to choose, kiru just uses it. Projects are keyed by name and provide the contexts for `project(name) { ... }` blocks.
 
 ```toml
 [profile.default]

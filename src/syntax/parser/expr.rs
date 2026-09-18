@@ -2,27 +2,18 @@
 //! bare identifiers resolved into `Template` nodes.
 
 use super::*;
-use crate::syntax::source::{Part, Template};
+use crate::syntax::source::Template;
 
 impl Parser {
-    /// Parse a template expression. This is either a `( ... )` / `$( ... )` /
-    /// `@( ... )` template token, or a bare identifier treated as a `@(name)`
-    /// variable reference (used for `switch` conditions).
+    /// Parse a template expression: a `( ... )` / `$( ... )` / `@( ... )`
+    /// template token. Variables are always referenced as `@(name)`; there
+    /// is no bare-identifier shorthand.
     pub(crate) fn parse_expr(&mut self) -> Result<Template, ParseError> {
         match &self.current_token().token_type {
             TokenType::Template(t) => {
                 let t = t.clone();
                 self.advance();
                 Ok(t)
-            }
-            TokenType::Ident(name) => {
-                let name = name.clone();
-                self.advance();
-                Ok(Template {
-                    parts: vec![Part::Var(name)],
-                    offset: self.current_token().offset,
-                    len: 0,
-                })
             }
             _ => Err(ParseError::new(
                 self.eof_aware_span(),

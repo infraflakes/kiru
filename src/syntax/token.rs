@@ -20,23 +20,25 @@ pub(crate) enum TokenType {
     RBrace,
     Semicolon,
     Assign,
-    /// `=>` separator inside run blocks: starts a new sequential stage. Calls
-    /// separated by `;` run concurrently in the same stage; `=>` runs the next
-    /// stage only after the current one finishes.
-    ChainArrow,
-    /// `import(path);` with the path template fused.
-    Import(Option<crate::syntax::source::Template>),
+    /// `import(path);` with the path argument fused.
+    Import(Option<Vec<crate::syntax::source::Template>>),
     Var,
-    /// `fn name { ... }` - a bare keyword: declarations take a name, never a
-    /// call-shaped template.
+    /// `fn name(params) { ... }` - a bare keyword: declarations take a name,
+    /// never a call-shaped template.
     Fn,
-    Project,
     Run,
-    /// `log(...)` with the template fused. `None` is the bare keyword, which
-    /// only exists so the parser can reject it generically.
-    Log(Option<crate::syntax::source::Template>),
-    /// `cd(...)` with the template fused.
-    Cd(Option<crate::syntax::source::Template>),
+    /// `log(...)` with the argument list fused. `None` is the bare keyword,
+    /// which only exists so the parser can reject it generically.
+    Log(Option<Vec<crate::syntax::source::Template>>),
+    /// `async() { ... }` - the concurrency primitive. Its parens must be
+    /// empty; the body is the concurrent unit.
+    Async(Option<Vec<crate::syntax::source::Template>>),
+    /// `exec(cmd)` with the command argument fused.
+    Exec(Option<Vec<crate::syntax::source::Template>>),
+    /// `project(name) { ... }` with the name argument fused.
+    Project(Option<Vec<crate::syntax::source::Template>>),
+    /// `cd(...)` with the argument list fused.
+    Cd(Option<Vec<crate::syntax::source::Template>>),
     /// The bare `env` keyword, only existing so the parser can reject the
     /// brace form generically. The fused `env(` pair list is `EnvOpen`.
     Env,
@@ -44,23 +46,21 @@ pub(crate) enum TokenType {
     /// fused; the pairs follow as an ordinary token stream until the bare
     /// closing `)` (`RParen`).
     EnvOpen,
-    /// `switch(...)` with the subject template fused.
-    Switch(Option<crate::syntax::source::Template>),
-    /// `case(...)` with the pattern template fused. `None` is the bare
+    /// `switch(...)` with the subject argument fused.
+    Switch(Option<Vec<crate::syntax::source::Template>>),
+    /// `case(...)` with the pattern argument fused. `None` is the bare
     /// keyword, only valid inside a `switch` when followed by... nothing:
     /// patterns must be fused, so `None` is always rejected.
-    Case(Option<crate::syntax::source::Template>),
+    Case(Option<Vec<crate::syntax::source::Template>>),
     /// `default` - the wildcard switch arm. It takes no pattern, so it is a
     /// bare keyword with no call parens: `default { ... };`.
     Default,
-    /// `name(...)` for a non-keyword identifier: a user function call. The
-    /// fused template must be empty; calls take no arguments.
+    /// `name(args)` for a non-keyword identifier: a function call with its
+    /// `;`-separated argument list fused.
     Call {
         name: String,
-        template: crate::syntax::source::Template,
+        args: Vec<crate::syntax::source::Template>,
     },
-    /// `::` separator used in run-block references (`project::fn`).
-    NamespaceSep,
 }
 
 /// A lexical token with its byte-offset span into the source text.
@@ -94,6 +94,9 @@ pub(crate) enum KeywordForm {
     /// The pair-list opener `env(`: only the paren fuses; the pairs follow
     /// as ordinary tokens.
     PairList,
+    /// Raw command text: the whole paren region is one template, so `;` is
+    /// literal inside it. `exec` reads a command, not an argument list.
+    Command,
     /// Declaration keyword: takes a name, never call parens
     /// (`project foo {`, `fn build {`, `var x = (...)`, `run ci {`).
     Declaration,
@@ -106,31 +109,40 @@ pub(crate) enum KeywordForm {
 const KEYWORDS: &[(&str, TokenType, KeywordForm)] = &[
     ("import", TokenType::Import(None), KeywordForm::TemplateCall),
     ("var", TokenType::Var, KeywordForm::Declaration),
-    ("project", TokenType::Project, KeywordForm::Declaration),
+    (
+        "project",
+        TokenType::Project(None),
+        KeywordForm::TemplateCall,
+    ),
     ("fn", TokenType::Fn, KeywordForm::Declaration),
     ("run", TokenType::Run, KeywordForm::Declaration),
     ("env", TokenType::Env, KeywordForm::PairList),
     ("log", TokenType::Log(None), KeywordForm::TemplateCall),
+    ("exec", TokenType::Exec(None), KeywordForm::Command),
+    ("async", TokenType::Async(None), KeywordForm::TemplateCall),
     ("cd", TokenType::Cd(None), KeywordForm::TemplateCall),
     ("case", TokenType::Case(None), KeywordForm::TemplateCall),
     ("switch", TokenType::Switch(None), KeywordForm::TemplateCall),
     ("default", TokenType::Default, KeywordForm::Bare),
 ];
 
-/// Attach a fused template payload to a call-form keyword's bare token.
+/// Attach a fused argument list to a call-form keyword's bare token.
 /// The single bare-to-fused mapping: adding a call-form keyword means one
 /// arm here on top of its `KEYWORDS` row.
-pub(crate) fn fuse_call_token(
+pub(crate) fn fuse_call_arguments(
     bare: TokenType,
-    template: crate::syntax::source::Template,
+    args: Vec<crate::syntax::source::Template>,
 ) -> TokenType {
     match bare {
-        TokenType::Log(_) => TokenType::Log(Some(template)),
-        TokenType::Cd(_) => TokenType::Cd(Some(template)),
-        TokenType::Switch(_) => TokenType::Switch(Some(template)),
-        TokenType::Case(_) => TokenType::Case(Some(template)),
-        TokenType::Import(_) => TokenType::Import(Some(template)),
-        _ => unreachable!("only call-form keywords reach template fusion"),
+        TokenType::Log(_) => TokenType::Log(Some(args)),
+        TokenType::Exec(_) => TokenType::Exec(Some(args)),
+        TokenType::Project(_) => TokenType::Project(Some(args)),
+        TokenType::Async(_) => TokenType::Async(Some(args)),
+        TokenType::Cd(_) => TokenType::Cd(Some(args)),
+        TokenType::Switch(_) => TokenType::Switch(Some(args)),
+        TokenType::Case(_) => TokenType::Case(Some(args)),
+        TokenType::Import(_) => TokenType::Import(Some(args)),
+        _ => unreachable!("only call-form keywords reach argument fusion"),
     }
 }
 
@@ -153,6 +165,9 @@ fn keyword_word_and_fusion(ty: &TokenType) -> Option<(&'static str, bool)> {
     let (word, fused) = match ty {
         TokenType::Import(template) => ("import", template.is_some()),
         TokenType::Log(template) => ("log", template.is_some()),
+        TokenType::Async(template) => ("async", template.is_some()),
+        TokenType::Exec(template) => ("exec", template.is_some()),
+        TokenType::Project(template) => ("project", template.is_some()),
         TokenType::Cd(template) => ("cd", template.is_some()),
         TokenType::Switch(template) => ("switch", template.is_some()),
         TokenType::Case(template) => ("case", template.is_some()),
@@ -160,7 +175,6 @@ fn keyword_word_and_fusion(ty: &TokenType) -> Option<(&'static str, bool)> {
         TokenType::EnvOpen => ("env", true),
         TokenType::Var => ("var", false),
         TokenType::Fn => ("fn", false),
-        TokenType::Project => ("project", false),
         TokenType::Run => ("run", false),
         TokenType::Default => ("default", false),
         TokenType::Eof
@@ -171,9 +185,7 @@ fn keyword_word_and_fusion(ty: &TokenType) -> Option<(&'static str, bool)> {
         | TokenType::RBrace
         | TokenType::RParen
         | TokenType::Semicolon
-        | TokenType::Assign
-        | TokenType::ChainArrow
-        | TokenType::NamespaceSep => return None,
+        | TokenType::Assign => return None,
     };
     Some((word, fused))
 }
@@ -203,6 +215,9 @@ pub(crate) fn format_token_type(ty: &TokenType) -> String {
     match ty {
         TokenType::Import(_)
         | TokenType::Log(_)
+        | TokenType::Exec(_)
+        | TokenType::Project(_)
+        | TokenType::Async(_)
         | TokenType::Cd(_)
         | TokenType::Switch(_)
         | TokenType::Case(_)
@@ -210,7 +225,6 @@ pub(crate) fn format_token_type(ty: &TokenType) -> String {
         | TokenType::EnvOpen
         | TokenType::Var
         | TokenType::Fn
-        | TokenType::Project
         | TokenType::Run
         | TokenType::Default => {
             let (word, fused) =
@@ -221,9 +235,9 @@ pub(crate) fn format_token_type(ty: &TokenType) -> String {
                 .map(|(_, _, shape)| *shape)
                 .expect("keyword table entry");
             match (shape, fused) {
-                (KeywordForm::TemplateCall, true) | (KeywordForm::PairList, true) => {
-                    format!("`{word}(...)`")
-                }
+                (KeywordForm::TemplateCall, true)
+                | (KeywordForm::PairList, true)
+                | (KeywordForm::Command, true) => format!("`{word}(...)`"),
                 _ => format!("`{word}`"),
             }
         }
@@ -236,8 +250,6 @@ pub(crate) fn format_token_type(ty: &TokenType) -> String {
         TokenType::RParen => "`)`".to_string(),
         TokenType::Semicolon => "`;`".to_string(),
         TokenType::Assign => "`=`".to_string(),
-        TokenType::ChainArrow => "`=>`".to_string(),
-        TokenType::NamespaceSep => "`::`".to_string(),
     }
 }
 

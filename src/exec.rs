@@ -1,15 +1,14 @@
-pub(crate) mod chain;
 pub(crate) mod colors;
 pub(crate) mod context;
 pub(crate) mod direnv;
 pub(crate) mod error;
-pub(crate) mod executor;
+pub(crate) mod run;
 pub(crate) mod subprocess;
 pub(crate) mod sync;
 pub(crate) mod tui;
 
-pub(crate) use context::OutputCallback;
-pub(crate) use executor::{Executor, ProjectExec};
+pub(crate) use context::ProjectExec;
+pub(crate) use run::execute_run;
 pub(crate) use sync::{ProjectSync, run_sync_for_projects};
 pub(crate) use tui::model::TaskStatus;
 pub(crate) use tui::run::{format_final_output, render_run_output};

@@ -16,7 +16,7 @@ pub(super) mod render;
 pub(super) mod run;
 pub(super) mod sync;
 
-use model::{Model, TaskRow, TaskStatus};
+use model::{Model, TaskStatus};
 
 use crossterm_backend::SafeBackend;
 
@@ -175,15 +175,16 @@ pub(crate) async fn run_tui_event_loop(
     Ok(cancelled)
 }
 
-/// Set up the tokio runtime, build the model from chains, and run the TUI
-/// alongside the given worker future. `format_fn` produces the final text
-/// dump after the TUI closes; `None` skips the dump entirely (e.g. sync).
+/// Set up the tokio runtime, build the model from the display plan, and run
+/// the TUI alongside the given worker future. `format_fn` produces the final
+/// text dump after the TUI closes; `None` skips the dump entirely (e.g.
+/// sync).
 ///
 /// The outer error is an infrastructure failure (TUI panic, terminal error,
 /// worker panic) that has not been shown to the user anywhere. The inner
 /// result is the worker's own outcome, passed through untouched.
 pub(crate) fn run_tui_with<F, Fut, E>(
-    chains: Vec<(String, Vec<String>)>,
+    plan: Vec<crate::ir::PlanLine>,
     worker: F,
     render_fn: fn(&mut Frame, &Model, usize),
     format_fn: Option<fn(&Model) -> String>,
@@ -196,16 +197,9 @@ where
 {
     let tokio_runtime = tokio::runtime::Runtime::new().map_err(|e| format!("{}", e))?;
     tokio_runtime.block_on(async {
-        let mut model = Model::new();
-        for (label, task_names) in chains {
-            model.add_chain(label, task_names);
-        }
-        let height: u16 = model
-            .chains
-            .iter()
-            .map(|c| 1u16.saturating_add(c.task_count as u16))
-            .try_fold(0u16, |acc, h| acc.checked_add(h))
-            .unwrap_or(u16::MAX);
+        let model = Model::from_plan(plan);
+        // Every plan line is one terminal row.
+        let height: u16 = model.tasks.len().min(u16::MAX as usize) as u16;
         let model = Arc::new(Mutex::new(model));
         let (event_sender, event_receiver) = mpsc::unbounded_channel();
         let tui = tokio::spawn(run_tui_event_loop(

@@ -1,79 +1,84 @@
-project kiru {
-  fn update {
-    log(Updating dependencies);
-    $(cargo update);
-    $(cargo upgrade);
-    $(nix flake update);
-  };
-
-  fn build {
+fn build_kiru {
+  project(kiru) {
     log(Building kiru cli!);
-    $(cargo build --release);
+    exec(cargo build --release);
   };
+};
 
-  fn container {
+fn clean_kiru {
+  project(kiru) {
+    log(Cleaning up artifacts...);
+    exec(rm -rf bin);
+    exec(rm -rf result);
+  };
+};
+
+fn test_kiru {
+  project(kiru) {
+    log(Testing the codebase!);
+    exec(cargo test);
+    exec(cargo clippy -- -D warnings);
+    exec(cargo fmt --check);
+  };
+};
+
+run update_kiru {
+  project(kiru) {
+    log(Updating dependencies);
+    exec(cargo update);
+    exec(cargo upgrade);
+    exec(nix flake update);
+  };
+};
+
+run fail_kiru {
+  project(kiru) {
+    log(Failing the task!);
+    env(CGO_ENABLED = (0); GOOS = (linux);) {
+      exec(go build ./...);
+    };
+  };
+};
+
+run build_kiru {
+  build_kiru();
+};
+
+run build_container_kiru {
+  project(kiru) {
     var docker_bin = $(command -v docker >/dev/null 2>&1 && echo "docker" || { command -v podman >/dev/null 2>&1 && echo "podman"; });
     switch(@(docker_bin)) {
       case() {
         log(no container runtime found);
-        $(exit 1);
+        exec(exit 1);
       };
       default {
         log(building kiru with @(docker_bin));
-        $(@(docker_bin) build --output type=local,dest=bin .);
+        exec(@(docker_bin) build --output type=local,dest=bin .);
       };
     };
   };
-
-  fn clean {
-    log(Cleaning up artifacts...);
-    $(rm -rf bin);
-    $(rm -rf result);
-  };
-
-  fn fmt {
-    log(Formatting the codebase...);
-    $(cargo clippy --fix --allow-dirty);
-    $(cargo fmt);
-  };
-
-  fn test {
-    log(Testing the codebase!);
-    $(cargo test);
-    $(cargo clippy -- -D warnings);
-    $(cargo fmt --check);
-  };
-
-  fn fail {
-    log(Failing the task!);
-    env(CGO_ENABLED = (0); GOOS = (linux);) {
-      $(go build ./...);
-    };
-  };
-};
-
-run clean_kiru {
-  kiru::clean;
-};
-
-run build_kiru {
-  kiru::build;
-};
-
-run build_container_kiru {
-  kiru::container;
-};
-
-run update_kiru {
-  kiru::update;
 };
 
 run test_kiru {
-  kiru::fmt => kiru::test;
-  kiru::clean => kiru::build;
+  async() {
+    project(kiru) {
+      env(PROJECT_NAME = (fuck);) {
+      log(Formatting the codebase...);
+      exec(cargo clippy --fix --allow-dirty);
+      exec(cargo fmt);
+      };
+    };
+    test_kiru();
+  };
+  log(this is main thread);
+  async() {
+    clean_kiru();
+    build_kiru();
+  };
 };
 
 run ci_kiru {
-  kiru::test;
-  kiru::build;
+  async() { test_kiru(); };
+  async() { build_kiru(); };
 };

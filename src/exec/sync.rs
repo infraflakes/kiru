@@ -121,11 +121,19 @@ fn run_git_with_output(
 /// `await_tasks_and_report` reduces the results to a single outcome
 /// (also surfacing any task panic).
 pub(crate) fn run_sync_for_projects(projects: Vec<ProjectSync>) -> Result<(), TaskRunError> {
-    let chain_pairs: Vec<(String, Vec<String>)> = projects
+    // One display line per project: sync has no steps, just projects.
+    let plan: Vec<crate::ir::PlanLine> = projects
         .iter()
-        .map(|project| {
-            let name = project.name.clone();
-            (name.clone(), vec![name])
+        .enumerate()
+        .map(|(row, project)| crate::ir::PlanLine {
+            row,
+            depth: 0,
+            label: project.name.clone(),
+            project: None,
+            // Sync draws its own per-project list; the tree prefixes are
+            // only used by the run views.
+            prefix: String::new(),
+            output_prefix: String::new(),
         })
         .collect();
     // Sync failures are all-settle (a failed clone does not abort other
@@ -136,7 +144,7 @@ pub(crate) fn run_sync_for_projects(projects: Vec<ProjectSync>) -> Result<(), Ta
     let kill_for_cancel = Arc::clone(&kill);
 
     match crate::exec::run_tui_with(
-        chain_pairs,
+        plan,
         move |tx| async move {
             let mut task_handles = Vec::new();
 

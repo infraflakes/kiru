@@ -136,11 +136,11 @@ fn draw_runs(out: &mut String, runs: &Ir) {
     out.push_str(&format!(
         "\n  {}  {}\n",
         style!(BOLD, "Runs"),
-        style!(YELLOW, "{}", runs.execution_chains.len())
+        style!(YELLOW, "{}", runs.runs.len())
     ));
 
-    let count = runs.execution_chains.len();
-    for (run_idx, (name, stages)) in runs.execution_chains.iter().enumerate() {
+    let count = runs.runs.len();
+    for (run_idx, name) in runs.runs.keys().enumerate() {
         let is_last_run = run_idx == count - 1;
         let run_connector = if is_last_run { "└" } else { "├" };
         out.push_str(&format!(
@@ -150,20 +150,16 @@ fn draw_runs(out: &mut String, runs: &Ir) {
         ));
 
         let run_indent = if is_last_run { "   " } else { "│  " };
-        let stage_count = stages.len();
-        for (stage_idx, stage) in stages.iter().enumerate() {
-            let is_last_stage = stage_idx == stage_count - 1;
-            let stage_connector = if is_last_stage { "└" } else { "├" };
-
-            // Join multiple calls in a chain with " => " on a single line.
-            let chain_display: Vec<String> = stage.iter().map(|call| call.fqn()).collect();
-            let chain_line = chain_display.join(&style!(GRAY_ANSI, " => "));
-
+        // One line per step or switch arm; the plan's tree prefixes carry
+        // the nesting, the `[project]` annotation carries the context.
+        for line in runs.run_plan(name) {
+            let project = line
+                .project
+                .map(|project| format!(" {}", style!(GRAY_ANSI, "[{project}]")))
+                .unwrap_or_default();
             out.push_str(&format!(
-                "  {}  {}── {}\n",
-                run_indent,
-                style!(BOLD, "{}", stage_connector),
-                chain_line
+                "  {}{}{}{}\n",
+                run_indent, line.prefix, line.label, project
             ));
         }
     }
@@ -195,17 +191,15 @@ mod tests {
     }
 
     fn sample_runs() -> Ir {
-        let mut chains = BTreeMap::new();
-        chains.insert(
-            "ci".to_string(),
-            vec![vec![crate::ir::Call {
-                project: "kiru".to_string(),
-                function: "test".to_string(),
-            }]],
-        );
         Ir {
-            projects: BTreeMap::new(),
-            execution_chains: chains,
+            runs: BTreeMap::from([(
+                "ci".to_string(),
+                vec![crate::ir::Instruction::Step {
+                    row: 0,
+                    label: "kiru::test".to_string(),
+                    body: Vec::new(),
+                }],
+            )]),
         }
     }
 

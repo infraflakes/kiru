@@ -6,49 +6,96 @@ use crate::syntax::fnstmt::{Arm, FnStmt};
 use crate::syntax::source::{ArmPattern, EnvPair};
 
 impl Parser {
-    /// Parses a bare `$(cmd);` statement. The current token is a template
-    /// token; it is consumed and must contain at least one `$(...)` command.
-    /// Bare `()` or `@()` values are rejected (use `log`, `cd`, `var`, `env`,
-    /// or `switch` instead).
-    pub(crate) fn parse_run_shell_cmd_stmt(&mut self) -> Result<FnStmt, ParseError> {
-        let value = self.parse_expr()?;
-        let has_cmd = value
-            .parts
-            .iter()
-            .any(|p| matches!(p, crate::syntax::source::Part::Cmd(_)));
-        if !has_cmd {
+    /// Parses an `exec(cmd);` statement. `$()`/`@()` inside the argument
+    /// are substituted at runtime; the resolved text is the command. An
+    /// empty argument list is rejected: there is nothing to run.
+    pub(crate) fn parse_exec_stmt(&mut self) -> Result<FnStmt, ParseError> {
+        let args = match &self.current_token().token_type {
+            TokenType::Exec(Some(args)) => args.clone(),
+            _ => unreachable!("exec dispatch guarantees a fused argument list"),
+        };
+        if args.is_empty() {
             return Err(ParseError::new(
-                crate::diagnostics::Span::new(value.offset, value.len.max(1)),
-                "bare template is not a statement — wrap the command in $(...) or prefix with log, cd, var, env or switch"
-                    .to_string(),
+                self.eof_aware_span(),
+                "`exec` requires a command".to_string(),
             ));
         }
-        self.expect_with_context(TokenType::Semicolon, "after command statement")?;
-        Ok(FnStmt::RunShellCmd(value))
+        let command = self.single_argument(args, "exec")?;
+        self.advance();
+        self.expect_with_context(TokenType::Semicolon, "after `exec`")?;
+        Ok(FnStmt::Exec(command))
     }
 
-    /// Parses a `name();` call statement. The parens are fused by the lexer
-    /// and must be empty: calls take no arguments, the target resolves at
-    /// compile time against the enclosing project and the global functions.
+    /// Parses a `name(args);` call statement. The argument list is fused by
+    /// the lexer; the target resolves at compile time by name among the
+    /// global functions, with arguments bound to its params.
     pub(crate) fn parse_call_stmt(&mut self) -> Result<FnStmt, ParseError> {
-        let (name, template, offset, len) = match &self.current_token().token_type {
-            TokenType::Call { name, template } => (
+        let (name, args, offset, len) = match &self.current_token().token_type {
+            TokenType::Call { name, args } => (
                 name.clone(),
-                template.clone(),
+                args.clone(),
                 self.current_token().offset,
                 self.current_token().len,
             ),
             _ => unreachable!("call dispatch guarantees a fused call token"),
         };
-        if !template.parts.is_empty() {
+        self.advance();
+        self.expect_with_context(TokenType::Semicolon, "after function call")?;
+        Ok(FnStmt::Call {
+            name,
+            args,
+            offset,
+            len,
+        })
+    }
+
+    /// Parses `project(name) { ... };`. The name argument is a template:
+    /// `project(app)` is compile-time literal, `project($(cat .project))`
+    /// resolves at runtime. Inside the body, every call runs in that
+    /// project's context.
+    pub(crate) fn parse_project_block(&mut self) -> Result<FnStmt, ParseError> {
+        let args = match &self.current_token().token_type {
+            TokenType::Project(Some(args)) => args.clone(),
+            _ => unreachable!("project dispatch guarantees a fused argument list"),
+        };
+        if args.is_empty() {
             return Err(ParseError::new(
-                crate::diagnostics::Span::new(template.offset, template.len.max(1)),
-                format!("function call `{name}` takes no arguments"),
+                self.eof_aware_span(),
+                "`project` requires a project name".to_string(),
+            ));
+        }
+        let name = self.single_argument(args, "project")?;
+        self.advance();
+        let body = self.parse_braced_block(
+            "after `project(name)`",
+            "to close project block",
+            Self::parse_fn_stmt,
+        )?;
+        self.expect_with_context(TokenType::Semicolon, "after project block")?;
+        Ok(FnStmt::Project { name, body })
+    }
+
+    /// Parses `async() { ... };` - a concurrent body joined at the end of
+    /// the enclosing body.
+    pub(crate) fn parse_async_block(&mut self) -> Result<FnStmt, ParseError> {
+        let args = match &self.current_token().token_type {
+            TokenType::Async(Some(args)) => args.clone(),
+            _ => unreachable!("async dispatch guarantees a fused argument list"),
+        };
+        if !args.is_empty() {
+            return Err(ParseError::new(
+                self.eof_aware_span(),
+                "`async` takes no arguments".to_string(),
             ));
         }
         self.advance();
-        self.expect_with_context(TokenType::Semicolon, "after function call")?;
-        Ok(FnStmt::Call { name, offset, len })
+        let body = self.parse_braced_block(
+            "after `async()`",
+            "to close async body",
+            Self::parse_fn_stmt,
+        )?;
+        self.expect_with_context(TokenType::Semicolon, "after async block")?;
+        Ok(FnStmt::Async { body })
     }
 
     /// Parses `env(pairs) { body };`. The current token is the fused `env(`
@@ -99,7 +146,7 @@ impl Parser {
     /// each arm is a call: `case(pattern)` or the wildcard `default()`.
     pub(crate) fn parse_switch_stmt(&mut self) -> Result<FnStmt, ParseError> {
         let subject = match &self.current_token().token_type {
-            TokenType::Switch(Some(subject)) => subject.clone(),
+            TokenType::Switch(Some(args)) => self.single_argument(args.clone(), "switch")?,
             _ => unreachable!("switch dispatch guarantees a fused subject"),
         };
         self.advance();
@@ -121,27 +168,13 @@ impl Parser {
     /// `default { body };`.
     fn parse_switch_arm(&mut self) -> Result<Arm, ParseError> {
         let pattern = match &self.current_token().token_type {
-            TokenType::Case(Some(pattern_template)) => {
-                let pattern_template = pattern_template.clone();
+            TokenType::Case(Some(args)) => {
+                // The pattern is validated as literal-only at compile time,
+                // after `@()` references are inlined: `case(@(x))` compares
+                // against x's value, while `$(cmd)` has no static text.
+                let pattern_template = self.single_argument(args.clone(), "case")?;
                 self.advance();
-                // Patterns are matched against the resolved subject string,
-                // so only literal text is meaningful: `@(var)` inlines to the
-                // variable's value at compile time and `$(cmd)` has no static
-                // text, so neither can form a pattern.
-                let pattern_is_literal = pattern_template
-                    .parts
-                    .iter()
-                    .all(|p| matches!(p, crate::syntax::source::Part::Lit(_)));
-                if !pattern_is_literal {
-                    return Err(ParseError::new(
-                        crate::diagnostics::Span::new(
-                            pattern_template.offset,
-                            pattern_template.len.max(1),
-                        ),
-                        "case pattern must be literal text".to_string(),
-                    ));
-                }
-                ArmPattern::Lit(pattern_template.literal_text())
+                ArmPattern::Template(pattern_template)
             }
             TokenType::Default => {
                 self.advance();
@@ -171,62 +204,50 @@ mod tests {
     use crate::syntax::parser::test_support::*;
     use crate::syntax::source::ArmPattern;
 
-    /// Parse a wrapped function body: tests describe `fn` bodies, which the
-    /// grammar only allows inside a `project` block.
+    /// Parse a top-level function body: functions are the named bundles the
+    /// grammar declares at the top level.
     fn parse_fn_body(input: &str) -> Vec<FnStmt> {
         let prog = parse_program(input).unwrap();
         match &prog.top_level_items[0] {
-            crate::syntax::TopLevel::Stmt(Stmt::Project { body, .. }) => match &body[0] {
-                Stmt::Fn { body, .. } => body.clone(),
-                other => panic!("expected fn in project body, got {:?}", other),
-            },
-            other => panic!("expected project, got {:?}", other),
+            crate::syntax::TopLevel::Stmt(Stmt::Fn { body, .. }) => body.clone(),
+            other => panic!("expected fn, got {:?}", other),
         }
     }
 
     #[test]
     fn test_fn_body_with_log_exec() {
         let body = parse_fn_body(
-            "project t {\
-              fn build {\
+            "fn build {\
                 log(compiling);\
-                $(cargo build);\
-              };\
+                exec(cargo build);\
             };",
         );
-        assert_eq!(count_fn_stmt_types(&body), vec!["log", "run_shell_cmd"]);
+        assert_eq!(count_fn_stmt_types(&body), vec!["log", "exec"]);
     }
 
     #[test]
     fn test_fn_body_orders() {
         let body = parse_fn_body(
-            "project t {\
-              fn deploy {\
+            "fn deploy {\
                 env(CGO_ENABLED = (0);) {\
-                  $(deploy);\
+                  exec(deploy);\
                 };\
                 cd(./dist);\
-                $(npm publish);\
+                exec(npm publish);\
                 log(done);\
-              };\
             };",
         );
-        assert_eq!(
-            count_fn_stmt_types(&body),
-            vec!["env", "cd", "run_shell_cmd", "log"]
-        );
+        assert_eq!(count_fn_stmt_types(&body), vec!["env", "cd", "exec", "log"]);
     }
 
     #[test]
     fn test_env_block_contents() {
         let body = parse_fn_body(
-            "project t {\
-              fn test {\
+            "fn test {\
                 env(X = (1);) {\
-                  $(run tests);\
+                  exec(run tests);\
                   log(testing);\
                 };\
-              };\
             };",
         );
         assert_eq!(body.len(), 1);
@@ -235,20 +256,18 @@ mod tests {
             other => panic!("expected EnvBlock, got {:?}", other),
         };
         assert_eq!(env.len(), 2);
-        assert!(matches!(&env[0], FnStmt::RunShellCmd(_)));
+        assert!(matches!(&env[0], FnStmt::Exec(_)));
         assert!(matches!(&env[1], FnStmt::Log(_)));
     }
 
     #[test]
     fn test_switch_branches() {
         let body = parse_fn_body(
-            "project t {\
-              fn deploy {\
+            "fn deploy {\
                 switch(@(target)) {\
-                  case(production) { $(deploy-prod); };\
+                  case(production) { exec(deploy-prod); };\
                   default { log(unknown); };\
                 };\
-              };\
             };",
         );
         let sw = match &body[0] {
@@ -256,60 +275,63 @@ mod tests {
             other => panic!("expected Switch, got {:?}", other),
         };
         assert_eq!(sw.len(), 2);
-        assert!(matches!(sw[0].pattern, ArmPattern::Lit(_)));
+        assert!(matches!(sw[0].pattern, ArmPattern::Template(_)));
         assert!(matches!(sw[1].pattern, ArmPattern::Default));
     }
 
     #[test]
-    fn test_case_pattern_must_be_literal() {
-        let result = parse_program(
-            "project t {\
-              fn d {\
-                switch(@(t)) {\
-                  case(@(v)) { log(x); };\
-                };\
-              };\
-            };",
-        );
+    fn test_cd_statement() {
+        let body = parse_fn_body("fn build { cd(./src); };");
+        assert_eq!(body.len(), 1);
+        assert!(matches!(body[0], FnStmt::Cd(_)));
+    }
+
+    #[test]
+    fn test_calls_carry_positional_arguments() {
+        let body = parse_fn_body("fn build { deploy(app-name; $(git rev-parse HEAD)); };");
+        match &body[0] {
+            FnStmt::Call { name, args, .. } => {
+                assert_eq!(name, "deploy");
+                assert_eq!(args.len(), 2, "args are `;`-separated templates");
+                assert_eq!(args[0].literal_text(), "app-name");
+            }
+            other => panic!("expected Call, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_zero_argument_call_has_no_args() {
+        let body = parse_fn_body("fn build { deploy(); };");
+        match &body[0] {
+            FnStmt::Call { name, args, .. } => {
+                assert_eq!(name, "deploy");
+                assert!(args.is_empty());
+            }
+            other => panic!("expected Call, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_exec_requires_a_command() {
+        let result = parse_program("fn x { exec(); };");
         let errs = result.unwrap_err();
         assert!(
             errs.iter()
-                .any(|e| e.to_string().contains("case pattern must be literal text")),
+                .any(|e| e.to_string().contains("`exec` requires a command")),
             "got: {:?}",
             errs
         );
     }
 
     #[test]
-    fn test_case_command_pattern_rejected() {
-        let result = parse_program(
-            "project t {\
-              fn d {\
-                switch(@(t)) {\
-                  case($(cmd)) { log(x); };\
-                };\
-              };\
-            };",
-        );
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_cd_statement() {
-        let body = parse_fn_body("project t { fn build { cd(./src); }; };");
-        assert_eq!(body.len(), 1);
-        assert!(matches!(body[0], FnStmt::Cd(_)));
-    }
-
-    #[test]
     fn test_log_must_end_with_semicolon() {
-        let result = parse_program("project t { fn x { log(hi) }; };");
+        let result = parse_program("fn x { log(hi) };");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_fn_decl_requires_semicolon() {
-        let result = parse_program("project t { fn x { log(hi); } };");
+        let result = parse_program("fn x { log(hi); }");
         assert!(result.is_err());
     }
 }

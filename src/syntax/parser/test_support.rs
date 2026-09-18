@@ -12,12 +12,14 @@ pub(crate) fn count_fn_stmt_types(body: &[FnStmt]) -> Vec<&'static str> {
     body.iter()
         .map(|s| match s {
             FnStmt::Log(_) => "log",
-            FnStmt::RunShellCmd(_) => "run_shell_cmd",
+            FnStmt::Exec(_) => "exec",
             FnStmt::Bind { .. } => "var",
             FnStmt::Cd(_) => "cd",
             FnStmt::EnvBlock { .. } => "env",
             FnStmt::Switch { .. } => "switch",
             FnStmt::Call { .. } => "call",
+            FnStmt::Async { .. } => "async",
+            FnStmt::Project { .. } => "project",
         })
         .collect()
 }
@@ -28,22 +30,9 @@ pub(crate) fn count_stmt_types(program: &Program) -> Vec<&'static str> {
         .iter()
         .map(|s| match s {
             TopLevel::Stmt(Stmt::Var { .. }) => "var",
-            TopLevel::Stmt(Stmt::Project { .. }) => "project",
             TopLevel::Stmt(Stmt::Fn { .. }) => "fn",
             TopLevel::Stmt(Stmt::Run { .. }) => "run",
             TopLevel::Import(_) => "import",
-            TopLevel::Stmt(Stmt::Call { .. }) => "call",
-        })
-        .collect()
-}
-
-pub(crate) fn count_body_stmt_types(body: &[Stmt]) -> Vec<&'static str> {
-    body.iter()
-        .map(|s| match s {
-            Stmt::Var { .. } => "var",
-            Stmt::Fn { .. } => "fn",
-            Stmt::Call { .. } => "call",
-            _ => "other",
         })
         .collect()
 }

@@ -51,6 +51,8 @@ pub(crate) struct EnvPair {
 /// the `_` default. Only `Default` survives to the runner.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ArmPattern {
-    Lit(String),
+    /// The `case(...)` pattern template, validated as literal-only at
+    /// compile time (after `@()` references are inlined).
+    Template(Template),
     Default,
 }

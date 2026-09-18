@@ -1,5 +1,5 @@
 use crate::diagnostics::{Diagnostic, Span};
-use crate::ir::{Call, Instruction, Ir};
+use crate::ir::Ir;
 use crate::syntax::{FnStmt, Program, Stmt, Template, TopLevel};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -41,39 +41,36 @@ pub(crate) fn compile_source(source_name: &str, source_text: &str) -> Result<Ir,
     build_ir(state)
 }
 
-/// A run block accumulated from `run name { ... }` syntax: the ordered
-/// stages of project-function calls plus the declaration's source location,
-/// so reference validation can report errors against the real span.
+/// A run block accumulated from `run name { ... }` syntax: its unresolved
+/// body plus the source location, so reference and arity errors report
+/// against the real span. The body is lowered in `build_ir`, once every
+/// function is collected.
 struct PendingRunBlock {
-    stages: Vec<Vec<Call>>,
+    body: Vec<FnStmt>,
     source_name: String,
-    offset: usize,
-    len: usize,
 }
 
-/// A function body awaiting lowering, with the source its statements were
-/// written in. Used for both project functions (declared in the project's
-/// source) and global function templates (declared wherever `fn` appears at
-/// the top level, possibly an imported file).
+/// A named function awaiting lowering: its parameters, body, and the source
+/// those statements were written in (possibly an imported file). Bodies are
+/// lowered per call site, with arguments bound to params, so this map is
+/// never lowered on its own.
 struct PendingFn {
+    params: Vec<String>,
     body: Vec<FnStmt>,
     source_name: String,
 }
 
 struct CompileState {
-    /// Static variables (top-level and `project`-body), each already inlined to a
-    /// template with no `@(var)` references. Commands inside them are preserved
-    /// as `Cmd` parts, they are never executed or frozen at compile time.
+    /// Top-level variables, each already inlined to a template with no
+    /// `@(var)` references. Commands inside them are preserved as `Cmd`
+    /// parts; they are never executed or frozen at compile time.
     globals: BTreeMap<String, Template>,
-    /// Project blocks accumulated from `project name { ... }` syntax, each
-    /// containing inlined static vars and compiled function bodies.
-    projects: BTreeMap<String, PendingProject>,
-    /// Global function templates accumulated from top-level `fn` syntax,
-    /// keyed by name. Expansions happen per call site during project
-    /// compilation, so this map is never lowered on its own.
-    global_functions: BTreeMap<String, PendingFn>,
+    /// Named functions accumulated from every source file, keyed by name.
+    /// Expansions happen per call site, so this map is never lowered on its
+    /// own.
+    functions: BTreeMap<String, PendingFn>,
     /// Run blocks accumulated from `run name { ... }` syntax, each being
-    /// an ordered list of sequential chains of project-function calls.
+    /// an ordered list of sequential chains of function calls.
     run_blocks: BTreeMap<String, PendingRunBlock>,
     /// Source file text snapshots keyed by source name, used for diagnostic
     /// span rendering in compile errors.
@@ -87,20 +84,11 @@ struct CompileState {
     recursion_stack: HashSet<PathBuf>,
 }
 
-/// A project block being accumulated: inlined static vars and lowered function
-/// bodies. Function-local `bind` variables are inlined away during compilation, so
-/// nothing static survives here either.
-struct PendingProject {
-    vars: BTreeMap<String, Template>,
-    functions: BTreeMap<String, Vec<Instruction>>,
-}
-
 impl CompileState {
     fn new() -> Self {
         Self {
             globals: BTreeMap::new(),
-            projects: BTreeMap::new(),
-            global_functions: BTreeMap::new(),
+            functions: BTreeMap::new(),
             run_blocks: BTreeMap::new(),
             source_texts: HashMap::new(),
             loaded_files: HashSet::new(),
@@ -218,30 +206,31 @@ fn compile_program(program: &Program, state: &mut CompileState) -> Result<(), Co
     state
         .source_texts
         .insert(program.source_name.clone(), program.source_text.clone());
-    // Pre-pass: collect every top-level `fn` as a global function template,
-    // wherever it appears in the file, so projects can call functions
-    // declared before or after them. Imports keep their file-order rule:
-    // global functions from an import are only visible after its import
-    // statement, matching how everything else from that file behaves.
+    // Pre-pass: collect every top-level `fn`, wherever it appears in the
+    // file, so any function can call any other regardless of order. Imports
+    // keep their file-order rule: functions from an import are only visible
+    // after its import statement, matching everything else from that file.
     for item in &program.top_level_items {
         if let TopLevel::Stmt(Stmt::Fn {
             name,
+            params,
             body,
             offset,
             len,
         }) = item
         {
-            if state.global_functions.contains_key(name) {
+            if state.functions.contains_key(name) {
                 return Err(state.spanned(
-                    format!("duplicate global function `{name}`"),
+                    format!("duplicate function `{name}`"),
                     &program.source_name,
                     *offset,
                     *len,
                 ));
             }
-            state.global_functions.insert(
+            state.functions.insert(
                 name.clone(),
                 PendingFn {
+                    params: params.clone(),
                     body: body.clone(),
                     source_name: program.source_name.clone(),
                 },
@@ -271,17 +260,14 @@ fn compile_stmt(
             offset,
             len,
         } => stmt::compile_var_decl(name, value, *offset, *len, &program.source_name, state),
-        // Top-level `fn` bodies were collected by the pre-pass; project-body
-        // calls are handled inside `compile_project_body`.
-        Stmt::Fn { .. } | Stmt::Call { .. } => Ok(()),
-        Stmt::Project { name, body } => {
-            stmt::compile_project_body(name, body, &program.source_name, state)
-        }
+        // Function bodies were collected by the pre-pass and are lowered per
+        // call site during `build_ir`.
+        Stmt::Fn { .. } => Ok(()),
         Stmt::Run {
             name,
-            calls,
+            body,
             offset,
             len,
-        } => stmt::compile_run_decl(name, calls, *offset, *len, &program.source_name, state),
+        } => stmt::compile_run_decl(name, body, *offset, *len, &program.source_name, state),
     }
 }

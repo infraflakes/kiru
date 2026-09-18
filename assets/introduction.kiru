@@ -5,9 +5,9 @@
 # Every declaration ends with a semicolon.
 #
 # Try it after reading:
-#   kiru compile -c intro.kiru -o .   # turn this into a kirufile
-#   kiru status -p kirufile           # see what kiru found
-#   kiru run all -p kirufile          # run the pipeline at the bottom
+#   kiru compile -c kiru.toml -p default   # turn this into a kirufile
+#   kiru status -p default                 # see what kiru found
+#   kiru run all -p default                # run the pipeline at the bottom
 
 # -- 1. VARIABLES -----------------------------------------------------
 #
@@ -39,18 +39,24 @@ var repo = (@(user)/@(app));
 #
 #   var dir = (~/configs);
 #   import(@(dir)/common.kiru);
+#
+# Everything imported joins one global namespace, so function names must
+# be unique across every imported file.
 
 # -- 3. FUNCTIONS -----------------------------------------------------
 #
-# A project groups functions that act on the same repo. Each function is
-# a sequence of calls; the keyword and its call parens must be adjacent
-# (log(x), never log (x)) and whitespace between other tokens is free:
+# A function is a named bundle of steps: primitives and other function
+# calls, run top-down. Every statement is a call; the keyword and its
+# call parens must be adjacent (log(x), never log (x)), and whitespace
+# between other tokens is free.
 #
 #   log(msg);             print a message
-#   $(cmd);               run a shell command (live output)
+#   exec(cmd);            run a shell command (live output); the
+#                         argument is raw text, so `;` is literal
 #   cd(path);             change directory for the rest of the function
+#   name(args);           call another function
 #
-#   var name = (val);     a value shared by this project's functions
+#   var name = (val);     a value used by the rest of this body
 #   var name = $(cmd);    same, but captured when you run kiru compile
 #
 #   env(KEY = (val);) {   run a block with extra environment
@@ -59,134 +65,109 @@ var repo = (@(user)/@(app));
 #
 #   switch(@(x)) {        run the first case that matches
 #       case(value) { ... };
-#       default { ... };  everything else
+#       default { ... };    everything else
 #   };
+#
+# Functions take positional parameters, written after the name and
+# separated by `;`:
+#
+#   fn greet(name) {
+#     log(hello @(name));
+#   };
+#
+# ... and calls pass positional arguments the same way: greet(world);
+# Arguments are substituted for the parameters when the call is compiled
+# (carbon-copy), so a function grows per call site, with no runtime scope.
 
-project myapp {
-  var docker_registry = (ghcr.io/@(user));
-  var port = (3000);
+fn check(name) {
+  log(Running static checks for @(name)...);
+  var dir = (@(name));
+  cd(@(dir));
+  exec(go fmt ./...);
+  exec(go vet ./...);
+};
 
-  fn check {
-    log(Running static checks for @(app)...);
-    $(go fmt ./...);
-    $(go vet ./...);
-  };
+fn build(name; target) {
+  log(Building @(name) for @(target)...);
 
-  fn build {
-    log(Building @(app)...);
-
-    switch(@(os)) {
-      case(Linux) {
-        env(GOOS = (linux); GOARCH = (amd64);) {
-          $(go build -o bin/@(app) .);
-        };
-      };
-      case(Darwin) {
-        cd(cmd);
-        $(go build -o ../bin/@(app) .);
-      };
-      default {
-        log(unsupported OS: @(os), falling back to native build);
-        $(go build -o bin/@(app) .);
+  switch(@(os)) {
+    case(Linux) {
+      env(GOOS = (linux); GOARCH = (amd64);) {
+        exec(go build -o bin/@(name) .);
       };
     };
-  };
-
-  fn test {
-    log(Running tests for @(app)...);
-    var gopath = (/home/user/.local/share/go);
-
-    env(CGO_ENABLED = (0); GOPATH = @(gopath);) {
-      log(Testing go program);
-      $(go test -race ./...);
+    case(Darwin) {
+      cd(cmd);
+      exec(go build -o ../bin/@(name) .);
     };
-  };
-
-  fn lint {
-    $(golangci-lint run ./...);
-  };
-
-  fn release {
-    var tag = (v1.0.0);
-    switch(@(tag)) {
-      case() {
-        log(no git tag found, skipping release);
-      };
-      default {
-        log(releasing @(tag)...);
-        $(docker build -t @(docker_registry)/@(app):@(tag) .);
-        $(docker push @(docker_registry)/@(app):@(tag));
-      };
+    default {
+      log(unsupported OS: @(os), falling back to native build);
+      exec(go build -o bin/@(name) .);
     };
   };
 };
 
-# -- 4. GLOBAL FUNCTIONS ----------------------------------------------
-#
-# A `fn` at the top level (outside any project) is a global function. It
-# is a template, not something you can run directly, and there are two
-# ways to reference it:
-#
-#   - inside a project body, `name();` binds it into the project as a
-#     function of that name (with the project's vars), so run blocks
-#     reach it as project::name;
-#
-#   - inside a function body, `name();` splices the body right there,
-#     carbon-copy, exactly as if its statements were written there.
-#
-#   fn greet {
-#     log(hello @(app));
-#   };
-#
-#   project myapp {
-#     var app = (myapp);
-#     greet();          # binds: the project now has fn greet
-#
-#     fn build {
-#       greet();        # splices: == log(hello myapp)
-#     };
-#   };
-#
-# Resolution follows the including project: `@(app)` inside the template
-# finds the project's `app` first, then a global var, then fails. Calls
-# inside the template do the same (a project function shadows a global
-# function of the same name). A call takes no arguments; everything it
-# needs comes from the scope it is expanded into. Recursive calls are a
-# compile error.
-#
-fn greet {
-  log(greeting @(app));
-};
-
-project greeter {
-  var app = (kiru);
-  greet();
-
-  fn hello {
-    log(done);
+fn test(name) {
+  log(Running tests for @(name)...);
+  env(CGO_ENABLED = (0);) {
+    exec(go test -race ./...);
   };
 };
 
-run greet_run {
-  greeter::hello;
-};
-
-# -- 5. RUN BLOCKS ----------------------------------------------------
+# -- 4. RUN BLOCKS ----------------------------------------------------
 #
-# A run block calls functions across projects as a pipeline.
+# A run block is the entry point, like main() in other languages: a body
+# of statements exactly like a function body, executed by `kiru run <name>`.
 #
-#   ;   means "starts at the same time"
-#   =>  means "wait for the one before to succeed"
+#   project(app) { ... };     run the body in that project's context
+#                             (directory and direnv from kiru.toml)
+#   function(args);           run at the current context
+#   ;                         the next statement runs after this one
 #
-# Chains starting together are not immune to each other: the first
-# failure anywhere stops the whole run. Running chains get killed and
-# pending steps are cancelled, so nothing keeps running in the background.
+# Concurrency is the `async` primitive: its body starts right away and is
+# joined when the enclosing body ends. Inside it cd and env apply to a
+# copy of the context, so they never leak out.
+#
+#   async() { ... };          start this body now, join at the end
+#
+# A run body's statements are the progress rows you see while it runs:
+# a sequential call is its own row, an async block groups its steps.
+# The first failure anywhere stops the run: running processes are killed
+# and pending steps are cancelled.
 
 run all {
-  myapp::lint => myapp::check => myapp::build;   # one after another
-  myapp::test;                                   # alongside the chain above
+  project(myapp) {
+    async() {
+      check(myapp);
+      build(myapp; release);
+    };
+    async() {
+      test(myapp);
+    };
+  };
 };
 
 run ci {
-  myapp::lint => myapp::test;
+  project(myapp) {
+    check(myapp);
+    test(myapp);
+  };
 };
+
+# -- 5. PROJECT CONTEXTS ----------------------------------------------
+#
+# kiru.toml is the source of truth for machine-specific things: the
+# profile's compile paths, and the projects that give calls their working
+# directory and direnv setting.
+#
+#   [profile.default]
+#   source = "main.kiru"
+#   output = "kirufile"
+#
+#   [profile.default.project.myapp]
+#   url    = "git@github.com:you/myapp.git"
+#   dir    = "~/projects/myapp"
+#   direnv = true
+#
+# `kiru sync` clones or updates those repositories. The DSL itself never
+# touches the network or the filesystem layout.

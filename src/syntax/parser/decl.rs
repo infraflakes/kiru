@@ -21,7 +21,17 @@ impl Parser {
         let len = self.current_token().len;
         self.advance();
 
-        let name = self.parse_ident_name("function name")?;
+        // `fn name { ... }` (no params) or the fused call form
+        // `fn name(p; q) { ... }`.
+        let (name, params) = match &self.current_token().token_type {
+            TokenType::Call { name, args } => {
+                let name = name.clone();
+                let params = self.parse_params(args.clone())?;
+                self.advance();
+                (name, params)
+            }
+            _ => (self.parse_ident_name("function name")?, Vec::new()),
+        };
 
         let body = self.parse_braced_block(
             "after function name",
@@ -32,10 +42,49 @@ impl Parser {
 
         Ok(Stmt::Fn {
             name,
+            params,
             body,
             offset,
             len,
         })
+    }
+
+    /// Validate the fused `fn name(...)` argument list as parameter names:
+    /// each argument must be a plain identifier literal, unique within the
+    /// declaration, and not a reserved keyword.
+    fn parse_params(&self, args: Vec<Template>) -> Result<Vec<String>, ParseError> {
+        let mut params = Vec::new();
+        for arg in args {
+            let text = match arg.parts.as_slice() {
+                [crate::syntax::source::Part::Lit(text)] => text.trim(),
+                _ => {
+                    return Err(ParseError::new(
+                        self.eof_aware_span(),
+                        "function parameters must be plain identifiers".to_string(),
+                    ));
+                }
+            };
+            let is_identifier = !text.is_empty()
+                && !text.chars().next().is_some_and(|c| c.is_ascii_digit())
+                && text.chars().all(|c| c.is_alphanumeric() || c == '_')
+                && !crate::syntax::token::is_keyword_token(&crate::syntax::token::lookup_ident(
+                    text,
+                ));
+            if !is_identifier {
+                return Err(ParseError::new(
+                    self.eof_aware_span(),
+                    format!("`{text}` is not a valid parameter name"),
+                ));
+            }
+            if params.iter().any(|p| p == text) {
+                return Err(ParseError::new(
+                    self.eof_aware_span(),
+                    format!("duplicate parameter `{text}`"),
+                ));
+            }
+            params.push(text.to_string());
+        }
+        Ok(params)
     }
 }
 
@@ -65,6 +114,45 @@ mod tests {
     }
 
     #[test]
+    fn test_fn_with_params() {
+        let prog = parse_program("fn deploy(name; registry) { log(x); };").unwrap();
+        match &prog.top_level_items[0] {
+            TopLevel::Stmt(Stmt::Fn { name, params, .. }) => {
+                assert_eq!(name, "deploy");
+                assert_eq!(params, &["name".to_string(), "registry".to_string()]);
+            }
+            other => panic!("expected Fn, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_fn_without_params() {
+        let prog = parse_program("fn build { log(x); };").unwrap();
+        match &prog.top_level_items[0] {
+            TopLevel::Stmt(Stmt::Fn { params, .. }) => assert!(params.is_empty()),
+            other => panic!("expected Fn, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_duplicate_param_rejected() {
+        let result = parse_program("fn deploy(name; name) { log(x); };");
+        let errs = result.unwrap_err();
+        assert!(
+            errs.iter()
+                .any(|e| e.to_string().contains("duplicate parameter")),
+            "got: {:?}",
+            errs
+        );
+    }
+
+    #[test]
+    fn test_keyword_param_rejected() {
+        let result = parse_program("fn deploy(log) { log(x); };");
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_var_missing_name() {
         let result = parse_program("var = (hello);");
         assert!(result.is_err());
@@ -86,15 +174,7 @@ mod tests {
 
     #[test]
     fn test_unclosed_fn_brace() {
-        let result = parse_program("project t { fn bad { log(hi); };");
+        let result = parse_program("fn bad { log(hi);");
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_toplevel_fn_is_accepted() {
-        // Top-level `fn` is a global function template, callable from any
-        // project function body.
-        let prog = parse_program("fn build { log(hi); };").unwrap();
-        assert_eq!(count_stmt_types(&prog), vec!["fn"]);
     }
 }
