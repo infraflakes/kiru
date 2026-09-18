@@ -1,4 +1,6 @@
-use crate::ir::{Arm, ArmPattern, EnvPair, Instruction, Segment, Template as IrTemplate};
+use crate::ir::{
+    ArmPattern, EnvPair, NodeId, NodeKind, ProgramBuilder, Segment, Template as IrTemplate,
+};
 use crate::syntax::source::ArmPattern as DslArmPattern;
 use crate::syntax::{Part as DslPart, Template};
 use std::collections::{BTreeMap, HashMap};
@@ -32,8 +34,8 @@ pub(super) fn lower_function_call(
     source_name: &str,
     offset: usize,
     len: usize,
-    row: &mut usize,
-) -> Result<Vec<Instruction>, CompileError> {
+    arena: &mut ProgramBuilder,
+) -> Result<Vec<NodeId>, CompileError> {
     let function = resolver.functions.get(name).ok_or_else(|| {
         super::error_in(
             sources,
@@ -85,7 +87,7 @@ pub(super) fn lower_function_call(
         &function.source_name,
         resolver,
         cycle_stack,
-        row,
+        arena,
     )?;
     cycle_stack.pop();
     Ok(lowered)
@@ -180,31 +182,19 @@ pub(super) fn compile_template(tmpl: &Template) -> IrTemplate {
     }
 }
 
-/// Compile a function body's statements into IR `Instruction`s, inlining every
-/// `@(var)` reference (against `scope` plus function-local `bind`s) as it goes.
-///
-/// Function-local `var x = T` maps name `x` to template `T` in the local
-/// scope so later references resolve to `T`. The bind itself does NOT
-/// emit an `Instruction`: execution is deferred to each use site via tolerant
-/// `capture`. Only bare `$(cmd);` emits strict `Instruction::RunShellCmd`.
-/// Nested `env`/`switch` bodies get a *copy* of the local scope so their binds
-/// do not leak into the surrounding body.
-///
-/// A `name();` call statement is lowered carbon-copy: the target body (a
-/// sibling project function first, then a global function) is compiled
-/// recursively against a copy of the current scope and its instructions are
-/// spliced in place. `cycle_stack` carries the chain of bodies being lowered,
-/// so self- or mutually-recursive calls are reported instead of looping; the
-/// `source_name` switches to the target's own source so diagnostics from an
-/// inlined body render against the file it was written in.
-/// Compile a body's statements into IR instructions, wrapping every
-/// statement in a display `Step` with the next compile-assigned row.
+/// Compile a body's statements into program nodes, inlining every `@(var)`
+/// reference (against `scope` plus function-local binds) as it goes.
 ///
 /// This is the single body compiler: function bodies, run bodies, async
-/// bodies, env bodies, and switch arms all lower through here, so the
-/// display tree and the execution tree are the same structure. Calls are
-/// flattened: the callee's statements are compiled (carbon-copy） as
-/// sibling steps, not hidden under a header.
+/// bodies, env bodies, switch arms, and project bodies all lower through
+/// here, so the execution tree and the display tree are the same arena.
+/// Calls are flattened: the callee's statements are compiled carbon-copy as
+/// sibling nodes, not hidden under a header.
+///
+/// Function-local `var x = T` binds mutate `scope` and emit no node:
+/// execution is deferred to each use site via tolerant capture. Nested
+/// block bodies get a copy of the local scope so their binds do not leak
+/// into the surrounding body.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn compile_fn_stmts(
     stmts: &[crate::syntax::FnStmt],
@@ -213,8 +203,8 @@ pub(super) fn compile_fn_stmts(
     source_name: &str,
     resolver: &FnResolver<'_>,
     cycle_stack: &mut Vec<String>,
-    row: &mut usize,
-) -> Result<Vec<Instruction>, CompileError> {
+    arena: &mut ProgramBuilder,
+) -> Result<Vec<NodeId>, CompileError> {
     let mut out = Vec::new();
     for stmt in stmts {
         out.extend(compile_fn_stmt(
@@ -224,15 +214,14 @@ pub(super) fn compile_fn_stmts(
             source_name,
             resolver,
             cycle_stack,
-            row,
+            arena,
         )?);
     }
     Ok(out)
 }
 
-/// Lower a single statement. Binds mutate `scope` (compile-time
-/// substitution) and emit nothing; every other statement becomes one
-/// display row, except calls, which flatten into their callee's rows.
+/// Lower a single statement into one node (or, for calls, the callee's
+/// flattened sibling nodes). Binds emit nothing.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn compile_fn_stmt(
     stmt: &crate::syntax::FnStmt,
@@ -241,40 +230,29 @@ pub(super) fn compile_fn_stmt(
     source_name: &str,
     resolver: &FnResolver<'_>,
     cycle_stack: &mut Vec<String>,
-    row: &mut usize,
-) -> Result<Vec<Instruction>, CompileError> {
+    arena: &mut ProgramBuilder,
+) -> Result<Vec<NodeId>, CompileError> {
+    let leaf = |kind: NodeKind, arena: &mut ProgramBuilder| vec![arena.push(kind, Vec::new())];
     match stmt {
         crate::syntax::FnStmt::Log(t) => {
             let value = compile_template(&inline_dsl_template(t, scope, sources, source_name)?);
-            Ok(vec![step(
-                row,
-                crate::ir::log_label(&plan_text(&value)),
-                vec![Instruction::Log(value)],
-            )])
+            Ok(leaf(NodeKind::Log(value), arena))
         }
         crate::syntax::FnStmt::Exec(command) => {
             let value =
                 compile_template(&inline_dsl_template(command, scope, sources, source_name)?);
-            Ok(vec![step(
-                row,
-                crate::ir::exec_label(&plan_text(&value)),
-                vec![Instruction::Exec { command: value }],
-            )])
+            Ok(leaf(NodeKind::Exec(value), arena))
         }
         crate::syntax::FnStmt::Cd(t) => {
             let value = compile_template(&inline_dsl_template(t, scope, sources, source_name)?);
-            Ok(vec![step(
-                row,
-                crate::ir::cd_label(&plan_text(&value)),
-                vec![Instruction::Cd(value)],
-            )])
+            Ok(leaf(NodeKind::Cd(value), arena))
         }
         crate::syntax::FnStmt::Bind { name, value } => {
             let inlined = inline_dsl_template(value, scope, sources, source_name)?;
             scope.insert(name.clone(), inlined);
-            // Assignment bindings are fully inlined into scope.
-            // No runtime command emitted: execution happens lazily at
-            // each use site via tolerant capture.
+            // Assignment bindings are fully inlined into scope. No node is
+            // emitted: execution happens lazily at each use site via
+            // tolerant capture.
             Ok(Vec::new())
         }
         crate::syntax::FnStmt::EnvBlock { pairs, body } => {
@@ -292,8 +270,6 @@ pub(super) fn compile_fn_stmt(
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let keys: Vec<&str> = pairs.iter().map(|p| p.key.as_str()).collect();
-            let index = take_row(row);
             let mut inner = scope.clone();
             let inner_body = compile_fn_stmts(
                 body,
@@ -302,19 +278,11 @@ pub(super) fn compile_fn_stmt(
                 source_name,
                 resolver,
                 cycle_stack,
-                row,
+                arena,
             )?;
-            Ok(vec![Instruction::Step {
-                row: index,
-                label: crate::ir::env_label(&keys.join(", ")),
-                body: vec![Instruction::Env {
-                    pairs: ir_pairs,
-                    body: inner_body,
-                }],
-            }])
+            Ok(vec![arena.push(NodeKind::Env(ir_pairs), inner_body)])
         }
         crate::syntax::FnStmt::Async { body } => {
-            let index = take_row(row);
             let mut inner = scope.clone();
             let inner_body = compile_fn_stmts(
                 body,
@@ -323,13 +291,9 @@ pub(super) fn compile_fn_stmt(
                 source_name,
                 resolver,
                 cycle_stack,
-                row,
+                arena,
             )?;
-            Ok(vec![Instruction::Step {
-                row: index,
-                label: "async".to_string(),
-                body: vec![Instruction::Async { body: inner_body }],
-            }])
+            Ok(vec![arena.push(NodeKind::Async, inner_body)])
         }
         crate::syntax::FnStmt::Call {
             name,
@@ -337,7 +301,7 @@ pub(super) fn compile_fn_stmt(
             offset,
             len,
         } => {
-            // Flattened: the callee's statements become sibling steps.
+            // Flattened: the callee's statements become sibling nodes.
             lower_function_call(
                 name,
                 args,
@@ -348,7 +312,7 @@ pub(super) fn compile_fn_stmt(
                 source_name,
                 *offset,
                 *len,
-                row,
+                arena,
             )
         }
         crate::syntax::FnStmt::Project { name, body } => {
@@ -361,17 +325,17 @@ pub(super) fn compile_fn_stmt(
                 source_name,
                 resolver,
                 cycle_stack,
-                row,
+                arena,
             )?;
-            Ok(vec![Instruction::Context {
-                project: compile_template(&inlined),
-                body: inner_body,
-            }])
+            Ok(vec![arena.push(
+                NodeKind::Project(compile_template(&inlined)),
+                inner_body,
+            )])
         }
         crate::syntax::FnStmt::Switch { subject, arms } => {
             let subject =
                 compile_template(&inline_dsl_template(subject, scope, sources, source_name)?);
-            let mut arms_out = Vec::new();
+            let mut arm_ids = Vec::new();
             for arm in arms {
                 let pattern = match &arm.pattern {
                     DslArmPattern::Default => ArmPattern::Default,
@@ -394,7 +358,6 @@ pub(super) fn compile_fn_stmt(
                         ArmPattern::Lit(inlined.literal_text())
                     }
                 };
-                let arm_row = take_row(row);
                 let mut inner = scope.clone();
                 let body = compile_fn_stmts(
                     &arm.body,
@@ -403,41 +366,12 @@ pub(super) fn compile_fn_stmt(
                     source_name,
                     resolver,
                     cycle_stack,
-                    row,
+                    arena,
                 )?;
-                arms_out.push(Arm {
-                    row: arm_row,
-                    pattern,
-                    body,
-                });
+                arm_ids.push(arena.push(NodeKind::Arm(pattern), body));
             }
-            // The switch statement has no line of its own; each arm is a row.
-            Ok(vec![Instruction::Switch {
-                subject,
-                arms: arms_out,
-            }])
+            // The switch has no row of its own; each arm child is a row.
+            Ok(vec![arena.push(NodeKind::Switch(subject), arm_ids)])
         }
     }
-}
-
-/// Wrap one statement's instructions in a display step with the next row.
-fn step(row: &mut usize, label: String, body: Vec<Instruction>) -> Instruction {
-    Instruction::Step {
-        row: take_row(row),
-        label,
-        body,
-    }
-}
-
-/// The next compile-assigned display row.
-fn take_row(row: &mut usize) -> usize {
-    let index = *row;
-    *row += 1;
-    index
-}
-
-/// The plan preview of a template: literal text with `$(...)` placeholders
-/// kept visible (`@()` is already inlined at this point).
-fn plan_text(template: &crate::ir::Template) -> String {
-    crate::ir::template_plan_text(template)
 }

@@ -1,11 +1,12 @@
 /// A single piece of a [`Template`].
 ///
 /// - `Lit` is literal text emitted verbatim.
-/// - `Var` is a `@(name)` data reference resolved against the runtime scope
-///   stack (local -> project -> global). There is no namespace qualifier.
-/// - `Cmd` is a `$(command)` substitution. Its inner template is data-only
-///   (literal / var, never a nested `Cmd` in well-formed input) and is resolved
-///   to a string, run through `shell -c`, and replaced by its stdout.
+/// - `Var` is a `@(name)` data reference. The compiler replaces it with the
+///   template the name refers to before the IR exists, so no runtime scope
+///   remains.
+/// - `Cmd` is a `$(command)` substitution: its inner template is resolved to
+///   a string, run through `shell -c`, and replaced by its stdout. The inner
+///   template may itself contain literals, references, and nested commands.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Part {
     Lit(String),
@@ -24,9 +25,10 @@ pub(crate) struct Template {
 }
 
 impl Template {
-    /// Returns the literal text of the template, concatenating literal parts and
-    /// rendering `@(name)`/`$(cmd)` references as their textual spelling. Used for
-    /// case-pattern matching where the pattern must be a concrete literal.
+    /// Returns the literal text of the template: literal parts concatenated,
+    /// each `@(name)` contributing its name. Commands contribute nothing.
+    /// Used where a template is expected to be concrete literal text (case
+    /// patterns after inlining, test assertions).
     pub(crate) fn literal_text(&self) -> String {
         let mut out = String::new();
         for part in &self.parts {
@@ -47,8 +49,8 @@ pub(crate) struct EnvPair {
     pub(crate) value: Template,
 }
 
-/// A pattern arm inside a `switch` block. Patterns are literal `(...)` text or
-/// the `_` default. Only `Default` survives to the runner.
+/// A pattern arm inside a `switch` block. Patterns are literal `(...)` text
+/// (validated after `@()` inlining) or the `default` arm.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ArmPattern {
     /// The `case(...)` pattern template, validated as literal-only at

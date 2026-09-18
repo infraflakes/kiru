@@ -6,7 +6,7 @@ use super::Lexer;
 use crate::syntax::error::ParseError;
 use crate::syntax::source::{Part, Template};
 use crate::syntax::token::{
-    KeywordForm, Token, TokenType, fuse_call_arguments, keyword_shape, lookup_ident,
+    KeywordForm, Token, TokenType, fuse_call_arguments, is_identifier, keyword_shape, lookup_ident,
 };
 
 impl Lexer {
@@ -44,7 +44,7 @@ impl Lexer {
     /// opening) as its payload. Whitespace between the word and `(` prevents
     /// fusion, so `log (x)` stays keyword + template and is rejected by the
     /// parser generically. The keyword's grammar shape comes from the
-    /// `KEYWORDS` table; the bare-to-fused mapping lives in `fuse_call_token`.
+    /// `KEYWORDS` table; the bare-to-fused mapping lives in `fuse_call_arguments`.
     pub(super) fn read_ident(&mut self) -> Result<Token, ParseError> {
         let start_pos = self.pos;
         let start_byte_offset = self.byte_offset;
@@ -101,7 +101,9 @@ impl Lexer {
     }
 
     /// Read `exec`'s payload: the whole `(...)` region as one raw command
-    /// template (empty for `exec()`), so top-level `;` stays literal.
+    /// template (empty for `exec()`), so top-level `;` stays literal. Plain
+    /// parentheses inside are data (see [`Self::read_template_parts_until`]),
+    /// which is what makes subshells and grouped commands writable.
     fn read_command_argument(
         &mut self,
     ) -> Result<Vec<crate::syntax::source::Template>, ParseError> {
@@ -123,9 +125,10 @@ impl Lexer {
     }
 
     /// Read a call's argument list: the `(...)` region split at top-level
-    /// `;` into templates. Nested `@()`/`$()` parts and command text stay
-    /// atomic; an empty region is zero arguments (`name()`). A trailing `;`
-    /// before `)` does not create an empty argument.
+    /// `;` into templates. Nested `@()`/`$()` parts and balanced plain
+    /// parentheses stay atomic, so a `;` inside them is data; an empty
+    /// region is zero arguments (`name()`). A trailing `;` before `)` does
+    /// not create an empty argument.
     fn read_call_arguments(&mut self) -> Result<Vec<crate::syntax::source::Template>, ParseError> {
         let open_offset = self.byte_offset;
         self.read_char(); // consume '('
@@ -207,6 +210,12 @@ impl Lexer {
                         self.unexpected("empty variable reference".to_string(), start_offset)
                     );
                 }
+                if !is_identifier(&name) {
+                    return Err(self.unexpected(
+                        format!("`{name}` is not a valid variable name"),
+                        start_offset,
+                    ));
+                }
                 self.read_char(); // consume ')'
                 vec![Part::Var(name)]
             }
@@ -238,15 +247,22 @@ impl Lexer {
     }
 
     /// Read the body of a template until the matching top-level `)`. Inside, `@(`
-    /// starts a `Var` part (its `)` is mandatory and its name must not be empty)
-    /// and `$(` starts a nested `Cmd` part (whose own body is read recursively
-    /// and must not be empty). All other characters accumulate into a literal
-    /// part. With `stop_on_semicolon`, a top-level `;` ends the parts instead
-    /// (call argument lists); the caller learns which terminator was hit.
+    /// starts a `Var` part (its `)` is mandatory and its name must be a plain
+    /// identifier) and `$(` starts a nested `Cmd` part (whose own body is read
+    /// recursively and must not be empty). Every other character accumulates
+    /// into a literal part, including plain parentheses.
+    ///
+    /// Plain `(` and `)` are data in matched pairs: `(` opens a depth level and
+    /// `)` closes it, both staying in the literal text. Only the `)` that
+    /// returns to depth zero ends the region, so `(a (b) c)` is one template
+    /// and `exec(cd x && (make))` is one command. An unbalanced `)` cannot be
+    /// data - closing the region is exactly what it does; produce one with
+    /// `$()` when a command needs it literally. With `stop_on_semicolon`, a `;`
+    /// at depth zero ends the parts instead (call argument lists); the caller
+    /// learns which terminator was hit.
     ///
     /// Returns `Err(message)` when the template is malformed, so the caller can
-    /// emit an `Illegal` token carrying that message instead of a malformed
-    /// `Template`.
+    /// raise a lex error instead of producing a malformed `Template`.
     fn read_template_parts(&mut self) -> Result<Vec<Part>, String> {
         self.read_template_parts_until(false)
             .map(|(parts, _)| parts)
@@ -261,6 +277,9 @@ impl Lexer {
     ) -> Result<(Vec<Part>, bool), String> {
         let mut parts: Vec<Part> = Vec::new();
         let mut lit = String::new();
+        // Plain parentheses are data in matched pairs; only depth zero ends
+        // the region.
+        let mut paren_depth = 0usize;
 
         loop {
             match self.ch {
@@ -268,11 +287,21 @@ impl Lexer {
                     // Unterminated template: signal the caller so it can error.
                     return Err("unterminated template".to_string());
                 }
-                Some(')') => {
+                Some(')') if paren_depth == 0 => {
                     self.read_char();
                     return Ok((finish_parts(parts, lit), false));
                 }
-                Some(';') if stop_on_semicolon => {
+                Some(')') => {
+                    lit.push(')');
+                    paren_depth -= 1;
+                    self.read_char();
+                }
+                Some('(') => {
+                    lit.push('(');
+                    paren_depth += 1;
+                    self.read_char();
+                }
+                Some(';') if stop_on_semicolon && paren_depth == 0 => {
                     self.read_char();
                     return Ok((finish_parts(parts, lit), true));
                 }
@@ -288,6 +317,9 @@ impl Lexer {
                     }
                     if name.is_empty() {
                         return Err("empty variable reference".to_string());
+                    }
+                    if !is_identifier(&name) {
+                        return Err(format!("`{name}` is not a valid variable name"));
                     }
                     self.read_char(); // ')'
                     parts.push(Part::Var(name));
@@ -317,7 +349,8 @@ impl Lexer {
         }
     }
 
-    /// Read an identifier's worth of characters (`[A-Za-z0-9_]`).
+    /// Read the character span of a variable name (`[A-Za-z0-9_]`); whether
+    /// it is a valid identifier is checked by the caller.
     fn read_ident_chars(&mut self) -> String {
         let mut name = String::new();
         while let Some(ch) = self.ch {

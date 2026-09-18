@@ -1,5 +1,5 @@
-//! Top-level declaration parsers: `var`, `fn`, and project-level
-//! `var`/`fn` inside `project` bodies.
+//! Top-level declaration parsers: `var` and `fn`. A `var` inside any body
+//! is a statement (`FnStmt::Bind`), not a declaration.
 
 use super::*;
 
@@ -64,13 +64,7 @@ impl Parser {
                     ));
                 }
             };
-            let is_identifier = !text.is_empty()
-                && !text.chars().next().is_some_and(|c| c.is_ascii_digit())
-                && text.chars().all(|c| c.is_alphanumeric() || c == '_')
-                && !crate::syntax::token::is_keyword_token(&crate::syntax::token::lookup_ident(
-                    text,
-                ));
-            if !is_identifier {
+            if !crate::syntax::token::is_identifier(text) {
                 return Err(ParseError::new(
                     self.eof_aware_span(),
                     format!("`{text}` is not a valid parameter name"),

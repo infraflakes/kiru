@@ -2,7 +2,9 @@ pub(crate) mod colors;
 pub(crate) mod context;
 pub(crate) mod direnv;
 pub(crate) mod error;
+pub(crate) mod model;
 pub(crate) mod run;
+pub(crate) mod signals;
 pub(crate) mod subprocess;
 pub(crate) mod sync;
 pub(crate) mod tui;
@@ -10,157 +12,19 @@ pub(crate) mod tui;
 pub(crate) use context::ProjectExec;
 pub(crate) use run::execute_run;
 pub(crate) use sync::{ProjectSync, run_sync_for_projects};
-pub(crate) use tui::model::TaskStatus;
 pub(crate) use tui::run::{format_final_output, render_run_output};
 pub(crate) use tui::sync::render_sync_output;
-pub(crate) use tui::{TuiEvent, run_tui_with, send_tui_event};
-
-use crate::exec::error::RuntimeError;
-use tokio::sync::mpsc;
-use tokio::task::{JoinError, JoinHandle};
 
 /// Why a TUI-driven batch of tasks (a run block or a sync) ended
 /// unsuccessfully. The distinction matters for reporting: task failures
-/// were already rendered through the output sink, infrastructure failures
-/// were not.
+/// were already rendered through the display, infrastructure failures were
+/// not.
 pub(crate) enum TaskRunError {
     /// At least one task failed. Every failing task rendered its own error
-    /// through the output sink (and the TUI summary shows the final count),
-    /// so there is nothing left to print, only a non-zero exit remains.
+    /// through the display, so there is nothing left to print, only a
+    /// non-zero exit remains.
     TaskFailed,
     /// The TUI or worker infrastructure failed before or while running the
     /// tasks. The message has not been shown anywhere yet.
     Infrastructure(String),
-}
-
-/// Outcome of a single async task (a chain step or a project sync), used to
-/// centralize the TUI event reporting shared by the chain and sync runners.
-pub(crate) enum TaskOutcome<E> {
-    /// Completed successfully.
-    Success,
-    /// Returned an error before finishing.
-    Error(E),
-    /// The spawned task panicked and could not be joined normally.
-    Panic(JoinError),
-}
-
-/// Emits the TUI events for a finished task and returns whether it failed.
-///
-/// Centralizes the success/error/panic status reporting shared by the chain
-/// and sync runners. The error is borrowed so callers keep ownership and can
-/// propagate it further.
-///
-/// Display follows the error's own cause, never timing: only
-/// [`RuntimeError::Cancelled`] — a task that never ran, or was killed,
-/// because the run was already lost to another chain's failure — renders as
-/// cancelled. Every other error is a genuine failure.
-pub(crate) fn report_task_outcome(
-    tx: &mpsc::UnboundedSender<TuiEvent>,
-    index: usize,
-    outcome: TaskOutcome<&error::RuntimeError>,
-) -> bool {
-    match outcome {
-        TaskOutcome::Success => {
-            send_tui_event(tx, TuiEvent::UpdateStatus(index, TaskStatus::Success));
-            false
-        }
-        TaskOutcome::Error(e) => {
-            // Timeout errors are already emitted via OutputCallback inside
-            // ExecContext::run_live with correct shell indent, suppress
-            // the duplicate "Error:" line here.
-            let is_timeout = e.is_timeout();
-            if !is_timeout {
-                send_tui_event(tx, TuiEvent::AppendOutput(index, format!("Error: {}", e)));
-            }
-            let status = match e {
-                error::RuntimeError::Cancelled(_) => TaskStatus::Cancelled,
-                _ => TaskStatus::Error,
-            };
-            send_tui_event(tx, TuiEvent::UpdateStatus(index, status));
-            true
-        }
-        TaskOutcome::Panic(e) => {
-            send_tui_event(
-                tx,
-                TuiEvent::AppendOutput(index, format!("Task panicked: {}", e)),
-            );
-            // A panic is a genuine defect, never a fail-fast victim.
-            send_tui_event(tx, TuiEvent::UpdateStatus(index, TaskStatus::Error));
-            true
-        }
-    }
-}
-
-/// Await all spawned task handles and reduce their results to a single
-/// outcome.
-///
-/// Success and error outcomes are reported by each task's own blocking
-/// closure (chain tasks report per-step as they progress, sync tasks report
-/// when a project finishes), so this driver only joins the handles and
-/// reports panics the closures had no chance to surface. When anything
-/// failed or panicked, the error is [`TaskRunError::TaskFailed`]: the user
-/// has already seen every individual failure.
-pub(crate) async fn await_tasks_and_report(
-    tx: &mpsc::UnboundedSender<TuiEvent>,
-    task_handles: Vec<(usize, JoinHandle<Result<(), RuntimeError>>)>,
-) -> Result<(), TaskRunError> {
-    let mut any_failed = false;
-    for (task_index, handle) in task_handles {
-        match handle.await {
-            Ok(Ok(())) => {}
-            Ok(Err(_)) => any_failed = true,
-            Err(join_error) => {
-                if report_task_outcome(
-                    tx,
-                    task_index,
-                    TaskOutcome::<&RuntimeError>::Panic(join_error),
-                ) {
-                    any_failed = true;
-                }
-            }
-        }
-    }
-    if any_failed {
-        Err(TaskRunError::TaskFailed)
-    } else {
-        Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn report_and_collect(outcome: TaskOutcome<&RuntimeError>) -> Vec<TuiEvent> {
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        report_task_outcome(&tx, 0, outcome);
-        let mut events = Vec::new();
-        while let Ok(event) = rx.try_recv() {
-            events.push(event);
-        }
-        events
-    }
-
-    #[test]
-    fn display_follows_the_error_cause() {
-        // A fail-fast victim carries Cancelled and renders as cancelled.
-        let events = report_and_collect(TaskOutcome::Error(&RuntimeError::Cancelled(
-            "stopped because another chain failed".to_string(),
-        )));
-        assert!(matches!(
-            events.last(),
-            Some(TuiEvent::UpdateStatus(_, TaskStatus::Cancelled))
-        ));
-
-        // A genuine failure renders as failed even if every other chain in
-        // the run already failed.
-        let events = report_and_collect(TaskOutcome::Error(&RuntimeError::Exec {
-            cmd: "make".to_string(),
-            detail: "exited with code 2".to_string(),
-        }));
-        assert!(matches!(
-            events.last(),
-            Some(TuiEvent::UpdateStatus(_, TaskStatus::Error))
-        ));
-    }
 }

@@ -4,8 +4,6 @@
 
 use crate::cli::CliError;
 use crate::exec;
-use crate::exec::ProjectExec;
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -16,41 +14,30 @@ pub(crate) fn execute_run_block(
 ) -> Result<(), CliError> {
     let (profile, _) = crate::cli::resolve_selected_profile(config_arg, profile_arg)?;
 
-    // The IR is the compiled form of the profile's source; the user
+    // The profile's output is the compiled form of its source; the user
     // compiles explicitly, run never compiles.
-    let ir = crate::cli::load_config(&profile.output).map_err(CliError::message)?;
-
-    let mut repos = BTreeMap::new();
-    for (project_name, project) in &profile.projects {
-        if !project.dir.is_empty() {
-            repos.insert(
-                project_name.clone(),
-                ProjectExec {
-                    dir: PathBuf::from(&project.dir),
-                    direnv: project.direnv,
-                },
-            );
+    let program = match crate::cli::load_program(&profile.output) {
+        Ok(Some(program)) => Arc::new(program),
+        Ok(None) => {
+            return Err(CliError::message(format!(
+                "no compiled program at {} (run `kiru compile`)",
+                profile.output.display()
+            )));
         }
+        Err(error) => return Err(CliError::message(error.message())),
+    };
+    if !program.runs.contains_key(&name) {
+        return Err(CliError::message(format!("unknown run block '{}'", name)));
     }
 
-    let body = match ir.runs.get(&name) {
-        Some(body) => body.clone(),
-        None => {
-            return Err(CliError::message(format!("unknown run block '{}'", name)));
-        }
-    };
-    let plan = ir.run_plan(&name);
-
     let invocation_cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"));
-    let timeout = profile.timeout.map(std::time::Duration::from_secs);
-
     exec::execute_run(
-        body,
-        plan,
-        Arc::new(repos),
+        program,
+        &name,
+        crate::cli::exec_projects(&profile),
         invocation_cwd,
-        profile.shell.unwrap_or_else(|| "sh".to_string()),
-        timeout,
+        crate::cli::profile_shell(&profile),
+        crate::cli::profile_timeout(&profile),
     )
     .map_err(CliError::from)
 }

@@ -16,7 +16,6 @@ shlex = "2.0.1"
 thiserror = "2.0.20"
 toml = "1.1.6"
 serde = { version = "1.0.229", features = ["derive"] }
-tokio = { version = "1.53.1", default-features = false, features = ["rt-multi-thread", "sync", "time"] }
 ron = "0.12.2"
 
 [build-dependencies]

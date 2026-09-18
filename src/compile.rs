@@ -1,50 +1,49 @@
 use crate::diagnostics::{Diagnostic, Span};
-use crate::ir::Ir;
+use crate::ir::Program as IrProgram;
 use crate::syntax::{FnStmt, Program, Stmt, Template, TopLevel};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 pub(crate) mod error;
-#[cfg(test)]
-mod test_support;
 
 #[cfg(test)]
 mod tests;
 
-mod build;
 mod inline;
 mod parse;
-mod stmt;
 
 pub(crate) use error::CompileError;
 
-use build::build_ir;
+use inline::{FnResolver, compile_fn_stmts, inline_dsl_template};
 use parse::load_import;
 
 /// Run the full compilation pipeline, always building the complete IR (the
 /// executor/sync both need the resolved projects).
-pub(crate) fn compile_path(entry_path: &Path) -> Result<Ir, CompileError> {
+pub(crate) fn compile_path(entry_path: &Path) -> Result<IrProgram, CompileError> {
     let abs_entry = canonicalize_entry(entry_path)?;
     let mut state = CompileState::new();
     compile_source_file(&abs_entry, &mut state)?;
-    build_ir(state)
+    build_program(state)
 }
 
 /// Compile an in-memory source string. Used by tests: imports inside `source`
 /// still resolve from the filesystem relative to `source_name`, but the root
 /// itself is never read back or registered as loaded.
 #[cfg(test)]
-pub(crate) fn compile_source(source_name: &str, source_text: &str) -> Result<Ir, CompileError> {
+pub(crate) fn compile_source(
+    source_name: &str,
+    source_text: &str,
+) -> Result<IrProgram, CompileError> {
     let program = parse::parse_source(source_name.to_string(), source_text.to_string())?;
     let mut state = CompileState::new();
     compile_program(&program, &mut state)?;
-    build_ir(state)
+    build_program(state)
 }
 
 /// A run block accumulated from `run name { ... }` syntax: its unresolved
 /// body plus the source location, so reference and arity errors report
-/// against the real span. The body is lowered in `build_ir`, once every
-/// function is collected.
+/// against the real span. The body is lowered in `build_program`, once
+/// every function is collected.
 struct PendingRunBlock {
     body: Vec<FnStmt>,
     source_name: String,
@@ -259,15 +258,105 @@ fn compile_stmt(
             value,
             offset,
             len,
-        } => stmt::compile_var_decl(name, value, *offset, *len, &program.source_name, state),
+        } => compile_var_decl(name, value, *offset, *len, &program.source_name, state),
         // Function bodies were collected by the pre-pass and are lowered per
-        // call site during `build_ir`.
+        // call site during `build_program`.
         Stmt::Fn { .. } => Ok(()),
         Stmt::Run {
             name,
             body,
             offset,
             len,
-        } => stmt::compile_run_decl(name, body, *offset, *len, &program.source_name, state),
+        } => compile_run_decl(name, body, *offset, *len, &program.source_name, state),
     }
+}
+
+/// Lower every run body into nodes and freeze the arena. Run bodies are no
+/// different from function bodies: calls are flattened and blocks own their
+/// children, so the display tree and the execution tree are one structure.
+fn build_program(state: CompileState) -> Result<IrProgram, CompileError> {
+    let CompileState {
+        globals,
+        functions,
+        run_blocks,
+        source_texts,
+        loaded_files: _,
+        recursion_stack: _,
+    } = state;
+
+    let resolver = FnResolver {
+        globals: &globals,
+        functions: &functions,
+    };
+
+    let mut runs = BTreeMap::new();
+    let mut arena = crate::ir::ProgramBuilder::default();
+    for (run_name, pending_run) in run_blocks {
+        let PendingRunBlock { body, source_name } = pending_run;
+        let mut scope = globals.clone();
+        let mut cycle_stack = Vec::new();
+        let children = compile_fn_stmts(
+            &body,
+            &mut scope,
+            &source_texts,
+            &source_name,
+            &resolver,
+            &mut cycle_stack,
+            &mut arena,
+        )?;
+        runs.insert(run_name, children);
+    }
+
+    Ok(arena.build(runs))
+}
+
+/// Declare a top-level variable: inline its template against the globals and
+/// record it for later inlining at every use site.
+fn compile_var_decl(
+    name: &str,
+    value: &Template,
+    offset: usize,
+    len: usize,
+    source_name: &str,
+    state: &mut CompileState,
+) -> Result<(), CompileError> {
+    let inlined = inline_dsl_template(value, &state.globals, &state.source_texts, source_name)?;
+    if state.globals.contains_key(name) {
+        return Err(state.spanned(
+            format!("variable `{}` is already defined", name),
+            source_name,
+            offset,
+            len,
+        ));
+    }
+    state.globals.insert(name.to_string(), inlined);
+    Ok(())
+}
+
+/// Accumulate a `run name { ... }` block; bodies are lowered once every
+/// function is collected, so a run may call functions declared later.
+fn compile_run_decl(
+    name: &str,
+    body: &[FnStmt],
+    offset: usize,
+    len: usize,
+    source_name: &str,
+    state: &mut CompileState,
+) -> Result<(), CompileError> {
+    if state.run_blocks.contains_key(name) {
+        return Err(state.spanned(
+            format!("duplicate run block: {}", name),
+            source_name,
+            offset,
+            len,
+        ));
+    }
+    state.run_blocks.insert(
+        name.to_string(),
+        PendingRunBlock {
+            body: body.to_vec(),
+            source_name: source_name.to_string(),
+        },
+    );
+    Ok(())
 }

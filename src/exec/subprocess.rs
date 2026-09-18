@@ -2,9 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read};
 use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -22,6 +22,9 @@ use std::time::{Duration, Instant};
 /// misses grandchildren that re-parented after their parent exited (the
 /// classic orphan bug), and PID namespaces are Linux-only and need
 /// namespace tooling kiru should not require.
+/// How long a group gets to exit on SIGTERM before it is SIGKILLed.
+pub(crate) const GRACE_PERIOD: Duration = Duration::from_secs(2);
+
 pub(crate) struct RunKillSwitch {
     /// Set once any chain of the run has failed. Steps check it before
     /// spawning so no new command starts after the run is already lost.
@@ -43,8 +46,8 @@ impl RunKillSwitch {
         }
     }
 
-    /// Mark the run as failed and kill every live command group.
-    pub(crate) fn fail(&self) {
+    /// Mark the run as failed and stop every live command group.
+    pub(crate) fn fail(self: &Arc<Self>) {
         self.failed.store(true, Ordering::SeqCst);
         self.kill_all();
     }
@@ -54,11 +57,47 @@ impl RunKillSwitch {
         self.failed.load(Ordering::SeqCst)
     }
 
-    /// Kill every live command group. The set is snapshotted under the lock
-    /// and killed without it, so concurrent registration is never blocked by
-    /// a syscall. Killed groups are recorded so their tasks can be told
-    /// apart from tasks that died on their own.
-    pub(crate) fn kill_all(&self) {
+    /// Stop every live command group: SIGTERM first so processes can clean
+    /// up, then SIGKILL after a grace period for whatever is still
+    /// registered. The set is snapshotted under the lock and signalled
+    /// without it, so concurrent registration is never blocked by a syscall.
+    /// Stopped groups are recorded so their tasks can be told apart from
+    /// tasks that died on their own.
+    pub(crate) fn kill_all(self: &Arc<Self>) {
+        let targets: Vec<i32> = self
+            .groups
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .copied()
+            .collect();
+        if targets.is_empty() {
+            return;
+        }
+        for pgid in &targets {
+            self.mark_killed(*pgid);
+            signal_group(*pgid, libc::SIGTERM);
+        }
+        let switch = Arc::clone(self);
+        thread::spawn(move || {
+            thread::sleep(GRACE_PERIOD);
+            for pgid in targets {
+                let still_live = switch
+                    .groups
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .contains(&pgid);
+                if still_live {
+                    signal_group(pgid, libc::SIGKILL);
+                }
+            }
+        });
+    }
+
+    /// SIGKILL every group still registered, without waiting for the grace
+    /// period. The cancel path hands off here because it exits immediately
+    /// after, which would otherwise abandon the escalation thread.
+    pub(crate) fn kill_survivors(&self) {
         let targets: Vec<i32> = self
             .groups
             .lock()
@@ -67,12 +106,24 @@ impl RunKillSwitch {
             .copied()
             .collect();
         for pgid in targets {
-            self.killed
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .insert(pgid);
-            kill_group(pgid);
+            signal_group(pgid, libc::SIGKILL);
         }
+    }
+
+    /// Record `pgid` as killed by this switch, so its task can distinguish
+    /// an external stop from an independent death.
+    pub(crate) fn mark_killed(&self, pgid: i32) {
+        self.killed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(pgid);
+    }
+
+    /// Stop one registered group synchronously: SIGTERM, wait up to the
+    /// grace period for the leader to exit, then SIGKILL.
+    pub(crate) fn terminate_group(&self, child: &mut std::process::Child, pgid: i32) {
+        self.mark_killed(pgid);
+        terminate_group(child, pgid);
     }
 
     /// Whether this switch was what killed the group `pgid`.
@@ -105,17 +156,32 @@ impl RunKillSwitch {
     }
 }
 
-/// SIGKILL every process in the group `pgid`, leader included. The group
-/// dies atomically from the kernel's view; there is no window in which a
+/// Signal every process in the group `pgid`, leader included. The group is
+/// addressed as a set from the kernel's view; there is no window in which a
 /// child of the command survives its parent.
-fn kill_group(pgid: i32) {
+fn signal_group(pgid: i32, signal: i32) {
     // SAFETY: kill is the POSIX syscall taking two integers; it cannot
     // violate memory safety. ESRCH (group already gone) is ignored.
-    let _ = unsafe { libc::kill(-pgid, libc::SIGKILL) };
+    let _ = unsafe { libc::kill(-pgid, signal) };
+}
+
+/// Stop one command group: SIGTERM so the command can clean up, a bounded
+/// wait for its leader to exit, then SIGKILL for the whole group.
+fn terminate_group(child: &mut std::process::Child, pgid: i32) {
+    signal_group(pgid, libc::SIGTERM);
+    let deadline = Instant::now() + GRACE_PERIOD;
+    while Instant::now() < deadline {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => thread::sleep(Duration::from_millis(10)),
+            Err(_) => break,
+        }
+    }
+    signal_group(pgid, libc::SIGKILL);
 }
 
 /// A line of subprocess output, tagged by the stream it arrived on.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum SubprocessLine {
     Stdout(String),
     Stderr(String),
@@ -199,9 +265,24 @@ fn spawn_stream_reader<T: Read + Send + 'static>(
 ) -> Option<thread::JoinHandle<()>> {
     stream.map(|stream| {
         thread::spawn(move || {
-            for line in BufReader::new(stream).lines().map_while(Result::ok) {
-                if sender.send(tag(line)).is_err() {
-                    break;
+            let mut reader = BufReader::new(stream);
+            loop {
+                let mut bytes = Vec::new();
+                match reader.read_until(b'\n', &mut bytes) {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        // Decode lossily: a single invalid byte must not
+                        // truncate the rest of the stream. Trailing line
+                        // endings are stripped, matching line semantics.
+                        while matches!(bytes.last(), Some(b'\n' | b'\r')) {
+                            bytes.pop();
+                        }
+                        let line = String::from_utf8_lossy(&bytes).into_owned();
+                        if sender.send(tag(line)).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
                 }
             }
         })
@@ -244,6 +325,20 @@ pub(crate) fn run_subprocess(
         // reaches its entire tree (wrappers and forked grandchildren) without
         // touching kiru's own group.
         .process_group(0);
+    #[cfg(target_os = "linux")]
+    unsafe {
+        // If kiru dies without stopping its children, the kernel signals
+        // this child. The parent-pid recheck closes the race where kiru died
+        // between fork and prctl.
+        command.pre_exec(|| {
+            let parent = libc::getppid();
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+            if libc::getppid() != parent {
+                libc::raise(libc::SIGTERM);
+            }
+            Ok(())
+        });
+    }
     if let Some(dir) = working_dir {
         command.current_dir(dir);
     }
@@ -257,6 +352,18 @@ pub(crate) fn run_subprocess(
     let pgid = child.id() as i32;
     if let Some(kill) = kill {
         kill.register(pgid);
+        // The run can be lost between the caller's pre-spawn check and this
+        // registration; a stop that missed this group must still not leave
+        // it running.
+        if kill.is_failed() {
+            kill.terminate_group(&mut child, pgid);
+            let status = child.wait().map_err(SubprocessError::Spawn)?;
+            kill.deregister(pgid);
+            return Ok(SubprocessExit {
+                status,
+                killed_by_switch: true,
+            });
+        }
     }
 
     // Each stream is drained by a reader thread forwarding lines through a
@@ -290,7 +397,13 @@ pub(crate) fn run_subprocess(
             None => line_receiver
                 .recv()
                 .map_err(|_| mpsc::RecvTimeoutError::Disconnected),
-            Some(_) => line_receiver.recv_timeout(Duration::from_millis(50)),
+            // Wait at most the remaining budget, so a silent command times
+            // out exactly when its deadline passes.
+            Some(limit) => line_receiver.recv_timeout(
+                limit
+                    .saturating_sub(start.elapsed())
+                    .max(Duration::from_millis(1)),
+            ),
         };
         match received {
             Ok(SubprocessLine::Stdout(text)) => {
@@ -309,20 +422,18 @@ pub(crate) fn run_subprocess(
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                if timeout.is_some_and(|limit| start.elapsed() >= limit) {
-                    // Kill the whole group: the direct child may itself have
-                    // forked grandchildren that must not outlive the timeout.
-                    kill_group(pgid);
-                    let _ = child.wait();
-                    if let Some(kill) = kill {
-                        kill.deregister(pgid);
-                    }
-                    return Err(SubprocessError::Timeout {
-                        command: cmd_desc.to_string(),
-                        partial_stdout,
-                        partial_stderr,
-                    });
+                // Stop the whole group: the direct child may itself have
+                // forked grandchildren that must not outlive the timeout.
+                terminate_group(&mut child, pgid);
+                let _ = child.wait();
+                if let Some(kill) = kill {
+                    kill.deregister(pgid);
                 }
+                return Err(SubprocessError::Timeout {
+                    command: cmd_desc.to_string(),
+                    partial_stdout,
+                    partial_stderr,
+                });
             }
         }
     }
@@ -381,7 +492,7 @@ mod tests {
 
     #[test]
     fn kill_switch_flag_transitions() {
-        let switch = RunKillSwitch::new();
+        let switch = Arc::new(RunKillSwitch::new());
         assert!(!switch.is_failed(), "a fresh switch is not failed");
         // Killing with no live groups registered is a no-op.
         switch.kill_all();
@@ -426,8 +537,56 @@ mod tests {
         // recorded as a victim (killed_by_switch already proves the switch
         // recorded the kill), and the group left the live registry.
         use std::os::unix::process::ExitStatusExt;
-        assert_eq!(exit.status.signal(), Some(libc::SIGKILL));
+        assert!(
+            matches!(exit.status.signal(), Some(libc::SIGTERM | libc::SIGKILL)),
+            "stopped by the switch's SIGTERM (or its SIGKILL escalation)"
+        );
         assert!(exit.killed_by_switch, "killed child is a switch victim");
         assert_eq!(switch.live_group_count(), 0, "group deregistered");
+    }
+
+    /// Invalid UTF-8 must not truncate the stream: the rest of the output
+    /// still arrives, with the bad byte decoded lossily.
+    #[test]
+    fn invalid_utf8_output_is_preserved_lossily() {
+        let mut lines = Vec::new();
+        run_subprocess(
+            "printf",
+            &["sh", "-c", "printf 'ok\n'; printf '\\377\n'"],
+            None,
+            None,
+            None,
+            None,
+            &mut |line| lines.push(line),
+        )
+        .unwrap();
+        assert_eq!(lines.len(), 2, "both lines are read: {lines:?}");
+        assert_eq!(lines[0], SubprocessLine::Stdout("ok".to_string()));
+        match &lines[1] {
+            SubprocessLine::Stdout(line) => {
+                assert!(line.contains('\u{FFFD}'), "lossy decode: {line:?}");
+            }
+            other => panic!("expected stdout, got {other:?}"),
+        }
+    }
+
+    /// A command that ignores SIGTERM is still stopped by the escalation.
+    #[test]
+    fn timeout_escalates_to_sigkill() {
+        let start = Instant::now();
+        let result = run_subprocess(
+            "trap-term",
+            &["sh", "-c", "trap '' TERM; sleep 60"],
+            None,
+            None,
+            Some(Duration::from_millis(200)),
+            None,
+            &mut |_| {},
+        );
+        assert!(matches!(result, Err(SubprocessError::Timeout { .. })));
+        assert!(
+            start.elapsed() < Duration::from_secs(15),
+            "escalation is bounded"
+        );
     }
 }

@@ -1,5 +1,4 @@
-//! Template expression parser: `(literal)`, `$(cmd)`, `@(var)`, and
-//! bare identifiers resolved into `Template` nodes.
+//! Template expression parser: `(literal)`, `$(cmd)`, and `@(var)`.
 
 use super::*;
 use crate::syntax::source::Template;
@@ -38,6 +37,17 @@ mod tests {
             crate::syntax::TopLevel::Stmt(crate::syntax::Stmt::Var { value, .. }) => {
                 assert_eq!(value.parts.len(), 1);
                 assert!(matches!(&value.parts[0], Part::Lit(s) if s == "hello"));
+            }
+            _ => panic!("expected var"),
+        }
+    }
+
+    #[test]
+    fn test_nested_plain_parens_stay_literal() {
+        let prog = parse_program("var x = (a (b) c);").unwrap();
+        match &prog.top_level_items[0] {
+            crate::syntax::TopLevel::Stmt(crate::syntax::Stmt::Var { value, .. }) => {
+                assert_eq!(value.literal_text(), "a (b) c");
             }
             _ => panic!("expected var"),
         }

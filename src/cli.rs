@@ -8,10 +8,13 @@ mod sync;
 use args::{Cli, Commands};
 
 use crate::compile::CompileError;
-use crate::exec::TaskRunError;
-use crate::ir::Ir;
+use crate::exec::{ProjectExec, ProjectSync, TaskRunError};
+use crate::ir::Program;
 use clap::Parser;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 
 pub(crate) mod compile;
 
@@ -57,14 +60,108 @@ pub(crate) fn compile_error_to_cli_error(e: CompileError) -> CliError {
     }
 }
 
-/// Load the IR by reading and parsing the compiled kirufile (the compiled
-/// form of the DSL that `status` and `run` work against). The path comes
-/// from the profile's `output`.
-pub(crate) fn load_config(ir_path: &Path) -> Result<Ir, String> {
-    let text = std::fs::read_to_string(ir_path)
-        .map_err(|e| format!("failed to read kirufile {}: {}", ir_path.display(), e))?;
-    Ir::deserialize(&text)
-        .map_err(|e| format!("failed to parse kirufile {}: {}", ir_path.display(), e))
+/// Why the compiled program could not be loaded. The absent case is not an
+/// error for every command: `status` reports what is configured without one,
+/// while `run` requires it.
+pub(crate) enum ProgramLoadError {
+    /// The file exists but is not a valid program.
+    Invalid { path: PathBuf, message: String },
+}
+
+/// Load the compiled program from the profile's `output`. `Ok(None)` means
+/// nothing has been compiled yet.
+pub(crate) fn load_program(path: &Path) -> Result<Option<Program>, ProgramLoadError> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(ProgramLoadError::Invalid {
+                path: path.to_path_buf(),
+                message: format!("failed to read: {e}"),
+            });
+        }
+    };
+    match Program::deserialize(&text) {
+        Ok(program) => Ok(Some(program)),
+        Err(message) => Err(ProgramLoadError::Invalid {
+            path: path.to_path_buf(),
+            message,
+        }),
+    }
+}
+
+impl ProgramLoadError {
+    /// The user-facing message of a malformed compiled program.
+    pub(crate) fn message(&self) -> String {
+        match self {
+            ProgramLoadError::Invalid { path, message } => {
+                format!(
+                    "failed to parse compiled program {}: {message}",
+                    path.display()
+                )
+            }
+        }
+    }
+}
+
+/// The project map `run` executes against: every project with a directory.
+pub(crate) fn exec_projects(
+    profile: &kiru_toml::ResolvedProfile,
+) -> Arc<BTreeMap<String, ProjectExec>> {
+    let mut projects = BTreeMap::new();
+    for (name, project) in &profile.projects {
+        if !project.dir.is_empty() {
+            projects.insert(
+                name.clone(),
+                ProjectExec {
+                    dir: PathBuf::from(&project.dir),
+                    direnv: project.direnv,
+                },
+            );
+        }
+    }
+    Arc::new(projects)
+}
+
+/// The project list `sync` works through: only projects with both a url and
+/// a directory are syncable; the rest are reported and skipped.
+pub(crate) fn sync_projects(profile: &kiru_toml::ResolvedProfile) -> Vec<ProjectSync> {
+    profile
+        .projects
+        .iter()
+        .filter_map(|(name, project)| {
+            let skip_reason = if project.url.is_empty() && project.dir.is_empty() {
+                Some("missing url and dir")
+            } else if project.url.is_empty() {
+                Some("missing url")
+            } else if project.dir.is_empty() {
+                Some("missing dir")
+            } else {
+                None
+            };
+            if let Some(reason) = skip_reason {
+                eprintln!("Warning: project {name:?}: {}, skipping sync", reason);
+                None
+            } else {
+                Some(ProjectSync {
+                    name: name.clone(),
+                    url: project.url.clone(),
+                    dir: project.dir.clone(),
+                    branch: project.branch.clone(),
+                })
+            }
+        })
+        .collect()
+}
+
+/// The shell of a profile, or the POSIX default.
+pub(crate) fn profile_shell(profile: &kiru_toml::ResolvedProfile) -> String {
+    profile.shell.clone().unwrap_or_else(|| "sh".to_string())
+}
+
+/// The command timeout of a profile.
+pub(crate) fn profile_timeout(profile: &kiru_toml::ResolvedProfile) -> Option<Duration> {
+    profile.timeout.map(Duration::from_secs)
 }
 
 /// Resolve the `kiru.toml` path from `-c`, falling back to the canonical

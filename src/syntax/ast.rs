@@ -4,8 +4,9 @@ use crate::syntax::source::Template;
 /// A parsed statement node in the kiru DSL.
 #[derive(Debug, Clone)]
 pub(crate) enum Stmt {
-    /// A variable declaration (`var name = value`). Frozen at compile time
-    /// when it contains no `$(command)` part; otherwise resolved at runtime.
+    /// A variable declaration (`var name = value`). The value is a template
+    /// inlined at every use site; any `$(command)` inside it resolves where
+    /// it is used, never here.
     Var {
         name: String,
         value: Template,
@@ -14,8 +15,8 @@ pub(crate) enum Stmt {
     },
     /// A function definition (`fn name(params) { ... };`): a named bundle of
     /// statements, callable by name from any body and importable across
-    /// files. Functions are global; project contexts are selected at the
-    /// call site with a qualifier.
+    /// files. Functions are global; a call runs in the project context of
+    /// the enclosing `project(...)` block, or at the invocation context.
     Fn {
         name: String,
         params: Vec<String>,

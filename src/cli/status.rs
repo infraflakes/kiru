@@ -8,7 +8,7 @@ use super::CliError;
 use super::pager;
 use crate::cli::kiru_toml::ResolvedProfile;
 use crate::exec::colors::{BOLD, BOLD_CYAN, CYAN, RESET, YELLOW};
-use crate::ir::Ir;
+use crate::ir::Program;
 use std::path::PathBuf;
 
 macro_rules! style {
@@ -23,12 +23,12 @@ pub(crate) fn run_status_command(
 ) -> Result<(), CliError> {
     let (profile, _) = super::resolve_selected_profile(config_arg, profile_arg)?;
 
-    // The IR is optional: without a compiled kirufile there are simply no
-    // runs to show. A malformed one is still an error, status validates it.
-    let runs = match super::load_config(&profile.output) {
-        Ok(config) => Some(config),
-        Err(message) if message.contains("failed to read") => None,
-        Err(message) => return Err(CliError::message(message)),
+    // The program is optional: without a compiled output there are simply
+    // no runs to show. A malformed one is still an error, status validates
+    // it.
+    let runs = match super::load_program(&profile.output) {
+        Ok(program) => program,
+        Err(error) => return Err(CliError::message(error.message())),
     };
 
     let rendered_status_tree = format_status_tree(&profile, runs.as_ref());
@@ -40,7 +40,7 @@ pub(crate) fn run_status_command(
 /// Render the whole status: the selected profile (paths and options), its
 /// projects, and the run blocks when a compiled IR exists. Without one,
 /// the output shows exactly what is configured.
-pub(crate) fn format_status_tree(profile: &ResolvedProfile, runs: Option<&Ir>) -> String {
+pub(crate) fn format_status_tree(profile: &ResolvedProfile, runs: Option<&Program>) -> String {
     let mut out = String::new();
     out.push('\n');
 
@@ -133,7 +133,7 @@ fn draw_projects(out: &mut String, profile: &ResolvedProfile) {
 
 /// Draw the compiled run blocks: their names only. What each run contains
 /// belongs to `kiru run`, not to the profile overview.
-fn draw_runs(out: &mut String, runs: &Ir) {
+fn draw_runs(out: &mut String, runs: &Program) {
     out.push_str(&format!(
         "\n  {}  {}\n",
         style!(BOLD, "Runs"),
@@ -176,19 +176,20 @@ mod tests {
         }
     }
 
-    fn sample_runs() -> Ir {
-        Ir {
+    fn sample_runs() -> Program {
+        Program {
             runs: BTreeMap::from([("ci".to_string(), Vec::new())]),
+            nodes: Vec::new(),
         }
     }
 
     #[test]
     fn tree_shows_profile_projects_and_runs() {
-        let profile = sample_profile("ci", "src/main.kiru", "dist/ci/kirufile");
+        let profile = sample_profile("ci", "src/main.kiru", "dist/ci/compiled");
         let tree = format_status_tree(&profile, Some(&sample_runs()));
         assert!(tree.contains("Profile") && tree.contains("ci"), "{tree}");
         assert!(tree.contains("src/main.kiru"), "{tree}");
-        assert!(tree.contains("dist/ci/kirufile"), "{tree}");
+        assert!(tree.contains("dist/ci/compiled"), "{tree}");
         assert!(tree.contains("shell") && tree.contains("zsh"), "{tree}");
         assert!(tree.contains("timeout") && tree.contains("300"), "{tree}");
         assert!(tree.contains("Projects"), "{tree}");
@@ -205,7 +206,7 @@ mod tests {
 
     #[test]
     fn missing_ir_renders_no_runs() {
-        let profile = sample_profile("ci", "src/main.kiru", "dist/ci/kirufile");
+        let profile = sample_profile("ci", "src/main.kiru", "dist/ci/compiled");
         let tree = format_status_tree(&profile, None);
         assert!(tree.contains("Profile"), "{tree}");
         assert!(tree.contains("Projects"), "{tree}");

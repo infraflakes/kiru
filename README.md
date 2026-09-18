@@ -68,7 +68,7 @@ A run block is the entry point, like `main()` in other languages: a body of stat
 ```toml
 [profile.default]
 source = "main.kiru"     # compile input, relative to this file
-output = "kirufile"      # where the IR goes, filename included
+output = "compiled"      # where the compiled program goes, filename included
 shell   = "sh"
 timeout = 300            # optional, seconds per command
 
@@ -85,7 +85,7 @@ A repo can ship its own `kiru.toml` and pass it with `-c`, which makes CI/CD one
 ```toml
 [profile.ci]
 source = "src/main.kiru"
-output = "dist/ci/kirufile"
+output = "dist/ci/compiled"
 ```
 
 ## Compile and run

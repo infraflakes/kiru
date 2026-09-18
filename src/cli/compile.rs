@@ -29,7 +29,7 @@ pub(crate) fn run_compile_command(
     let text = ir.serialize();
     std::fs::write(&profile.output, text).map_err(|e| {
         CliError::message(format!(
-            "failed to write kirufile {}: {}",
+            "failed to write compiled program {}: {}",
             profile.output.display(),
             e
         ))

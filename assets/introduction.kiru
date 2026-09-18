@@ -5,7 +5,7 @@
 # Every declaration ends with a semicolon.
 #
 # Try it after reading:
-#   kiru compile -c kiru.toml -p default   # turn this into a kirufile
+#   kiru compile -c kiru.toml -p default   # turn this into the compiled program
 #   kiru status -p default                 # see what kiru found
 #   kiru run all -p default                # run the pipeline at the bottom
 
@@ -162,7 +162,7 @@ run ci {
 #
 #   [profile.default]
 #   source = "main.kiru"
-#   output = "kirufile"
+#   output = "compiled"
 #
 #   [profile.default.project.myapp]
 #   url    = "git@github.com:you/myapp.git"

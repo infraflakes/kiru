@@ -143,7 +143,7 @@ impl Parser {
 
     /// Parses a `switch(subject) { case(pat) { ... } default { ... } };`
     /// block. The subject template is fused into the `switch(...)` token;
-    /// each arm is a call: `case(pattern)` or the wildcard `default()`.
+    /// each arm is `case(pattern)` or the bare wildcard `default`.
     pub(crate) fn parse_switch_stmt(&mut self) -> Result<FnStmt, ParseError> {
         let subject = match &self.current_token().token_type {
             TokenType::Switch(Some(args)) => self.single_argument(args.clone(), "switch")?,
@@ -151,13 +151,11 @@ impl Parser {
         };
         self.advance();
 
-        self.expect_with_context(TokenType::LBrace, "to open switch arms")?;
-
-        let mut arms = Vec::new();
-        while self.current_token().token_type != TokenType::RBrace {
-            arms.push(self.parse_switch_arm()?);
-        }
-        self.expect_with_context(TokenType::RBrace, "to close switch block")?;
+        let arms = self.parse_braced_block(
+            "to open switch arms",
+            "to close switch block",
+            Self::parse_switch_arm,
+        )?;
 
         self.expect_with_context(TokenType::Semicolon, "after switch block")?;
 

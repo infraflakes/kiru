@@ -146,6 +146,21 @@ pub(crate) fn fuse_call_arguments(
     }
 }
 
+/// Whether `text` is a plain identifier: a letter or underscore first, then
+/// letters, digits, or underscores, and not a reserved keyword. One rule for
+/// every place that names something a user wrote.
+pub(crate) fn is_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    match chars.next() {
+        Some(first) if first.is_alphabetic() || first == '_' => {}
+        _ => return false,
+    }
+    if !chars.all(|ch| ch.is_alphanumeric() || ch == '_') {
+        return false;
+    }
+    !is_keyword_token(&lookup_ident(text))
+}
+
 /// Convert a keyword string to its corresponding bare token type,
 /// or return `TokenType::Ident` if it is not a keyword.
 pub(crate) fn lookup_ident(ident: &str) -> TokenType {

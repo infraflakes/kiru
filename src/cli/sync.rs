@@ -3,7 +3,6 @@
 //! with `-c`.
 
 use crate::cli::CliError;
-use crate::exec::ProjectSync;
 
 pub(crate) fn run_sync_command(
     config_arg: Option<std::path::PathBuf>,
@@ -11,33 +10,7 @@ pub(crate) fn run_sync_command(
 ) -> Result<(), CliError> {
     let (profile, _) = crate::cli::resolve_selected_profile(config_arg, profile_arg)?;
 
-    let repos: Vec<ProjectSync> = profile
-        .projects
-        .into_iter()
-        .filter_map(|(name, project)| {
-            let skip_reason = if project.url.is_empty() && project.dir.is_empty() {
-                Some("missing url and dir")
-            } else if project.url.is_empty() {
-                Some("missing url")
-            } else if project.dir.is_empty() {
-                Some("missing dir")
-            } else {
-                None
-            };
-            if let Some(reason) = skip_reason {
-                eprintln!("Warning: project {name:?}: {}, skipping sync", reason);
-                None
-            } else {
-                Some(ProjectSync {
-                    name,
-                    url: project.url,
-                    dir: project.dir,
-                    branch: project.branch,
-                })
-            }
-        })
-        .collect();
-
+    let repos = crate::cli::sync_projects(&profile);
     if repos.is_empty() {
         eprintln!("Warning: no projects to sync");
         return Ok(());

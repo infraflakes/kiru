@@ -251,13 +251,13 @@ mod tests {
             r#"
             [profile.ci]
             source = "main.kiru"
-            output = "kirufile"
+            output = "compiled"
             shell = "zsh"
             timeout = 60
 
             [profile.default]
             source = "main.kiru"
-            output = "kirufile"
+            output = "compiled"
 
             [profile.default.project.todo]
             dir = "~/projects/todo"
@@ -267,7 +267,7 @@ mod tests {
         .unwrap();
         assert_eq!(config.profile.len(), 2);
         let default = config.profile.get("default").unwrap();
-        assert_eq!(default.output, "kirufile");
+        assert_eq!(default.output, "compiled");
         assert!(default.projects["todo"].direnv);
         assert_eq!(config.profile["ci"].shell.as_deref(), Some("zsh"));
     }
@@ -284,7 +284,7 @@ mod tests {
             r#"
             [profile.default]
             source = "main.kiru"
-            output = "kirufile"
+            output = "compiled"
             direnv = true
             "#,
         );
@@ -369,13 +369,13 @@ mod tests {
             r#"
             [profile.ci]
             source = "src/main.kiru"
-            output = "build/ir/kirufile"
+            output = "build/ir/compiled"
             "#,
         )
         .unwrap();
         let resolved = resolve_profile(&path, "ci").unwrap();
         assert_eq!(resolved.source, nested.join("src/main.kiru"));
-        assert_eq!(resolved.output, nested.join("build/ir/kirufile"));
+        assert_eq!(resolved.output, nested.join("build/ir/compiled"));
     }
 
     #[test]
@@ -388,13 +388,13 @@ mod tests {
             r#"
             [profile.ci]
             source = "~/main.kiru"
-            output = "/tmp/kirufile"
+            output = "/tmp/compiled"
             "#,
         )
         .unwrap();
         let resolved = resolve_profile(&path, "ci").unwrap();
         assert_eq!(resolved.source, home.join("main.kiru"));
-        assert_eq!(resolved.output, PathBuf::from("/tmp/kirufile"));
+        assert_eq!(resolved.output, PathBuf::from("/tmp/compiled"));
     }
 
     #[test]

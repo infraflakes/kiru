@@ -19,13 +19,10 @@ mod test_support;
 pub(crate) struct Parser {
     lexer: Lexer,
     current: Token,
-    /// One token of lookahead, used to disambiguate `project::fn` references in run
-    /// blocks from a bare identifier in a function body.
-    next: Token,
     source_len: usize,
-    /// First lex error hit while filling the token windows. Lex errors are
-    /// deferred to the next `parse_toplevel` call so the statement currently
-    /// being parsed finishes normally before compilation aborts.
+    /// First lex error hit while advancing. Lex errors are deferred to the
+    /// next `parse_toplevel` call so the statement currently being parsed
+    /// finishes normally before compilation aborts.
     pending_lex_error: Option<ParseError>,
 }
 
@@ -36,21 +33,18 @@ impl Parser {
         let mut parser = Parser {
             lexer,
             current: Token::new(TokenType::Eof, source_len, 0),
-            next: Token::new(TokenType::Eof, source_len, 0),
             source_len,
             pending_lex_error: None,
         };
-        // Fill both lookahead slots (current + next) from the lexer.
-        parser.fill_token_window();
-        parser.fill_token_window();
+        parser.advance();
         parser
     }
 
-    /// Pulls one token from the lexer into `self.next`. A lex error is
+    /// Pulls the next token from the lexer into `current`. A lex error is
     /// stashed (first one wins) and an EOF token takes its place, so the
-    /// token window always holds usable tokens.
+    /// parser always holds a usable token.
     fn pull_token(&mut self) {
-        let token = match self.lexer.next_token() {
+        self.current = match self.lexer.next_token() {
             Ok(token) => token,
             Err(e) => {
                 if self.pending_lex_error.is_none() {
@@ -59,14 +53,6 @@ impl Parser {
                 Token::new(TokenType::Eof, self.source_len, 0)
             }
         };
-        self.next = token;
-    }
-
-    /// Refills the lookahead window: `current` becomes the old `next` and a
-    /// fresh token is pulled from the lexer.
-    fn fill_token_window(&mut self) {
-        self.current = std::mem::replace(&mut self.next, Token::new(TokenType::Eof, 0, 0));
-        self.pull_token();
     }
 
     /// Returns a reference to the current token.
@@ -76,7 +62,7 @@ impl Parser {
 
     /// Advances to the next token from the lexer.
     fn advance(&mut self) {
-        self.fill_token_window();
+        self.pull_token();
     }
 
     /// Surfaces a deferred lex error. Every site that reports "end of file"
@@ -121,8 +107,8 @@ impl Parser {
     }
 
     /// Reads an identifier as a named declaration target (variable, function,
-    /// project, run, or field name) and advances past it. Reserved keywords
-    /// and non-identifier tokens are rejected with a context-aware message.
+    /// or run) and advances past it. Reserved keywords and non-identifier
+    /// tokens are rejected with a context-aware message.
     fn parse_ident_name(&mut self, expected: &'static str) -> Result<String, ParseError> {
         let name = match &self.current_token().token_type {
             TokenType::Ident(name_str) => name_str.clone(),

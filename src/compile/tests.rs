@@ -1,99 +1,148 @@
-use crate::ir::{Instruction, Ir};
+use crate::ir::{ArmPattern, Node, NodeId, NodeKind, Program, Segment, Template};
+use std::sync::atomic::{AtomicU64, Ordering};
 
-/// The instruction body of the display row `row` in a run, searched through
-/// the run body, its async groups, project contexts, and switch arms.
-fn task_body<'a>(ir: &'a Ir, run: &str, row: usize) -> &'a [Instruction] {
-    fn find<'a>(body: &'a [Instruction], row: usize) -> Option<&'a [Instruction]> {
-        for instruction in body {
-            match instruction {
-                Instruction::Step { row: r, body, .. } => {
-                    if *r == row {
-                        return Some(body);
-                    }
-                    if let Some(found) = find(body, row) {
-                        return Some(found);
-                    }
-                }
-                Instruction::Switch { arms, .. } => {
-                    for arm in arms {
-                        if arm.row == row {
-                            return Some(&arm.body);
-                        }
-                        if let Some(found) = find(&arm.body, row) {
-                            return Some(found);
-                        }
-                    }
-                }
-                Instruction::Async { body } | Instruction::Context { body, .. } => {
-                    if let Some(found) = find(body, row) {
-                        return Some(found);
-                    }
-                }
-                _ => {}
-            }
-        }
-        None
-    }
-    find(
-        ir.runs.get(run).unwrap_or_else(|| panic!("run `{run}`")),
-        row,
-    )
-    .unwrap_or_else(|| panic!("row {row} in run `{run}`"))
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Compile a string of kiru source into a `Program` entirely in memory. All
+/// compiler errors are surfaced via `unwrap` so tests fail loudly.
+fn compile_str(src: &str) -> Program {
+    let name = format!("<test {}>", TEMP_COUNTER.fetch_add(1, Ordering::Relaxed));
+    crate::compile::compile_source(&name, src).unwrap_or_else(|e| panic!("compile failed: {:?}", e))
 }
 
-/// The first switch in a run tree, with its arms.
-fn find_switch_arms<'a>(ir: &'a Ir, run: &str) -> Option<&'a [crate::ir::Arm]> {
-    fn find(body: &[Instruction]) -> Option<&[crate::ir::Arm]> {
-        for instruction in body {
-            match instruction {
-                Instruction::Switch { arms, .. } => return Some(arms),
-                Instruction::Step { body, .. }
-                | Instruction::Async { body }
-                | Instruction::Context { body, .. } => {
-                    if let Some(found) = find(body) {
-                        return Some(found);
-                    }
-                }
+/// The run's root nodes.
+fn roots<'a>(program: &'a Program, run: &str) -> &'a [NodeId] {
+    program
+        .runs
+        .get(run)
+        .unwrap_or_else(|| panic!("run `{run}`"))
+}
+
+/// The one child node of `id`.
+fn only_child(program: &Program, id: NodeId) -> NodeId {
+    let children = &program.node(id).children;
+    assert_eq!(children.len(), 1, "expected exactly one child");
+    children[0]
+}
+
+/// The first child of a run.
+fn first_node<'a>(program: &'a Program, run: &str) -> &'a Node {
+    let root = roots(program, run)
+        .first()
+        .copied()
+        .expect("run has a node");
+    program.node(root)
+}
+
+/// The first `Log` or `Exec` template found under a run, in pre-order.
+fn first_command_template<'a>(program: &'a Program, run: &str, want_log: bool) -> &'a Template {
+    fn find<'a>(program: &'a Program, children: &[NodeId], want_log: bool) -> Option<&'a Template> {
+        for &id in children {
+            let node = program.node(id);
+            match &node.kind {
+                NodeKind::Log(t) if want_log => return Some(t),
+                NodeKind::Exec(t) if !want_log => return Some(t),
                 _ => {}
+            }
+            if let Some(found) = find(program, &node.children, want_log) {
+                return Some(found);
             }
         }
         None
     }
-    find(&ir.runs[run])
+    find(program, roots(program, run), want_log).unwrap_or_else(|| {
+        panic!(
+            "no {} template in run `{run}`",
+            if want_log { "log" } else { "exec" }
+        )
+    })
+}
+
+/// The first `switch` node under a run, in pre-order.
+fn first_switch<'a>(program: &'a Program, run: &str) -> &'a Node {
+    fn find<'a>(program: &'a Program, children: &[NodeId]) -> Option<&'a Node> {
+        for &id in children {
+            let node = program.node(id);
+            if matches!(node.kind, NodeKind::Switch(_)) {
+                return Some(node);
+            }
+            if let Some(found) = find(program, &node.children) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    find(program, roots(program, run)).unwrap_or_else(|| panic!("no switch in run `{run}`"))
+}
+
+/// The documented rows of a run, in display order: label and depth. Mirrors
+/// the renderer's walk, without any runtime state.
+fn rows(program: &Program, run: &str) -> Vec<(usize, String)> {
+    fn walk(program: &Program, children: &[NodeId], depth: usize, out: &mut Vec<(usize, String)>) {
+        for &id in children {
+            let node = program.node(id);
+            match &node.kind {
+                NodeKind::Project(_) | NodeKind::Switch(_) => {
+                    walk(program, &node.children, depth, out);
+                }
+                kind => {
+                    if let Some(label) = kind.row_label() {
+                        out.push((depth, label));
+                    }
+                    if matches!(kind, NodeKind::Env(_) | NodeKind::Async | NodeKind::Arm(_)) {
+                        walk(program, &node.children, depth + 1, out);
+                    }
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(program, roots(program, run), 0, &mut out);
+    out
+}
+
+/// The concatenated literal text of an IR template. These tests assert on
+/// fully-inlined templates, so the literal text is their whole value.
+fn template_text(template: &Template) -> String {
+    template
+        .parts
+        .iter()
+        .map(|part| match part {
+            Segment::Lit(text) => text.clone(),
+            Segment::Cmd(_) => String::new(),
+        })
+        .collect()
 }
 
 #[test]
 fn test_compile_basic_run() {
-    let ir = crate::compile::test_support::compile_str(
+    let program = compile_str(
         "\
 var channel = (unstable);
 fn eval { log(evaluating @(channel)); };
 run bootstrap { project(nix) { eval(); }; };
 ",
     );
-    // The project block wraps the row: `run bootstrap { project(nix) { eval(); }; };`
-    match ir.runs["bootstrap"].first() {
-        Some(Instruction::Context { project, body }) => {
-            match project.parts.as_slice() {
-                [crate::ir::Segment::Lit(name)] => assert_eq!(name, "nix"),
-                other => panic!("expected a literal project name, got {:?}", other),
-            }
-            assert!(matches!(
-                body.first(),
-                Some(Instruction::Step { row: 0, .. })
-            ));
-        }
-        other => panic!("expected context, got {:?}", other),
+    // The run has one node: the project context, whose child is the log.
+    let project = first_node(&program, "bootstrap");
+    match &project.kind {
+        NodeKind::Project(name) => match name.parts.as_slice() {
+            [Segment::Lit(name)] => assert_eq!(name, "nix"),
+            other => panic!("expected a literal project name, got {:?}", other),
+        },
+        other => panic!("expected a project context, got {:?}", other),
     }
-    match task_body(&ir, "bootstrap", 0).first() {
-        Some(Instruction::Log(t)) => assert_eq!(template_text(t), "evaluating unstable"),
+    let root = roots(&program, "bootstrap")[0];
+    let log = only_child(&program, root);
+    match &program.node(log).kind {
+        NodeKind::Log(t) => assert_eq!(template_text(t), "evaluating unstable"),
         other => panic!("expected log, got {:?}", other),
     }
 }
 
 #[test]
 fn test_arguments_bind_params() {
-    let ir = crate::compile::test_support::compile_str(
+    let program = compile_str(
         "\
 fn greet(app; suffix) {
     log(hello @(app)@(suffix));
@@ -101,27 +150,23 @@ fn greet(app; suffix) {
 run greet_run { project(web) { greet(web-app; !); }; };
 ",
     );
-    match task_body(&ir, "greet_run", 0).first() {
-        Some(Instruction::Log(t)) => assert_eq!(template_text(t), "hello web-app!"),
-        other => panic!("expected log, got {:?}", other),
-    }
+    let template = first_command_template(&program, "greet_run", true);
+    assert_eq!(template_text(template), "hello web-app!");
 }
 
 /// Params shadow global variables, and the callee sees only params plus
 /// globals - never the caller's local bindings.
 #[test]
 fn test_callee_scope_is_params_then_globals() {
-    let ir = crate::compile::test_support::compile_str(
+    let program = compile_str(
         "\
 var app = (global-app);
 fn show(app) { log(@(app)); };
 run shadow { project(p) { show(project-app); }; };
 ",
     );
-    match task_body(&ir, "shadow", 0).first() {
-        Some(Instruction::Log(t)) => assert_eq!(template_text(t), "project-app"),
-        other => panic!("expected log, got {:?}", other),
-    }
+    let template = first_command_template(&program, "shadow", true);
+    assert_eq!(template_text(template), "project-app");
 
     let error = compile_error(
         "\
@@ -140,7 +185,7 @@ run r { project(p) { outer(); }; };
 /// order, with the callee's body spliced where the call sits.
 #[test]
 fn test_calls_inline_carbon_copy() {
-    let ir = crate::compile::test_support::compile_str(
+    let program = compile_str(
         "\
 fn step { log(step-run); };
 fn build {
@@ -151,24 +196,16 @@ fn build {
 run ci { build(); };
 ",
     );
-    // Calls flatten: the callee's step becomes a sibling row.
-    let rows: Vec<String> = ir
-        .run_plan("ci")
+    let labels: Vec<String> = rows(&program, "ci")
         .into_iter()
-        .map(|line| line.label)
+        .map(|(_, label)| label)
         .collect();
-    assert_eq!(rows, vec!["log: before", "log: step-run", "log: after"]);
-    for (row, expected) in [(0, "before"), (1, "step-run"), (2, "after")] {
-        match task_body(&ir, "ci", row).first() {
-            Some(Instruction::Log(t)) => assert_eq!(template_text(t), expected),
-            other => panic!("expected log, got {:?}", other),
-        }
-    }
+    assert_eq!(labels, vec!["log: before", "log: step-run", "log: after"]);
 }
 
 #[test]
 fn test_compile_switch_lowering() {
-    let ir = crate::compile::test_support::compile_str(
+    let program = compile_str(
         "\
 var os = (linux);
 fn pick {
@@ -180,20 +217,24 @@ fn pick {
 run pick_run { project(p) { pick(); }; };
 ",
     );
-    let arms = find_switch_arms(&ir, "pick_run").expect("switch in pick_run");
-    assert_eq!(arms.len(), 2);
-    assert!(matches!(arms[1].pattern, crate::ir::ArmPattern::Default));
-    // Arm rows are interleaved with their bodies: arm 0, its step, arm 1.
-    assert_eq!(arms[0].row, 0);
-    assert_eq!(task_body(&ir, "pick_run", 0).len(), 1);
-    assert_eq!(arms[1].row, 2);
+    let switch = first_switch(&program, "pick_run");
+    assert_eq!(switch.children.len(), 2);
+    let second = program.node(switch.children[1]);
+    assert!(matches!(second.kind, NodeKind::Arm(ArmPattern::Default)));
+    // The taken arm owns its body; the switch itself has no row.
+    let first = program.node(switch.children[0]);
+    assert_eq!(first.children.len(), 1);
+    assert!(matches!(
+        program.node(first.children[0]).kind,
+        NodeKind::Log(_)
+    ));
 }
 
 /// The run layout mirrors the display rows: a sequential top-level call is
-/// its own group; an async block groups its steps under one label.
+/// its own row; an async block indents its steps under one label.
 #[test]
-fn test_run_plan_expands_calls_and_indents_async() {
-    let ir = crate::compile::test_support::compile_str(
+fn test_run_layout_expands_calls_and_indents_async() {
+    let program = compile_str(
         "\
 fn a { log(a); };
 fn b { log(b); };
@@ -206,13 +247,8 @@ run d {
 };
 ",
     );
-    let plan: Vec<(usize, String)> = ir
-        .run_plan("d")
-        .into_iter()
-        .map(|line| (line.depth, line.label))
-        .collect();
     assert_eq!(
-        plan,
+        rows(&program, "d"),
         vec![
             (0, "log: a".to_string()),
             (0, "async".to_string()),
@@ -220,16 +256,47 @@ run d {
             (1, "log: a".to_string()),
         ]
     );
-    // Every planned row exists in the instruction tree.
-    assert_eq!(task_body(&ir, "d", 0).len(), 1);
-    assert_eq!(task_body(&ir, "d", 2).len(), 1);
-    assert_eq!(task_body(&ir, "d", 3).len(), 1);
+}
+
+/// The full layout of nested async/project/call bodies, asserted row by row.
+#[test]
+fn test_layout_rows_cover_every_statement_in_order() {
+    let program = compile_str(
+        "\
+fn fmt_step { log(a); exec(b); exec(c); };
+fn test_kiru { log(t); exec(d); };
+fn clean_kiru { log(cl); };
+fn build_kiru { log(b); };
+run test_kiru {
+    async() {
+        project(kiru) { log(x); exec(y); };
+        test_kiru();
+    };
+    log(main);
+    async() { clean_kiru(); build_kiru(); };
+};
+",
+    );
+    assert_eq!(
+        rows(&program, "test_kiru"),
+        vec![
+            (0, "async".to_string()),
+            (1, "log: x".to_string()),
+            (1, "exec: y".to_string()),
+            (1, "log: t".to_string()),
+            (1, "exec: d".to_string()),
+            (0, "log: main".to_string()),
+            (0, "async".to_string()),
+            (1, "log: cl".to_string()),
+            (1, "log: b".to_string()),
+        ]
+    );
 }
 
 /// `case(@(x))` is legal: the reference inlines to a literal at compile time.
 #[test]
 fn test_case_pattern_inlines_variable_references() {
-    let ir = crate::compile::test_support::compile_str(
+    let program = compile_str(
         "\
 var target = (prod);
 fn pick {
@@ -241,11 +308,12 @@ fn pick {
 run r { pick(); };
 ",
     );
-    let arms = find_switch_arms(&ir, "r").expect("switch in r");
+    let switch = first_switch(&program, "r");
+    let first = program.node(switch.children[0]);
     assert!(
-        matches!(&arms[0].pattern, crate::ir::ArmPattern::Lit(p) if p == "prod"),
+        matches!(&first.kind, NodeKind::Arm(ArmPattern::Lit(p)) if p == "prod"),
         "got {:?}",
-        arms[0].pattern
+        first.kind
     );
 }
 
@@ -265,99 +333,15 @@ fn test_case_command_pattern_is_rejected() {
 /// `exec` resolves substitutions, then runs the resulting text.
 #[test]
 fn test_exec_inlines_variables() {
-    let ir = crate::compile::test_support::compile_str(
+    let program = compile_str(
         "\
 var name = (kiru);
 fn build { exec(echo @(name)); };
 run r { build(); };
 ",
     );
-    match &task_body(&ir, "r", 0)[0] {
-        Instruction::Exec { command } => assert_eq!(template_text(command), "echo kiru"),
-        other => panic!("expected exec, got {:?}", other),
-    }
-}
-
-/// The concatenated literal text of an IR template. These tests assert on
-/// fully-inlined templates, so the literal text is their whole value.
-fn template_text(template: &crate::ir::Template) -> String {
-    template
-        .parts
-        .iter()
-        .map(|part| match part {
-            crate::ir::Segment::Lit(text) => text.clone(),
-            crate::ir::Segment::Cmd(_) => String::new(),
-        })
-        .collect()
-}
-
-/// Every display row in a run, ordered by its compile-assigned index.
-fn rows_by_index(ir: &Ir, run: &str) -> Vec<(usize, String)> {
-    fn walk(body: &[Instruction], found: &mut Vec<(usize, String)>) {
-        for instruction in body {
-            match instruction {
-                Instruction::Step { row, label, body } => {
-                    found.push((*row, label.clone()));
-                    walk(body, found);
-                }
-                Instruction::Switch { arms, .. } => {
-                    for arm in arms {
-                        let label = match &arm.pattern {
-                            crate::ir::ArmPattern::Lit(pattern) => {
-                                format!("switch case {pattern}")
-                            }
-                            crate::ir::ArmPattern::Default => "switch default".to_string(),
-                        };
-                        found.push((arm.row, label));
-                        walk(&arm.body, found);
-                    }
-                }
-                Instruction::Async { body } | Instruction::Context { body, .. } => {
-                    walk(body, found);
-                }
-                _ => {}
-            }
-        }
-    }
-    let mut found = Vec::new();
-    walk(&ir.runs[run], &mut found);
-    found.sort_by_key(|(row, _)| *row);
-    found
-}
-
-/// The layout's flat rows must equal the `Task` labels ordered by their
-/// compile-assigned row index: projects inside async groups, main-thread
-/// statements, and nested calls all included, in order. Any drift between
-/// lowering and the display projection breaks output routing and can end
-/// the run early.
-#[test]
-fn test_layout_rows_match_compile_assigned_indices() {
-    let ir = crate::compile::test_support::compile_str(
-        "\
-fn fmt_step { log(a); exec(b); exec(c); };
-fn test_kiru { log(t); exec(d); };
-fn clean_kiru { log(cl); };
-fn build_kiru { log(b); };
-run test_kiru {
-    async() {
-        project(kiru) { log(x); exec(y); };
-        test_kiru();
-    };
-    log(main);
-    async() { clean_kiru(); build_kiru(); };
-};
-",
-    );
-    let plan_rows: Vec<(usize, String)> = ir
-        .run_plan("test_kiru")
-        .into_iter()
-        .map(|line| (line.row, line.label))
-        .collect();
-    assert_eq!(
-        plan_rows,
-        rows_by_index(&ir, "test_kiru"),
-        "the display plan must match the compile-assigned row order"
-    );
+    let template = first_command_template(&program, "r", false);
+    assert_eq!(template_text(template), "echo kiru");
 }
 
 #[test]
@@ -427,28 +411,24 @@ run r { project(p) { a(); }; };
 /// declared after it.
 #[test]
 fn test_function_order_independence() {
-    let ir = crate::compile::test_support::compile_str(
+    let program = compile_str(
         "\
 run r { project(p) { step(); }; };
 fn step { log(step-run); };
 ",
     );
-    match task_body(&ir, "r", 0).first() {
-        Some(Instruction::Log(t)) => assert_eq!(template_text(t), "step-run"),
-        other => panic!("expected log, got {:?}", other),
-    }
+    let template = first_command_template(&program, "r", true);
+    assert_eq!(template_text(template), "step-run");
 }
 
-/// An unqualified run call runs at the invocation context: no `Context`
-/// wrapper, just the inlined body.
+/// An unqualified run call runs at the invocation context: no project
+/// wrapper, just the inlined node.
 #[test]
 fn test_unqualified_run_call_has_no_context() {
-    let ir =
-        crate::compile::test_support::compile_str("fn build { log(b); };\n run r { build(); };");
-    let body = task_body(&ir, "r", 0);
+    let program = compile_str("fn build { log(b); };\n run r { build(); };");
     assert!(
-        !matches!(body.first(), Some(Instruction::Context { .. })),
-        "unqualified call must not switch project context: {body:?}"
+        !matches!(first_node(&program, "r").kind, NodeKind::Project(_)),
+        "unqualified call must not switch project context"
     );
 }
 
@@ -490,21 +470,6 @@ fn test_imported_function_reports_against_its_own_source() {
         "{:?}",
         error
     );
-}
-
-fn count_instructions(body: &[Instruction]) -> Vec<&'static str> {
-    body.iter()
-        .map(|i| match i {
-            Instruction::Log(_) => "log",
-            Instruction::Exec { .. } => "exec",
-            Instruction::Cd(_) => "cd",
-            Instruction::Env { .. } => "env",
-            Instruction::Switch { .. } => "switch",
-            Instruction::Step { .. } => "step",
-            Instruction::Async { .. } => "async",
-            Instruction::Context { .. } => "context",
-        })
-        .collect()
 }
 
 fn compile_error(src: &str) -> String {

@@ -315,6 +315,76 @@ mod tests {
     }
 
     #[test]
+    fn test_nested_plain_parens_are_data() {
+        // Plain `(`/`)` are literal characters in matched pairs; only the
+        // depth-zero `)` ends the template.
+        let tokens = collect_tokens("(a (b) c)");
+        match &tokens[0] {
+            TokenType::Template(template) => {
+                assert_eq!(
+                    template.parts,
+                    vec![crate::syntax::source::Part::Lit("a (b) c".to_string())]
+                );
+            }
+            other => panic!("expected template, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_balanced_parens_are_literal_command_text() {
+        let tokens = collect_tokens("exec(cd x && (make))");
+        match &tokens[0] {
+            TokenType::Exec(Some(args)) => match args[0].parts.as_slice() {
+                [crate::syntax::source::Part::Lit(command)] => {
+                    assert_eq!(command, "cd x && (make)");
+                }
+                other => panic!("expected one literal command, got {:?}", other),
+            },
+            other => panic!("expected fused exec, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_parens_shield_semicolons_in_arguments() {
+        // A `;` nested in plain parens is data, not an argument separator.
+        let tokens = collect_tokens("name(a (x; y); b)");
+        match &tokens[0] {
+            TokenType::Call { args, .. } => {
+                assert_eq!(args.len(), 2, "got {:?}", args);
+                assert_eq!(args[0].literal_text(), "a (x; y)");
+                assert_eq!(args[1].literal_text(), "b");
+            }
+            other => panic!("expected call, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_unbalanced_open_paren_is_unterminated() {
+        let errors = extract_errors("(a (b)");
+        assert!(
+            errors.iter().any(|e| e == "unterminated template"),
+            "got {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn test_variable_names_must_be_identifiers() {
+        for input in ["@(1x)", "(a @(1x) b)", "$(echo @(2y))"] {
+            let errors = extract_errors(input);
+            assert!(
+                errors
+                    .iter()
+                    .any(|e| e == "`1x` is not a valid variable name"
+                        || e == "`2y` is not a valid variable name"),
+                "input {:?}: got {:?}",
+                input,
+                errors
+            );
+        }
+    }
+
+    #[test]
     fn test_complex_nested_template_still_valid() {
         // Nesting commands and references inside one template must keep working.
         let errors = extract_errors("($(echo @(name))suffix)");

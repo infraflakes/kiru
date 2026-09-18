@@ -1,16 +1,19 @@
 //! Repository sync: clones or fast-forward-pulls declared repositories
 //! into their configured directories, reporting each project through the
-//! sync TUI.
+//! shared TUI shell.
+//!
+//! Sync is an all-settle batch: every project runs concurrently in its own
+//! scoped thread and a failure never cancels its siblings. It reuses the
+//! same display state and TUI shell as `run`; only the scheduling policy
+//! differs.
 
 use crate::exec::colors;
 use crate::exec::error::RuntimeError;
+use crate::exec::model::{Display, TaskStatus};
 use crate::exec::subprocess::{RunKillSwitch, run_subprocess};
-use crate::exec::{
-    TaskOutcome, TaskRunError, TaskStatus, TuiEvent, await_tasks_and_report, render_sync_output,
-    report_task_outcome,
-};
+use crate::exec::{TaskRunError, render_sync_output};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// A plain project configuration read from `kiru.toml`, used by sync.
 #[derive(Debug, Clone)]
@@ -114,76 +117,81 @@ fn run_git_with_output(
 
 /// Run sync for all projects through the TUI.
 ///
-/// The sync chain list is derived from the project list itself: every project is
-/// its own single-step chain labelled by its name, so the CLI cannot pass a
-/// chain list that disagrees with the projects being synced. Each project runs
-/// in its own blocking task that reports its own outcome, and
-/// `await_tasks_and_report` reduces the results to a single outcome
-/// (also surfacing any task panic).
+/// Every project is one display row; all rows run concurrently in scoped
+/// threads and are joined before the sync finishes. A failure is reported
+/// on its own row and never cancels the others (all-settle), but a keyboard
+/// cancel kills every running git process.
 pub(crate) fn run_sync_for_projects(projects: Vec<ProjectSync>) -> Result<(), TaskRunError> {
-    // One display line per project: sync has no steps, just projects.
-    let plan: Vec<crate::ir::PlanLine> = projects
-        .iter()
-        .enumerate()
-        .map(|(row, project)| crate::ir::PlanLine {
-            row,
-            depth: 0,
-            label: project.name.clone(),
-            project: None,
-            // Sync draws its own per-project list; the tree prefixes are
-            // only used by the run views.
-            prefix: String::new(),
-            output_prefix: String::new(),
-        })
-        .collect();
-    // Sync failures are all-settle (a failed clone does not abort other
-    // clones), but a keyboard cancel kills every running git process.
+    let labels: Vec<String> = projects.iter().map(|p| p.name.clone()).collect();
+    let row_count = labels.len();
+    let display = Arc::new(Mutex::new(Display::with_labels(labels)));
     let kill = Arc::new(RunKillSwitch::new());
-    // Cloned before the worker closure moves `kill` into the async task:
-    // the cancel path needs the same kill switch.
     let kill_for_cancel = Arc::clone(&kill);
 
-    match crate::exec::run_tui_with(
-        plan,
-        move |tx| async move {
-            let mut task_handles = Vec::new();
-
-            for (project_index, project) in projects.into_iter().enumerate() {
-                let tx_cb = tx.clone();
-                let kill = Arc::clone(&kill);
-
-                let handle = tokio::task::spawn_blocking(move || {
-                    crate::exec::send_tui_event(
-                        &tx_cb,
-                        TuiEvent::UpdateStatus(project_index, TaskStatus::Running),
-                    );
-                    let result = run_sync_clone_or_update(&project, &kill, |line: &str| {
-                        crate::exec::send_tui_event(
-                            &tx_cb,
-                            TuiEvent::AppendOutput(project_index, line.to_string()),
-                        );
-                    });
-                    report_task_outcome(
-                        &tx_cb,
-                        project_index,
-                        match &result {
-                            Ok(()) => TaskOutcome::Success,
-                            Err(error) => TaskOutcome::Error(error),
-                        },
-                    );
-                    result
-                });
-
-                task_handles.push((project_index, handle));
+    let display_for_worker = Arc::clone(&display);
+    let worker = move || {
+        std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for (index, project) in projects.into_iter().enumerate() {
+                let project_display = Arc::clone(&display_for_worker);
+                let project_kill = Arc::clone(&kill);
+                handles.push((
+                    index,
+                    scope.spawn(move || {
+                        project_display
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .set_status(index, TaskStatus::Running);
+                        let result = run_sync_clone_or_update(&project, &project_kill, |line| {
+                            project_display
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .push_output(index, line.to_string());
+                        });
+                        let status = match &result {
+                            Ok(()) => TaskStatus::Success,
+                            Err(RuntimeError::Cancelled(_)) => TaskStatus::Cancelled,
+                            Err(_) => TaskStatus::Error,
+                        };
+                        project_display
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .set_status(index, status);
+                        result
+                    }),
+                ));
             }
 
-            await_tasks_and_report(&tx, task_handles).await
-        },
+            let mut failed = false;
+            for (index, handle) in handles {
+                match handle.join() {
+                    Ok(Ok(())) => {}
+                    Ok(Err(_)) => failed = true,
+                    Err(_) => {
+                        // A panicked project thread is a genuine defect.
+                        let mut guard =
+                            display_for_worker.lock().unwrap_or_else(|e| e.into_inner());
+                        guard.set_status(index, TaskStatus::Error);
+                        guard.push_output(index, "Task panicked".to_string());
+                        failed = true;
+                    }
+                }
+            }
+            if failed { Err(()) } else { Ok(()) }
+        })
+    };
+
+    // Sync has no final text dump: the per-project rows are the report.
+    match crate::exec::tui::run_tui(
+        display,
+        row_count,
+        worker,
         render_sync_output,
-        None,
+        None::<fn(&Display) -> String>,
         Some(kill_for_cancel),
     ) {
-        Ok(worker_result) => worker_result,
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(())) => Err(TaskRunError::TaskFailed),
         Err(message) => Err(TaskRunError::Infrastructure(message)),
     }
 }
