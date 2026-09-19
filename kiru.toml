@@ -1,17 +1,7 @@
-[profile.default]
-shell = "sh"
-source = "main.kiru"
-output = "kirufile"
-
-[profile.default.project.kiru]
-url = "https://github.com/infraflakes/kiru"
-dir = "~/Projects/kiru"
-branch = "dev"
-direnv = true
-
 [profile.ci]
 source = "main.kiru"
 output = "kirufile"
 
 [profile.ci.project.kiru]
 dir = "."
+direnv = true

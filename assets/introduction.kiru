@@ -78,6 +78,8 @@ var repo = (@(user)/@(app));
 # ... and calls pass positional arguments the same way: greet(world);
 # Arguments are substituted for the parameters when the call is compiled
 # (carbon-copy), so a function grows per call site, with no runtime scope.
+# A function sees only its parameters and the vars it declares itself: file
+# variables are not implicitly visible, pass them in at the call site.
 
 fn check(name) {
   log(Running static checks for @(name)...);
@@ -87,7 +89,7 @@ fn check(name) {
   exec(go vet ./...);
 };
 
-fn build(name; target) {
+fn build(os; name; target) {
   log(Building @(name) for @(target)...);
 
   switch(@(os)) {
@@ -139,7 +141,7 @@ run all {
   project(myapp) {
     async() {
       check(myapp);
-      build(myapp; release);
+      build(@(os); myapp; release);
     };
     async() {
       test(myapp);

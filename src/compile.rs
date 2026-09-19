@@ -285,7 +285,6 @@ fn build_program(state: CompileState) -> Result<IrProgram, CompileError> {
     } = state;
 
     let resolver = FnResolver {
-        globals: &globals,
         functions: &functions,
     };
 

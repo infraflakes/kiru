@@ -6,12 +6,12 @@
 
 var app = (todo);
 
-fn build {
+fn build(app) {
   log(Building @(app)...);
   exec(go build -o bin/@(app) .);
 };
 
-fn test {
+fn test(app) {
   log(Testing @(app)...);
   env(CGO_ENABLED = (0);) {
     exec(go test -race ./...);
@@ -20,7 +20,7 @@ fn test {
 
 run ci {
   project(todo) {
-    test();
-    build();
+    test(@(app));
+    build(@(app));
   };
 };

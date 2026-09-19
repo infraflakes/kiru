@@ -119,8 +119,8 @@ fn test_compile_basic_run() {
     let program = compile_str(
         "\
 var channel = (unstable);
-fn eval { log(evaluating @(channel)); };
-run bootstrap { project(nix) { eval(); }; };
+fn eval(channel) { log(evaluating @(channel)); };
+run bootstrap { project(nix) { eval(@(channel)); }; };
 ",
     );
     // The run has one node: the project context, whose child is the log.
@@ -154,10 +154,10 @@ run greet_run { project(web) { greet(web-app; !); }; };
     assert_eq!(template_text(template), "hello web-app!");
 }
 
-/// Params shadow global variables, and the callee sees only params plus
-/// globals - never the caller's local bindings.
+/// A function sees only its parameters and the vars its own body declares:
+/// file variables and the caller's local bindings are never implicit.
 #[test]
-fn test_callee_scope_is_params_then_globals() {
+fn test_functions_see_only_their_parameters() {
     let program = compile_str(
         "\
 var app = (global-app);
@@ -167,6 +167,16 @@ run shadow { project(p) { show(project-app); }; };
     );
     let template = first_command_template(&program, "shadow", true);
     assert_eq!(template_text(template), "project-app");
+
+    // A file variable with the same name is not a fallback either.
+    let error = compile_error(
+        "\
+var app = (global-app);
+fn show { log(@(app)); };
+run shadow { project(p) { show(); }; };
+",
+    );
+    assert!(error.contains("undefined variable: app"), "{error}");
 
     let error = compile_error(
         "\
@@ -179,6 +189,36 @@ run r { project(p) { outer(); }; };
 ",
     );
     assert!(error.contains("undefined variable: hidden"), "{error}");
+}
+
+/// A run body still resolves file variables and its own local binds.
+#[test]
+fn test_run_bodies_see_file_variables() {
+    let program = compile_str(
+        "\
+var host = (example.com);
+run r {
+    var port = (8080);
+    log(@(host):@(port));
+};",
+    );
+    let template = first_command_template(&program, "r", true);
+    assert_eq!(template_text(template), "example.com:8080");
+}
+
+/// A function's own `var` binds need no outer scope at all.
+#[test]
+fn test_function_local_var_works_without_globals() {
+    let program = compile_str(
+        "\
+fn announce {
+    var who = (world);
+    log(hello @(who));
+};
+run r { announce(); };",
+    );
+    let template = first_command_template(&program, "r", true);
+    assert_eq!(template_text(template), "hello world");
 }
 
 /// A function call inlines the callee body carbon-copy: statements in
@@ -208,13 +248,13 @@ fn test_compile_switch_lowering() {
     let program = compile_str(
         "\
 var os = (linux);
-fn pick {
+fn pick(os) {
     switch(@(os)) {
         case(linux) { log(linux-path); };
         default { log(other); };
     };
 };
-run pick_run { project(p) { pick(); }; };
+run pick_run { project(p) { pick(@(os)); }; };
 ",
     );
     let switch = first_switch(&program, "pick_run");
@@ -299,13 +339,13 @@ fn test_case_pattern_inlines_variable_references() {
     let program = compile_str(
         "\
 var target = (prod);
-fn pick {
+fn pick(target) {
     switch(@(target)) {
         case(@(target)) { log(matched); };
         default { log(other); };
     };
 };
-run r { pick(); };
+run r { pick(@(target)); };
 ",
     );
     let switch = first_switch(&program, "r");
@@ -336,8 +376,8 @@ fn test_exec_inlines_variables() {
     let program = compile_str(
         "\
 var name = (kiru);
-fn build { exec(echo @(name)); };
-run r { build(); };
+fn build(name) { exec(echo @(name)); };
+run r { build(@(name)); };
 ",
     );
     let template = first_command_template(&program, "r", false);

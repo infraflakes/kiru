@@ -8,20 +8,19 @@ use std::collections::{BTreeMap, HashMap};
 use super::CompileError;
 use super::PendingFn;
 
-/// What a `name(args);` call statement resolves against during lowering: the
-/// named functions collected from every source file and the global
-/// variables. Every function carries the source its statements were written
-/// in, so diagnostics from an inlined body render against the right file.
+/// What a `name(args);` call statement resolves against during lowering:
+/// the named functions collected from every source file. Every function
+/// carries the source its statements were written in, so diagnostics from an
+/// inlined body render against the right file.
 pub(super) struct FnResolver<'a> {
-    pub(super) globals: &'a BTreeMap<String, Template>,
     pub(super) functions: &'a BTreeMap<String, PendingFn>,
 }
 
 /// Lower a call to a named function: check the target exists and the
 /// argument count matches, inline each argument against the caller's scope,
 /// bind the results to the callee's params, and compile the callee's body
-/// with `params -> globals` resolution. The call is spliced carbon-copy at
-/// the call site; `cycle_stack` reports recursive call chains instead of
+/// with those parameters as its only scope. The call is spliced carbon-copy
+/// at the call site; `cycle_stack` reports recursive call chains instead of
 /// looping.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn lower_function_call(
@@ -71,10 +70,10 @@ pub(super) fn lower_function_call(
         ));
     }
 
-    // The callee sees its params and the global variables only: arguments
-    // are inlined at the call site, so the caller's local bindings never
-    // leak into the inlined body.
-    let mut inner = resolver.globals.clone();
+    // The callee sees exactly its parameters (plus the binds it declares
+    // itself): file variables and the caller's local bindings are not
+    // visible, so data enters a function only through its call arguments.
+    let mut inner = BTreeMap::new();
     for (param, arg) in function.params.iter().zip(args) {
         let value = inline_dsl_template(arg, caller_scope, sources, source_name)?;
         inner.insert(param.clone(), value);

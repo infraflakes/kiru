@@ -5,6 +5,10 @@ fn build_kiru {
   };
 };
 
+run build_kiru {
+  build_kiru();
+};
+
 fn nix_kiru {
   project(kiru) {
     log(Building kiru with nix...);
@@ -12,7 +16,11 @@ fn nix_kiru {
   };
 };
 
-fn clean_kiru {
+run nix_kiru {
+  nix_kiru();
+};
+
+run clean_kiru {
   project(kiru) {
     log(Cleaning up artifacts...);
     exec(rm -rf bin);
@@ -45,13 +53,9 @@ run fail_kiru {
   };
 };
 
-run build_kiru {
-  build_kiru();
-};
-
 run build_container_kiru {
+  var docker_bin = $(command -v docker >/dev/null 2>&1 && echo "docker" || { command -v podman >/dev/null 2>&1 && echo "podman"; });
   project(kiru) {
-    var docker_bin = $(command -v docker >/dev/null 2>&1 && echo "docker" || { command -v podman >/dev/null 2>&1 && echo "podman"; });
     switch(@(docker_bin)) {
       case() {
         log(no container runtime found);
@@ -66,19 +70,12 @@ run build_container_kiru {
 };
 
 run test_kiru {
-  async() {
-    project(kiru) {
-      log(Formatting the codebase...);
-      exec(cargo clippy --fix --allow-dirty);
-      exec(cargo fmt);
-    };
-    test_kiru();
+  project(kiru) {
+    log(Formatting the codebase...);
+    exec(cargo clippy --fix --allow-dirty);
+    exec(cargo fmt);
   };
-  async() {
-    clean_kiru();
-    build_kiru();
-    nix_kiru();
-  };
+  test_kiru();
 };
 
 run ci_kiru {
