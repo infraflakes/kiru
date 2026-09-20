@@ -42,12 +42,20 @@ fn collect_rows(
         let inherited = state.project.clone().or_else(|| project.clone());
         match kind {
             NodeKind::Project(template) => {
+                // An empty name has no annotation to show; brackets would
+                // just be noise.
+                let annotation = template.plan_text();
+                let annotation = if annotation.is_empty() {
+                    None
+                } else {
+                    Some(annotation)
+                };
                 collect_rows(
                     program,
                     display,
                     &program.node(node).children,
                     depth,
-                    Some(template.plan_text()),
+                    annotation,
                     rows,
                 );
             }

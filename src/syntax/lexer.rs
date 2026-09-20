@@ -261,9 +261,10 @@ mod tests {
 
     #[test]
     fn test_nested_var_reference_requires_closing_paren() {
-        // Top-level `@(` was already strict; the same must hold inside templates.
+        // The name must be followed by `)`; a stray character says so, and
+        // running out of input reports the unterminated reference.
         let cases = [
-            ("(a @(b c)", "unterminated variable reference"),
+            ("(a @(b c)", "expected `)` after variable name"),
             ("$(echo @(x", "unterminated variable reference"),
         ];
         for (input, expected) in cases {
@@ -343,7 +344,7 @@ mod tests {
     #[test]
     fn test_parens_shield_semicolons_in_arguments() {
         // A `;` nested in plain parens is data, not an argument separator.
-        let tokens = collect_tokens("name(a (x; y); b)");
+        let tokens = collect_tokens("name(a (x; y);b)");
         match &tokens[0] {
             TokenType::Call { args, .. } => {
                 assert_eq!(args.len(), 2, "got {:?}", args);
@@ -351,6 +352,35 @@ mod tests {
                 assert_eq!(args[1].literal_text(), "b");
             }
             other => panic!("expected call, got {:?}", other),
+        }
+    }
+
+    /// The hard rule: inside a string-literal paren, whitespace is data.
+    #[test]
+    fn test_argument_whitespace_is_data() {
+        let tokens = collect_tokens("name( a ; b )");
+        match &tokens[0] {
+            TokenType::Call { args, .. } => {
+                assert_eq!(args.len(), 2, "got {:?}", args);
+                assert_eq!(args[0].literal_text(), " a ");
+                assert_eq!(args[1].literal_text(), " b ");
+            }
+            other => panic!("expected call, got {:?}", other),
+        }
+    }
+
+    /// `@()` holds an identifier, not data: whitespace around it is layout.
+    #[test]
+    fn test_variable_reference_allows_surrounding_whitespace() {
+        let tokens = collect_tokens("@( name )");
+        match &tokens[0] {
+            TokenType::Template(template) => {
+                assert_eq!(
+                    template.parts,
+                    vec![crate::syntax::source::Part::Var("name".to_string())]
+                );
+            }
+            other => panic!("expected template, got {:?}", other),
         }
     }
 

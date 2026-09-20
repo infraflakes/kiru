@@ -129,6 +129,9 @@ impl Lexer {
     /// parentheses stay atomic, so a `;` inside them is data; an empty
     /// region is zero arguments (`name()`). A trailing `;` before `)` does
     /// not create an empty argument.
+    ///
+    /// The templates are kept exactly as written: whitespace inside an
+    /// argument is data, so `name(a; b)` passes `"a"` and `" b"`.
     fn read_call_arguments(&mut self) -> Result<Vec<crate::syntax::source::Template>, ParseError> {
         let open_offset = self.byte_offset;
         self.read_char(); // consume '('
@@ -144,7 +147,7 @@ impl Lexer {
                 .read_template_parts_until(true)
                 .map_err(|msg| self.unexpected(msg, open_offset))?;
             args.push(crate::syntax::source::Template {
-                parts: trim_argument_parts(parts),
+                parts,
                 offset: arg_offset,
                 len: self.byte_offset - arg_offset,
             });
@@ -191,13 +194,22 @@ impl Lexer {
                 }
             }
             Some('@') => {
-                // `@( name )` -> a single Var part.
+                // `@( name )` -> a single Var part. The content is an
+                // identifier, not data, so whitespace around it is layout.
                 self.read_char(); // consume '@'
                 self.read_char(); // consume '('
+                self.skip_whitespace();
                 let name = self.read_ident_chars();
+                self.skip_whitespace();
                 if self.ch != Some(')') {
-                    return Err(self
-                        .unexpected("unterminated variable reference".to_string(), start_offset));
+                    let message = if self.ch.is_none() {
+                        "unterminated variable reference".to_string()
+                    } else if name.is_empty() {
+                        "empty variable reference".to_string()
+                    } else {
+                        "expected `)` after variable name".to_string()
+                    };
+                    return Err(self.unexpected(message, start_offset));
                 }
                 if name.is_empty() {
                     return Err(
@@ -305,9 +317,17 @@ impl Lexer {
                     }
                     self.read_char(); // '@'
                     self.read_char(); // '('
+                    self.skip_whitespace();
                     let name = self.read_ident_chars();
+                    self.skip_whitespace();
                     if self.ch != Some(')') {
-                        return Err("unterminated variable reference".to_string());
+                        return Err(if self.ch.is_none() {
+                            "unterminated variable reference".to_string()
+                        } else if name.is_empty() {
+                            "empty variable reference".to_string()
+                        } else {
+                            "expected `)` after variable name".to_string()
+                        });
                     }
                     if name.is_empty() {
                         return Err("empty variable reference".to_string());
@@ -363,19 +383,5 @@ fn finish_parts(mut parts: Vec<Part>, lit: String) -> Vec<Part> {
     if !lit.is_empty() {
         parts.push(Part::Lit(lit));
     }
-    parts
-}
-
-/// Trim whitespace surrounding an argument template: separators are written
-/// with spaces for readability (`deploy(a; b)`), and those boundary spaces
-/// are layout, not data.
-fn trim_argument_parts(mut parts: Vec<Part>) -> Vec<Part> {
-    if let Some(Part::Lit(first)) = parts.first_mut() {
-        *first = first.trim_start().to_string();
-    }
-    if let Some(Part::Lit(last)) = parts.last_mut() {
-        *last = last.trim_end().to_string();
-    }
-    parts.retain(|part| !matches!(part, Part::Lit(text) if text.is_empty()));
     parts
 }

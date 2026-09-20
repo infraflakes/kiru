@@ -41,6 +41,9 @@ impl Parser {
         let mut params = Vec::new();
         for arg in args {
             let text = match arg.parts.as_slice() {
+                // Parameter names are identifiers, not data: whitespace-only
+                // arguments (and empty ones) are layout.
+                [] => continue,
                 [crate::syntax::source::Part::Lit(text)] => text.trim(),
                 _ => {
                     return Err(ParseError::new(
@@ -49,6 +52,9 @@ impl Parser {
                     ));
                 }
             };
+            if text.is_empty() {
+                continue;
+            }
             if !crate::syntax::token::is_identifier(text) {
                 return Err(ParseError::new(
                     self.eof_aware_span(),

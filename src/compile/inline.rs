@@ -44,13 +44,15 @@ pub(super) fn lower_function_call(
         .get(name)
         .and_then(|versions| versions.iter().rev().find(|f| f.epoch <= bound))
         .ok_or_else(|| {
-            let declared_later = resolver.functions.contains_key(name);
-            let message = if declared_later {
-                format!("function `{name}` is declared after this point")
-            } else {
-                format!("undefined function: `{name}`")
-            };
-            super::error_in(sources, source_name, offset, len.max(1), message)
+            // At this point in the text the name is simply not declared yet;
+            // a later declaration has not been read.
+            super::error_in(
+                sources,
+                source_name,
+                offset,
+                len.max(1),
+                format!("undefined function: `{name}`"),
+            )
         })?;
     if function.params.len() != args.len() {
         return Err(super::error_in(

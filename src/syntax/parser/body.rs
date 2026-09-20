@@ -71,7 +71,14 @@ impl Parser {
             TokenType::Async(Some(args)) => args.clone(),
             _ => unreachable!("async dispatch guarantees a fused argument list"),
         };
-        if !args.is_empty() {
+        // `async` parens are shape, not data: whitespace-only content is
+        // layout and means no arguments.
+        let has_content = args.iter().any(|arg| match arg.parts.as_slice() {
+            [] => false,
+            [crate::syntax::source::Part::Lit(text)] => !text.trim().is_empty(),
+            _ => true,
+        });
+        if has_content {
             return Err(ParseError::new(
                 self.eof_aware_span(),
                 "`async` takes no arguments".to_string(),

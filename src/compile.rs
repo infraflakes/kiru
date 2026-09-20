@@ -23,7 +23,7 @@ pub(crate) fn compile_path(entry_path: &Path) -> Result<IrProgram, CompileError>
     let abs_entry = canonicalize_entry(entry_path)?;
     let mut state = CompileState::new();
     compile_source_file(&abs_entry, &mut state)?;
-    build_program(state)
+    Ok(state.arena.build(state.runs))
 }
 
 /// Compile an in-memory source string. Used by tests: imports inside `source`
@@ -37,21 +37,7 @@ pub(crate) fn compile_source(
     let program = parse::parse_source(source_name.to_string(), source_text.to_string())?;
     let mut state = CompileState::new();
     compile_program(&program, &mut state)?;
-    build_program(state)
-}
-
-/// A run block accumulated from `run name { ... }` syntax: its unresolved
-/// body, the source location, the declaration order, and a snapshot of the
-/// variables declared before it. The body is lowered in `build_program`
-/// against exactly that snapshot, so a run can never see a variable or
-/// function declared after it.
-struct PendingRunBlock {
-    body: Vec<FnStmt>,
-    source_name: String,
-    /// Declaration order across every loaded file, for callee visibility.
-    epoch: usize,
-    /// The variables visible where this run was declared.
-    globals: BTreeMap<String, Template>,
+    Ok(state.arena.build(state.runs))
 }
 
 /// One definition of a named function, at the declaration order it appeared.
@@ -75,9 +61,10 @@ struct CompileState {
     /// textually: the newest definition at or before the mentioning body's
     /// own declaration point.
     functions: BTreeMap<String, Vec<PendingFn>>,
-    /// Run blocks accumulated from `run name { ... }` syntax, each being
-    /// an ordered list of sequential chains of function calls.
-    run_blocks: BTreeMap<String, PendingRunBlock>,
+    /// The arena being filled as declarations are read.
+    arena: crate::ir::ProgramBuilder,
+    /// Each run's root nodes, lowered the moment its declaration is read.
+    runs: BTreeMap<String, Vec<crate::ir::NodeId>>,
     /// Source file text snapshots keyed by source name, used for diagnostic
     /// span rendering in compile errors.
     source_texts: HashMap<String, String>,
@@ -98,7 +85,8 @@ impl CompileState {
         Self {
             globals: BTreeMap::new(),
             functions: BTreeMap::new(),
-            run_blocks: BTreeMap::new(),
+            arena: crate::ir::ProgramBuilder::default(),
+            runs: BTreeMap::new(),
             source_texts: HashMap::new(),
             loaded_files: HashSet::new(),
             recursion_stack: HashSet::new(),
@@ -245,13 +233,13 @@ fn compile_stmt(
 ) -> Result<(), CompileError> {
     match stmt {
         Stmt::Var { name, value } => compile_var_decl(name, value, &program.source_name, state),
-        // Function bodies were collected by the pre-pass and are lowered per
-        // call site during `build_program`.
-        // Functions are registered where they appear; their bodies are
-        // lowered per call site against the visibility of that site.
         Stmt::Fn {
             name, params, body, ..
         } => {
+            // Register this definition at its point in the text, then
+            // validate the body right here, so a mention of a name declared
+            // later (or an undefined name) errors even if the function is
+            // never called.
             let epoch = state.take_epoch();
             state
                 .functions
@@ -263,55 +251,68 @@ fn compile_stmt(
                     body: body.clone(),
                     source_name: program.source_name.clone(),
                 });
+            validate_function_body(state, name, params, body, epoch, &program.source_name)
+        }
+        Stmt::Run { name, body } => {
+            // Runs are entry points: lower immediately against the
+            // declarations visible here.
+            let bound = state.next_epoch;
+            let mut scope = state.globals.clone();
+            let mut cycle_stack = Vec::new();
+            let resolver = FnResolver {
+                functions: &state.functions,
+            };
+            let children = compile_fn_stmts(
+                body,
+                &mut scope,
+                &state.source_texts,
+                &program.source_name,
+                &resolver,
+                &mut cycle_stack,
+                bound,
+                &mut state.arena,
+            )?;
+            state.runs.insert(name.clone(), children);
             Ok(())
         }
-        Stmt::Run { name, body } => compile_run_decl(name, body, &program.source_name, state),
     }
 }
 
-/// Lower every run body into nodes and freeze the arena. Run bodies are no
-/// different from function bodies: calls are flattened and blocks own their
-/// children, so the display tree and the execution tree are one structure.
-fn build_program(state: CompileState) -> Result<IrProgram, CompileError> {
-    let CompileState {
-        globals: _,
-        functions,
-        run_blocks,
-        source_texts,
-        loaded_files: _,
-        recursion_stack: _,
-        next_epoch: _,
-    } = state;
-
-    let resolver = FnResolver {
-        functions: &functions,
-    };
-
-    let mut runs = BTreeMap::new();
-    let mut arena = crate::ir::ProgramBuilder::default();
-    for (run_name, pending_run) in run_blocks {
-        let PendingRunBlock {
-            body,
-            source_name,
-            epoch,
-            globals,
-        } = pending_run;
-        let mut scope = globals;
-        let mut cycle_stack = Vec::new();
-        let children = compile_fn_stmts(
-            &body,
-            &mut scope,
-            &source_texts,
-            &source_name,
-            &resolver,
-            &mut cycle_stack,
-            epoch,
-            &mut arena,
-        )?;
-        runs.insert(run_name, children);
+/// Validate one function body at its declaration point: lower it once with
+/// each parameter bound to an empty placeholder, against the definitions
+/// visible up to `epoch`, and discard the result. Mistakes in dead code
+/// (undefined names, mentions of later declarations, unusable case
+/// patterns) are still compile errors. Call sites re-lower the body with
+/// the real arguments, which stays the authority on argument-dependent
+/// checks.
+fn validate_function_body(
+    state: &CompileState,
+    name: &str,
+    params: &[String],
+    body: &[FnStmt],
+    epoch: usize,
+    source_name: &str,
+) -> Result<(), CompileError> {
+    let mut scope = BTreeMap::new();
+    for param in params {
+        scope.insert(param.clone(), Template::default());
     }
-
-    Ok(arena.build(runs))
+    let resolver = FnResolver {
+        functions: &state.functions,
+    };
+    let mut cycle_stack = vec![name.to_string()];
+    let mut scratch = crate::ir::ProgramBuilder::default();
+    compile_fn_stmts(
+        body,
+        &mut scope,
+        &state.source_texts,
+        source_name,
+        &resolver,
+        &mut cycle_stack,
+        epoch,
+        &mut scratch,
+    )?;
+    Ok(())
 }
 
 /// Declare a top-level variable: inline its template against the variables
@@ -325,27 +326,5 @@ fn compile_var_decl(
 ) -> Result<(), CompileError> {
     let inlined = inline_dsl_template(value, &state.globals, &state.source_texts, source_name)?;
     state.globals.insert(name.to_string(), inlined);
-    Ok(())
-}
-
-/// Accumulate a `run name { ... }` block with the variables and declaration
-/// order visible where it appeared; its body is lowered against exactly
-/// those later. A later block of the same name replaces it.
-fn compile_run_decl(
-    name: &str,
-    body: &[FnStmt],
-    source_name: &str,
-    state: &mut CompileState,
-) -> Result<(), CompileError> {
-    let epoch = state.take_epoch();
-    state.run_blocks.insert(
-        name.to_string(),
-        PendingRunBlock {
-            body: body.to_vec(),
-            source_name: source_name.to_string(),
-            epoch,
-            globals: state.globals.clone(),
-        },
-    );
     Ok(())
 }

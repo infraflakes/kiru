@@ -147,7 +147,7 @@ fn test_arguments_bind_params() {
 fn greet(app; suffix) {
     log(hello @(app)@(suffix));
 };
-run greet_run { project(web) { greet(web-app; !); }; };
+run greet_run { project(web) { greet(web-app;!); }; };
 ",
     );
     let template = first_command_template(&program, "greet_run", true);
@@ -420,7 +420,7 @@ fn test_argument_count_is_checked() {
     let error = compile_error(
         "\
 fn deploy(name) { log(@(name)); };
-run r { project(p) { deploy(a; b); }; };
+run r { project(p) { deploy(a;b); }; };
 ",
     );
     assert!(
@@ -454,10 +454,7 @@ fn b { a(); };
 run r { project(p) { a(); }; };
 ",
     );
-    assert!(
-        error.contains("function `b` is declared after this point"),
-        "{error}"
-    );
+    assert!(error.contains("undefined function: `b`"), "{error}");
 }
 
 /// Everything is read top-down: a function mentioned before its declaration
@@ -465,10 +462,18 @@ run r { project(p) { a(); }; };
 #[test]
 fn test_functions_must_be_declared_before_use() {
     let error = compile_error("run r { project(p) { step(); }; };\nfn step { log(step-run); };");
-    assert!(
-        error.contains("function `step` is declared after this point"),
-        "{error}"
-    );
+    assert!(error.contains("undefined function: `step`"), "{error}");
+}
+
+/// Validation is not lazy: a dead function body that mentions a later
+/// declaration or an undefined name still errors.
+#[test]
+fn test_dead_function_bodies_are_validated() {
+    let error = compile_error("fn a { b(); };\nfn b { log(x); };\nrun r { log(ok); };");
+    assert!(error.contains("undefined function: `b`"), "{error}");
+
+    let error = compile_error("fn dead { log(@(missing)); };\nrun r { log(ok); };");
+    assert!(error.contains("undefined variable: missing"), "{error}");
 }
 
 /// Imports join the namespace at the point they appear: a use before the
@@ -481,10 +486,7 @@ fn test_imports_are_visible_from_their_point_on() {
 
     let before = format!("run r {{ step(); }};\nimport({});\n", helper.display());
     let error = compile_error(&before);
-    assert!(
-        error.contains("function `step` is declared after this point"),
-        "{error}"
-    );
+    assert!(error.contains("undefined function: `step`"), "{error}");
 
     let after = format!("import({});\nrun r {{ step(); }};\n", helper.display());
     let program = compile_str(&after);
@@ -535,7 +537,7 @@ fn test_last_parameter_wins() {
     let program = compile_str(
         "\
 fn f(a; a) { log(@(a)); };
-run r { f(one; two); };
+run r { f(one;two); };
 ",
     );
     assert_eq!(
