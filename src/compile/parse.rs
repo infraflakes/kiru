@@ -47,14 +47,6 @@ pub(super) fn load_import(
         &program.source_name,
     )?;
     let path_str = eval_path_template(&inlined, state, &program.source_name)?;
-    if path_str.is_empty() {
-        return Err(state.spanned(
-            "import path cannot be empty".to_string(),
-            &program.source_name,
-            path.offset,
-            path.len.max(1),
-        ));
-    }
 
     let base_dir = Path::new(&program.source_name).parent().ok_or_else(|| {
         state.spanned(

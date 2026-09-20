@@ -180,12 +180,6 @@ impl Lexer {
                 self.read_char(); // consume '('
                 match self.read_template_parts() {
                     Ok(inner) => {
-                        if template_is_only_whitespace(&inner) {
-                            return Err(self.unexpected(
-                                "empty command substitution".to_string(),
-                                start_offset,
-                            ));
-                        }
                         let len = self.byte_offset - start_offset;
                         vec![Part::Cmd(Template {
                             parts: inner,
@@ -332,9 +326,6 @@ impl Lexer {
                     self.read_char(); // '$'
                     self.read_char(); // '('
                     let inner = self.read_template_parts()?;
-                    if template_is_only_whitespace(&inner) {
-                        return Err("empty command substitution".to_string());
-                    }
                     parts.push(Part::Cmd(Template {
                         parts: inner,
                         offset: cmd_offset,
@@ -387,14 +378,4 @@ fn trim_argument_parts(mut parts: Vec<Part>) -> Vec<Part> {
     }
     parts.retain(|part| !matches!(part, Part::Lit(text) if text.is_empty()));
     parts
-}
-
-/// A command substitution is empty when it contains no variable or nested
-/// command parts and its literal text is only whitespace; running it would
-/// be a silent no-op. A general `()` template is deliberately exempt: it is
-/// the empty-string literal (used by `case ()` patterns).
-fn template_is_only_whitespace(parts: &[Part]) -> bool {
-    parts
-        .iter()
-        .all(|p| matches!(p, Part::Lit(s) if s.trim().is_empty()))
 }

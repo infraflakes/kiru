@@ -5,20 +5,11 @@ use super::*;
 
 impl Parser {
     pub(crate) fn parse_var_decl(&mut self) -> Result<Stmt, ParseError> {
-        let offset = self.current_token().offset;
-        let len = self.current_token().len;
         let (name, value) = self.parse_var_decl_common()?;
-        Ok(Stmt::Var {
-            name,
-            value,
-            offset,
-            len,
-        })
+        Ok(Stmt::Var { name, value })
     }
 
     pub(crate) fn parse_fn_decl(&mut self) -> Result<Stmt, ParseError> {
-        let offset = self.current_token().offset;
-        let len = self.current_token().len;
         self.advance();
 
         // `fn name { ... }` (no params) or the fused call form
@@ -40,13 +31,7 @@ impl Parser {
         )?;
         self.expect_with_context(TokenType::Semicolon, "after function declaration")?;
 
-        Ok(Stmt::Fn {
-            name,
-            params,
-            body,
-            offset,
-            len,
-        })
+        Ok(Stmt::Fn { name, params, body })
     }
 
     /// Validate the fused `fn name(...)` argument list as parameter names:
@@ -68,12 +53,6 @@ impl Parser {
                 return Err(ParseError::new(
                     self.eof_aware_span(),
                     format!("`{text}` is not a valid parameter name"),
-                ));
-            }
-            if params.iter().any(|p| p == text) {
-                return Err(ParseError::new(
-                    self.eof_aware_span(),
-                    format!("duplicate parameter `{text}`"),
                 ));
             }
             params.push(text.to_string());
@@ -129,15 +108,16 @@ mod tests {
     }
 
     #[test]
-    fn test_duplicate_param_rejected() {
-        let result = parse_program("fn deploy(name; name) { log(x); };");
-        let errs = result.unwrap_err();
-        assert!(
-            errs.iter()
-                .any(|e| e.to_string().contains("duplicate parameter")),
-            "got: {:?}",
-            errs
-        );
+    fn test_duplicate_parameters_are_kept_in_order() {
+        // Duplicates are not rejected; the last one wins when arguments are
+        // bound at the call site.
+        let prog = parse_program("fn deploy(name; name) { log(x); };").unwrap();
+        match &prog.top_level_items[0] {
+            TopLevel::Stmt(Stmt::Fn { params, .. }) => {
+                assert_eq!(params, &["name".to_string(), "name".to_string()]);
+            }
+            other => panic!("expected Fn, got {:?}", other),
+        }
     }
 
     #[test]

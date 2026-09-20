@@ -40,8 +40,10 @@ var repo = (@(user)/@(app));
 #   var dir = (~/configs);
 #   import(@(dir)/common.kiru);
 #
-# Everything imported joins one global namespace, so function names must
-# be unique across every imported file.
+# Everything imported joins one namespace at the point the import appears.
+# Declarations are read top-down: a name must be declared before it is
+# mentioned, and a later declaration of the same name wins from that point
+# on.
 
 # -- 3. FUNCTIONS -----------------------------------------------------
 #
@@ -80,6 +82,8 @@ var repo = (@(user)/@(app));
 # (carbon-copy), so a function grows per call site, with no runtime scope.
 # A function sees only its parameters and the vars it declares itself: file
 # variables are not implicitly visible, pass them in at the call site.
+# Declarations are read top-down, so a function must appear before its
+# first use; a later declaration of the same name wins from that point on.
 
 fn check(name) {
   log(Running static checks for @(name)...);

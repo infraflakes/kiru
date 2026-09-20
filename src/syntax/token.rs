@@ -8,8 +8,8 @@
 pub(crate) enum TokenType {
     Eof,
     Ident(String),
-    /// A standalone template token: the value after `=` in a declaration, a
-    /// pair value inside `env(...)`, or a bare `$(cmd)` statement.
+    /// A standalone template token: the value after `=` in a declaration or
+    /// a pair value inside `env(...)`.
     Template(crate::syntax::source::Template),
     /// A bare `)` outside any template. Never accepted by the grammar except
     /// as the closing paren of an `env(...)` pair list, but kept as a distinct

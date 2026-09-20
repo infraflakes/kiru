@@ -11,7 +11,6 @@ impl Parser {
     /// executed top-down. `;` always means "then"; `async` starts its body
     /// concurrently and joins at the end of the enclosing body.
     pub(crate) fn parse_run_decl(&mut self) -> Result<Stmt, ParseError> {
-        let start_offset = self.current_token().offset;
         self.advance(); // skip `run`
 
         let name = self.parse_ident_name("run block name")?;
@@ -22,15 +21,9 @@ impl Parser {
             Self::parse_fn_stmt,
         )?;
 
-        let end_offset = self.current_token().offset + self.current_token().len;
         self.expect_with_context(TokenType::Semicolon, "after run declaration")?;
 
-        Ok(Stmt::Run {
-            name,
-            body,
-            offset: start_offset,
-            len: end_offset - start_offset,
-        })
+        Ok(Stmt::Run { name, body })
     }
 }
 
@@ -79,15 +72,14 @@ mod tests {
     }
 
     #[test]
-    fn test_project_requires_a_name() {
-        let result = parse_program("run d { project() { a(); }; };");
-        let errs = result.unwrap_err();
-        assert!(
-            errs.iter()
-                .any(|e| e.to_string().contains("`project` requires a project name")),
-            "got: {:?}",
-            errs
-        );
+    fn test_project_accepts_empty_name() {
+        // Empty is valid data; an empty project name fails at entry with the
+        // ordinary unknown-project error.
+        let body = run_body("run d { project() { a(); }; };");
+        match &body[0] {
+            FnStmt::Project { name, .. } => assert!(name.parts.is_empty()),
+            other => panic!("expected project, got {:?}", other),
+        }
     }
 
     #[test]

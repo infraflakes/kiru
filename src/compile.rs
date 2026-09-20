@@ -41,19 +41,25 @@ pub(crate) fn compile_source(
 }
 
 /// A run block accumulated from `run name { ... }` syntax: its unresolved
-/// body plus the source location, so reference and arity errors report
-/// against the real span. The body is lowered in `build_program`, once
-/// every function is collected.
+/// body, the source location, the declaration order, and a snapshot of the
+/// variables declared before it. The body is lowered in `build_program`
+/// against exactly that snapshot, so a run can never see a variable or
+/// function declared after it.
 struct PendingRunBlock {
     body: Vec<FnStmt>,
     source_name: String,
+    /// Declaration order across every loaded file, for callee visibility.
+    epoch: usize,
+    /// The variables visible where this run was declared.
+    globals: BTreeMap<String, Template>,
 }
 
-/// A named function awaiting lowering: its parameters, body, and the source
-/// those statements were written in (possibly an imported file). Bodies are
-/// lowered per call site, with arguments bound to params, so this map is
-/// never lowered on its own.
+/// One definition of a named function, at the declaration order it appeared.
+/// A name may be defined again later; each mention resolves to the newest
+/// definition at or before its own declaration point (textual scoping).
 struct PendingFn {
+    /// Declaration order across every loaded file.
+    epoch: usize,
     params: Vec<String>,
     body: Vec<FnStmt>,
     source_name: String,
@@ -65,9 +71,10 @@ struct CompileState {
     /// parts; they are never executed or frozen at compile time.
     globals: BTreeMap<String, Template>,
     /// Named functions accumulated from every source file, keyed by name.
-    /// Expansions happen per call site, so this map is never lowered on its
-    /// own.
-    functions: BTreeMap<String, PendingFn>,
+    /// Every definition is kept in declaration order, so a mention resolves
+    /// textually: the newest definition at or before the mentioning body's
+    /// own declaration point.
+    functions: BTreeMap<String, Vec<PendingFn>>,
     /// Run blocks accumulated from `run name { ... }` syntax, each being
     /// an ordered list of sequential chains of function calls.
     run_blocks: BTreeMap<String, PendingRunBlock>,
@@ -81,6 +88,9 @@ struct CompileState {
     /// before compilation and removed after, so re-entry within the same
     /// chain is an error.
     recursion_stack: HashSet<PathBuf>,
+    /// Next declaration order to hand out. Declarations are read top-down,
+    /// imports loaded inline, so this is the total textual order.
+    next_epoch: usize,
 }
 
 impl CompileState {
@@ -92,7 +102,15 @@ impl CompileState {
             source_texts: HashMap::new(),
             loaded_files: HashSet::new(),
             recursion_stack: HashSet::new(),
+            next_epoch: 0,
         }
+    }
+
+    /// Take the next declaration order.
+    fn take_epoch(&mut self) -> usize {
+        let epoch = self.next_epoch;
+        self.next_epoch += 1;
+        epoch
     }
 
     fn spanned(
@@ -205,37 +223,10 @@ fn compile_program(program: &Program, state: &mut CompileState) -> Result<(), Co
     state
         .source_texts
         .insert(program.source_name.clone(), program.source_text.clone());
-    // Pre-pass: collect every top-level `fn`, wherever it appears in the
-    // file, so any function can call any other regardless of order. Imports
-    // keep their file-order rule: functions from an import are only visible
-    // after its import statement, matching everything else from that file.
-    for item in &program.top_level_items {
-        if let TopLevel::Stmt(Stmt::Fn {
-            name,
-            params,
-            body,
-            offset,
-            len,
-        }) = item
-        {
-            if state.functions.contains_key(name) {
-                return Err(state.spanned(
-                    format!("duplicate function `{name}`"),
-                    &program.source_name,
-                    *offset,
-                    *len,
-                ));
-            }
-            state.functions.insert(
-                name.clone(),
-                PendingFn {
-                    params: params.clone(),
-                    body: body.clone(),
-                    source_name: program.source_name.clone(),
-                },
-            );
-        }
-    }
+    // Everything is read top-down: a declaration joins the namespace at the
+    // point it appears, and imports are loaded inline, so later declarations
+    // in later files are simply later. A mention can only resolve against
+    // what was declared before it.
     for item in &program.top_level_items {
         match item {
             TopLevel::Stmt(stmt) => compile_stmt(stmt, state, program)?,
@@ -253,21 +244,28 @@ fn compile_stmt(
     program: &Program,
 ) -> Result<(), CompileError> {
     match stmt {
-        Stmt::Var {
-            name,
-            value,
-            offset,
-            len,
-        } => compile_var_decl(name, value, *offset, *len, &program.source_name, state),
+        Stmt::Var { name, value } => compile_var_decl(name, value, &program.source_name, state),
         // Function bodies were collected by the pre-pass and are lowered per
         // call site during `build_program`.
-        Stmt::Fn { .. } => Ok(()),
-        Stmt::Run {
-            name,
-            body,
-            offset,
-            len,
-        } => compile_run_decl(name, body, *offset, *len, &program.source_name, state),
+        // Functions are registered where they appear; their bodies are
+        // lowered per call site against the visibility of that site.
+        Stmt::Fn {
+            name, params, body, ..
+        } => {
+            let epoch = state.take_epoch();
+            state
+                .functions
+                .entry(name.clone())
+                .or_default()
+                .push(PendingFn {
+                    epoch,
+                    params: params.clone(),
+                    body: body.clone(),
+                    source_name: program.source_name.clone(),
+                });
+            Ok(())
+        }
+        Stmt::Run { name, body } => compile_run_decl(name, body, &program.source_name, state),
     }
 }
 
@@ -276,12 +274,13 @@ fn compile_stmt(
 /// children, so the display tree and the execution tree are one structure.
 fn build_program(state: CompileState) -> Result<IrProgram, CompileError> {
     let CompileState {
-        globals,
+        globals: _,
         functions,
         run_blocks,
         source_texts,
         loaded_files: _,
         recursion_stack: _,
+        next_epoch: _,
     } = state;
 
     let resolver = FnResolver {
@@ -291,8 +290,13 @@ fn build_program(state: CompileState) -> Result<IrProgram, CompileError> {
     let mut runs = BTreeMap::new();
     let mut arena = crate::ir::ProgramBuilder::default();
     for (run_name, pending_run) in run_blocks {
-        let PendingRunBlock { body, source_name } = pending_run;
-        let mut scope = globals.clone();
+        let PendingRunBlock {
+            body,
+            source_name,
+            epoch,
+            globals,
+        } = pending_run;
+        let mut scope = globals;
         let mut cycle_stack = Vec::new();
         let children = compile_fn_stmts(
             &body,
@@ -301,6 +305,7 @@ fn build_program(state: CompileState) -> Result<IrProgram, CompileError> {
             &source_name,
             &resolver,
             &mut cycle_stack,
+            epoch,
             &mut arena,
         )?;
         runs.insert(run_name, children);
@@ -309,52 +314,37 @@ fn build_program(state: CompileState) -> Result<IrProgram, CompileError> {
     Ok(arena.build(runs))
 }
 
-/// Declare a top-level variable: inline its template against the globals and
-/// record it for later inlining at every use site.
+/// Declare a top-level variable: inline its template against the variables
+/// declared before it and record it for later inlining. A later declaration
+/// of the same name simply replaces it from that point on.
 fn compile_var_decl(
     name: &str,
     value: &Template,
-    offset: usize,
-    len: usize,
     source_name: &str,
     state: &mut CompileState,
 ) -> Result<(), CompileError> {
     let inlined = inline_dsl_template(value, &state.globals, &state.source_texts, source_name)?;
-    if state.globals.contains_key(name) {
-        return Err(state.spanned(
-            format!("variable `{}` is already defined", name),
-            source_name,
-            offset,
-            len,
-        ));
-    }
     state.globals.insert(name.to_string(), inlined);
     Ok(())
 }
 
-/// Accumulate a `run name { ... }` block; bodies are lowered once every
-/// function is collected, so a run may call functions declared later.
+/// Accumulate a `run name { ... }` block with the variables and declaration
+/// order visible where it appeared; its body is lowered against exactly
+/// those later. A later block of the same name replaces it.
 fn compile_run_decl(
     name: &str,
     body: &[FnStmt],
-    offset: usize,
-    len: usize,
     source_name: &str,
     state: &mut CompileState,
 ) -> Result<(), CompileError> {
-    if state.run_blocks.contains_key(name) {
-        return Err(state.spanned(
-            format!("duplicate run block: {}", name),
-            source_name,
-            offset,
-            len,
-        ));
-    }
+    let epoch = state.take_epoch();
     state.run_blocks.insert(
         name.to_string(),
         PendingRunBlock {
             body: body.to_vec(),
             source_name: source_name.to_string(),
+            epoch,
+            globals: state.globals.clone(),
         },
     );
     Ok(())

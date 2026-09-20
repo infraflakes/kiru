@@ -7,32 +7,20 @@ pub(crate) enum Stmt {
     /// A variable declaration (`var name = value`). The value is a template
     /// inlined at every use site; any `$(command)` inside it resolves where
     /// it is used, never here.
-    Var {
-        name: String,
-        value: Template,
-        offset: usize,
-        len: usize,
-    },
+    Var { name: String, value: Template },
     /// A function definition (`fn name(params) { ... };`): a named bundle of
-    /// statements, callable by name from any body and importable across
-    /// files. Functions are global; a call runs in the project context of
-    /// the enclosing `project(...)` block, or at the invocation context.
+    /// statements, importable across files and callable by name after this
+    /// declaration point. A call runs in the project context of the
+    /// enclosing `project(...)` block, or at the invocation context.
     Fn {
         name: String,
         params: Vec<String>,
         body: Vec<FnStmt>,
-        offset: usize,
-        len: usize,
     },
     /// A run block definition: `run name { statement; ... };` - an entry
     /// point whose body is an ordinary statement list. `async() { ... }`
     /// expresses concurrency; `;` always means "then".
-    Run {
-        name: String,
-        body: Vec<FnStmt>,
-        offset: usize,
-        len: usize,
-    },
+    Run { name: String, body: Vec<FnStmt> },
 }
 
 /// A top-level item returned by the parser: either a DSL statement or an import directive.

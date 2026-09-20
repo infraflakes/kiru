@@ -293,16 +293,12 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_command_substitution_rejected() {
+    fn test_empty_command_substitution_is_empty_data() {
+        // `$()` runs nothing and substitutes nothing: empty is valid data.
         let cases = ["$()", "$(  )", "(a $() b)", "$($( ))"];
         for input in cases {
             let errors = extract_errors(input);
-            assert!(
-                errors.iter().any(|e| e == "empty command substitution"),
-                "input {:?}: got {:?}",
-                input,
-                errors
-            );
+            assert!(errors.is_empty(), "input {:?}: got {:?}", input, errors);
         }
     }
 

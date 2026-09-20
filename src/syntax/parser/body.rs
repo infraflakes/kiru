@@ -7,19 +7,13 @@ use crate::syntax::source::{ArmPattern, EnvPair};
 
 impl Parser {
     /// Parses an `exec(cmd);` statement. `$()`/`@()` inside the argument
-    /// are substituted at runtime; the resolved text is the command. An
-    /// empty argument list is rejected: there is nothing to run.
+    /// are substituted at runtime; the resolved text is the command. Data is
+    /// monotyped strings, so an empty argument is a valid empty command.
     pub(crate) fn parse_exec_stmt(&mut self) -> Result<FnStmt, ParseError> {
         let args = match &self.current_token().token_type {
             TokenType::Exec(Some(args)) => args.clone(),
             _ => unreachable!("exec dispatch guarantees a fused argument list"),
         };
-        if args.is_empty() {
-            return Err(ParseError::new(
-                self.eof_aware_span(),
-                "`exec` requires a command".to_string(),
-            ));
-        }
         let command = self.single_argument(args, "exec")?;
         self.advance();
         self.expect_with_context(TokenType::Semicolon, "after `exec`")?;
@@ -52,18 +46,13 @@ impl Parser {
     /// Parses `project(name) { ... };`. The name argument is a template:
     /// `project(app)` is compile-time literal, `project($(cat .project))`
     /// resolves at runtime. Inside the body, every call runs in that
-    /// project's context.
+    /// project's context. An empty name is empty data and fails at entry
+    /// with the ordinary unknown-project error.
     pub(crate) fn parse_project_block(&mut self) -> Result<FnStmt, ParseError> {
         let args = match &self.current_token().token_type {
             TokenType::Project(Some(args)) => args.clone(),
             _ => unreachable!("project dispatch guarantees a fused argument list"),
         };
-        if args.is_empty() {
-            return Err(ParseError::new(
-                self.eof_aware_span(),
-                "`project` requires a project name".to_string(),
-            ));
-        }
         let name = self.single_argument(args, "project")?;
         self.advance();
         let body = self.parse_braced_block(
@@ -310,15 +299,14 @@ mod tests {
     }
 
     #[test]
-    fn test_exec_requires_a_command() {
-        let result = parse_program("fn x { exec(); };");
-        let errs = result.unwrap_err();
-        assert!(
-            errs.iter()
-                .any(|e| e.to_string().contains("`exec` requires a command")),
-            "got: {:?}",
-            errs
-        );
+    fn test_exec_accepts_empty_command() {
+        // Empty is valid data: `exec()` is an empty command, not a syntax
+        // error.
+        let body = parse_fn_body("fn x { exec(); };");
+        match &body[0] {
+            FnStmt::Exec(command) => assert!(command.parts.is_empty()),
+            other => panic!("expected exec, got {:?}", other),
+        }
     }
 
     #[test]

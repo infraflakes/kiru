@@ -393,15 +393,26 @@ fn test_undefined_function_call_is_rejected() {
     );
 }
 
+/// A redefinition is textual: earlier mentions keep the definition visible
+/// at their own declaration point, later ones see the new one.
 #[test]
-fn test_duplicate_function_is_rejected() {
-    let error = compile_error(
+fn test_function_redefinition_is_textual() {
+    let program = compile_str(
         "\
-fn step { log(one); };
-fn step { log(two); };
+fn f { log(first); };
+run before { f(); };
+fn f { log(second); };
+run after { f(); };
 ",
     );
-    assert!(error.contains("duplicate function `step`"), "{error}");
+    assert_eq!(
+        template_text(first_command_template(&program, "before", true)),
+        "first"
+    );
+    assert_eq!(
+        template_text(first_command_template(&program, "after", true)),
+        "second"
+    );
 }
 
 #[test]
@@ -432,8 +443,10 @@ run r { project(p) { step(); }; };
     );
 }
 
+/// Mutual recursion cannot even be written: the mention of `b` inside `a`
+/// comes before `b` is declared.
 #[test]
-fn test_mutually_recursive_fns_are_rejected() {
+fn test_mutual_recursion_fails_by_order() {
     let error = compile_error(
         "\
 fn a { b(); };
@@ -442,23 +455,93 @@ run r { project(p) { a(); }; };
 ",
     );
     assert!(
-        error.contains("circular function call: a -> b -> a"),
+        error.contains("function `b` is declared after this point"),
         "{error}"
     );
 }
 
-/// Functions are collected in a pre-pass, so a run may call a function
-/// declared after it.
+/// Everything is read top-down: a function mentioned before its declaration
+/// is not visible.
 #[test]
-fn test_function_order_independence() {
+fn test_functions_must_be_declared_before_use() {
+    let error = compile_error("run r { project(p) { step(); }; };\nfn step { log(step-run); };");
+    assert!(
+        error.contains("function `step` is declared after this point"),
+        "{error}"
+    );
+}
+
+/// Imports join the namespace at the point they appear: a use before the
+/// import cannot see its definitions, a use after can.
+#[test]
+fn test_imports_are_visible_from_their_point_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let helper = dir.path().join("shared.kiru");
+    std::fs::write(&helper, "fn step { log(step-run); };").unwrap();
+
+    let before = format!("run r {{ step(); }};\nimport({});\n", helper.display());
+    let error = compile_error(&before);
+    assert!(
+        error.contains("function `step` is declared after this point"),
+        "{error}"
+    );
+
+    let after = format!("import({});\nrun r {{ step(); }};\n", helper.display());
+    let program = compile_str(&after);
+    assert_eq!(
+        template_text(first_command_template(&program, "r", true)),
+        "step-run"
+    );
+}
+
+/// A run sees the variables declared before it, never a later one.
+#[test]
+fn test_runs_see_only_earlier_variables() {
+    let error = compile_error("run r { log(@(later)); };\nvar later = (L);");
+    assert!(error.contains("undefined variable: later"), "{error}");
+
+    let program = compile_str("var earlier = (E);\nrun r { log(@(earlier)); };");
+    assert_eq!(
+        template_text(first_command_template(&program, "r", true)),
+        "E"
+    );
+}
+
+/// A variable redefinition wins from its point on; earlier runs keep the
+/// value that was visible when they were declared.
+#[test]
+fn test_variable_redefinition_wins_from_that_point() {
     let program = compile_str(
         "\
-run r { project(p) { step(); }; };
-fn step { log(step-run); };
+var x = (one);
+run first { log(@(x)); };
+var x = (two);
+run second { log(@(x)); };
 ",
     );
-    let template = first_command_template(&program, "r", true);
-    assert_eq!(template_text(template), "step-run");
+    assert_eq!(
+        template_text(first_command_template(&program, "first", true)),
+        "one"
+    );
+    assert_eq!(
+        template_text(first_command_template(&program, "second", true)),
+        "two"
+    );
+}
+
+/// Duplicate parameters bind the last argument.
+#[test]
+fn test_last_parameter_wins() {
+    let program = compile_str(
+        "\
+fn f(a; a) { log(@(a)); };
+run r { f(one; two); };
+",
+    );
+    assert_eq!(
+        template_text(first_command_template(&program, "r", true)),
+        "two"
+    );
 }
 
 /// An unqualified run call runs at the invocation context: no project

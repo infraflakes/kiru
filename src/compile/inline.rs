@@ -13,15 +13,18 @@ use super::PendingFn;
 /// carries the source its statements were written in, so diagnostics from an
 /// inlined body render against the right file.
 pub(super) struct FnResolver<'a> {
-    pub(super) functions: &'a BTreeMap<String, PendingFn>,
+    /// Every definition of every name, in declaration order. A lookup picks
+    /// the newest definition at or before the mentioning body's order.
+    pub(super) functions: &'a BTreeMap<String, Vec<PendingFn>>,
 }
 
-/// Lower a call to a named function: check the target exists and the
-/// argument count matches, inline each argument against the caller's scope,
-/// bind the results to the callee's params, and compile the callee's body
-/// with those parameters as its only scope. The call is spliced carbon-copy
-/// at the call site; `cycle_stack` reports recursive call chains instead of
-/// looping.
+/// Lower a call to a named function: resolve the target textually (the
+/// newest definition at or before `bound`, the mentioning body's own
+/// declaration order), inline each argument against the caller's scope, bind
+/// the results to the callee's params, and compile the callee's body with
+/// those parameters as its only scope and its own order as the new bound.
+/// The call is spliced carbon-copy at the call site; `cycle_stack` reports
+/// self-recursion instead of looping.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn lower_function_call(
     name: &str,
@@ -33,17 +36,22 @@ pub(super) fn lower_function_call(
     source_name: &str,
     offset: usize,
     len: usize,
+    bound: usize,
     arena: &mut ProgramBuilder,
 ) -> Result<Vec<NodeId>, CompileError> {
-    let function = resolver.functions.get(name).ok_or_else(|| {
-        super::error_in(
-            sources,
-            source_name,
-            offset,
-            len.max(1),
-            format!("undefined function: `{name}`"),
-        )
-    })?;
+    let function = resolver
+        .functions
+        .get(name)
+        .and_then(|versions| versions.iter().rev().find(|f| f.epoch <= bound))
+        .ok_or_else(|| {
+            let declared_later = resolver.functions.contains_key(name);
+            let message = if declared_later {
+                format!("function `{name}` is declared after this point")
+            } else {
+                format!("undefined function: `{name}`")
+            };
+            super::error_in(sources, source_name, offset, len.max(1), message)
+        })?;
     if function.params.len() != args.len() {
         return Err(super::error_in(
             sources,
@@ -86,6 +94,7 @@ pub(super) fn lower_function_call(
         &function.source_name,
         resolver,
         cycle_stack,
+        function.epoch,
         arena,
     )?;
     cycle_stack.pop();
@@ -202,6 +211,7 @@ pub(super) fn compile_fn_stmts(
     source_name: &str,
     resolver: &FnResolver<'_>,
     cycle_stack: &mut Vec<String>,
+    bound: usize,
     arena: &mut ProgramBuilder,
 ) -> Result<Vec<NodeId>, CompileError> {
     let mut out = Vec::new();
@@ -213,6 +223,7 @@ pub(super) fn compile_fn_stmts(
             source_name,
             resolver,
             cycle_stack,
+            bound,
             arena,
         )?);
     }
@@ -229,6 +240,7 @@ pub(super) fn compile_fn_stmt(
     source_name: &str,
     resolver: &FnResolver<'_>,
     cycle_stack: &mut Vec<String>,
+    bound: usize,
     arena: &mut ProgramBuilder,
 ) -> Result<Vec<NodeId>, CompileError> {
     let leaf = |kind: NodeKind, arena: &mut ProgramBuilder| vec![arena.push(kind, Vec::new())];
@@ -277,6 +289,7 @@ pub(super) fn compile_fn_stmt(
                 source_name,
                 resolver,
                 cycle_stack,
+                bound,
                 arena,
             )?;
             Ok(vec![arena.push(NodeKind::Env(ir_pairs), inner_body)])
@@ -290,6 +303,7 @@ pub(super) fn compile_fn_stmt(
                 source_name,
                 resolver,
                 cycle_stack,
+                bound,
                 arena,
             )?;
             Ok(vec![arena.push(NodeKind::Async, inner_body)])
@@ -311,6 +325,7 @@ pub(super) fn compile_fn_stmt(
                 source_name,
                 *offset,
                 *len,
+                bound,
                 arena,
             )
         }
@@ -324,6 +339,7 @@ pub(super) fn compile_fn_stmt(
                 source_name,
                 resolver,
                 cycle_stack,
+                bound,
                 arena,
             )?;
             Ok(vec![arena.push(
@@ -365,6 +381,7 @@ pub(super) fn compile_fn_stmt(
                     source_name,
                     resolver,
                     cycle_stack,
+                    bound,
                     arena,
                 )?;
                 arm_ids.push(arena.push(NodeKind::Arm(pattern), body));
