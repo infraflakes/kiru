@@ -1,0 +1,468 @@
+//! Engine tests. They call functions directly instead of running the entry,
+//! so no process output is captured. Only the tests that build commands
+//! spawn processes.
+
+use std::time::{Duration, Instant};
+
+use crate::compiler::{Program, Value};
+use crate::compiler::{analyze, link, load};
+
+use super::Runtime;
+
+/// Load, link, and check one source file. Module values are evaluated by
+/// `Runtime::for_testing`, exactly as a compiled binary does at startup.
+fn program(source: &str) -> Program {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let path = directory.path().join("main.kiru");
+    std::fs::write(&path, source).expect("write file");
+    let mut loaded = load(&path).expect("loads");
+    let mut program = link(&mut loaded).expect("links");
+    analyze(&mut program).expect("checks");
+    program
+}
+
+fn runtime(source: &str) -> Runtime {
+    Runtime::for_testing(program(source))
+}
+
+fn call_text(runtime: &Runtime, name: &str) -> String {
+    match runtime
+        .call_root(name, Vec::new())
+        .expect("the call succeeds")
+    {
+        Value::Text(text) => text,
+        other => panic!("expected text, found {other:?}"),
+    }
+}
+
+/// Run every pure evaluation case, collecting all mismatches so one run
+/// reports every case that failed.
+fn expect_text_results(cases: &[(&str, &str, &str, &str)]) {
+    let mut failures = Vec::new();
+    for &(name, source, function, expected) in cases {
+        let actual = call_text(&runtime(source), function);
+        if actual != expected {
+            failures.push(format!("{name}: expected `{expected}`, found `{actual}`"));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} evaluation case(s) failed:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn args_record_holds_two_verbatim_words() {
+    let record = super::build_arguments_record(&["deploy".to_owned(), "fast".to_owned()])
+        .expect("two words");
+    assert_eq!(record.get("cmd"), "deploy");
+    assert_eq!(record.get("flag"), "fast");
+    assert_eq!(record.get("missing"), "");
+
+    let absent = super::build_arguments_record(&[]).expect("no words");
+    assert_eq!(absent.get("cmd"), "");
+    assert_eq!(absent.get("flag"), "");
+
+    let extra = super::build_arguments_record(&["a".to_owned(), "b".to_owned(), "c".to_owned()]);
+    assert!(extra.is_err());
+}
+
+#[test]
+fn evaluates_expressions() {
+    expect_text_results(&[
+        (
+            "returns a text value",
+            "fn answer() { return(\"42\"); };\nfn main() {};",
+            "answer",
+            "42",
+        ),
+        (
+            "missing field reads empty",
+            "fn f() { rec r = { a = \"1\" }; return(r.b + \"!\"); };\nfn main() {};",
+            "f",
+            "!",
+        ),
+        (
+            "duplicate key last wins",
+            "fn f() { rec r = { a = \"1\", a = \"2\" }; return(r.a); };\nfn main() {};",
+            "f",
+            "2",
+        ),
+        (
+            "defer does not change the returned value",
+            "fn f() { txt x = \"a\"; defer { x = \"b\"; }; return(x); };\nfn main() {};",
+            "f",
+            "a",
+        ),
+        (
+            "defer body uses its own local",
+            "fn f() { txt x = \"a\"; defer { txt y = \"b\"; x = y; }; return(x); };\nfn main() {};",
+            "f",
+            "a",
+        ),
+        (
+            "module values are evaluated once at startup",
+            "txt base = \"a\";\ntxt derived = base + \"b\";\nfn f() { return(derived + base); };\nfn main() {};",
+            "f",
+            "aba",
+        ),
+    ]);
+}
+
+#[test]
+fn a_void_call_produces_nothing() {
+    let runtime = runtime("fn work() {};\nfn main() {};");
+    let value = runtime
+        .call_root("work", Vec::new())
+        .expect("the call succeeds");
+    assert_eq!(value, Value::Nothing);
+}
+
+#[test]
+fn switch_takes_the_first_match_then_default() {
+    let runtime = runtime(
+        "txt a = \"a\";\n\
+         fn f(txt s) {\n\
+           txt found = \"\";\n\
+           switch(s) {\n\
+             case(\"a\") { found = \"one\"; };\n\
+             case(a) { found = \"two\"; };\n\
+             default { found = \"other\"; };\n\
+           };\n\
+           return(found);\n\
+         };\n\
+         fn main() {};",
+    );
+    let first = runtime
+        .call_root("f", vec![Value::Text("a".to_owned())])
+        .expect("the call succeeds");
+    assert_eq!(first, Value::Text("one".to_owned()));
+    let fallback = runtime
+        .call_root("f", vec![Value::Text("z".to_owned())])
+        .expect("the call succeeds");
+    assert_eq!(fallback, Value::Text("other".to_owned()));
+}
+
+#[test]
+fn out_terminal_captures_stdout() {
+    let runtime = runtime("fn f() { return(std::command(\"echo hi\").out()); };\nfn main() {};");
+    assert_eq!(call_text(&runtime, "f"), "hi");
+}
+
+#[test]
+fn code_terminal_binds_the_exit_code() {
+    let runtime = runtime("fn f() { return(std::command(\"exit 3\").code()); };\nfn main() {};");
+    assert_eq!(call_text(&runtime, "f"), "3");
+}
+
+#[test]
+fn a_bare_command_statement_runs() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let marker = directory.path().join("ran");
+    let source = format!(
+        "fn f() {{ std::command(\"touch {}\"); return(\"ok\"); }};\nfn main() {{}};",
+        marker.display()
+    );
+    assert_eq!(call_text(&runtime(&source), "f"), "ok");
+    assert!(marker.exists(), "the bare command ran");
+}
+
+#[test]
+fn timeout_kills_the_group_with_code_124() {
+    let runtime = runtime(
+        "fn f() { return(std::command(\"sleep 5\").timeout(\"1\").code()); };\nfn main() {};",
+    );
+    assert_eq!(call_text(&runtime, "f"), "124");
+}
+
+#[test]
+fn huge_timeout_fails_cleanly() {
+    let runtime = runtime(
+        "fn f() { return(std::command(\"true\").timeout(\"18446744073709551615\").code()); };\nfn main() {};",
+    );
+    assert!(runtime.call_root("f", Vec::new()).is_err());
+}
+
+#[test]
+fn panic_stops_the_run() {
+    let runtime = runtime("fn f() { std::panic(); };\nfn main() {};");
+    assert!(runtime.call_root("f", Vec::new()).is_err());
+    assert!(runtime.state.panicked(), "the run remembers the panic");
+}
+
+#[test]
+fn panic_runs_pending_defers() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let marker = directory.path().join("cleaned");
+    let source = format!(
+        "fn f() {{\n\
+           defer {{ std::command(\"touch {}\").stream(); }};\n\
+           std::panic();\n\
+         }};\nfn main() {{}};",
+        marker.display()
+    );
+    let runtime = runtime(&source);
+    assert!(runtime.call_root("f", Vec::new()).is_err());
+    assert!(marker.exists(), "the deferred cleanup command ran");
+}
+
+#[test]
+fn async_does_not_wait_for_the_call() {
+    let runtime = runtime(
+        "fn worker() { return(\"w\"); };\n\
+         fn f() { std::async(worker()); return(\"done\"); };\n\
+         fn main() {};",
+    );
+    assert_eq!(call_text(&runtime, "f"), "done");
+}
+
+#[test]
+fn wait_blocks_until_the_thread_finishes() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let marker = directory.path().join("finished");
+    let source = format!(
+        "fn worker() {{ std::command(\"sleep 0.2; touch {}\").stream(); }};\n\
+         fn f() {{ std::async(worker()); std::wait(); return(\"done\"); }};\n\
+         fn main() {{}};",
+        marker.display()
+    );
+    assert_eq!(call_text(&runtime(&source), "f"), "done");
+    assert!(marker.exists(), "wait joined the thread before continuing");
+}
+
+#[test]
+fn wait_joins_every_outstanding_thread() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let first = directory.path().join("first");
+    let second = directory.path().join("second");
+    let third = directory.path().join("third");
+    let source = format!(
+        "fn work(txt marker) {{ std::command(\"sleep 0.2; touch \" + marker).stream(); }};\n\
+         fn f() {{\n\
+           std::async(work(\"{first}\"));\n\
+           std::async(work(\"{second}\"));\n\
+           std::async(work(\"{third}\"));\n\
+           std::wait();\n\
+           return(\"done\");\n\
+         }};\nfn main() {{}};",
+        first = first.display(),
+        second = second.display(),
+        third = third.display(),
+    );
+    assert_eq!(call_text(&runtime(&source), "f"), "done");
+    assert!(first.exists(), "the first thread finished");
+    assert!(second.exists(), "the second thread finished");
+    assert!(third.exists(), "the third thread finished");
+}
+
+#[test]
+fn a_second_wait_returns_immediately() {
+    let runtime = runtime(
+        "fn worker() {};\n\
+         fn f() {\n\
+           std::async(worker());\n\
+           std::wait();\n\
+           std::wait();\n\
+           return(\"done\");\n\
+         };\n\
+         fn main() {};",
+    );
+    assert_eq!(call_text(&runtime, "f"), "done");
+}
+
+#[test]
+fn wait_inside_a_spawned_thread_returns_without_joining_its_spawner() {
+    let runtime = runtime(
+        "fn worker() { std::wait(); };\n\
+         fn f() { std::async(worker()); std::wait(); return(\"done\"); };\n\
+         fn main() {};",
+    );
+    assert_eq!(call_text(&runtime, "f"), "done");
+}
+
+#[test]
+fn wait_inside_a_spawned_thread_joins_its_own_children() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let marker = directory.path().join("finished");
+    let source = format!(
+        "fn child() {{ std::command(\"sleep 0.2; touch {}\").stream(); }};\n\
+         fn worker() {{ std::async(child()); std::wait(); }};\n\
+         fn f() {{ std::async(worker()); std::wait(); return(\"done\"); }};\n\
+         fn main() {{}};",
+        marker.display()
+    );
+    assert_eq!(call_text(&runtime(&source), "f"), "done");
+    assert!(
+        marker.exists(),
+        "the inner wait joined the thread worker spawned"
+    );
+}
+
+#[test]
+fn panic_in_an_async_thread_sets_the_panicked_flag() {
+    let runtime = runtime(
+        "fn worker() { std::panic(); };\n\
+         fn f() { std::async(worker()); return(\"done\"); };\n\
+         fn main() {};",
+    );
+    // The detached panic can reach the caller before or after `f` returns.
+    let _ = runtime.call_root("f", Vec::new());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline && !runtime.state.panicked() {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        runtime.state.panicked(),
+        "a panic in a detached thread is remembered"
+    );
+}
+
+#[test]
+fn panic_in_a_waited_thread_is_remembered_without_stopping_the_caller() {
+    let runtime = runtime(
+        "fn worker() { std::panic(); };\n\
+         fn f() {\n\
+           std::async(worker());\n\
+           std::wait();\n\
+           return(\"done\");\n\
+         };\n\
+         fn main() {};",
+    );
+    let value = runtime
+        .call_root("f", Vec::new())
+        .expect("a joined panic does not unwind the caller");
+    assert_eq!(value, Value::Text("done".to_owned()));
+    assert!(
+        runtime.state.panicked(),
+        "the joined panic still fails the run"
+    );
+}
+
+#[test]
+fn async_over_a_native_panic_records_the_failure() {
+    let runtime = runtime(
+        "fn f() {\n\
+           std::async(std::panic());\n\
+           std::wait();\n\
+           return(\"done\");\n\
+         };\n\
+         fn main() {};",
+    );
+    assert_eq!(call_text(&runtime, "f"), "done");
+    assert!(runtime.state.panicked());
+}
+
+#[test]
+fn async_over_a_method_chain_runs_the_terminal_on_the_thread() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let marker = directory.path().join("ran");
+    let source = format!(
+        "fn f() {{\n\
+           std::async(std::command(\"touch {}\").code());\n\
+           std::wait();\n\
+           return(\"done\");\n\
+         }};\n\
+         fn main() {{}};",
+        marker.display()
+    );
+    assert_eq!(call_text(&runtime(&source), "f"), "done");
+    assert!(marker.exists(), "the terminal ran on the spawned thread");
+}
+
+#[test]
+fn async_of_a_bare_command_runs_it_on_the_thread() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let marker = directory.path().join("ran");
+    let source = format!(
+        "fn f() {{\n\
+           std::async(std::command(\"touch {}\"));\n\
+           std::wait();\n\
+           return(\"done\");\n\
+         }};\n\
+         fn main() {{}};",
+        marker.display()
+    );
+    assert_eq!(call_text(&runtime(&source), "f"), "done");
+    assert!(
+        marker.exists(),
+        "the bare command ran on the spawned thread"
+    );
+}
+
+#[test]
+fn async_of_a_command_builder_runs_in_its_directory() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let marker = directory.path().join("ran");
+    let source = format!(
+        "fn f() {{\n\
+           std::async(std::command(\"touch ran\").in(\"{}\"));\n\
+           std::wait();\n\
+           return(\"done\");\n\
+         }};\n\
+         fn main() {{}};",
+        directory.path().display()
+    );
+    assert_eq!(call_text(&runtime(&source), "f"), "done");
+    assert!(
+        marker.exists(),
+        "the command ran in the directory named by the chain"
+    );
+}
+
+#[test]
+fn a_panic_in_one_thread_does_not_cancel_another_threads_command() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let marker = directory.path().join("survived");
+    let source = format!(
+        "fn worker() {{ std::panic(); }};\n\
+         fn other() {{ std::command(\"sleep 0.2; touch {}\").stream(); }};\n\
+         fn f() {{\n\
+           std::async(worker());\n\
+           std::async(other());\n\
+           std::wait();\n\
+           return(\"done\");\n\
+         }};\n\
+         fn main() {{}};",
+        marker.display()
+    );
+    let runtime = runtime(&source);
+    assert_eq!(call_text(&runtime, "f"), "done");
+    assert!(runtime.state.panicked(), "the panic is still recorded");
+    assert!(
+        marker.exists(),
+        "a panic in one thread must not cancel another thread's command"
+    );
+}
+
+#[test]
+fn an_empty_shell_is_a_spawn_failure() {
+    let runtime =
+        runtime("fn f() { return(std::command(\"true\").shell(\"\").code()); };\nfn main() {};");
+    assert!(
+        runtime.call_root("f", Vec::new()).is_err(),
+        "an empty shell must fail to spawn"
+    );
+}
+
+#[test]
+fn a_panic_in_a_defer_does_not_stop_the_other_defers() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let first = directory.path().join("first");
+    let last = directory.path().join("last");
+    let runtime = runtime(&format!(
+        "fn f() {{\n\
+           defer {{ std::command(\"touch {first}\").stream(); }};\n\
+           defer {{ std::panic(); }};\n\
+           defer {{ std::command(\"touch {last}\").stream(); }};\n\
+           return(\"\");\n\
+         }};\n\
+         fn main() {{}};",
+        first = first.display(),
+        last = last.display(),
+    ));
+    assert!(runtime.call_root("f", Vec::new()).is_err());
+    assert!(last.exists(), "the defer after the panic still runs");
+    assert!(first.exists(), "the first registered defer runs last");
+}

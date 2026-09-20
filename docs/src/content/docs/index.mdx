@@ -1,0 +1,44 @@
+---
+title: Kiru
+description: A statically typed, compiled process orchestration language.
+hero:
+  tagline: A statically typed, compiled process orchestration language.
+  actions:
+    - text: Start reading
+      link: getting-started/01-installing-kiru/01-from-a-release/
+      icon: open-book
+      variant: primary
+    - text: GitHub
+      link: https://github.com/infraflakes/kiru
+      icon: github
+      variant: minimal
+---
+
+Compile strict, simple, concurrent programs to self-contained binaries.
+
+## Features
+
+- **Commands as the primitive.** `std::command` chains a command line with
+  its environment, working directory, shell, and timeout, then streams or
+  captures the result. See [Building a
+  command](/effects/06-commands/01-building-a-command/).
+- **Statically typed.** Names, arity, and kinds are fixed and checked before a binary is built, so a wrong value cannot reach runtime. See [Types](/language/04-types/01-types/).
+- **Failure and cleanup.** `defer` registers cleanup, a panic records
+  failure, and signals stop every process group. See [Failure and
+  Cleanup](/effects/08-failure-and-cleanup/01-panic/).
+- **Concurrency.** `std::async` starts a call on its own thread and
+  `std::wait` joins the asyncs the calling thread spawned; the runtime
+  joins every remaining thread before exit. See
+  [Threads](/effects/07-threads/01-threads/).
+- **Self-contained binaries.** A compiled program is one file that holds
+  the compiler and the program. See
+  [Compiling](/getting-started/02-compiling-and-running/01-compiling/).
+
+## Contents
+
+- Chapters 1-5 cover installation, compiling, and the core language.
+- Chapters 6-8 cover commands, threads, and failure and cleanup.
+- Chapters 9-10 cover the command line and the standard library.
+- Appendices A-C list the standard library, reserved words, and grammar.
+
+Chapter numbers appear only in the sidebar.

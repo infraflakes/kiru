@@ -5,27 +5,14 @@ edition = "2024"
 license = "MIT"
 authors = ["Nguyen Bao Truong <infraflakes@proton.me>"]
 
-[dependencies]
-clap = { version = "4.6.7", features = ["derive"] }
-dirs = "7.0.0"
-libc = "0.2.189"
-annotate-snippets = "0.12.16"
-anstream = "1.0.0"
-ratatui = "0.30.2"
-shlex = "2.0.1"
-thiserror = "2.0.20"
-toml = "1.1.6"
-serde = { version = "1.0.229", features = ["derive"] }
-ron = "0.12.2"
+[[bin]]
+name = "kc"
+path = "src/main.rs"
 
-[build-dependencies]
-clap = { version = "4.6.7", features = ["derive"] }
-clap_complete = "4.6.11"
+[dependencies]
+libc = "0.2.189"
+serde = { version = "1.0.229", features = ["derive"] }
+postcard = { version = "1.1.3", features = ["alloc"] }
 
 [dev-dependencies]
-annotate-snippets = { version = "0.12.16", features = ["testing-colors"] }
 tempfile = "3.27.0"
-
-[dependencies.crossterm]
-version = "0.29.0"
-features = ["event-stream"]

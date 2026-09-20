@@ -51,22 +51,6 @@
               lockFile = ./Cargo.lock;
               allowBuiltinFetchGit = true;
             };
-
-            nativeBuildInputs = [ pkgs.installShellFiles ];
-
-            KIRU_COMPLETIONS_DIR = "target/kiru-completions";
-
-            # Ensure the directory exists right before Cargo kicks off anything.
-            preConfigure = ''
-              mkdir -p "$KIRU_COMPLETIONS_DIR"
-            '';
-
-            postInstall = ''
-              installShellCompletion --cmd kiru \
-                --bash "$KIRU_COMPLETIONS_DIR/kiru.bash" \
-                --fish "$KIRU_COMPLETIONS_DIR/kiru.fish" \
-                --zsh "$KIRU_COMPLETIONS_DIR/_kiru"
-            '';
           };
 
           devShells.default = pkgs.mkShell {
@@ -76,6 +60,8 @@
               clippy
               rustfmt
               cargo-edit
+              bun
+              biome
             ];
           };
         };

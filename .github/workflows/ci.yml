@@ -36,8 +36,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Compile Kiru Config
-        run: cargo run -- -c kiru.toml -p ci compile
+      - name: Build
+        run: cargo build
 
-      - name: Run CI via Kiru
-        run: cargo run -- -c kiru.toml -p ci run ci_kiru
+      - name: Checks
+        run: |
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+          cargo fmt --check
+
+      - name: Compile the pipeline
+        run: ./target/debug/kc main.kiru

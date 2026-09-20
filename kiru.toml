@@ -1,7 +1,0 @@
-[profile.ci]
-source = "main.kiru"
-output = "kirufile"
-
-[profile.ci.project.kiru]
-dir = "."
-direnv = true

@@ -1,0 +1,29 @@
+# std/io.kiru
+#
+# print and eprint live at the std root; see the language page in docs.
+
+module std;
+
+# The message travels through the environment, never through the shell
+# line, so its text cannot become syntax. \\n reaches printf as \n. print
+# returns text so it may be composed, and is commonly used as a statement.
+fn print(txt message) {
+  command("printf '%s\\n' \"$KIRU_MESSAGE\"")
+    .env({KIRU_MESSAGE = message})
+    .stream();
+  return("");
+};
+
+# A void function: it writes the message and stops the run. An empty message
+# panics with no output.
+fn eprint(txt message) {
+  switch(message) {
+    case("") {};
+    default {
+      command("printf '%s\\n' \"$KIRU_MESSAGE\" >&2")
+        .env({KIRU_MESSAGE = message})
+        .stream();
+    };
+  };
+  panic();
+};

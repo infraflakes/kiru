@@ -1,6 +1,12 @@
 .direnv
+kiru
 bin/
+out/
+/main
+/kc.tar.gz
 result
 /target
-/completions
 vendor/
+docs/node_modules/
+docs/dist/
+docs/.astro/

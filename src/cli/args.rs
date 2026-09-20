@@ -1,35 +1,56 @@
-use clap::{Parser, Subcommand};
+//! Parsing the words after the program name.
+
 use std::path::PathBuf;
 
-#[derive(Parser)]
-#[command(name = "kiru")]
-#[command(about = "kiru is a local project orchestrator CLI", long_about = None)]
-pub(crate) struct Cli {
-    /// Path to kiru.toml (defaults to ~/.config/kiru/kiru.toml)
-    #[arg(short, long, global = true)]
-    pub(crate) config: Option<PathBuf>,
+use super::CliError;
 
-    /// Profile to use, declared as [profile.<name>] in kiru.toml
-    #[arg(short, long, global = true)]
-    pub(crate) profile: Option<String>,
-
-    #[command(subcommand)]
-    pub(crate) command: Commands,
+/// What the words ask for.
+pub(crate) enum Request {
+    /// Print usage.
+    Help,
+    /// Print the compiler version.
+    Version,
+    /// Compile the entry file into an executable.
+    Compile {
+        entry: PathBuf,
+        output: Option<PathBuf>,
+    },
 }
 
-#[derive(Subcommand)]
-pub(crate) enum Commands {
-    /// Show current status of kiru
-    Status,
-    /// Clone/sync project repositories
-    Sync,
-    /// Run a run block
-    Run {
-        /// Name of the run block to execute
-        name: String,
-    },
-    /// Compile the profile's source into its output IR file
-    Compile,
-    /// Print the version number
-    Version,
+/// Parse the words after the program name. `help` and `version` win wherever
+/// they appear, before any later word is read. The first other word is the
+/// entry path; `-o` sets the output path.
+pub(crate) fn parse(words: &[String]) -> Result<Request, CliError> {
+    let mut entry = None;
+    let mut output = None;
+    let mut index = 0;
+    while index < words.len() {
+        match words[index].as_str() {
+            "help" => return Ok(Request::Help),
+            "version" => return Ok(Request::Version),
+            "-o" => {
+                index += 1;
+                let Some(value) = words.get(index) else {
+                    return Err(CliError("`-o` needs a path".to_owned()));
+                };
+                output = Some(PathBuf::from(value));
+            }
+            word if word.starts_with('-') => {
+                return Err(CliError(format!(
+                    "unexpected argument `{word}`; run `kc help` for usage"
+                )));
+            }
+            word if entry.is_none() => entry = Some(PathBuf::from(word)),
+            other => {
+                return Err(CliError(format!(
+                    "unexpected argument `{other}`; run `kc help` for usage"
+                )));
+            }
+        }
+        index += 1;
+    }
+    let Some(entry) = entry else {
+        return Err(CliError("no input file, `kc help` for usage.".to_owned()));
+    };
+    Ok(Request::Compile { entry, output })
 }

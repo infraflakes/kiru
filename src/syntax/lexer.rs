@@ -1,491 +1,355 @@
-use crate::diagnostics::Span;
-use crate::syntax::error::ParseError;
-use crate::syntax::token::{Token, TokenType};
+//! Turning source text into tokens.
 
-mod tokenizer;
+use crate::syntax::Span;
 
-/// Character-level lexer that emits tokens from source text. Lexing is
-/// strict: any character or template that cannot form a token is an error
-/// carrying its span, never a token.
-#[derive(Debug)]
-pub(crate) struct Lexer {
-    /// Source characters as a Vec<char> for O(1) index access.
-    pub(super) input: Vec<char>,
-    /// Current byte index into `input` (points at the next character to read).
-    pub(super) pos: usize,
-    /// One past `pos`, used by `read_char` to advance after peeking.
-    pub(super) read_pos: usize,
-    /// The current character at `pos`, or `None` at end-of-input.
-    pub(super) ch: Option<char>,
-    /// Byte offset of `pos` in the original source string, used for
-    /// token span computation when characters are multi-byte.
-    pub(super) byte_offset: usize,
+use super::token::{Token, TokenKind};
+
+/// A lexical error, positioned at the offending source range.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct LexError {
+    pub(crate) span: Span,
+    pub(crate) message: String,
 }
 
-impl Lexer {
-    /// Constructs a new Lexer from the given input string.
-    pub(crate) fn new(input: String) -> Self {
-        let mut lexer = Self {
-            input: input.chars().collect(),
-            pos: 0,
-            read_pos: 0,
-            ch: None,
-            byte_offset: 0,
-        };
-        lexer.read_char();
-        lexer
+/// Lex a whole source file.
+pub(crate) fn lex(source: &str) -> Result<Vec<Token>, LexError> {
+    Lexer::new(source).run()
+}
+
+struct Lexer<'a> {
+    source: &'a str,
+    chars: Vec<(usize, char)>,
+    position: usize,
+}
+
+impl<'a> Lexer<'a> {
+    fn new(source: &'a str) -> Self {
+        Self {
+            source,
+            chars: source.char_indices().collect(),
+            position: 0,
+        }
     }
 
-    /// Returns the source text length in bytes.
-    pub(crate) fn source_len(&self) -> usize {
-        self.input.iter().map(|ch| ch.len_utf8()).sum()
+    fn current(&self) -> Option<(usize, char)> {
+        self.chars.get(self.position).copied()
     }
 
-    /// The character one position ahead, without consuming it.
-    fn peek_next(&self) -> Option<char> {
-        self.input.get(self.read_pos).copied()
+    fn peek(&self, ahead: usize) -> Option<(usize, char)> {
+        self.chars.get(self.position + ahead).copied()
     }
 
-    /// Consume the current character and produce a single-character token.
-    fn single_char_token(&mut self, ty: TokenType, start_byte_offset: usize) -> Token {
-        self.read_char();
-        Token::new(ty, start_byte_offset, self.byte_offset - start_byte_offset)
+    fn offset(&self) -> usize {
+        self.current()
+            .map(|(offset, _)| offset)
+            .unwrap_or(self.source.len())
     }
 
-    /// Build the error for a character (or template) that cannot form a token.
-    fn unexpected(&self, msg: String, start_byte_offset: usize) -> ParseError {
-        ParseError::new(
-            Span::new(
-                start_byte_offset,
-                (self.byte_offset - start_byte_offset).max(1),
-            ),
-            msg,
-        )
+    fn advance(&mut self) -> Option<(usize, char)> {
+        let current = self.current();
+        if current.is_some() {
+            self.position += 1;
+        }
+        current
     }
 
-    /// Returns the next Token from the input, or a lex error with its span.
-    /// Every error path consumes at least one character, so callers always
-    /// make progress.
-    pub(crate) fn next_token(&mut self) -> Result<Token, ParseError> {
+    fn error(&self, span: Span, message: impl Into<String>) -> LexError {
+        LexError {
+            span,
+            message: message.into(),
+        }
+    }
+
+    fn run(mut self) -> Result<Vec<Token>, LexError> {
+        let mut tokens = Vec::new();
         loop {
-            self.skip_whitespace();
-            if self.ch != Some('#') {
+            self.skip_trivia();
+            let Some((start, current)) = self.current() else {
+                tokens.push(Token {
+                    kind: TokenKind::Eof,
+                    span: Span::new(self.source.len(), self.source.len()),
+                });
+                return Ok(tokens);
+            };
+
+            if current == '"' {
+                tokens.push(self.text()?);
+                continue;
+            }
+
+            if is_identifier_start(current) {
+                tokens.push(self.identifier());
+                continue;
+            }
+
+            let simple = match current {
+                '.' => Some(TokenKind::Dot),
+                ',' => Some(TokenKind::Comma),
+                ';' => Some(TokenKind::Semi),
+                '=' => Some(TokenKind::Equals),
+                '+' => Some(TokenKind::Plus),
+                '{' => Some(TokenKind::LBrace),
+                '}' => Some(TokenKind::RBrace),
+                '(' => Some(TokenKind::LParen),
+                ')' => Some(TokenKind::RParen),
+                _ => None,
+            };
+            if let Some(kind) = simple {
+                self.advance();
+                tokens.push(Token {
+                    kind,
+                    span: Span::new(start, self.offset()),
+                });
+                continue;
+            }
+
+            if current == ':' {
+                if let Some((_, ':')) = self.peek(1) {
+                    self.advance();
+                    self.advance();
+                    tokens.push(Token {
+                        kind: TokenKind::PathSep,
+                        span: Span::new(start, self.offset()),
+                    });
+                    continue;
+                }
+                return Err(self.error(
+                    Span::new(start, start + current.len_utf8()),
+                    "expected `::` in a path",
+                ));
+            }
+
+            return Err(self.error(
+                Span::new(start, start + current.len_utf8()),
+                format!("unexpected character `{current}`"),
+            ));
+        }
+    }
+
+    fn skip_trivia(&mut self) {
+        loop {
+            match self.current() {
+                Some((_, ' ' | '\t' | '\r' | '\n')) => {
+                    self.advance();
+                }
+                Some((_, '#')) => {
+                    while let Some((_, character)) = self.current() {
+                        if character == '\n' {
+                            break;
+                        }
+                        self.advance();
+                    }
+                }
+                _ => return,
+            }
+        }
+    }
+
+    fn identifier(&mut self) -> Token {
+        let (start, _) = self.current().expect("identifier starts at a character");
+        while let Some((_, character)) = self.current() {
+            if !is_identifier_continue(character) {
                 break;
             }
-            self.skip_comment();
+            self.advance();
         }
-
-        let start_byte_offset = self.byte_offset;
-        let ch = self.ch;
-
-        match ch {
-            None => Ok(Token::new(TokenType::Eof, start_byte_offset, 0)),
-            Some('{') => Ok(self.single_char_token(TokenType::LBrace, start_byte_offset)),
-            Some('}') => Ok(self.single_char_token(TokenType::RBrace, start_byte_offset)),
-            Some('(') => self.read_template_token(start_byte_offset),
-            Some(')') => Ok(self.single_char_token(TokenType::RParen, start_byte_offset)),
-            Some(';') => Ok(self.single_char_token(TokenType::Semicolon, start_byte_offset)),
-            Some('=') => Ok(self.single_char_token(TokenType::Assign, start_byte_offset)),
-            // A bare `$()`/`@()` is not a value: every template is a
-            // parenthesized region, with `$()` and `@()` as parts inside it.
-            Some('$') if self.peek_next() == Some('(') => {
-                self.read_char();
-                Err(self.unexpected(
-                    "`$(...)` is only valid inside `(...)`".to_string(),
-                    start_byte_offset,
-                ))
-            }
-            Some('@') if self.peek_next() == Some('(') => {
-                self.read_char();
-                Err(self.unexpected(
-                    "`@(...)` is only valid inside `(...)`".to_string(),
-                    start_byte_offset,
-                ))
-            }
-            Some(':') => {
-                self.read_char();
-                Err(self.unexpected("unexpected character: :".to_string(), start_byte_offset))
-            }
-            Some(ch) if ch.is_alphabetic() || ch == '_' => self.read_ident(),
-            Some(ch) => {
-                self.read_char();
-                Err(self.unexpected(format!("unexpected character: {ch}"), start_byte_offset))
-            }
+        let text = &self.source[start..self.offset()];
+        let kind = match text {
+            "module" => TokenKind::Module,
+            "import" => TokenKind::Import,
+            "fn" => TokenKind::Fn,
+            "txt" => TokenKind::Txt,
+            "rec" => TokenKind::Rec,
+            "switch" => TokenKind::Switch,
+            "case" => TokenKind::Case,
+            "default" => TokenKind::Default,
+            "defer" => TokenKind::Defer,
+            "return" => TokenKind::Return,
+            _ => TokenKind::Ident(text.to_owned()),
+        };
+        Token {
+            kind,
+            span: Span::new(start, self.offset()),
         }
     }
-}
 
-#[cfg(test)]
-/// Drive the lexer to EOF, returning every token (including EOF) in order
-/// alongside every lex error message.
-fn drain_tokens(input: &str) -> (Vec<Token>, Vec<String>) {
-    let mut lexer = Lexer::new(input.to_string());
-    let mut tokens = Vec::new();
-    let mut errors = Vec::new();
-    loop {
-        match lexer.next_token() {
-            Ok(tok) => {
-                let is_eof = matches!(tok.token_type, TokenType::Eof);
-                tokens.push(tok);
-                if is_eof {
-                    break;
+    fn text(&mut self) -> Result<Token, LexError> {
+        let (start, _) = self.current().expect("string starts at a quote");
+        self.advance();
+        let mut value = String::new();
+        loop {
+            let Some((position, character)) = self.current() else {
+                return Err(self.error(Span::new(start, self.source.len()), "unterminated string"));
+            };
+            match character {
+                '"' => {
+                    self.advance();
+                    return Ok(Token {
+                        kind: TokenKind::Text(value),
+                        span: Span::new(start, self.offset()),
+                    });
+                }
+                '\\' => {
+                    let escape_start = position;
+                    self.advance();
+                    let Some((_, escape)) = self.current() else {
+                        return Err(
+                            self.error(Span::new(start, self.source.len()), "unterminated string")
+                        );
+                    };
+                    let decoded = match escape {
+                        'n' => '\n',
+                        't' => '\t',
+                        'r' => '\r',
+                        '\\' => '\\',
+                        '"' => '"',
+                        _ => {
+                            return Err(self.error(
+                                Span::new(escape_start, self.offset() + escape.len_utf8()),
+                                format!(
+                                    "invalid escape `\\{escape}`; only \\n, \\t, \\r, \\\\, and \\\" are allowed"
+                                ),
+                            ));
+                        }
+                    };
+                    value.push(decoded);
+                    self.advance();
+                }
+                _ => {
+                    value.push(character);
+                    self.advance();
                 }
             }
-            Err(e) => errors.push(e.msg),
         }
     }
-    (tokens, errors)
 }
 
-#[cfg(test)]
-fn collect_tokens(input: &str) -> Vec<TokenType> {
-    drain_tokens(input)
-        .0
-        .into_iter()
-        .filter(|tok| !matches!(tok.token_type, TokenType::Eof))
-        .map(|tok| tok.token_type)
-        .collect()
+fn is_identifier_start(character: char) -> bool {
+    character == '_' || character.is_alphabetic()
 }
 
-#[cfg(test)]
-fn extract_errors(input: &str) -> Vec<String> {
-    drain_tokens(input).1
+fn is_identifier_continue(character: char) -> bool {
+    character == '_' || character.is_alphanumeric()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_single_tokens() {
-        let cases = vec![
-            ("=", TokenType::Assign),
-            ("{", TokenType::LBrace),
-            ("}", TokenType::RBrace),
-            (";", TokenType::Semicolon),
-            (")", TokenType::RParen),
-        ];
-        for (input, expected) in cases {
-            let mut lexer = Lexer::new(input.to_string());
-            assert_eq!(
-                lexer.next_token().unwrap().token_type,
-                expected,
-                "input: {:?}",
-                input
-            );
-        }
+    fn kinds(source: &str) -> Vec<TokenKind> {
+        lex(source)
+            .expect("source lexes")
+            .into_iter()
+            .map(|token| token.kind)
+            .collect()
     }
 
     #[test]
-    fn test_brackets_are_illegal() {
-        // `[` / `]` belonged to the removed bracket-field syntax; they must
-        // not lex as accepted tokens.
-        let errors = extract_errors("project p [x] { };");
-        assert_eq!(errors.len(), 2, "got {:?}", errors);
-        assert!(errors.iter().all(|e| e.starts_with("unexpected character")));
-    }
-
-    #[test]
-    fn test_keywords() {
-        let tokens = collect_tokens("import var fn run env log cd switch case default async");
+    fn lexes_keywords_identifiers_and_punctuation() {
         assert_eq!(
-            tokens,
+            kinds("fn build(rec repo) { return repo.dir; };"),
             vec![
-                TokenType::Import(None),
-                TokenType::Var,
-                TokenType::Fn,
-                TokenType::Run,
-                TokenType::Env,
-                TokenType::Log(None),
-                TokenType::Cd(None),
-                TokenType::Switch(None),
-                TokenType::Case(None),
-                TokenType::Default,
-                TokenType::Async(None),
+                TokenKind::Fn,
+                TokenKind::Ident("build".to_owned()),
+                TokenKind::LParen,
+                TokenKind::Rec,
+                TokenKind::Ident("repo".to_owned()),
+                TokenKind::RParen,
+                TokenKind::LBrace,
+                TokenKind::Return,
+                TokenKind::Ident("repo".to_owned()),
+                TokenKind::Dot,
+                TokenKind::Ident("dir".to_owned()),
+                TokenKind::Semi,
+                TokenKind::RBrace,
+                TokenKind::Semi,
+                TokenKind::Eof,
             ]
         );
     }
 
     #[test]
-    fn test_fused_call_tokens() {
-        // `word(` adjacency fuses the template into one call-shaped token;
-        // a space breaks the fusion and leaves keyword + template apart.
-        let mut lexer = Lexer::new("log(hi);".to_string());
+    fn lexes_paths_and_comments() {
         assert_eq!(
-            lexer.next_token().unwrap().token_type,
-            TokenType::Log(Some(vec![crate::syntax::source::Template {
-                parts: vec![crate::syntax::source::Part::Lit("hi".to_string())],
-                offset: 4,
-                len: 3,
-            }]))
+            kinds("std::wait(); # done"),
+            vec![
+                TokenKind::Ident("std".to_owned()),
+                TokenKind::PathSep,
+                TokenKind::Ident("wait".to_owned()),
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::Semi,
+                TokenKind::Eof,
+            ]
         );
-        assert_eq!(lexer.next_token().unwrap().token_type, TokenType::Semicolon);
-
-        let mut lexer = Lexer::new("name();".to_string());
-        assert!(matches!(
-            lexer.next_token().unwrap().token_type,
-            TokenType::Call { ref name, .. } if name == "name"
-        ));
     }
 
     #[test]
-    fn test_identifiers() {
-        let cases = vec!["todo", "port1", "idx_port", "url", "myVar", "x", "abc123"];
-        for ident in cases {
-            let mut lexer = Lexer::new(ident.to_string());
-            assert_eq!(
-                lexer.next_token().unwrap().token_type,
-                TokenType::Ident(ident.to_string()),
-                "ident: {:?}",
-                ident
-            );
-        }
+    fn lexes_a_leading_path_separator() {
+        assert_eq!(
+            kinds("::std::print(\"x\");"),
+            vec![
+                TokenKind::PathSep,
+                TokenKind::Ident("std".to_owned()),
+                TokenKind::PathSep,
+                TokenKind::Ident("print".to_owned()),
+                TokenKind::LParen,
+                TokenKind::Text("x".to_owned()),
+                TokenKind::RParen,
+                TokenKind::Semi,
+                TokenKind::Eof,
+            ]
+        );
     }
 
     #[test]
-    fn test_template_literals() {
-        let cases = vec![
-            ("(hello)", "hello", false),
-            ("()", "", false),
-            ("(a @(b) c)", "a  c", false),
-            ("($(echo hi))", "echo hi", false),
-            ("(@(name))", "name", false),
-        ];
-        for (input, _, _) in cases {
-            let mut lexer = Lexer::new(input.to_string());
-            let tok = lexer.next_token().unwrap();
-            assert!(
-                matches!(&tok.token_type, TokenType::Template(_)),
-                "input {:?} should be a template, got {:?}",
-                input,
-                tok.token_type
-            );
-        }
+    fn decodes_string_escapes() {
+        assert_eq!(
+            kinds(r#""a\n\t\r\\\"""#),
+            vec![TokenKind::Text("a\n\t\r\\\"".to_owned()), TokenKind::Eof]
+        );
     }
 
     #[test]
-    fn test_template_unterminated() {
-        let errors = extract_errors("(unterminated");
-        assert!(errors.iter().any(|e| e == "unterminated template"));
+    fn strings_span_lines() {
+        assert_eq!(
+            kinds("\"one\ntwo\""),
+            vec![TokenKind::Text("one\ntwo".to_owned()), TokenKind::Eof]
+        );
     }
 
-    #[test]
-    fn test_nested_var_reference_requires_closing_paren() {
-        // The name must be followed by `)`; a stray character says so, and
-        // running out of input reports the unterminated reference.
-        let cases = [
-            ("(a @(b c)", "expected `)` after variable name"),
-            ("($(echo @(x", "unterminated variable reference"),
-        ];
-        for (input, expected) in cases {
-            let errors = extract_errors(input);
-            assert!(
-                errors.iter().any(|e| e == expected),
-                "input {:?}: expected {:?}, got {:?}",
-                input,
-                expected,
-                errors
-            );
-        }
-    }
-
-    #[test]
-    fn test_empty_var_reference_rejected() {
-        let cases = ["(@())", "(a @() b)"];
-        for input in cases {
-            let errors = extract_errors(input);
-            assert!(
-                errors.iter().any(|e| e == "empty variable reference"),
-                "input {:?}: got {:?}",
-                input,
-                errors
-            );
-        }
-    }
-
-    #[test]
-    fn test_empty_command_substitution_is_empty_data() {
-        // `$()` runs nothing and substitutes nothing: empty is valid data.
-        let cases = ["($())", "($(  ))", "(a $() b)", "($($( )))"];
-        for input in cases {
-            let errors = extract_errors(input);
-            assert!(errors.is_empty(), "input {:?}: got {:?}", input, errors);
-        }
-    }
-
-    #[test]
-    fn test_empty_literal_template_still_valid() {
-        // `()` is the empty-string literal (used by `case ()` patterns) and
-        // must keep parsing as a template, not an error.
-        let errors = extract_errors("()");
-        assert!(errors.is_empty());
-    }
-
-    #[test]
-    fn test_nested_plain_parens_are_data() {
-        // Plain `(`/`)` are literal characters in matched pairs; only the
-        // depth-zero `)` ends the template.
-        let tokens = collect_tokens("(a (b) c)");
-        match &tokens[0] {
-            TokenType::Template(template) => {
-                assert_eq!(
-                    template.parts,
-                    vec![crate::syntax::source::Part::Lit("a (b) c".to_string())]
-                );
+    /// Run every rejection case against its expected message, collecting all
+    /// mismatches so one run reports every case that failed.
+    fn expect_rejections(cases: &[(&str, &str, &str)]) {
+        let mut failures = Vec::new();
+        for &(name, source, expected) in cases {
+            let error = lex(source).expect_err("source is rejected");
+            if error.message != expected {
+                failures.push(format!(
+                    "{name}: expected `{expected}`, found `{}`",
+                    error.message
+                ));
             }
-            other => panic!("expected template, got {:?}", other),
         }
-    }
-
-    #[test]
-    fn test_balanced_parens_are_literal_command_text() {
-        let tokens = collect_tokens("exec(cd x && (make))");
-        match &tokens[0] {
-            TokenType::Exec(Some(args)) => match args[0].parts.as_slice() {
-                [crate::syntax::source::Part::Lit(command)] => {
-                    assert_eq!(command, "cd x && (make)");
-                }
-                other => panic!("expected one literal command, got {:?}", other),
-            },
-            other => panic!("expected fused exec, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_parens_shield_semicolons_in_arguments() {
-        // A `;` nested in plain parens is data, not an argument separator.
-        let tokens = collect_tokens("name(a (x; y);b)");
-        match &tokens[0] {
-            TokenType::Call { args, .. } => {
-                assert_eq!(args.len(), 2, "got {:?}", args);
-                assert_eq!(args[0].literal_text(), "a (x; y)");
-                assert_eq!(args[1].literal_text(), "b");
-            }
-            other => panic!("expected call, got {:?}", other),
-        }
-    }
-
-    /// The hard rule: inside a string-literal paren, whitespace is data.
-    #[test]
-    fn test_argument_whitespace_is_data() {
-        let tokens = collect_tokens("name( a ; b )");
-        match &tokens[0] {
-            TokenType::Call { args, .. } => {
-                assert_eq!(args.len(), 2, "got {:?}", args);
-                assert_eq!(args[0].literal_text(), " a ");
-                assert_eq!(args[1].literal_text(), " b ");
-            }
-            other => panic!("expected call, got {:?}", other),
-        }
-    }
-
-    /// `@()` holds an identifier, not data: whitespace around it is layout.
-    #[test]
-    fn test_variable_reference_allows_surrounding_whitespace() {
-        let tokens = collect_tokens("(@( name ))");
-        match &tokens[0] {
-            TokenType::Template(template) => {
-                assert_eq!(
-                    template.parts,
-                    vec![crate::syntax::source::Part::Var("name".to_string())]
-                );
-            }
-            other => panic!("expected template, got {:?}", other),
-        }
-    }
-
-    /// A bare `$()`/`@()` is not a value; every template is parenthesized.
-    #[test]
-    fn test_bare_substitutions_are_rejected() {
-        for input in ["var x = $(cmd);", "var x = @(name);"] {
-            let errors = extract_errors(input);
-            let expected = if input.contains("$(") {
-                "`$(...)` is only valid inside `(...)`"
-            } else {
-                "`@(...)` is only valid inside `(...)`"
-            };
-            assert!(
-                errors.iter().any(|error| error == expected),
-                "input {:?}: got {:?}",
-                input,
-                errors
-            );
-        }
-    }
-
-    #[test]
-    fn test_unbalanced_open_paren_is_unterminated() {
-        let errors = extract_errors("(a (b)");
         assert!(
-            errors.iter().any(|e| e == "unterminated template"),
-            "got {:?}",
-            errors
+            failures.is_empty(),
+            "{} rejection case(s) failed:\n{}",
+            failures.len(),
+            failures.join("\n")
         );
     }
 
     #[test]
-    fn test_variable_names_must_be_identifiers() {
-        for input in ["(@(1x))", "(a @(1x) b)", "($(echo @(2y)))"] {
-            let errors = extract_errors(input);
-            assert!(
-                errors
-                    .iter()
-                    .any(|e| e == "`1x` is not a valid variable name"
-                        || e == "`2y` is not a valid variable name"),
-                "input {:?}: got {:?}",
-                input,
-                errors
-            );
-        }
-    }
-
-    #[test]
-    fn test_complex_nested_template_still_valid() {
-        // Nesting commands and references inside one template must keep working.
-        let errors = extract_errors("($(echo @(name))suffix)");
-        assert!(errors.is_empty(), "got {:?}", errors);
-    }
-
-    #[test]
-    fn test_comments() {
-        let tokens = collect_tokens("# comment\nvar x = (hello);");
-        assert_eq!(
-            tokens,
-            vec![
-                TokenType::Var,
-                TokenType::Ident("x".to_string()),
-                TokenType::Assign,
-                TokenType::Template(crate::syntax::source::Template {
-                    parts: vec![crate::syntax::source::Part::Lit("hello".to_string())],
-                    offset: 18,
-                    len: 7,
-                }),
-                TokenType::Semicolon,
-            ]
-        );
-    }
-
-    #[test]
-    fn test_empty_input() {
-        let tokens = collect_tokens("");
-        assert!(tokens.is_empty());
-    }
-
-    #[test]
-    fn test_error_cases() {
-        let cases = vec![
-            ("bare:", "unexpected character: :"),
-            ("@", "unexpected character: @"),
-        ];
-        for (input, expected_err) in cases {
-            let errors = extract_errors(input);
-            assert!(
-                errors.iter().any(|e| e == expected_err),
-                "input {:?}: expected error {:?}, got {:?}",
-                input,
-                expected_err,
-                errors
-            );
-        }
+    fn lexer_errors() {
+        expect_rejections(&[
+            (
+                "invalid escape",
+                r#""bad \q""#,
+                "invalid escape `\\q`; only \\n, \\t, \\r, \\\\, and \\\" are allowed",
+            ),
+            ("unterminated string", "\"open", "unterminated string"),
+            ("lone colon", "a : b", "expected `::` in a path"),
+            ("unknown character", "a @ b", "unexpected character `@`"),
+        ]);
     }
 }

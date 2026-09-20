@@ -1,51 +1,179 @@
-use crate::syntax::FnStmt;
-use crate::syntax::source::Template;
+//! The syntax tree produced by the parser.
+//!
+//! A `File` is one loaded source file: an optional module path, its imports,
+//! and its declarations. Statements exist only inside function, `defer`, and
+//! `case` bodies.
 
-/// A parsed statement node in the kiru DSL.
-#[derive(Debug, Clone)]
-pub(crate) enum Stmt {
-    /// A variable declaration (`var name = value`). The value is a template
-    /// inlined at every use site; any `$(command)` inside it resolves where
-    /// it is used, never here.
-    Var { name: String, value: Template },
-    /// A function definition (`fn name(params) { ... };`): a named bundle of
-    /// statements, importable across files and callable by name after this
-    /// declaration point. A call runs in the project context of the
-    /// enclosing `project(...)` block, or at the invocation context.
-    Fn {
+use crate::syntax::Span;
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct File {
+    pub(crate) module: Option<ModulePath>,
+    pub(crate) imports: Vec<Import>,
+    pub(crate) declarations: Vec<Declaration>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ModulePath {
+    pub(crate) segments: Vec<String>,
+    pub(crate) span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Import {
+    pub(crate) path: String,
+    pub(crate) span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) enum Declaration {
+    Function(Function),
+    Text(TextBinding),
+    Rec(RecBinding),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Function {
+    pub(crate) name: String,
+    pub(crate) name_span: Span,
+    pub(crate) parameters: Vec<Parameter>,
+    pub(crate) body: Vec<Statement>,
+    pub(crate) span: Span,
+}
+
+/// The kind a parameter declares. A parameter is the only place a kind is
+/// written down.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) enum ParameterKind {
+    /// The `txt` keyword: text data.
+    Text,
+    /// The `rec` keyword: a record of text.
+    Record,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Parameter {
+    pub(crate) kind: ParameterKind,
+    pub(crate) name: String,
+    pub(crate) span: Span,
+}
+
+/// A `txt name = expression;` declaration or statement.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct TextBinding {
+    pub(crate) name: String,
+    pub(crate) name_span: Span,
+    pub(crate) value: Expression,
+    pub(crate) span: Span,
+}
+
+/// A `rec name = { ... };` declaration or statement.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct RecBinding {
+    pub(crate) name: String,
+    pub(crate) name_span: Span,
+    pub(crate) fields: Vec<Field>,
+    pub(crate) span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Field {
+    pub(crate) name: String,
+    pub(crate) name_span: Span,
+    pub(crate) value: Expression,
+    pub(crate) span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) enum Statement {
+    Text(TextBinding),
+    Rec(RecBinding),
+    Assignment {
         name: String,
-        params: Vec<String>,
-        body: Vec<FnStmt>,
+        name_span: Span,
+        value: Expression,
+        span: Span,
     },
-    /// A run block definition: `run name { statement; ... };` - an entry
-    /// point whose body is an ordinary statement list. `async() { ... }`
-    /// expresses concurrency; `;` always means "then".
-    Run { name: String, body: Vec<FnStmt> },
+    Expression(Expression),
+    Return {
+        value: Expression,
+        span: Span,
+    },
+    Switch {
+        subject: Expression,
+        cases: Vec<Case>,
+        default: Option<Vec<Statement>>,
+        span: Span,
+    },
+    Defer {
+        body: Vec<Statement>,
+        span: Span,
+    },
 }
 
-/// A top-level item returned by the parser: either a DSL statement or an import directive.
-#[derive(Debug, Clone)]
-pub(crate) enum TopLevel {
-    Stmt(Stmt),
-    Import(Template),
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Case {
+    pub(crate) pattern: Expression,
+    pub(crate) body: Vec<Statement>,
+    pub(crate) span: Span,
 }
 
-/// A set of parsed top-level items from a single source file, with source tracking
-/// for error reporting. Items preserve source order and include both statements
-/// and import directives.
-#[derive(Debug, Clone)]
-pub(crate) struct Program {
-    pub(crate) top_level_items: Vec<TopLevel>,
-    pub(crate) source_name: String,
-    pub(crate) source_text: String,
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) enum Expression {
+    Text {
+        value: String,
+        span: Span,
+    },
+    Record {
+        fields: Vec<Field>,
+        span: Span,
+    },
+    Name {
+        /// An explicit leading `::`, which resolves against the root
+        /// namespace only.
+        root: bool,
+        path: Vec<String>,
+        span: Span,
+    },
+    Call {
+        /// An explicit leading `::`, which resolves against the root
+        /// namespace only.
+        root: bool,
+        callee: Vec<String>,
+        callee_span: Span,
+        arguments: Vec<Expression>,
+        span: Span,
+    },
+    Field {
+        target: Box<Expression>,
+        name: String,
+        name_span: Span,
+        span: Span,
+    },
+    Method {
+        target: Box<Expression>,
+        name: String,
+        name_span: Span,
+        arguments: Vec<Expression>,
+        span: Span,
+    },
+    Add {
+        left: Box<Expression>,
+        right: Box<Expression>,
+        span: Span,
+    },
 }
 
-impl Program {
-    pub(crate) fn new_with_source(name: String, text: String) -> Self {
-        Self {
-            top_level_items: Vec::new(),
-            source_name: name,
-            source_text: text,
+impl Expression {
+    pub(crate) fn span(&self) -> Span {
+        match self {
+            Expression::Text { span, .. }
+            | Expression::Record { span, .. }
+            | Expression::Name { span, .. }
+            | Expression::Call { span, .. }
+            | Expression::Field { span, .. }
+            | Expression::Method { span, .. }
+            | Expression::Add { span, .. } => *span,
         }
     }
 }

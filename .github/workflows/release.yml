@@ -25,7 +25,7 @@ jobs:
         run: |
           cd bin
           NAME="kiru-${{ github.ref_name }}-linux-x86_64"
-          mv kiru "$NAME"
+          mv kc "$NAME"
           sha256sum "$NAME" > "$NAME.sha256"
 
       - name: Generate release notes from commits
