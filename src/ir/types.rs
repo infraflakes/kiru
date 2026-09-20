@@ -13,17 +13,31 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// The identity of one variable declaration. Every `@(name)` reference to a
+/// variable carries its identity, so the runtime can compute the variable's
+/// value once and reuse the text instead of running its commands again.
+pub(crate) type VarId = usize;
+
 /// A single piece of a [`Template`].
 ///
 /// - `Lit` is literal text.
 /// - `Cmd` is a `$(command)` substitution whose inner template is run through
 ///   `shell -c` at runtime and replaced by its captured stdout.
+/// - `Ref` is one variable declaration's value, tagged with its identity.
+///   The runtime resolves it on first use and reuses the text afterwards.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) enum Segment {
     Lit(String),
     /// A `$(command)` substitution. The inner template is run through `shell -c`
     /// at runtime.
     Cmd(Template),
+    /// A tagged variable reference. The template is the declaration's value
+    /// (already inlined), kept here so labels and case-pattern checks stay
+    /// self-describing; `id` is what makes reuse possible.
+    Ref {
+        id: VarId,
+        template: Template,
+    },
 }
 
 /// A template: the single string-valued form in the DSL.
@@ -43,24 +57,28 @@ impl Template {
 
     /// The plan preview of the template: its literal text with every
     /// `$(command)` kept verbatim, because parenthesized content is data,
-    /// not an operator to summarize. `@()` references are already inlined
-    /// at compile time.
+    /// not an operator to summarize. A variable reference shows the value it
+    /// stands for, exactly as the inliner would have spliced it.
     pub(crate) fn plan_text(&self) -> String {
         self.parts
             .iter()
             .map(|segment| match segment {
                 Segment::Lit(text) => text.clone(),
                 Segment::Cmd(inner) => format!("$({})", inner.plan_text()),
+                Segment::Ref { template, .. } => template.plan_text(),
             })
             .collect()
     }
 
     /// Whether the template resolves only at runtime: any `$()` part means
-    /// its value is not visible in the plan label.
+    /// its value is not visible in the plan label. A variable reference is
+    /// as dynamic as the value it stands for.
     pub(crate) fn is_dynamic(&self) -> bool {
-        self.parts
-            .iter()
-            .any(|segment| matches!(segment, Segment::Cmd(_)))
+        self.parts.iter().any(|segment| match segment {
+            Segment::Cmd(_) => true,
+            Segment::Ref { template, .. } => template.is_dynamic(),
+            Segment::Lit(_) => false,
+        })
     }
 }
 

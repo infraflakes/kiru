@@ -54,7 +54,7 @@ run fail_kiru {
 };
 
 run build_container_kiru {
-  var docker_bin = $(command -v docker >/dev/null 2>&1 && echo "docker" || { command -v podman >/dev/null 2>&1 && echo "podman"; });
+  var docker_bin = ($(command -v docker >/dev/null 2>&1 && echo "docker" || { command -v podman >/dev/null 2>&1 && echo "podman"; }));
   project(kiru) {
     switch(@(docker_bin)) {
       case() {

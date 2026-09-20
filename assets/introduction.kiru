@@ -14,16 +14,19 @@
 # A var holds a value you can reuse.
 #
 #   var name = (text);      the text as-is
-#   var name = $(command);  run the command now and keep its output
+#   var name = ($(command));  run the command once, the first time the
+#                             value is needed while running, then reuse it
 #
 # A failed $(command) is not an error; it leaves "". Handy for probing,
-# e.g. var has_docker = $(command -v docker).
+# e.g. var has_docker = ($(command -v docker)).
 #
-# Use @(name) later to use the value again.
+# Use @(name) later to use the value again. A command inside a var runs
+# once per execution: every @(name) reuses the same text. Nothing is frozen
+# into the compiled program, so values stay portable.
 
 var app  = (myapp);
 var user = (yourname);
-var os   = $(uname -s);
+var os   = ($(uname -s));
 
 # @(app) works inside any template, so this builds a name out of parts:
 var repo = (@(user)/@(app));
@@ -59,7 +62,8 @@ var repo = (@(user)/@(app));
 #   name(args);           call another function
 #
 #   var name = (val);     a value used by the rest of this body
-#   var name = $(cmd);    same, but captured when you run kiru compile
+#   var name = ($(cmd));  same, but the command runs the first time the
+#                         value is needed while running, not at compile
 #
 #   env(KEY = (val);) {   run a block with extra environment
 #       ...;

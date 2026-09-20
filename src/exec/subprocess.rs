@@ -454,10 +454,12 @@ pub(crate) fn run_subprocess(
     })
 }
 
-/// Capture stdout of `argv`. Non-zero exit is tolerated (whatever stdout
-/// was produced is returned). Returns `Err(Timeout { .. })` when the process
-/// exceeds the optional timeout. Single capture implementation shared by the
-/// runtime command capture and the compile-time import-path capture.
+/// Capture stdout of `argv` as reconstructed text: one line per line break,
+/// nothing trimmed. Non-zero exit is tolerated (whatever stdout was produced
+/// is returned). Returns `Err(Timeout { .. })` when the process exceeds the
+/// optional timeout. Single capture implementation shared by the runtime
+/// command capture and the compile-time import-path capture; each caller
+/// decides what trailing text its use allows.
 pub(crate) fn capture_argv(
     argv: &[&str],
     cmd_desc: &str,
@@ -482,7 +484,7 @@ pub(crate) fn capture_argv(
             SubprocessLine::Stderr(_) => {}
         },
     )?;
-    Ok(captured.trim_end().to_string())
+    Ok(captured)
 }
 
 #[cfg(test)]
@@ -568,6 +570,22 @@ mod tests {
             }
             other => panic!("expected stdout, got {other:?}"),
         }
+    }
+
+    /// The capture primitive returns reconstructed text untrimmed; each
+    /// caller decides what trailing text its use allows.
+    #[test]
+    fn capture_returns_text_for_the_caller_to_trim() {
+        let text = capture_argv(
+            &["sh", "-c", "printf 'x\\n\\n'"],
+            "printf",
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(text, "x\n\n");
     }
 
     /// A command that ignores SIGTERM is still stopped by the escalation.

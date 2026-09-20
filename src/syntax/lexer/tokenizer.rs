@@ -167,77 +167,18 @@ impl Lexer {
         Ok(args)
     }
 
-    /// Read a template expression starting at the current character. The current
-    /// character must be `(` (general template), `$` followed by `(` (command
-    /// substitution), or `@` followed by `(` (variable reference).
+    /// Read a parenthesized template starting at `(`. The only value form
+    /// in the language: `$()` and `@()` are parts inside it, never tokens of
+    /// their own.
     pub(super) fn read_template_token(
         &mut self,
         start_byte_offset: usize,
     ) -> Result<Token, ParseError> {
         let start_offset = start_byte_offset;
-
-        let parts = match self.ch {
-            Some('$') => {
-                // `$( cmd )` -> a single Cmd part wrapping the inner template.
-                self.read_char(); // consume '$'
-                self.read_char(); // consume '('
-                match self.read_template_parts() {
-                    Ok(inner) => {
-                        let len = self.byte_offset - start_offset;
-                        vec![Part::Cmd(Template {
-                            parts: inner,
-                            offset: start_offset,
-                            len,
-                        })]
-                    }
-                    Err(msg) => return Err(self.unexpected(msg, start_offset)),
-                }
-            }
-            Some('@') => {
-                // `@( name )` -> a single Var part. The content is an
-                // identifier, not data, so whitespace around it is layout.
-                self.read_char(); // consume '@'
-                self.read_char(); // consume '('
-                self.skip_whitespace();
-                let name = self.read_ident_chars();
-                self.skip_whitespace();
-                if self.ch != Some(')') {
-                    let message = if self.ch.is_none() {
-                        "unterminated variable reference".to_string()
-                    } else if name.is_empty() {
-                        "empty variable reference".to_string()
-                    } else {
-                        "expected `)` after variable name".to_string()
-                    };
-                    return Err(self.unexpected(message, start_offset));
-                }
-                if name.is_empty() {
-                    return Err(
-                        self.unexpected("empty variable reference".to_string(), start_offset)
-                    );
-                }
-                if !is_identifier(&name) {
-                    return Err(self.unexpected(
-                        format!("`{name}` is not a valid variable name"),
-                        start_offset,
-                    ));
-                }
-                self.read_char(); // consume ')'
-                vec![Part::Var(name)]
-            }
-            Some('(') => {
-                self.read_char(); // consume '('
-                match self.read_template_parts() {
-                    Ok(parts) => parts,
-                    Err(msg) => return Err(self.unexpected(msg, start_offset)),
-                }
-            }
-            _ => {
-                return Err(self.unexpected(
-                    "expected template starting with `(`".to_string(),
-                    start_offset,
-                ));
-            }
+        self.read_char(); // consume '('
+        let parts = match self.read_template_parts() {
+            Ok(parts) => parts,
+            Err(msg) => return Err(self.unexpected(msg, start_offset)),
         };
 
         let len = self.byte_offset - start_offset;

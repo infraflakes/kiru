@@ -10,7 +10,7 @@ use super::subprocess;
 use super::subprocess::RunKillSwitch;
 use crate::exec::error::RuntimeError;
 use crate::exec::model::{Display, TaskStatus};
-use crate::ir::{ArmPattern, EnvPair, Node, NodeId, NodeKind, Program, Segment, Template};
+use crate::ir::{ArmPattern, EnvPair, Node, NodeId, NodeKind, Program, Segment, Template, VarId};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -47,6 +47,10 @@ pub(crate) struct ExecContext<'p> {
     display: Arc<Mutex<Display>>,
     run: Arc<RunContext>,
     cwd: PathBuf,
+    /// Values already computed for tagged variable references. A variable's
+    /// commands run the first time its value is needed and never again in
+    /// this context; async bodies start from a copy of what is known here.
+    var_values: BTreeMap<VarId, String>,
     env_layers: Vec<BTreeMap<String, String>>,
     /// Commands run via `direnv exec <cwd>` when the project opted in with
     /// `direnv = true`. Entering a project context approves the rc first;
@@ -69,6 +73,7 @@ impl<'p> ExecContext<'p> {
             display,
             run,
             cwd,
+            var_values: BTreeMap::new(),
             env_layers: Vec::new(),
             direnv_wrap,
         }
@@ -83,6 +88,7 @@ impl<'p> ExecContext<'p> {
             display: Arc::clone(&self.display),
             run: Arc::clone(&self.run),
             cwd: self.cwd.clone(),
+            var_values: self.var_values.clone(),
             env_layers: self.env_layers.clone(),
             direnv_wrap: self.direnv_wrap,
         }
@@ -146,8 +152,9 @@ impl<'p> ExecContext<'p> {
 
     /// Resolve a template to a string, tolerantly: `$(cmd)` parts run and
     /// their stdout is captured and inlined, an empty or failed command
-    /// contributing nothing.
-    fn resolve(&self, tmpl: &Template) -> Result<String, RuntimeError> {
+    /// contributing nothing. A tagged variable reference computes once,
+    /// stores its text in this context, and reuses it for every later use.
+    fn resolve(&mut self, tmpl: &Template) -> Result<String, RuntimeError> {
         let mut out = String::new();
         for segment in &tmpl.parts {
             match segment {
@@ -155,17 +162,24 @@ impl<'p> ExecContext<'p> {
                 Segment::Cmd(inner) => {
                     let cmd = self.resolve(inner)?;
                     match self.capture(&cmd) {
-                        Ok(captured) => {
-                            if !captured.is_empty() {
-                                out.push_str(&captured);
-                            }
-                        }
+                        Ok(captured) => out.push_str(&captured),
                         Err(RuntimeError::Timeout { .. }) => {
                             // Tolerant mode: an inner timeout silently
                             // returns an empty string, no propagation.
                         }
                         Err(e) => return Err(e),
                     }
+                }
+                Segment::Ref { id, template } => {
+                    let value = match self.var_values.get(id) {
+                        Some(value) => value.clone(),
+                        None => {
+                            let value = self.resolve(template)?;
+                            self.var_values.insert(*id, value.clone());
+                            value
+                        }
+                    };
+                    out.push_str(&value);
                 }
             }
         }
@@ -174,7 +188,7 @@ impl<'p> ExecContext<'p> {
 
     /// Resolve a template and render its failure on the node, so the node
     /// that produced the error is the one that shows it.
-    fn resolve_or_report(&self, node: NodeId, tmpl: &Template) -> Result<String, RuntimeError> {
+    fn resolve_or_report(&mut self, node: NodeId, tmpl: &Template) -> Result<String, RuntimeError> {
         self.resolve(tmpl)
             .inspect_err(|error| self.report_failure(node, error))
     }
@@ -207,7 +221,7 @@ impl<'p> ExecContext<'p> {
             &mut |line| match line {
                 subprocess::SubprocessLine::Stdout(text)
                 | subprocess::SubprocessLine::Stderr(text) => {
-                    self.push_output(node, text.trim_start().to_string());
+                    self.push_output(node, text);
                 }
             },
         );
@@ -258,6 +272,9 @@ impl<'p> ExecContext<'p> {
             self.run.timeout,
             self.run.kill.as_deref(),
         )
+        // Shell value: trailing newlines are not part of what the command
+        // substituted; every other byte is.
+        .map(|text| text.trim_end_matches('\n').to_string())
         .map_err(|e| match e {
             subprocess::SubprocessError::Timeout { command, .. } => RuntimeError::Timeout {
                 cmd: command,
@@ -959,6 +976,209 @@ mod tests {
 
         assert!(observed_running, "a running leaf must report Running");
         assert_eq!(status(&display, exec), TaskStatus::Success);
+    }
+
+    /// A tagged reference whose first resolution appends one line to
+    /// `counter` and yields the text `value`.
+    fn counter_ref(id: VarId, counter: &std::path::Path) -> Segment {
+        Segment::Ref {
+            id,
+            template: Template {
+                parts: vec![Segment::Cmd(lit(&format!(
+                    "echo hit >> '{}'; echo value",
+                    counter.display()
+                )))],
+            },
+        }
+    }
+
+    fn counter_lines(counter: &std::path::Path) -> usize {
+        std::fs::read_to_string(counter).map_or(0, |text| text.lines().count())
+    }
+
+    /// A variable runs its command once per context and reuses the text for
+    /// every later use.
+    #[test]
+    fn test_variable_value_is_computed_once_and_reused() {
+        let dir = tempfile::tempdir().unwrap();
+        let counter = dir.path().join("count");
+        let mut build = ProgramBuilder::default();
+        let log = build.push(
+            NodeKind::Log(Template {
+                parts: vec![counter_ref(1, &counter), counter_ref(1, &counter)],
+            }),
+            vec![],
+        );
+        let program = build.build(BTreeMap::from([("r".to_string(), vec![log])]));
+
+        let (mut ctx, display) = test_context(&program, BTreeMap::new());
+        ctx.exec_children(program.run_children("r")).unwrap();
+
+        assert_eq!(counter_lines(&counter), 1, "the command ran once");
+        assert_eq!(
+            display.lock().unwrap().state(log).label.as_deref(),
+            Some("log: valuevalue"),
+            "both uses see the same computed text"
+        );
+    }
+
+    /// A value computed before a project entry is reused inside it.
+    #[test]
+    fn test_variable_value_survives_a_project_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let counter = dir.path().join("count");
+        let project_dir = dir.path().join("proj");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        let mut projects = BTreeMap::new();
+        projects.insert(
+            "p".to_string(),
+            ProjectExec {
+                dir: project_dir,
+                direnv: false,
+            },
+        );
+
+        let mut build = ProgramBuilder::default();
+        let before = build.push(
+            NodeKind::Log(Template {
+                parts: vec![counter_ref(1, &counter)],
+            }),
+            vec![],
+        );
+        let inside = build.push(
+            NodeKind::Log(Template {
+                parts: vec![counter_ref(1, &counter)],
+            }),
+            vec![],
+        );
+        let project = build.push(NodeKind::Project(lit("p")), vec![inside]);
+        let program = build.build(BTreeMap::from([("r".to_string(), vec![before, project])]));
+
+        let (mut ctx, display) = test_context(&program, projects);
+        ctx.exec_children(program.run_children("r")).unwrap();
+
+        assert_eq!(
+            counter_lines(&counter),
+            1,
+            "computed before the project, reused inside"
+        );
+        let guard = display.lock().unwrap();
+        assert_eq!(guard.state(before).label.as_deref(), Some("log: value"));
+        assert_eq!(guard.state(inside).label.as_deref(), Some("log: value"));
+    }
+
+    /// A value computed before an async starts is reused inside it.
+    #[test]
+    fn test_variable_value_is_reused_across_async_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let counter = dir.path().join("count");
+        let mut build = ProgramBuilder::default();
+        let inside = build.push(
+            NodeKind::Log(Template {
+                parts: vec![counter_ref(1, &counter)],
+            }),
+            vec![],
+        );
+        let group = build.push(NodeKind::Async, vec![inside]);
+        let before = build.push(
+            NodeKind::Log(Template {
+                parts: vec![counter_ref(1, &counter)],
+            }),
+            vec![],
+        );
+        let program = build.build(BTreeMap::from([("r".to_string(), vec![before, group])]));
+
+        let (mut ctx, display) = test_context(&program, BTreeMap::new());
+        ctx.exec_children(program.run_children("r")).unwrap();
+
+        assert_eq!(
+            counter_lines(&counter),
+            1,
+            "computed once, reused in the copy"
+        );
+        assert_eq!(
+            display.lock().unwrap().state(inside).label.as_deref(),
+            Some("log: value")
+        );
+    }
+
+    /// A variable first used inside async bodies is computed in each copy:
+    /// once per async that needs it, with no shared state between them.
+    #[test]
+    fn test_variable_first_used_in_each_async_is_computed_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let counter = dir.path().join("count");
+        let mut build = ProgramBuilder::default();
+        let in_a = build.push(
+            NodeKind::Log(Template {
+                parts: vec![counter_ref(1, &counter)],
+            }),
+            vec![],
+        );
+        let group_a = build.push(NodeKind::Async, vec![in_a]);
+        let in_b = build.push(
+            NodeKind::Log(Template {
+                parts: vec![counter_ref(1, &counter)],
+            }),
+            vec![],
+        );
+        let group_b = build.push(NodeKind::Async, vec![in_b]);
+        let program = build.build(BTreeMap::from([("r".to_string(), vec![group_a, group_b])]));
+
+        let (mut ctx, display) = test_context(&program, BTreeMap::new());
+        ctx.exec_children(program.run_children("r")).unwrap();
+
+        assert_eq!(
+            counter_lines(&counter),
+            2,
+            "each async copy computes its own value"
+        );
+        let guard = display.lock().unwrap();
+        assert_eq!(guard.state(in_a).label.as_deref(), Some("log: value"));
+        assert_eq!(guard.state(in_b).label.as_deref(), Some("log: value"));
+    }
+
+    /// Command substitution keeps everything but trailing newlines.
+    #[test]
+    fn test_capture_keeps_spaces_and_drops_newlines() {
+        let mut build = ProgramBuilder::default();
+        let spaces = build.push(
+            NodeKind::Log(Template {
+                parts: vec![Segment::Cmd(lit("printf '  '"))],
+            }),
+            vec![],
+        );
+        let trailing = build.push(
+            NodeKind::Log(Template {
+                parts: vec![Segment::Cmd(lit("printf 'a\n\n'"))],
+            }),
+            vec![],
+        );
+        let program = build.build(BTreeMap::from([("r".to_string(), vec![spaces, trailing])]));
+
+        let (mut ctx, display) = test_context(&program, BTreeMap::new());
+        ctx.exec_children(program.run_children("r")).unwrap();
+
+        let guard = display.lock().unwrap();
+        assert_eq!(guard.state(spaces).label.as_deref(), Some("log:   "));
+        assert_eq!(guard.state(trailing).label.as_deref(), Some("log: a"));
+    }
+
+    /// Printed output keeps its leading whitespace.
+    #[test]
+    fn test_output_keeps_leading_whitespace() {
+        let mut build = ProgramBuilder::default();
+        let exec = build.push(NodeKind::Exec(lit("echo '   indented'")), vec![]);
+        let program = build.build(BTreeMap::from([("r".to_string(), vec![exec])]));
+
+        let (mut ctx, display) = test_context(&program, BTreeMap::new());
+        ctx.exec_children(program.run_children("r")).unwrap();
+
+        assert_eq!(
+            outputs(&display, exec),
+            vec!["   indented".to_string()],
+            "indentation survives"
+        );
     }
 
     #[test]

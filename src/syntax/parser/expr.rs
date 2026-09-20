@@ -14,13 +14,18 @@ impl Parser {
                 self.advance();
                 Ok(t)
             }
-            _ => Err(ParseError::new(
-                self.eof_aware_span(),
-                format!(
-                    "expected a template, found {}",
-                    format_token(self.current_token())
-                ),
-            )),
+            _ => {
+                // A synthetic EOF carries the real lex error, such as a bare
+                // `$()` that must be wrapped in `(...)`.
+                self.take_pending_lex_error()?;
+                Err(ParseError::new(
+                    self.eof_aware_span(),
+                    format!(
+                        "expected a template, found {}",
+                        format_token(self.current_token())
+                    ),
+                ))
+            }
         }
     }
 }
@@ -55,7 +60,7 @@ mod tests {
 
     #[test]
     fn test_parse_var_ref_template() {
-        let prog = parse_program("var x = @(name);").unwrap();
+        let prog = parse_program("var x = (@(name));").unwrap();
         match &prog.top_level_items[0] {
             crate::syntax::TopLevel::Stmt(crate::syntax::Stmt::Var { value, .. }) => {
                 assert!(matches!(&value.parts[0], Part::Var(n) if n == "name"));

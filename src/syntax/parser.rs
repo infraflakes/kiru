@@ -96,6 +96,18 @@ impl Parser {
         if self.current_token().token_type == ty {
             self.advance();
             Ok(())
+        } else if self.current_token().token_type == TokenType::Eof {
+            // The EOF may be synthetic, standing in for an unreadable token.
+            self.take_pending_lex_error()?;
+            Err(ParseError::new(
+                self.eof_aware_span(),
+                format!(
+                    "expected {} {}, found {}",
+                    format_token_type(&ty),
+                    context,
+                    format_token(self.current_token())
+                ),
+            ))
         } else {
             let expected = format_token_type(&ty);
             let found = format_token(self.current_token());
@@ -142,7 +154,14 @@ impl Parser {
     /// each position is the grammar's business, not a list of alternatives
     /// to re-enumerate on every rejection; the rendered source snippet shows
     /// where, the found token shows what.
-    fn unexpected_token_error(&self) -> ParseError {
+    fn unexpected_token_error(&mut self) -> ParseError {
+        // A synthetic EOF stands in for an unreadable token: report the real
+        // lex error instead of "unexpected end of file".
+        if self.current_token().token_type == TokenType::Eof
+            && let Err(error) = self.take_pending_lex_error()
+        {
+            return error;
+        }
         ParseError::new(
             self.eof_aware_span(),
             format!("unexpected {}", format_token(self.current_token())),

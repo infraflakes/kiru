@@ -18,6 +18,19 @@ pub(super) struct FnResolver<'a> {
     pub(super) functions: &'a BTreeMap<String, Vec<PendingFn>>,
 }
 
+/// What one name resolves to while lowering. A parameter is substituted: its
+/// text is the caller's data, repeated wherever the parameter is used. A
+/// variable is a tagged reference: the runtime computes the declaration's
+/// value once and reuses the text for every reference.
+#[derive(Debug, Clone)]
+pub(super) enum Binding {
+    Param(Template),
+    Var {
+        id: crate::ir::VarId,
+        value: Template,
+    },
+}
+
 /// Lower a call to a named function: resolve the target textually (the
 /// newest definition at or before `bound`, the mentioning body's own
 /// declaration order), inline each argument against the caller's scope, bind
@@ -29,7 +42,7 @@ pub(super) struct FnResolver<'a> {
 pub(super) fn lower_function_call(
     name: &str,
     args: &[Template],
-    caller_scope: &BTreeMap<String, Template>,
+    caller_scope: &BTreeMap<String, Binding>,
     sources: &HashMap<String, String>,
     resolver: &FnResolver<'_>,
     cycle_stack: &mut Vec<String>,
@@ -37,6 +50,7 @@ pub(super) fn lower_function_call(
     offset: usize,
     len: usize,
     bound: usize,
+    next_var_id: &mut crate::ir::VarId,
     arena: &mut ProgramBuilder,
 ) -> Result<Vec<NodeId>, CompileError> {
     let function = resolver
@@ -85,8 +99,9 @@ pub(super) fn lower_function_call(
     // visible, so data enters a function only through its call arguments.
     let mut inner = BTreeMap::new();
     for (param, arg) in function.params.iter().zip(args) {
+        // Arguments are the caller's data: substitution, not a cached value.
         let value = inline_dsl_template(arg, caller_scope, sources, source_name)?;
-        inner.insert(param.clone(), value);
+        inner.insert(param.clone(), Binding::Param(value));
     }
     cycle_stack.push(name.to_string());
     let lowered = compile_fn_stmts(
@@ -97,76 +112,71 @@ pub(super) fn lower_function_call(
         resolver,
         cycle_stack,
         function.epoch,
+        next_var_id,
         arena,
     )?;
     cycle_stack.pop();
     Ok(lowered)
 }
 
-/// Inline every `@(var)` reference in `tmpl` against `scope`, replacing each
-/// with the (already-inlined) template it names. Commands are preserved as
-/// `Cmd` parts -- they are never executed here. Returns the flattened list of
-/// parts (a var that resolves to several parts is spliced in directly).
-///
-/// `stack` tracks the variable-resolution chain so a self- or mutually-referential
-/// `var` is reported instead of looping forever.
+/// Inline every `@(name)` reference in `tmpl` against `scope`. Parameters
+/// are substituted (spliced), variables become tagged references carrying
+/// the declaration's already-inlined value, so the runtime can compute once
+/// and reuse. Commands stay as `Cmd` parts; nothing is executed here.
 pub(super) fn inline_dsl_parts(
     tmpl: &Template,
-    scope: &BTreeMap<String, Template>,
+    scope: &BTreeMap<String, Binding>,
     sources: &HashMap<String, String>,
     source_name: &str,
-    stack: &mut Vec<String>,
 ) -> Result<Vec<DslPart>, CompileError> {
     let mut out = Vec::new();
     for part in &tmpl.parts {
         match part {
             DslPart::Lit(s) => out.push(DslPart::Lit(s.clone())),
-            DslPart::Var(name) => {
-                if stack.contains(name) {
+            DslPart::Var(name) => match scope.get(name) {
+                Some(Binding::Param(value)) => {
+                    let inlined = inline_dsl_parts(value, scope, sources, source_name)?;
+                    out.extend(inlined);
+                }
+                Some(Binding::Var { id, value }) => out.push(DslPart::Ref {
+                    id: *id,
+                    template: value.clone(),
+                }),
+                None => {
                     return Err(super::error_in(
                         sources,
                         source_name,
                         tmpl.offset,
                         tmpl.len.max(1),
-                        format!("circular variable reference: {}", name),
+                        format!("undefined variable: {}", name),
                     ));
                 }
-                let var_tmpl = scope.get(name).ok_or_else(|| {
-                    super::error_in(
-                        sources,
-                        source_name,
-                        tmpl.offset,
-                        tmpl.len.max(1),
-                        format!("undefined variable: {}", name),
-                    )
-                })?;
-                stack.push(name.clone());
-                let inlined = inline_dsl_parts(var_tmpl, scope, sources, source_name, stack)?;
-                stack.pop();
-                out.extend(inlined);
-            }
+            },
             DslPart::Cmd(inner) => {
-                let inlined = inline_dsl_parts(inner, scope, sources, source_name, stack)?;
+                let inlined = inline_dsl_parts(inner, scope, sources, source_name)?;
                 out.push(DslPart::Cmd(Template {
                     parts: inlined,
                     offset: inner.offset,
                     len: inner.len,
                 }));
             }
+            // Produced by this inliner already; its template is fully
+            // inlined, so it passes through untouched.
+            DslPart::Ref { .. } => out.push(part.clone()),
         }
     }
     Ok(out)
 }
 
-/// Inline `@(var)` references in `tmpl` against `scope`, returning a template with
-/// no `Var` parts.
+/// Inline `@(name)` references in `tmpl` against `scope`, returning a
+/// template with no `Var` parts (parameters spliced, variables tagged).
 pub(super) fn inline_dsl_template(
     tmpl: &Template,
-    scope: &BTreeMap<String, Template>,
+    scope: &BTreeMap<String, Binding>,
     sources: &HashMap<String, String>,
     source_name: &str,
 ) -> Result<Template, CompileError> {
-    let parts = inline_dsl_parts(tmpl, scope, sources, source_name, &mut Vec::new())?;
+    let parts = inline_dsl_parts(tmpl, scope, sources, source_name)?;
     Ok(Template {
         parts,
         offset: tmpl.offset,
@@ -187,6 +197,10 @@ pub(super) fn compile_template(tmpl: &Template) -> IrTemplate {
                     unreachable!("variables are inlined away before lowering")
                 }
                 DslPart::Cmd(inner) => Segment::Cmd(compile_template(inner)),
+                DslPart::Ref { id, template } => Segment::Ref {
+                    id: *id,
+                    template: compile_template(template),
+                },
             })
             .collect(),
     }
@@ -201,19 +215,21 @@ pub(super) fn compile_template(tmpl: &Template) -> IrTemplate {
 /// Calls are flattened: the callee's statements are compiled carbon-copy as
 /// sibling nodes, not hidden under a header.
 ///
-/// Function-local `var x = T` binds mutate `scope` and emit no node:
-/// execution is deferred to each use site via tolerant capture. Nested
-/// block bodies get a copy of the local scope so their binds do not leak
-/// into the surrounding body.
+/// Function-local `var x = T` binds mutate `scope` and emit no node: each
+/// declaration instance gets an identity, so the first use of a tagged
+/// reference computes its value and every later use reuses it. Nested block
+/// bodies get a copy of the local scope so their binds do not leak into the
+/// surrounding body.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn compile_fn_stmts(
     stmts: &[crate::syntax::FnStmt],
-    scope: &mut BTreeMap<String, Template>,
+    scope: &mut BTreeMap<String, Binding>,
     sources: &HashMap<String, String>,
     source_name: &str,
     resolver: &FnResolver<'_>,
     cycle_stack: &mut Vec<String>,
     bound: usize,
+    next_var_id: &mut crate::ir::VarId,
     arena: &mut ProgramBuilder,
 ) -> Result<Vec<NodeId>, CompileError> {
     let mut out = Vec::new();
@@ -226,6 +242,7 @@ pub(super) fn compile_fn_stmts(
             resolver,
             cycle_stack,
             bound,
+            next_var_id,
             arena,
         )?);
     }
@@ -237,12 +254,13 @@ pub(super) fn compile_fn_stmts(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn compile_fn_stmt(
     stmt: &crate::syntax::FnStmt,
-    scope: &mut BTreeMap<String, Template>,
+    scope: &mut BTreeMap<String, Binding>,
     sources: &HashMap<String, String>,
     source_name: &str,
     resolver: &FnResolver<'_>,
     cycle_stack: &mut Vec<String>,
     bound: usize,
+    next_var_id: &mut crate::ir::VarId,
     arena: &mut ProgramBuilder,
 ) -> Result<Vec<NodeId>, CompileError> {
     let leaf = |kind: NodeKind, arena: &mut ProgramBuilder| vec![arena.push(kind, Vec::new())];
@@ -262,10 +280,12 @@ pub(super) fn compile_fn_stmt(
         }
         crate::syntax::FnStmt::Bind { name, value } => {
             let inlined = inline_dsl_template(value, scope, sources, source_name)?;
-            scope.insert(name.clone(), inlined);
-            // Assignment bindings are fully inlined into scope. No node is
-            // emitted: execution happens lazily at each use site via
-            // tolerant capture.
+            // One identity per declaration instance: every later reference
+            // in this body reuses the value the first use computes.
+            let id = *next_var_id;
+            *next_var_id += 1;
+            scope.insert(name.clone(), Binding::Var { id, value: inlined });
+            // Binds emit no node: the tagged references carry the value.
             Ok(Vec::new())
         }
         crate::syntax::FnStmt::EnvBlock { pairs, body } => {
@@ -292,6 +312,7 @@ pub(super) fn compile_fn_stmt(
                 resolver,
                 cycle_stack,
                 bound,
+                next_var_id,
                 arena,
             )?;
             Ok(vec![arena.push(NodeKind::Env(ir_pairs), inner_body)])
@@ -306,6 +327,7 @@ pub(super) fn compile_fn_stmt(
                 resolver,
                 cycle_stack,
                 bound,
+                next_var_id,
                 arena,
             )?;
             Ok(vec![arena.push(NodeKind::Async, inner_body)])
@@ -328,6 +350,7 @@ pub(super) fn compile_fn_stmt(
                 *offset,
                 *len,
                 bound,
+                next_var_id,
                 arena,
             )
         }
@@ -342,6 +365,7 @@ pub(super) fn compile_fn_stmt(
                 resolver,
                 cycle_stack,
                 bound,
+                next_var_id,
                 arena,
             )?;
             Ok(vec![arena.push(
@@ -362,8 +386,7 @@ pub(super) fn compile_fn_stmt(
                         // value here (becoming literal); `$(cmd)` has no
                         // static text and stays an error.
                         let inlined = inline_dsl_template(template, scope, sources, source_name)?;
-                        let is_literal = inlined.parts.iter().all(|p| matches!(p, DslPart::Lit(_)));
-                        if !is_literal {
+                        if !inlined.is_literal() {
                             return Err(super::error_in(
                                 sources,
                                 source_name,
@@ -384,6 +407,7 @@ pub(super) fn compile_fn_stmt(
                     resolver,
                     cycle_stack,
                     bound,
+                    next_var_id,
                     arena,
                 )?;
                 arm_ids.push(arena.push(NodeKind::Arm(pattern), body));

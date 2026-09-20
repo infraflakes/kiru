@@ -86,11 +86,21 @@ impl Lexer {
             Some(')') => Ok(self.single_char_token(TokenType::RParen, start_byte_offset)),
             Some(';') => Ok(self.single_char_token(TokenType::Semicolon, start_byte_offset)),
             Some('=') => Ok(self.single_char_token(TokenType::Assign, start_byte_offset)),
+            // A bare `$()`/`@()` is not a value: every template is a
+            // parenthesized region, with `$()` and `@()` as parts inside it.
             Some('$') if self.peek_next() == Some('(') => {
-                self.read_template_token(start_byte_offset)
+                self.read_char();
+                Err(self.unexpected(
+                    "`$(...)` is only valid inside `(...)`".to_string(),
+                    start_byte_offset,
+                ))
             }
             Some('@') if self.peek_next() == Some('(') => {
-                self.read_template_token(start_byte_offset)
+                self.read_char();
+                Err(self.unexpected(
+                    "`@(...)` is only valid inside `(...)`".to_string(),
+                    start_byte_offset,
+                ))
             }
             Some(':') => {
                 self.read_char();
@@ -238,8 +248,8 @@ mod tests {
             ("(hello)", "hello", false),
             ("()", "", false),
             ("(a @(b) c)", "a  c", false),
-            ("$(echo hi)", "echo hi", false),
-            ("@(name)", "name", false),
+            ("($(echo hi))", "echo hi", false),
+            ("(@(name))", "name", false),
         ];
         for (input, _, _) in cases {
             let mut lexer = Lexer::new(input.to_string());
@@ -265,7 +275,7 @@ mod tests {
         // running out of input reports the unterminated reference.
         let cases = [
             ("(a @(b c)", "expected `)` after variable name"),
-            ("$(echo @(x", "unterminated variable reference"),
+            ("($(echo @(x", "unterminated variable reference"),
         ];
         for (input, expected) in cases {
             let errors = extract_errors(input);
@@ -281,7 +291,7 @@ mod tests {
 
     #[test]
     fn test_empty_var_reference_rejected() {
-        let cases = ["@()", "(a @() b)"];
+        let cases = ["(@())", "(a @() b)"];
         for input in cases {
             let errors = extract_errors(input);
             assert!(
@@ -296,7 +306,7 @@ mod tests {
     #[test]
     fn test_empty_command_substitution_is_empty_data() {
         // `$()` runs nothing and substitutes nothing: empty is valid data.
-        let cases = ["$()", "$(  )", "(a $() b)", "$($( ))"];
+        let cases = ["($())", "($(  ))", "(a $() b)", "($($( )))"];
         for input in cases {
             let errors = extract_errors(input);
             assert!(errors.is_empty(), "input {:?}: got {:?}", input, errors);
@@ -372,7 +382,7 @@ mod tests {
     /// `@()` holds an identifier, not data: whitespace around it is layout.
     #[test]
     fn test_variable_reference_allows_surrounding_whitespace() {
-        let tokens = collect_tokens("@( name )");
+        let tokens = collect_tokens("(@( name ))");
         match &tokens[0] {
             TokenType::Template(template) => {
                 assert_eq!(
@@ -381,6 +391,25 @@ mod tests {
                 );
             }
             other => panic!("expected template, got {:?}", other),
+        }
+    }
+
+    /// A bare `$()`/`@()` is not a value; every template is parenthesized.
+    #[test]
+    fn test_bare_substitutions_are_rejected() {
+        for input in ["var x = $(cmd);", "var x = @(name);"] {
+            let errors = extract_errors(input);
+            let expected = if input.contains("$(") {
+                "`$(...)` is only valid inside `(...)`"
+            } else {
+                "`@(...)` is only valid inside `(...)`"
+            };
+            assert!(
+                errors.iter().any(|error| error == expected),
+                "input {:?}: got {:?}",
+                input,
+                errors
+            );
         }
     }
 
@@ -396,7 +425,7 @@ mod tests {
 
     #[test]
     fn test_variable_names_must_be_identifiers() {
-        for input in ["@(1x)", "(a @(1x) b)", "$(echo @(2y))"] {
+        for input in ["(@(1x))", "(a @(1x) b)", "($(echo @(2y)))"] {
             let errors = extract_errors(input);
             assert!(
                 errors

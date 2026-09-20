@@ -101,8 +101,9 @@ fn rows(program: &Program, run: &str) -> Vec<(usize, String)> {
     out
 }
 
-/// The concatenated literal text of an IR template. These tests assert on
-/// fully-inlined templates, so the literal text is their whole value.
+/// The concatenated text of an IR template: literals verbatim, commands
+/// blank (they never ran), variable references expanded to the value they
+/// stand for. These tests assert on fully-inlined templates.
 fn template_text(template: &Template) -> String {
     template
         .parts
@@ -110,6 +111,7 @@ fn template_text(template: &Template) -> String {
         .map(|part| match part {
             Segment::Lit(text) => text.clone(),
             Segment::Cmd(_) => String::new(),
+            Segment::Ref { template, .. } => template_text(template),
         })
         .collect()
 }
@@ -528,6 +530,79 @@ run second { log(@(x)); };
     assert_eq!(
         template_text(first_command_template(&program, "second", true)),
         "two"
+    );
+}
+
+/// A variable reference is a tagged value, not a spliced copy: two uses in
+/// one template share one identity so the runtime computes it once.
+#[test]
+fn test_variable_reference_is_tagged_and_shared() {
+    let program = compile_str(
+        "\
+var x = ($(echo hi));
+run r { log(@(x)@(x)); };
+",
+    );
+    let template = first_command_template(&program, "r", true);
+    let refs: Vec<(usize, &Template)> = template
+        .parts
+        .iter()
+        .filter_map(|part| match part {
+            Segment::Ref { id, template } => Some((*id, template)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(refs.len(), 2, "both uses are tagged: {template:?}");
+    assert_eq!(refs[0].0, refs[1].0, "both uses share one identity");
+    assert!(
+        refs[0]
+            .1
+            .parts
+            .iter()
+            .any(|part| matches!(part, Segment::Cmd(_))),
+        "the tagged value carries the command to run once"
+    );
+}
+
+/// A literal variable is still acceptable as a case pattern.
+#[test]
+fn test_case_pattern_with_literal_variable() {
+    let program = compile_str(
+        "\
+var target = (prod);
+run r {
+    switch(@(target)) {
+        case(@(target)) { log(matched); };
+        default { log(other); };
+    };
+};
+",
+    );
+    let switch = first_switch(&program, "r");
+    let first = program.node(switch.children[0]);
+    assert!(
+        matches!(&first.kind, NodeKind::Arm(ArmPattern::Lit(p)) if p == "prod"),
+        "got {:?}",
+        first.kind
+    );
+}
+
+/// A bare `$()`/`@()` is not a value: it must be wrapped in `(...)`.
+#[test]
+fn test_bare_value_must_be_wrapped() {
+    let error = compile_error("var x = $(cmd);");
+    assert!(error.contains("is only valid inside"), "{error}");
+}
+
+/// A variable holding a command cannot be a case pattern: the pattern must
+/// be concrete text.
+#[test]
+fn test_case_pattern_with_command_variable_is_rejected() {
+    let error =
+        compile_error("var t = ($(echo x));\nrun r { switch(y) { case(@(t)) { log(z); }; }; };");
+    assert!(
+        error.contains("case pattern must be literal text"),
+        "{error}"
     );
 }
 

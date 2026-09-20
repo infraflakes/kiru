@@ -140,11 +140,19 @@ pub(super) fn eval_path_template(
                     tmpl.len.max(1),
                 ));
             }
+            DslPart::Ref { template, .. } => {
+                // A path is resolved when the file is read: the variable's
+                // value is evaluated here, commands and all.
+                let value = eval_path_template(template, state, source_name)?;
+                out.push_str(&value);
+            }
             DslPart::Cmd(inner) => {
                 let cmd = eval_path_template(inner, state, source_name)?;
                 // Tolerant capture: non-zero exit returns whatever stdout was
                 // produced (empty on failure). Deliberately unwrapped: compile
                 // is config- and direnv-independent by design.
+                // A filesystem path is exact: the reconstruction's line
+                // breaks are layout, not part of the name.
                 let captured = crate::exec::subprocess::capture_argv(
                     &["sh", "-c", cmd.as_str()],
                     &cmd,
@@ -154,7 +162,7 @@ pub(super) fn eval_path_template(
                     None,
                 )
                 .unwrap_or_default();
-                out.push_str(&captured);
+                out.push_str(captured.trim_end());
             }
         }
     }
