@@ -170,7 +170,9 @@ impl<'p> ExecContext<'p> {
                         Err(e) => return Err(e),
                     }
                 }
-                Segment::Ref { id, template } => {
+                Segment::Ref(id) => {
+                    // The program holds the value once, by identity.
+                    let template = self.program.var(*id);
                     let value = match self.var_values.get(id) {
                         Some(value) => value.clone(),
                         None => {
@@ -403,7 +405,7 @@ impl<'p> ExecContext<'p> {
         let Node { kind, children } = program.node(node);
         match kind {
             NodeKind::Log(template) => {
-                let result = if template.is_dynamic() {
+                let result = if template.is_dynamic(&self.program.vars) {
                     match self.resolve_or_report(node, template) {
                         Ok(resolved) => {
                             if let Some(label) = kind.resolved_label(&resolved) {
@@ -421,7 +423,7 @@ impl<'p> ExecContext<'p> {
             NodeKind::Exec(template) => {
                 let result = match self.resolve_or_report(node, template) {
                     Ok(cmd) => {
-                        if template.is_dynamic()
+                        if template.is_dynamic(&self.program.vars)
                             && let Some(label) = kind.resolved_label(&cmd)
                         {
                             self.set_label(node, label);
@@ -441,7 +443,7 @@ impl<'p> ExecContext<'p> {
                             .inspect_err(|error| self.report_failure(node, error))
                         {
                             Ok(()) => {
-                                if template.is_dynamic()
+                                if template.is_dynamic(&self.program.vars)
                                     && let Some(label) = kind.resolved_label(&target)
                                 {
                                     self.set_label(node, label);
@@ -558,7 +560,7 @@ impl<'p> ExecContext<'p> {
         };
         // A dynamic project name is only known here, so every row of the
         // body is annotated with the resolved name it actually ran under.
-        if project.is_dynamic() {
+        if project.is_dynamic(&self.program.vars) {
             let program = self.program;
             for &child in children {
                 let name = name.clone();
@@ -636,7 +638,7 @@ impl<'p> ExecContext<'p> {
         let mut first: Option<NodeId> = None;
         for &root in roots {
             program.visit_subtree(&[root], &mut |id| {
-                if first.is_none() && program.node(id).kind.row_label().is_some() {
+                if first.is_none() && program.node(id).kind.row_label(&program.vars).is_some() {
                     first = Some(id);
                 }
             });
@@ -978,18 +980,15 @@ mod tests {
         assert_eq!(status(&display, exec), TaskStatus::Success);
     }
 
-    /// A tagged reference whose first resolution appends one line to
-    /// `counter` and yields the text `value`.
-    fn counter_ref(id: VarId, counter: &std::path::Path) -> Segment {
-        Segment::Ref {
-            id,
-            template: Template {
-                parts: vec![Segment::Cmd(lit(&format!(
-                    "echo hit >> '{}'; echo value",
-                    counter.display()
-                )))],
-            },
-        }
+    /// Store a variable whose first resolution appends one line to
+    /// `counter` and yields the text `value`; returns its identity.
+    fn counter_var(build: &mut ProgramBuilder, counter: &std::path::Path) -> VarId {
+        build.push_var(Template {
+            parts: vec![Segment::Cmd(lit(&format!(
+                "echo hit >> '{}'; echo value",
+                counter.display()
+            )))],
+        })
     }
 
     fn counter_lines(counter: &std::path::Path) -> usize {
@@ -1003,9 +1002,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let counter = dir.path().join("count");
         let mut build = ProgramBuilder::default();
+        let stamp = counter_var(&mut build, &counter);
         let log = build.push(
             NodeKind::Log(Template {
-                parts: vec![counter_ref(1, &counter), counter_ref(1, &counter)],
+                parts: vec![Segment::Ref(stamp), Segment::Ref(stamp)],
             }),
             vec![],
         );
@@ -1039,15 +1039,16 @@ mod tests {
         );
 
         let mut build = ProgramBuilder::default();
+        let stamp = counter_var(&mut build, &counter);
         let before = build.push(
             NodeKind::Log(Template {
-                parts: vec![counter_ref(1, &counter)],
+                parts: vec![Segment::Ref(stamp)],
             }),
             vec![],
         );
         let inside = build.push(
             NodeKind::Log(Template {
-                parts: vec![counter_ref(1, &counter)],
+                parts: vec![Segment::Ref(stamp)],
             }),
             vec![],
         );
@@ -1073,16 +1074,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let counter = dir.path().join("count");
         let mut build = ProgramBuilder::default();
+        let stamp = counter_var(&mut build, &counter);
         let inside = build.push(
             NodeKind::Log(Template {
-                parts: vec![counter_ref(1, &counter)],
+                parts: vec![Segment::Ref(stamp)],
             }),
             vec![],
         );
         let group = build.push(NodeKind::Async, vec![inside]);
         let before = build.push(
             NodeKind::Log(Template {
-                parts: vec![counter_ref(1, &counter)],
+                parts: vec![Segment::Ref(stamp)],
             }),
             vec![],
         );
@@ -1109,16 +1111,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let counter = dir.path().join("count");
         let mut build = ProgramBuilder::default();
+        let stamp = counter_var(&mut build, &counter);
         let in_a = build.push(
             NodeKind::Log(Template {
-                parts: vec![counter_ref(1, &counter)],
+                parts: vec![Segment::Ref(stamp)],
             }),
             vec![],
         );
         let group_a = build.push(NodeKind::Async, vec![in_a]);
         let in_b = build.push(
             NodeKind::Log(Template {
-                parts: vec![counter_ref(1, &counter)],
+                parts: vec![Segment::Ref(stamp)],
             }),
             vec![],
         );

@@ -240,8 +240,9 @@ impl Parser {
     fn parse_top_level_stmt(&mut self) -> Result<Stmt, ParseError> {
         match self.current_token().token_type {
             TokenType::Var => self.parse_var_decl(),
-            // Functions are global named bundles: callable from any body,
-            // importable across files, and parameterized by positional args.
+            // Functions are named bundles, declared before use and
+            // importable across files; a later declaration of the same name
+            // wins from that point on.
             TokenType::Fn => self.parse_fn_decl(),
             TokenType::Run => self.parse_run_decl(),
             _ => Err(self.unexpected_token_error()),

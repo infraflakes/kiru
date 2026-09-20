@@ -50,7 +50,6 @@ pub(super) fn lower_function_call(
     offset: usize,
     len: usize,
     bound: usize,
-    next_var_id: &mut crate::ir::VarId,
     arena: &mut ProgramBuilder,
 ) -> Result<Vec<NodeId>, CompileError> {
     let function = resolver
@@ -112,7 +111,6 @@ pub(super) fn lower_function_call(
         resolver,
         cycle_stack,
         function.epoch,
-        next_var_id,
         arena,
     )?;
     cycle_stack.pop();
@@ -197,10 +195,8 @@ pub(super) fn compile_template(tmpl: &Template) -> IrTemplate {
                     unreachable!("variables are inlined away before lowering")
                 }
                 DslPart::Cmd(inner) => Segment::Cmd(compile_template(inner)),
-                DslPart::Ref { id, template } => Segment::Ref {
-                    id: *id,
-                    template: compile_template(template),
-                },
+                // The value lives once in the program's variable table.
+                DslPart::Ref { id, .. } => Segment::Ref(*id),
             })
             .collect(),
     }
@@ -229,7 +225,6 @@ pub(super) fn compile_fn_stmts(
     resolver: &FnResolver<'_>,
     cycle_stack: &mut Vec<String>,
     bound: usize,
-    next_var_id: &mut crate::ir::VarId,
     arena: &mut ProgramBuilder,
 ) -> Result<Vec<NodeId>, CompileError> {
     let mut out = Vec::new();
@@ -242,7 +237,6 @@ pub(super) fn compile_fn_stmts(
             resolver,
             cycle_stack,
             bound,
-            next_var_id,
             arena,
         )?);
     }
@@ -260,7 +254,6 @@ pub(super) fn compile_fn_stmt(
     resolver: &FnResolver<'_>,
     cycle_stack: &mut Vec<String>,
     bound: usize,
-    next_var_id: &mut crate::ir::VarId,
     arena: &mut ProgramBuilder,
 ) -> Result<Vec<NodeId>, CompileError> {
     let leaf = |kind: NodeKind, arena: &mut ProgramBuilder| vec![arena.push(kind, Vec::new())];
@@ -280,12 +273,12 @@ pub(super) fn compile_fn_stmt(
         }
         crate::syntax::FnStmt::Bind { name, value } => {
             let inlined = inline_dsl_template(value, scope, sources, source_name)?;
-            // One identity per declaration instance: every later reference
-            // in this body reuses the value the first use computes.
-            let id = *next_var_id;
-            *next_var_id += 1;
+            // The value is stored once; references carry only the identity.
+            // One identity per declaration instance, so every later
+            // reference reuses the value the first use computes.
+            let id = arena.push_var(compile_template(&inlined));
             scope.insert(name.clone(), Binding::Var { id, value: inlined });
-            // Binds emit no node: the tagged references carry the value.
+            // Binds emit no node: the tagged references carry the identity.
             Ok(Vec::new())
         }
         crate::syntax::FnStmt::EnvBlock { pairs, body } => {
@@ -312,7 +305,6 @@ pub(super) fn compile_fn_stmt(
                 resolver,
                 cycle_stack,
                 bound,
-                next_var_id,
                 arena,
             )?;
             Ok(vec![arena.push(NodeKind::Env(ir_pairs), inner_body)])
@@ -327,7 +319,6 @@ pub(super) fn compile_fn_stmt(
                 resolver,
                 cycle_stack,
                 bound,
-                next_var_id,
                 arena,
             )?;
             Ok(vec![arena.push(NodeKind::Async, inner_body)])
@@ -350,7 +341,6 @@ pub(super) fn compile_fn_stmt(
                 *offset,
                 *len,
                 bound,
-                next_var_id,
                 arena,
             )
         }
@@ -365,7 +355,6 @@ pub(super) fn compile_fn_stmt(
                 resolver,
                 cycle_stack,
                 bound,
-                next_var_id,
                 arena,
             )?;
             Ok(vec![arena.push(
@@ -407,7 +396,6 @@ pub(super) fn compile_fn_stmt(
                     resolver,
                     cycle_stack,
                     bound,
-                    next_var_id,
                     arena,
                 )?;
                 arm_ids.push(arena.push(NodeKind::Arm(pattern), body));

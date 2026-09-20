@@ -44,7 +44,7 @@ fn collect_rows(
             NodeKind::Project(template) => {
                 // An empty name has no annotation to show; brackets would
                 // just be noise.
-                let annotation = template.plan_text();
+                let annotation = template.plan_text(&program.vars);
                 let annotation = if annotation.is_empty() {
                     None
                 } else {
@@ -73,7 +73,7 @@ fn collect_rows(
                 let label = state
                     .label
                     .clone()
-                    .or_else(|| kind.row_label())
+                    .or_else(|| kind.row_label(&program.vars))
                     .unwrap_or_default();
                 rows.push(RowInfo {
                     node,

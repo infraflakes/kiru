@@ -2,11 +2,13 @@
 (*  kiru DSL - EBNF Grammar                                         *)
 (* ----------------------------------------------------------------- *)
 
-(* Whitespace between tokens is insignificant, with one exception:    *)
-(* a statement keyword and its call parens must be adjacent           *)
-(* (log(x), never log (x)). The adjacency is what the lexer fuses     *)
-(* into one call-shaped token, so `word(...)` is always one unit.     *)
-(* Argument lists are `;`-separated, with an optional trailing `;`.   *)
+(* Whitespace between tokens is insignificant. Inside a parenthesized *)
+(* region every character is data, spaces included. A statement       *)
+(* keyword and its call parens must be adjacent (log(x), never        *)
+(* log (x)); the adjacency is what the lexer fuses into one token.    *)
+(* Declarations are read top-down: a name must be declared before the *)
+(* point that mentions it, and a later declaration of the same name   *)
+(* wins from that point on.                                          *)
 
 (* ================================================================= *)
 (*  PROGRAM                                                          *)
@@ -14,18 +16,20 @@
 
 program          = { statement } ;
 statement        = import_decl | var_decl | fn_decl | run_decl ;
-(* Functions are global named bundles: callable from any body and
-   importable across files. A run block is an entry point (main()),
-   invoked from the command line.                                   *)
 
 (* ================================================================= *)
 (*  DECLARATIONS                                                     *)
 (* ================================================================= *)
 
-import_decl      = "import" "(" template ")" ";" ;
-var_decl         = "var" ident "=" template ";" ;
+import_decl      = "import" "(" [ argument ] ")" ";" ;
+var_decl         = "var" ident "=" value ";" ;
 fn_decl          = "fn" ident [ params ] "{" { fn_stmt } "}" ";" ;
-params           = "(" [ ident { ";" ident } [ ";" ] ] ")" ;
+params           = "(" [ param { ";" param } [ ";" ] ] ")" ;
+param            = ident ;
+
+(* `value` is the only template form: a parenthesized region. `$()`   *)
+(* and `@()` are parts inside a region, never values by themselves,   *)
+(* so write `var x = (@(y));`, not `var x = @(y);`.                   *)
 
 (* ================================================================= *)
 (*  FUNCTION BODIES                                                  *)
@@ -35,44 +39,54 @@ fn_stmt          = log_stmt | exec_stmt | cd_stmt | var_decl
                  | env_block | switch_stmt | call_stmt | async_stmt
                  | project_block ;
 
-log_stmt         = "log" "(" template ")" ";" ;
-(* Run the resolved template as a shell command with live output; a
-   non-zero exit aborts. The argument is raw text: every `;` is
-   literal shell text, only @() and $() are special.                *)
-exec_stmt        = "exec" "(" template ")" ";" ;
-cd_stmt          = "cd" "(" template ")" ";" ;
+(* log, cd, switch, case, import, and project take at most one        *)
+(* argument; `()` is the empty string. A variable declared inside a   *)
+(* body is a bind with the same `var name = value;` shape. A top-     *)
+(* level `;` inside the parens separates arguments, so a second word  *)
+(* is an arity error, not data.                                       *)
+log_stmt         = "log" "(" [ argument ] ")" ";" ;
+cd_stmt          = "cd" "(" [ argument ] ")" ";" ;
 
-(* A call to another function. Arguments are positional templates,
-   bound to the callee's params at compile time. The call runs in the
-   innermost enclosing project context, or at the invocation context. *)
+(* Run the resolved region as a shell command with live output; a     *)
+(* non-zero exit aborts. The region is raw text: `;` and plain        *)
+(* parentheses are data, and its parentheses must balance. A lone     *)
+(* literal `)` has to come from a substitution, e.g. $(printf ')').   *)
+exec_stmt        = "exec" "(" region ")" ";" ;
+
+(* A call to another function. Arguments are positional regions bound *)
+(* to the callee's params at compile time; the callee sees only its   *)
+(* parameters and the vars its own body declares.                    *)
 call_stmt        = ident "(" [ argument { ";" argument } [ ";" ] ] ")" ";" ;
+argument         = region ;
 
 (* -- project block ------------------------------------------------- *)
 
-(* Run the body in a project's context: its directory and direnv
-   setting from kiru.toml, restored when the block ends. The name is
-   a template: @() inlines at compile time, $() resolves at runtime. *) 
-project_block    = "project" "(" template ")" "{" { fn_stmt } "}" ";" ;
+(* Run the body in a project's context: its directory and direnv      *)
+(* setting from kiru.toml, restored when the block ends. The name is  *)
+(* a region, so it may resolve at runtime.                           *)
+project_block    = "project" "(" [ argument ] ")" "{" { fn_stmt } "}" ";" ;
 
 (* -- async block --------------------------------------------------- *)
 
-(* Start this body now and join it at the end of the enclosing body.
-   It runs on a copy of the context, so changes never leak out.     *)
+(* Start this body now and join it at the end of the enclosing body.  *)
+(* It runs on a copy of the context, so changes never leak out.       *)
+(* The parens must be empty; whitespace-only content is layout.       *)
 async_stmt       = "async" "(" ")" "{" { fn_stmt } "}" ";" ;
 
 (* -- env block ---------------------------------------------------- *)
 
 env_block        = "env" "(" [ env_pair { ";" env_pair } [ ";" ] ] ")"
                    "{" { fn_stmt } "}" ";" ;
-env_pair         = ident "=" template ;
+env_pair         = ident "=" value ;
 
 (* -- switch block ------------------------------------------------- *)
 
-switch_stmt      = "switch" "(" template ")" "{" { switch_arm } "}" ";" ;
+switch_stmt      = "switch" "(" [ argument ] ")" "{" { switch_arm } "}" ";" ;
 switch_arm       = case_arm | default_arm ;
-case_arm         = "case" "(" template ")" "{" { fn_stmt } "}" ";" ;
-(* Patterns match the resolved subject, so they must reduce to literal
-   text: @(var) is allowed (inlined at compile time), $(cmd) is not. *)
+case_arm         = "case" "(" [ argument ] ")" "{" { fn_stmt } "}" ";" ;
+(* Patterns match the resolved subject, so they must reduce to        *)
+(* concrete text: a variable whose value is literal is allowed, a     *)
+(* variable holding a command is not. `default` needs no parens.      *)
 default_arm      = "default" "{" { fn_stmt } "}" ";" ;
 
 (* ================================================================= *)
@@ -80,31 +94,36 @@ default_arm      = "default" "{" { fn_stmt } "}" ";" ;
 (* ================================================================= *)
 
 run_decl         = "run" ident "{" { fn_stmt } "}" ";" ;
-(* A run body is a normal statement list, executed by `kiru run <name>`.
-   `;` always means "then"; concurrency is the `async` primitive.    *)
+(* A run body is a normal statement list, executed by                *)
+(* `kiru run <name>`. `;` always means "then"; concurrency is the    *)
+(* `async` primitive.                                                *)
 
 (* ================================================================= *)
-(*  TEMPLATES / EXPRESSIONS                                         *)
+(*  TEMPLATES / REGIONS                                              *)
 (* ================================================================= *)
 
-argument         = template ;
+(* A value is a parenthesized region; the same region syntax is used  *)
+(* wherever text is taken: call arguments, `exec(...)`, `env(...)`    *)
+(* pair values, and the parens of the constructs above.               *)
+(* In an argument list a top-level `;` separates arguments, and nested *)
+(* parentheses shield it; in `exec` the whole region is raw, so `;`   *)
+(* is data there.                                                     *)
 
-(* a template is (text), @(name) to interpolate a variable, or       *)
-(* $(command) to run one                                             *)
+value            = "(" region ")" ;
 
-template         = "(" { template_part } ")"
-                 | "$(" { template_part } ")"
-                 | "@(" ident ")"
-                 | ident ;
+region           = { part } ;
 
-template_part    = lit_text
-                 | "@(" ident ")"
-                 | "$(" template ")" ;
+part             = text
+                 | var_part
+                 | cmd_part ;
 
-lit_text         = ? any character except ")", "@(", "$( " ? ;
+(* Literal data. Plain parentheses are data in matched pairs; the     *)
+(* region ends at the ")" that returns to depth zero. A "#" inside a  *)
+(* region is data, not a comment.                                    *)
+text             = ? characters other than "$(", "@(", and the unmatched ")" ? ;
 
-(* A bare `(` inside a template is literal text; only `@(` and `$( ` *)
-(* start nested parts.                                              *)
+var_part         = "@(" [ whitespace ] ident [ whitespace ] ")" ;
+cmd_part         = "$(" region ")" ;
 
 (* ================================================================= *)
 (*  LEXICAL TOKENS                                                   *)
@@ -114,12 +133,13 @@ ident            = ( letter | "_" ) { letter | digit | "_" } ;
 letter           = "A" | "B" | ... | "Z" | "a" | "b" | ... | "z" ;
 digit            = "0" | "1" | ... | "9" ;
 
-(* Keywords (reserved: they cannot be used as identifiers, variable
-   names, parameters, or function names; this is what keeps foo()
-   unambiguous against the built-in primitives):                    *)
+(* Keywords (reserved: they cannot be used as identifiers, variable    *)
+(* names, parameters, or function names; this is what keeps foo()     *)
+(* unambiguous against the built-in primitives):                      *)
 (*   import var fn run project log exec cd env switch case default async *)
-(*                                                                  *)
-(* Comments start with # and run to end of line.                    *)
-(* Every declaration ends with a semicolon: var, fn, run, import,   *)
-(* and each statement inside every body.                            *)
+(*                                                                    *)
+(* Comments start with # and run to end of line, but only between     *)
+(* tokens; inside a parenthesized region # is data.                   *)
+(* Every declaration ends with a semicolon, and so does every         *)
+(* statement inside every body.                                       *)
 (* ----------------------------------------------------------------- *)

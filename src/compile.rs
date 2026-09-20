@@ -78,10 +78,6 @@ struct CompileState {
     /// Next declaration order to hand out. Declarations are read top-down,
     /// imports loaded inline, so this is the total textual order.
     next_epoch: usize,
-    /// Next variable identity to hand out. Every declaration instance gets a
-    /// fresh one, so redefinitions and call-site instantiations never share
-    /// a cached value.
-    next_var_id: crate::ir::VarId,
 }
 
 impl CompileState {
@@ -95,7 +91,6 @@ impl CompileState {
             loaded_files: HashSet::new(),
             recursion_stack: HashSet::new(),
             next_epoch: 0,
-            next_var_id: 0,
         }
     }
 
@@ -275,7 +270,6 @@ fn compile_stmt(
                 &resolver,
                 &mut cycle_stack,
                 bound,
-                &mut state.next_var_id,
                 &mut state.arena,
             )?;
             state.runs.insert(name.clone(), children);
@@ -316,7 +310,6 @@ fn validate_function_body(
         &resolver,
         &mut cycle_stack,
         epoch,
-        &mut state.next_var_id,
         &mut scratch,
     )?;
     Ok(())
@@ -332,8 +325,10 @@ fn compile_var_decl(
     state: &mut CompileState,
 ) -> Result<(), CompileError> {
     let inlined = inline_dsl_template(value, &state.globals, &state.source_texts, source_name)?;
-    let id = state.next_var_id;
-    state.next_var_id += 1;
+    // The value is stored once in the program; references carry the id.
+    let id = state
+        .arena
+        .push_var(crate::compile::inline::compile_template(&inlined));
     state
         .globals
         .insert(name.to_string(), Binding::Var { id, value: inlined });

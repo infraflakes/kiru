@@ -10,12 +10,10 @@ fn sample_program() -> Program {
     let mut build = ProgramBuilder::default();
 
     let exec = build.push(NodeKind::Exec(check.clone()), vec![]);
+    let switching = build.push_var(Template::lit("switching"));
     let log_switching = build.push(
         NodeKind::Log(Template {
-            parts: vec![Segment::Ref {
-                id: 7,
-                template: Template::lit("switching"),
-            }],
+            parts: vec![Segment::Ref(switching)],
         }),
         vec![],
     );

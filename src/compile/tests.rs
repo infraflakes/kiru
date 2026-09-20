@@ -86,7 +86,7 @@ fn rows(program: &Program, run: &str) -> Vec<(usize, String)> {
                     walk(program, &node.children, depth, out);
                 }
                 kind => {
-                    if let Some(label) = kind.row_label() {
+                    if let Some(label) = kind.row_label(&program.vars) {
                         out.push((depth, label));
                     }
                     if matches!(kind, NodeKind::Env(_) | NodeKind::Async | NodeKind::Arm(_)) {
@@ -103,15 +103,16 @@ fn rows(program: &Program, run: &str) -> Vec<(usize, String)> {
 
 /// The concatenated text of an IR template: literals verbatim, commands
 /// blank (they never ran), variable references expanded to the value they
-/// stand for. These tests assert on fully-inlined templates.
-fn template_text(template: &Template) -> String {
+/// stand for from the program's table. These tests assert on fully-inlined
+/// templates.
+fn template_text(program: &Program, template: &Template) -> String {
     template
         .parts
         .iter()
         .map(|part| match part {
             Segment::Lit(text) => text.clone(),
             Segment::Cmd(_) => String::new(),
-            Segment::Ref { template, .. } => template_text(template),
+            Segment::Ref(id) => template_text(&program, program.var(*id)),
         })
         .collect()
 }
@@ -137,7 +138,7 @@ run bootstrap { project(nix) { eval(@(channel)); }; };
     let root = roots(&program, "bootstrap")[0];
     let log = only_child(&program, root);
     match &program.node(log).kind {
-        NodeKind::Log(t) => assert_eq!(template_text(t), "evaluating unstable"),
+        NodeKind::Log(t) => assert_eq!(template_text(&program, t), "evaluating unstable"),
         other => panic!("expected log, got {:?}", other),
     }
 }
@@ -153,7 +154,7 @@ run greet_run { project(web) { greet(web-app;!); }; };
 ",
     );
     let template = first_command_template(&program, "greet_run", true);
-    assert_eq!(template_text(template), "hello web-app!");
+    assert_eq!(template_text(&program, template), "hello web-app!");
 }
 
 /// A function sees only its parameters and the vars its own body declares:
@@ -168,7 +169,7 @@ run shadow { project(p) { show(project-app); }; };
 ",
     );
     let template = first_command_template(&program, "shadow", true);
-    assert_eq!(template_text(template), "project-app");
+    assert_eq!(template_text(&program, template), "project-app");
 
     // A file variable with the same name is not a fallback either.
     let error = compile_error(
@@ -205,7 +206,7 @@ run r {
 };",
     );
     let template = first_command_template(&program, "r", true);
-    assert_eq!(template_text(template), "example.com:8080");
+    assert_eq!(template_text(&program, template), "example.com:8080");
 }
 
 /// A function's own `var` binds need no outer scope at all.
@@ -220,7 +221,7 @@ fn announce {
 run r { announce(); };",
     );
     let template = first_command_template(&program, "r", true);
-    assert_eq!(template_text(template), "hello world");
+    assert_eq!(template_text(&program, template), "hello world");
 }
 
 /// A function call inlines the callee body carbon-copy: statements in
@@ -383,7 +384,7 @@ run r { build(@(name)); };
 ",
     );
     let template = first_command_template(&program, "r", false);
-    assert_eq!(template_text(template), "echo kiru");
+    assert_eq!(template_text(&program, template), "echo kiru");
 }
 
 #[test]
@@ -408,11 +409,11 @@ run after { f(); };
 ",
     );
     assert_eq!(
-        template_text(first_command_template(&program, "before", true)),
+        template_text(&program, first_command_template(&program, "before", true)),
         "first"
     );
     assert_eq!(
-        template_text(first_command_template(&program, "after", true)),
+        template_text(&program, first_command_template(&program, "after", true)),
         "second"
     );
 }
@@ -493,7 +494,7 @@ fn test_imports_are_visible_from_their_point_on() {
     let after = format!("import({});\nrun r {{ step(); }};\n", helper.display());
     let program = compile_str(&after);
     assert_eq!(
-        template_text(first_command_template(&program, "r", true)),
+        template_text(&program, first_command_template(&program, "r", true)),
         "step-run"
     );
 }
@@ -506,7 +507,7 @@ fn test_runs_see_only_earlier_variables() {
 
     let program = compile_str("var earlier = (E);\nrun r { log(@(earlier)); };");
     assert_eq!(
-        template_text(first_command_template(&program, "r", true)),
+        template_text(&program, first_command_template(&program, "r", true)),
         "E"
     );
 }
@@ -524,11 +525,11 @@ run second { log(@(x)); };
 ",
     );
     assert_eq!(
-        template_text(first_command_template(&program, "first", true)),
+        template_text(&program, first_command_template(&program, "first", true)),
         "one"
     );
     assert_eq!(
-        template_text(first_command_template(&program, "second", true)),
+        template_text(&program, first_command_template(&program, "second", true)),
         "two"
     );
 }
@@ -548,19 +549,37 @@ run r { log(@(x)@(x)); };
         .parts
         .iter()
         .filter_map(|part| match part {
-            Segment::Ref { id, template } => Some((*id, template)),
+            Segment::Ref(id) => Some((*id, program.var(*id))),
             _ => None,
         })
         .collect();
     assert_eq!(refs.len(), 2, "both uses are tagged: {template:?}");
     assert_eq!(refs[0].0, refs[1].0, "both uses share one identity");
     assert!(
-        refs[0]
-            .1
+        program
+            .var(refs[0].0)
             .parts
             .iter()
             .any(|part| matches!(part, Segment::Cmd(_))),
         "the tagged value carries the command to run once"
+    );
+}
+
+/// A variable's value is stored once in the compiled program, however
+/// many references use it.
+#[test]
+fn test_variable_value_is_stored_once() {
+    let program = compile_str(
+        "\
+var x = ($(echo unique-marker));
+run r { log(@(x)@(x)); };
+",
+    );
+    let text = program.serialize();
+    assert_eq!(
+        text.matches("unique-marker").count(),
+        1,
+        "one table entry, not one per reference:\n{text}"
     );
 }
 
@@ -616,7 +635,7 @@ run r { f(one;two); };
 ",
     );
     assert_eq!(
-        template_text(first_command_template(&program, "r", true)),
+        template_text(&program, first_command_template(&program, "r", true)),
         "two"
     );
 }

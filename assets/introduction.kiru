@@ -57,7 +57,11 @@ var repo = (@(user)/@(app));
 #
 #   log(msg);             print a message
 #   exec(cmd);            run a shell command (live output); the
-#                         argument is raw text, so `;` is literal
+#                         argument is raw text, so `;` is literal.
+#                         Plain ( ) inside are data and must balance
+#                         ((echo sub) runs a subshell); a lone `)`
+#                         has to come from a substitution, e.g.
+#                         exec(echo $(printf ')'))
 #   cd(path);             change directory for the rest of the function
 #   name(args);           call another function
 #

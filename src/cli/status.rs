@@ -180,6 +180,7 @@ mod tests {
         Program {
             runs: BTreeMap::from([("ci".to_string(), Vec::new())]),
             nodes: Vec::new(),
+            vars: Vec::new(),
         }
     }
 

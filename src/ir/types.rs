@@ -8,7 +8,9 @@
 //! Everything is a resolved `String` or a [`Template`]: there is no type or
 //! operator system, the DSL is an IaC task runner. `@(var)` references no
 //! longer exist here; the compiler inlines them before the IR is built, so
-//! only literal text and `$(command)` substitutions remain.
+//! only literal text, `$(command)` substitutions, and variable identities
+//! remain. Each variable's value is stored once in [`Program::vars`]; a
+//! reference carries only its identity.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -23,21 +25,18 @@ pub(crate) type VarId = usize;
 /// - `Lit` is literal text.
 /// - `Cmd` is a `$(command)` substitution whose inner template is run through
 ///   `shell -c` at runtime and replaced by its captured stdout.
-/// - `Ref` is one variable declaration's value, tagged with its identity.
-///   The runtime resolves it on first use and reuses the text afterwards.
+/// - `Ref` is one variable declaration, addressed by identity. The value
+///   lives once in [`Program::vars`]; the runtime resolves it on first use
+///   and reuses the text afterwards.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) enum Segment {
     Lit(String),
     /// A `$(command)` substitution. The inner template is run through `shell -c`
     /// at runtime.
     Cmd(Template),
-    /// A tagged variable reference. The template is the declaration's value
-    /// (already inlined), kept here so labels and case-pattern checks stay
-    /// self-describing; `id` is what makes reuse possible.
-    Ref {
-        id: VarId,
-        template: Template,
-    },
+    /// A tagged variable reference: the identity whose value is stored in
+    /// [`Program::vars`].
+    Ref(VarId),
 }
 
 /// A template: the single string-valued form in the DSL.
@@ -59,13 +58,13 @@ impl Template {
     /// `$(command)` kept verbatim, because parenthesized content is data,
     /// not an operator to summarize. A variable reference shows the value it
     /// stands for, exactly as the inliner would have spliced it.
-    pub(crate) fn plan_text(&self) -> String {
+    pub(crate) fn plan_text(&self, vars: &[Template]) -> String {
         self.parts
             .iter()
             .map(|segment| match segment {
                 Segment::Lit(text) => text.clone(),
-                Segment::Cmd(inner) => format!("$({})", inner.plan_text()),
-                Segment::Ref { template, .. } => template.plan_text(),
+                Segment::Cmd(inner) => format!("$({})", inner.plan_text(vars)),
+                Segment::Ref(id) => vars[*id].plan_text(vars),
             })
             .collect()
     }
@@ -73,10 +72,10 @@ impl Template {
     /// Whether the template resolves only at runtime: any `$()` part means
     /// its value is not visible in the plan label. A variable reference is
     /// as dynamic as the value it stands for.
-    pub(crate) fn is_dynamic(&self) -> bool {
+    pub(crate) fn is_dynamic(&self, vars: &[Template]) -> bool {
         self.parts.iter().any(|segment| match segment {
             Segment::Cmd(_) => true,
-            Segment::Ref { template, .. } => template.is_dynamic(),
+            Segment::Ref(id) => vars[*id].is_dynamic(vars),
             Segment::Lit(_) => false,
         })
     }
@@ -162,10 +161,10 @@ impl NodeKind {
 
     /// The label this node shows as a display row, or `None` when the node
     /// is structural (a `switch` or a project context) and only groups rows.
-    pub(crate) fn row_label(&self) -> Option<String> {
+    pub(crate) fn row_label(&self, vars: &[Template]) -> Option<String> {
         match self {
             NodeKind::Log(t) | NodeKind::Exec(t) | NodeKind::Cd(t) => {
-                self.resolved_label(&t.plan_text())
+                self.resolved_label(&t.plan_text(vars))
             }
             NodeKind::Env(pairs) => {
                 let keys: Vec<&str> = pairs.iter().map(|pair| pair.key.as_str()).collect();
@@ -190,6 +189,9 @@ impl NodeKind {
 pub(crate) struct Program {
     pub(crate) runs: BTreeMap<String, Vec<NodeId>>,
     pub(crate) nodes: Vec<Node>,
+    /// Every variable declaration's value, addressed by [`VarId`]. Stored
+    /// once no matter how many references use it.
+    pub(crate) vars: Vec<Template>,
 }
 
 impl Program {
@@ -197,6 +199,11 @@ impl Program {
     /// every id they hold came from this arena and is in range.
     pub(crate) fn node(&self, id: NodeId) -> &Node {
         &self.nodes[id]
+    }
+
+    /// The value of the variable declaration with this identity.
+    pub(crate) fn var(&self, id: VarId) -> &Template {
+        &self.vars[id]
     }
 
     /// Visit every node in the subtree rooted at `roots` in pre-order,
@@ -216,7 +223,7 @@ impl Program {
     pub(crate) fn run_row_count(&self, run: &str) -> usize {
         let mut count = 0;
         self.visit_subtree(self.run_children(run), &mut |id| {
-            if self.node(id).kind.row_label().is_some() {
+            if self.node(id).kind.row_label(&self.vars).is_some() {
                 count += 1;
             }
         });
@@ -247,6 +254,7 @@ impl Program {
 #[derive(Debug, Default)]
 pub(crate) struct ProgramBuilder {
     nodes: Vec<Node>,
+    vars: Vec<Template>,
 }
 
 impl ProgramBuilder {
@@ -257,11 +265,20 @@ impl ProgramBuilder {
         id
     }
 
-    /// Freeze the arena together with the run roots.
+    /// Store one variable declaration's value and return its identity.
+    /// Called once per declaration, never per reference.
+    pub(crate) fn push_var(&mut self, value: Template) -> VarId {
+        let id = self.vars.len();
+        self.vars.push(value);
+        id
+    }
+
+    /// Freeze the arena together with the run roots and the variable values.
     pub(crate) fn build(self, runs: BTreeMap<String, Vec<NodeId>>) -> Program {
         Program {
             runs,
             nodes: self.nodes,
+            vars: self.vars,
         }
     }
 }
