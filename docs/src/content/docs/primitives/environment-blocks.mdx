@@ -1,0 +1,49 @@
+---
+title: Environment Blocks
+description: env sets variables for a block of steps, layered and scoped like everything else.
+---
+
+The shell commands kiru runs inherit the environment kiru started with. When a
+block of steps needs extra variables, `env` adds them for that block:
+
+```kiru
+env(STAGE = (test);) {
+  exec(echo "$STAGE");
+};
+```
+
+The pairs are written `KEY = (value);`, separated by `;`, and the block body
+follows. The value is a template, so it can reference kiru variables or
+substitute command output:
+
+```kiru
+var dir = (./dist);
+env(ARTIFACT_DIR = (@(dir));) {
+  exec(ls "$ARTIFACT_DIR");
+};
+```
+
+## Keys and Layering
+
+Keys are identifiers: letters, digits, and underscores, starting with a letter
+or `_`. Pairs are applied in order for the block, and blocks nest, so an inner
+`env` layer overrides the outer one without touching it:
+
+```kiru
+env(STAGE = (test);) {
+  env(STAGE = (unit);) {
+    exec(echo "$STAGE");    # unit
+  };
+  exec(echo "$STAGE");      # test
+};
+```
+
+When the block ends, the previous environment is back. Commands started inside
+the block inherit the layered values, including the processes they spawn.
+
+## Interaction with Context
+
+`env` is part of the context, which is why it behaves well with everything else
+that changes context: a `project` block restores the environment it found, and
+an `async` body receives a copy, so variables it sets never leak to its
+siblings ([Concurrency](../../runs/concurrency/)).

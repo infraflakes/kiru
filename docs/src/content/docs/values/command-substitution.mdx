@@ -1,0 +1,70 @@
+---
+title: Command Substitution
+description: How $() runs a command, what happens to its output and its failures, and where it can appear.
+---
+
+The value of `app` was fixed text. A value can also come from a command, with
+`$(...)`:
+
+```kiru
+var os = ($(uname -s));
+log(building for @(os));
+```
+
+When the value is first needed during a run, the command runs through the
+profile's shell and its output takes the place of the `$(...)` part.
+
+## What Comes Back
+
+The command's trailing newlines are dropped, and the rest of the output -
+interior newlines, indentation, trailing spaces - is used as written.
+
+> Note: A command that fails is not an error. It substitutes the empty string,
+> which makes probes like `$(command -v docker)` simple to write.
+
+## Where It Appears
+
+A template can mix literal text, `$()`, and `@()` freely, so output and
+variables compose into paths, names, and messages:
+
+```kiru
+var branch = ($(git branch --show-current));
+log(pushing @(branch) to origin);
+```
+
+Substitutions also run inside the argument of `exec`, where the region is raw
+text otherwise: `exec(git push origin $(git branch --show-current))`.
+
+One place a command cannot hide is a `switch` pattern. Patterns must reduce to
+a fixed string when the file is compiled, so a variable holding literal text is
+allowed but a variable holding a `$()` is not; the subject of the switch may
+still be dynamic. [Switch and Case](../../primitives/switch/) shows the
+allowed and rejected forms.
+
+## It Is Never a Value by Itself
+
+`$()` is part of a region, so it has to be wrapped in the parentheses that make
+a value. This does not compile:
+
+```kiru
+var os = $(uname -s);
+```
+
+```console
+$ kiru compile -p default
+error: `$(...)` is only valid inside `(...)`
+ --> main.kiru:1:10
+  |
+1 | var os = $(uname -s);
+  |          ^ `$(...)` is only valid inside `(...)`
+```
+
+The corrected form is the one at the top of this page:
+
+```kiru
+var os = ($(uname -s));
+```
+
+When a `$()` sits inside a `var`, it behaves like any other computed value: it
+runs once and is reused. [Command Values and
+Reuse](../../variables/command-values/) covers when that happens and how often.

@@ -1,0 +1,70 @@
+---
+title: Scope and Validation
+description: What a function body can see, why recursion is rejected, and when each body is checked.
+---
+
+Suppose a file defines a value at the top level and a function wants to use it.
+That does not work the way you might expect:
+
+```kiru
+var registry = (ghcr.io/you);
+
+fn push(image) {
+  log(pushing @(image));      # a parameter: fine
+  log(registry @(registry));  # a file variable: not visible
+};
+```
+
+The second line does not compile, because a function body sees its parameters
+and the `var`s it declares itself, and nothing else:
+
+```console
+$ kiru compile -p default
+error: undefined variable: registry
+ --> main.kiru:4:7
+  |
+4 |   log(registry @(registry));
+  |       ^^^^^^^^^^^^^^^^^^^^^ undefined variable: registry
+```
+
+To use outside data, pass it as an argument at the call site:
+
+```kiru
+push(@(registry)/todo);
+```
+
+## No Recursion
+
+Because a call is inlined where it is written, a function cannot call itself.
+This does not compile:
+
+```kiru
+fn loop {
+  loop();
+};
+```
+
+```console
+$ kiru compile -p default
+error: circular function call: loop -> loop
+ --> main.kiru:2:3
+  |
+2 |   loop();
+  |   ^^^^^^ circular function call: loop -> loop
+```
+
+Two functions cannot call each other either; the first one cannot see the
+second, since declarations are read top-down. Repetition between tasks is
+expressed with sequential statements in a run body.
+
+## Validated Where Declared
+
+Every function body is checked at its declaration, including functions that no
+run ever calls. A misspelled primitive, an unknown name, or a bad argument
+count fails the compile, not the deploy.
+
+This is the same rule as [declaration
+order](../../program-structure/declaration-order/): the compiler reads the file
+once, top to bottom, so it can examine every body as it passes. A later `fn`
+with the same name becomes the definition from that point on, for calls below
+it.

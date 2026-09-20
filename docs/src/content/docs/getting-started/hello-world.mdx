@@ -1,0 +1,108 @@
+---
+title: Hello, World!
+description: Write the two files and run your first job.
+---
+
+import { Code } from 'astro:components';
+import example from '../../../../../assets/example.kiru?raw';
+
+Now that kiru is installed, it is time to write a first program. This page
+describes one repository and runs two steps against it; later parts take each
+of its pieces apart.
+
+## The Work
+
+Start with `main.kiru`, which holds the work itself:
+
+<Code code={example} lang="sh" title="main.kiru" />
+
+The file declares a value named `app`, two bundles of steps, and one entry
+point called `ci`. Parts 4 through 7 go through those declarations one at a
+time; for now, notice only that every statement ends with `;` and that the last
+block is where execution starts.
+
+## The Machine
+
+The work does not say where it runs. That is the job of `kiru.toml`, which
+describes this machine: which file to compile, where the compiled program goes,
+and which repositories the work may enter.
+
+```toml
+[profile.default]
+source = "main.kiru"
+output = "kirufile"
+shell = "sh"
+timeout = 300
+
+[profile.default.project.todo]
+url = "git@github.com:you/todo.git"
+dir = "~/projects/todo"
+```
+
+Both files usually live in `~/.config/kiru/`, which is where kiru looks by
+default. Save them there, and create the `~/projects/todo` directory (or point
+`dir` at a repository you already have).
+
+## Compile and Run
+
+kiru does not read `main.kiru` when it runs a job. First, compile it:
+
+```console
+$ kiru compile -p default
+compiled main.kiru -> kirufile
+```
+
+Then look at what the profile contains. `status` never executes anything:
+
+```console
+$ kiru status -p default
+  Profile  default
+
+  ├── source  main.kiru
+  ├── output  kirufile
+  ├── shell  sh
+  └── timeout  300
+
+  Projects  1
+
+  └── todo
+       ├── url:  git@github.com:you/todo.git
+       └── dir:  ~/projects/todo
+
+  Runs  1
+  └── ci
+```
+
+Finally, run the entry point named `ci`:
+
+```console
+$ kiru run ci -p default
+
+✓ log: Testing todo... [todo]
+✓ exec: printf 'tested todo\n' [todo]
+│    tested todo
+✓ log: Building todo... [todo]
+✓ exec: printf 'built todo\n' [todo]
+     built todo
+```
+
+Each step gets a row, and `[todo]` in a row names the project the step ran in.
+The two bundles run in the order the run block calls them: `test` first, then
+`build`.
+
+## What Just Happened
+
+- `var app = (todo);` gave the text `todo` a name, so the rest of the file can
+  write `@(app)` instead of repeating it. Variables are the subject of Part 4.
+- `fn test(app) { ... };` declared a bundle of steps that takes one input.
+  Functions are Part 5.
+- `run ci { ... };` declared an entry point, and `kiru run ci` executed it.
+  Runs are Part 6.
+- `project(todo) { ... };` ran the steps inside the `todo` entry's directory.
+  Projects are covered in Part 6.2 and Part 8.
+- `log` and `exec` are primitives, the statements that do the work. Part 7
+  covers them, including what happens when a command fails.
+
+Next, [CLI Basics](../cli-basics/) explains the commands and flags, or you can
+continue to [Files and Imports](../../program-structure/files-and-imports/) to
+start learning the language.

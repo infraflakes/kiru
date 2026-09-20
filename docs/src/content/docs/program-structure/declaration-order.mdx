@@ -1,0 +1,68 @@
+---
+title: Declaration Order and Namespaces
+description: Everything is read top-down, later declarations win from their point on, and every body is validated where it is declared.
+---
+
+kiru reads a program the way a person reads a page: top to bottom, once. There
+is no hoisting and no forward reference, which keeps the definition of a name
+somewhere above every use of it.
+
+## Declare Before Use
+
+This program does not compile, because `deploy` is used before it is declared:
+
+```kiru
+run ci {
+  deploy();
+};
+
+fn deploy {
+  log(deploying);
+};
+```
+
+Compiling it reports the first name it cannot resolve:
+
+```console
+$ kiru compile -p default
+error: undefined function: `deploy`
+ --> main.kiru:2:3
+  |
+2 |   deploy();
+  |   ^^^^^^^^ undefined function: `deploy`
+```
+
+Move the `fn` above the `run` and the program compiles. Imports follow the same
+rule: names from an imported file are visible from the import's position
+onward, not from the top of the importing file ([Files and
+Imports](../files-and-imports/)).
+
+## Later Declarations Win
+
+Redeclaring a name is allowed, and the later declaration takes over from that
+point on. Earlier uses keep the definition they saw:
+
+```kiru
+var env = (dev);
+
+run dev_run {
+  log(target @(env));    # target dev
+};
+
+var env = (prod);
+
+run prod_run {
+  log(target @(env));    # target prod
+};
+```
+
+The same applies to functions: a second `fn` with the same name replaces the
+first for every use below it.
+
+## Validation Happens Early
+
+Every function body is checked where it is declared, not where it is called.
+A mistake inside a function that nothing calls still fails the compile, so a
+typo cannot hide in a branch you have not exercised. [Scope and
+Validation](../../functions/scope-and-validation/) describes what a body is
+allowed to reference while it is being checked.

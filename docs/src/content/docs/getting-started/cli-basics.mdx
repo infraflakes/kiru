@@ -1,0 +1,58 @@
+---
+title: CLI Basics
+description: The five commands, how flags select a config and profile, and how to use kiru in CI.
+---
+
+You have written, compiled, and run a program. Before going further into the
+language, it is worth knowing the commands that surround that cycle. Every
+command reads one configuration file and works with one profile.
+
+## The Commands
+
+| Command | What it does |
+| --- | --- |
+| `kiru compile` | Checks the profile's `source` and writes the program to `output`. |
+| `kiru status` | Shows the profile, its projects, and its run names. Never executes anything. |
+| `kiru run <name>` | Executes one run block from the compiled program. |
+| `kiru sync` | Clones or fast-forward-pulls the profile's repositories. |
+| `kiru version` | Prints the version. |
+
+kiru never reads `main.kiru` while running: `compile` is the only command that
+parses source, and every edit needs a fresh `compile` before `run` sees it.
+Nothing compiles implicitly.
+
+In the Hello, World! setup the files live in the default location, so the
+profile and config flags could be omitted. The next section explains what those
+flags do when they are needed.
+
+## Flags
+
+| Flag | Meaning |
+| --- | --- |
+| `-c`, `--config <path>` | The `kiru.toml` to read. Defaults to `~/.config/kiru/kiru.toml`. |
+| `-p`, `--profile <name>` | Required for every command except `version`. An unknown profile is an error that lists the available ones. |
+
+The profile has to be named before anything else can be addressed, so `-p` is
+the flag you will type most. When a typo or a missing entry makes a profile
+invalid, `kiru status` is the cheapest way to see it.
+
+## In CI
+
+Because a repository can ship its own `kiru.toml` and pass it with `-c`, a CI
+step is one command with no flags to guess at:
+
+```toml
+[profile.ci]
+source = "src/main.kiru"
+output = "dist/ci/compiled"
+```
+
+```console
+$ kiru compile -c kiru.toml -p ci
+$ kiru run build -c kiru.toml -p ci
+```
+
+Continue with [Files and
+Imports](../../program-structure/files-and-imports/) to start learning the
+language, or jump to [the CLI reference](../../cli/) for every command, flag,
+and exit code.

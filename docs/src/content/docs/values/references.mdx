@@ -1,0 +1,73 @@
+---
+title: References
+description: How @(name) inserts a value, where the name resolves, and why it is always wrapped in parens.
+---
+
+In Hello, World! the value `todo` was reused through a name:
+
+```kiru
+var app = (todo);
+log(building @(app));
+```
+
+The `@(app)` part is a reference: it looks up the name `app` and puts its value
+into the surrounding text.
+
+## Naming and Whitespace
+
+A reference names a declaration, not a string expression. Whitespace around the
+name is allowed and ignored, so `@(app)` and `@( app )` are the same. The name
+itself must start with a letter or `_` and contain letters, digits, and
+underscores.
+
+## What a Name Can Resolve To
+
+A reference is resolved against the scope it appears in:
+
+- Inside a run body or a function body, it sees the parameters of that body and
+  the `var`s the body declares itself.
+- At the top level, a `var`s value can reference earlier top-level vars.
+- Inside a function, file variables are not visible; pass them in as arguments.
+  [Scope and Validation](../../functions/scope-and-validation/) explains why.
+
+A name that resolves to nothing is a compile error, which is one of the
+mistakes `kiru compile` catches before anything runs.
+
+## It Is Never a Value by Itself
+
+`@(...)` is part of a region, so wrap it in the parentheses that make a value.
+This does not compile:
+
+```kiru
+var repo = @(user)/@(app);
+```
+
+```console
+$ kiru compile -p default
+error: `@(...)` is only valid inside `(...)`
+ --> main.kiru:1:12
+  |
+1 | var repo = @(user)/@(app);
+  |            ^ `@(...)` is only valid inside `(...)`
+```
+
+The corrected form wraps the whole template:
+
+```kiru
+var repo = (@(user)/@(app));
+```
+
+## Insertion Is Plain Text
+
+A reference substitutes text; it does not quote or escape it. `exec` receives
+exactly the characters of the value, so a value with spaces behaves like
+multiple shell words unless the value itself carries quoting:
+
+```kiru
+var message = (hello world);
+exec(echo @(message));          # echoes two words
+exec(echo "@(message)");        # echoes one
+```
+
+The value itself is computed once and reused across references; see [Command
+Values and Reuse](../../variables/command-values/).

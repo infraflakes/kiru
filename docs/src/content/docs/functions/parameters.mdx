@@ -1,0 +1,63 @@
+---
+title: Parameters
+description: Positional parameters separated by semicolons, substitution at compile time, and argument count checking.
+---
+
+A function becomes reusable when its values come from the call site. That is
+what parameters are for; they are written in the parentheses after the name and
+separated by `;`:
+
+```kiru
+fn deploy(app; channel) {
+  log(deploying @(app) to @(channel));
+};
+```
+
+Calls pass arguments the same way, so the binding is obvious at a glance:
+
+```kiru
+deploy(todo;stable);
+```
+
+A trailing `;` before the closing parenthesis is allowed in both places, which
+keeps diffs tidy when the last parameter changes.
+
+## Substitution, Not a Call Frame
+
+When a call is compiled, each argument is substituted for its parameter in the
+body - carbon copy. `@(app)` inside `deploy` becomes exactly the text passed at
+the call site, and the body that reaches the executor already has the values in
+place. Nothing is looked up at run time, which is why `@(name)` inside a
+function can only ever be a parameter or a `var` declared in that body ([Scope
+and Validation](../scope-and-validation/)).
+
+## Count and Spacing Matter
+
+The number of arguments must match the number of parameters. This call passes
+one argument to a function that takes two, which does not compile:
+
+```kiru
+fn deploy(app; channel) {
+  log(deploying @(app) to @(channel));
+};
+
+run ci {
+  deploy(todo);
+};
+```
+
+```console
+$ kiru compile -p default
+error: function `deploy` takes 2 argument(s), got 1
+ --> main.kiru:6:3
+  |
+6 |   deploy(todo);
+  |   ^^^^^^^^^^^^ function `deploy` takes 2 argument(s), got 1
+```
+
+Spacing matters too, because a region keeps its spaces: `deploy(todo;stable)`
+passes two arguments, while `deploy(todo; stable)` passes `todo` and
+` stable`. If you want a space in the second argument, that is exactly how to
+write it; if you did not, remove it. [Text and
+Whitespace](../../values/text-and-whitespace/) covers the rule for every
+argument list.

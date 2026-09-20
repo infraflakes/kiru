@@ -1,6 +1,11 @@
 .direnv
 bin/
+out/
+kirufile
 result
 /target
 /completions
 vendor/
+docs/node_modules/
+docs/dist/
+docs/.astro/

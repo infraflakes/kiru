@@ -1,0 +1,46 @@
+---
+title: Projects and Direnv
+description: The project entries behind project(name) blocks, and how direnv is handled.
+---
+
+Hello, World! ran its steps inside a repository called `todo`. That name comes
+from a project entry, which gives a repository on disk a name the work can use:
+
+```toml
+[profile.default.project.todo]
+url = "git@github.com:you/todo.git"
+dir = "~/projects/todo"
+branch = "main"
+direnv = true
+```
+
+| Field | Meaning |
+| --- | --- |
+| `dir` | The working directory for the block's commands. |
+| `url` | The repository to clone or pull when syncing. |
+| `branch` | The branch to clone; optional. |
+| `direnv` | Run commands through the project's direnv environment. |
+
+`dir` is what makes `project(name)` useful; `url` and `branch` are only used by
+`kiru sync`, so a local-only project can omit them.
+
+## Direnv
+
+With `direnv = true`, kiru calls `direnv allow` on the repository before the
+block runs and wraps every command in the block with `direnv exec`, so the
+project's environment is loaded from its `.envrc` automatically. Everything
+else is direnv's business: a missing binary, a failing `.envrc`, or a directory
+without one fails the command with direnv's own error. There is no silent
+fallback, because a command running without the environment you declared would
+be worse than a clear failure.
+
+Projects without the flag run their commands plain, using the environment kiru
+inherited.
+
+## Where Entries Are Used
+
+`project(name)` resolves the name when the block is entered, so an unknown or
+empty name fails the run ([Projects and Context](../../runs/projects/)).
+`kiru sync` walks every project that has both a URL and a directory
+([Syncing](../syncing/)). Both read the same entries, so there is one place to
+describe a repository.

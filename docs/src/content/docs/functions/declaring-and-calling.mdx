@@ -1,0 +1,56 @@
+---
+title: Declaring and Calling
+description: How fn bundles steps, how calls pass arguments, and why there is no runtime call stack.
+---
+
+In Hello, World! the two steps were declared as named bundles, and the run
+block called them by name:
+
+```kiru
+fn test(app) {
+  log(Testing @(app)...);
+  exec(printf 'tested @(app)\n');
+};
+
+run ci {
+  project(todo) {
+    test(@(app));
+  };
+};
+```
+
+A function is that named bundle. Where a run block is an entry point you invoke
+from the command line, a function is a piece of work you invoke from another
+body, with the `fn` keyword and a name.
+
+A function body contains the same statements a run body does: primitives such
+as `exec` and `log`, variable declarations, and calls to other functions. The
+parameters written after the name are optional, so `fn banner { ... };` is a
+bundle with no inputs.
+
+## Calls
+
+A call is the function's name followed by its arguments, and it ends with `;`
+like every statement:
+
+```kiru
+test(myapp);
+deploy(app;release);
+```
+
+Arguments are written the same way parameters are - regions separated by `;` -
+and [Parameters](../parameters/) explains how they bind.
+
+## No Runtime Stack
+
+Calling a function does not transfer control the way a call stack does:
+arguments are substituted into the body, and the body is placed at the call
+site when the file is compiled. A function used three times appears three times
+in the program.
+
+Two consequences follow. First, a function must be declared before the first
+call, because the compiler inlines it from top to bottom ([Declaration Order
+and Namespaces](../../program-structure/declaration-order/)). Second, a
+function cannot call itself; there is nothing to inline the second time.
+[Scope and Validation](../scope-and-validation/) covers that rule and the rest
+of what a body can see.

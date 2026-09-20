@@ -1,21 +1,19 @@
 # The smallest useful kiru setup.
 #
 # Copy to ~/.config/kiru/main.kiru, add a "todo" project to kiru.toml,
-# then: kiru compile -c kiru.toml -p default, kiru status -p default, kiru run ci -p default.
+# then: kiru compile -p default, kiru status -p default, kiru run ci -p default.
 # Every declaration ends with a semicolon.
 
 var app = (todo);
 
 fn build(app) {
   log(Building @(app)...);
-  exec(go build -o bin/@(app) .);
+  exec(printf 'built @(app)\n');
 };
 
 fn test(app) {
   log(Testing @(app)...);
-  env(CGO_ENABLED = (0);) {
-    exec(go test -race ./...);
-  };
+  exec(printf 'tested @(app)\n');
 };
 
 run ci {

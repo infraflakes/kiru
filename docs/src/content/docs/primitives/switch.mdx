@@ -1,0 +1,72 @@
+---
+title: Switch and Case
+description: Branching on a value, first match wins, and what patterns are allowed.
+---
+
+A run often has to behave differently depending on a value. `switch` chooses
+one arm to run:
+
+```kiru
+var mode = ($(cat .mode 2>/dev/null));
+
+run deploy {
+  switch(@(mode)) {
+    case(dev) {
+      exec(printf 'deploying to dev\n');
+    };
+    case(prod) {
+      exec(printf 'deploying to prod\n');
+    };
+    default {
+      log(unknown mode: @(mode));
+    };
+  };
+};
+```
+
+The subject is a template, so it can be a variable reference, a command's
+output, or plain text. The first matching arm runs; every other arm is skipped
+and pruned from the progress view, even the ones below it.
+
+## Matching
+
+`case(pattern)` compares text exactly. A `case()` with an empty pattern matches
+the empty string. `default` is not compared at all - it matches whatever the
+subject is - so it acts as the fallback and should come last.
+
+If no arm matches and there is no `default`, nothing runs and the switch
+succeeds. That is a valid choice when every case is optional.
+
+## Patterns Must Be Fixed
+
+The subject may be computed at run time, but patterns are part of the compiled
+program and must reduce to fixed text when the file is compiled. A variable
+holding literal text is allowed; a variable holding a command substitution is
+not:
+
+```kiru
+var detected = ($(uname -s));
+
+run ci {
+  switch(@(detected)) {
+    case(@(detected)) { log(matched); };
+    default { log(other); };
+  };
+};
+```
+
+```console
+$ kiru compile -p default
+error: case pattern must be literal text
+ --> main.kiru:5:10
+  |
+5 |     case(@(detected)) { log(matched); };
+  |          ^^^^^^^^^^^^ case pattern must be literal text
+```
+
+If you need to branch on a command's output, switch on the value and compare in
+the cases, as the example at the top of this page does.
+
+Each arm has its own body and ends with `;`, and the whole switch is one
+statement, so failure inside the chosen arm fails the enclosing body like any
+other statement.

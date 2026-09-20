@@ -1,0 +1,35 @@
+---
+title: Syncing
+description: How kiru sync clones missing repositories and fast-forwards existing ones.
+---
+
+With the project entries in place, one command brings the repositories to a
+known state:
+
+```console
+$ kiru sync -p default
+```
+
+`sync` never runs your tasks. It visits every project that has both a `url` and
+a `dir` and does one of two things:
+
+- If the directory does not exist, the repository is cloned there, checking out
+  `branch` when one is set.
+- If it already exists, the update is `git pull --ff-only`: it moves forward
+  when the local branch can fast-forward, and refuses instead of creating a
+  merge commit or discarding local work.
+
+Projects without a URL or a directory are reported and skipped; they are still
+valid for local work, they just have nothing to sync. If a profile has no
+projects at all, the command tells you rather than pretending to work.
+
+## Independent Results
+
+All projects sync at the same time, and each settles on its own. One repository
+failing does not cancel the others, and the final report shows which succeeded
+and which failed, so a network problem on one remote cannot hide the state of
+the rest.
+
+Sync is deliberately conservative: it fast-forwards and clones, and nothing
+else. Branch policy, rebasing, and conflict resolution stay with git, where you
+can see and control them.

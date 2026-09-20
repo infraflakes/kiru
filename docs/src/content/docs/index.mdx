@@ -1,0 +1,46 @@
+---
+title: kiru
+description: Kiru is statically validated monotyped DSL designed for process orchestration for multiple repositories, featuring an integrated CLI (kiru) that validates, compiles, and executes locally.
+hero:
+  tagline: Describe the work once, in one file, and run it across your repositories.
+  actions:
+    - text: Get Started
+      link: getting-started/installation/
+      icon: right-arrow
+      variant: primary
+    - text: The Language
+      link: program-structure/files-and-imports/
+      icon: open-book
+---
+
+Welcome to the kiru documentation. kiru describes work that spans repositories -
+the shell commands that build, test, sync, and release them - in a file you can
+read and version, and provides a command line tool that checks that file,
+compiles it, and runs it.
+
+## Who This Documentation Is For
+
+This wiki assumes that you are comfortable in a terminal: that you have run
+build and test commands by hand, and that you know what a shell environment is.
+It assumes nothing about kiru itself. Every construct is shown on a small
+example before it is explained, and pages point back to earlier ones when a
+detail matters.
+
+## How to Use This Wiki
+
+The pages are written to be read in order. Part 1 is hands-on: you install
+kiru, write the two files, and run a first job. Parts 2 through 8 teach the
+language, one part per concept. Parts 9 through 11 are reference material for
+when you already know what you are looking for.
+
+There is no wrong way to read. If you want to jump ahead, go ahead and come
+back when something needs context.
+
+## Conventions
+
+- `main.kiru` holds the work and `kiru.toml` describes the machine; both
+  filenames are used throughout.
+- Commands you type appear with a `$` prompt. Lines without a prompt are the
+  output a command produced.
+- Some examples are deliberately invalid. The surrounding text says so, and
+  the corrected version follows.

@@ -13,13 +13,7 @@
 >
 > Many docs are temporarily LLM generated for now.
 
-kiru is a small tool that keeps several git repos in sync and runs jobs across them. You describe the work once, in one file, and kiru runs it for you.
-
-## What you get
-
-- One DSL for the repos you work with and the shell steps that build, test, and release them.
-- Pipelines that run steps in parallel or one after another, across repos.
-- Validation up front: kiru checks your file before it runs anything, so mistakes show up while you edit, not mid-deploy.
+`Kiru` is statically validated monotyped DSL designed for process orchestration for multiple repositories, featuring an integrated CLI (`kiru`) that validates, compiles, and executes locally.
 
 ## Install
 
@@ -29,93 +23,9 @@ curl -sSf https://raw.githubusercontent.com/infraflakes/kiru/main/install.sh | s
 
 This puts `kiru` in `~/.local/bin`. Make sure that directory is on your `PATH`.
 
-## Your two files
+## Documentation
 
-Everything lives in `~/.config/kiru/`, in two files you write.
-
-**`main.kiru`** - the work. Named bundles (`fn`), their parameters, and the entry points (`run`) that call them. This one travels well, so keep it under version control.
-
-```kiru
-var app = (todo);
-
-fn build(app) {
-  log(Building @(app)...);
-  exec(go build -o bin/@(app) .);
-};
-
-fn test {
-  exec(go test -race ./...);
-};
-
-run ci {
-  project(todo) {
-    test();
-    build(@(app));
-  };
-};
-```
-
-## The language in one paragraph
-
-Every statement is a call, and the keyword and its call parens must be adjacent (`log(x)`, never `log (x)`); whitespace between tokens is free, but inside a string-literal paren every character is data, spaces included (`name(a;b)` passes `a` and `b`, `name(a; b)` passes `a` and `" b"`). The only template form is `( ... )`: what you write inside is data, except that `$(command)` runs a command and substitutes its output and `@(name)` uses a variable's value. Those two are parts of a template, never values by themselves, so `var os = ($(uname -s));`, not `var os = $(uname -s);`. The `exec(cmd);` primitive runs its resolved text as a command with live output. So `$()` and `@()` only ever appear inside templates, and templates only appear as call arguments, `var` values, and `env` pair values. The built-in primitives (`log`, `exec`, `cd`, `async`, `env`, `switch`, `case`, `default`, and the declaration keywords) are reserved - they cannot be used as identifiers or function names, which is what keeps `bar()` unambiguous against them.
-
-Functions are named bundles; every file joins one namespace. Everything is read top-down: a function or variable must be declared before the point that mentions it, and imports join the namespace where they appear. Every function body is validated where it is declared, so mistakes in a function that is never called still fail the compile. A later declaration of the same name simply wins from that point on. Functions take positional parameters (`fn greet(name) { ... };`), calls pass arguments the same way (`greet(world)`) - both `;`-separated - and the arguments are substituted for the parameters when the call is compiled, carbon-copy. Inside a function, `@(name)` resolves to a parameter or to a `var` the body declares itself, then fails; file variables and the caller's local bindings are not visible, so a function receives data only through its arguments. Self-recursion is a compile error. Values are strings, so an empty argument is valid data like any other.
-
-A run block is the entry point, like `main()` in other languages: a body of statements executed by `kiru run <name>`. A `project(name) { ... }` block runs its body in that project's context - its directory and direnv setting from `kiru.toml`, restored when the block ends; calls outside every block run at the invocation context. A semicolon always means "then"; concurrency is the `async() { ... };` primitive, whose body starts right away and is joined when the enclosing body ends, on a copy of the context so changes inside never leak out.
-
-**`kiru.toml`** - your machine, organized as profiles. The top level declares only `[profile.<name>]` tables; each profile is a complete unit: where to compile from (`source`), where the compiled IR goes (`output`), the shell, an optional command timeout, and the projects. `source` and `output` are file paths - relative to the `kiru.toml`, or `~/...`, or absolute; the output name is yours to choose, kiru just uses it. Projects are keyed by name and provide the contexts for `project(name) { ... }` blocks.
-
-```toml
-[profile.default]
-source = "main.kiru"     # compile input, relative to this file
-output = "compiled"      # where the compiled program goes, filename included
-shell   = "sh"
-timeout = 300            # optional, seconds per command
-
-[profile.default.project.todo]
-url     = "git@github.com:you/todo.git"
-dir     = "~/projects/todo"
-direnv  = true
-```
-
-Set `direnv = true` on a project entry to run that project's commands through `direnv exec`. Before a function of the project runs, kiru calls `direnv allow` on the repo directory for you, so the environment always loads. Everything else is direnv's business: a missing binary, a failing `.envrc`, or a directory without one fails the command with direnv's own error. Projects without the flag run their commands plain.
-
-A repo can ship its own `kiru.toml` and pass it with `-c`, which makes CI/CD one command per step with no flags to guess at:
-
-```toml
-[profile.ci]
-source = "src/main.kiru"
-output = "dist/ci/compiled"
-```
-
-## Compile and run
-
-kiru does not read the `.kiru` source directly. First, compile the profile's `source` into its `output`:
-
-```bash
-kiru compile -c kiru.toml -p ci
-```
-
-Compile parses and checks `source`, creates missing parent directories of `output`, and writes the IR there. If it reports errors, fix them and compile again. Every edit to the source needs a fresh `kiru compile` before the other commands see it; nothing compiles implicitly.
-
-| command | what it does |
-|---------|-------------|
-| `kiru compile` | compile the profile's `source` into its `output` |
-| `kiru status` | show the profile, its projects, and the compiled run blocks |
-| `kiru run ci` | run the `ci` pipeline from the profile's `output` IR |
-| `kiru sync` | clone or update the profile's repos |
-| `kiru version` | print the version |
-
-Start with `kiru status`. It never runs anything, just tells you whether your config is sound.
-
-Flags follow one rule: `-c/--config` points at a `kiru.toml` (defaulting to `~/.config/kiru/kiru.toml`), `-p/--profile` selects the `[profile.<name>]` to use and is mandatory for every command except `version`. An unknown profile is an error listing the available ones.
-
-## Learn the DSL
-
-- [Introduction to kiru](./assets/introduction.kiru) - the language, feature by feature.
-- [Minimal example](./assets/example.kiru) - the smallest setup that runs.
-- [Grammar](./assets/kiru.ebnf) - the formal spec.
-- [main.kiru](./main.kiru) - kiru's own config, used to build and test itself.
+The guides and reference live at [kiru.infraflakes.fyi](https://kiru.infraflakes.fyi/), built from [`docs/`](./docs).
 
 ---
 

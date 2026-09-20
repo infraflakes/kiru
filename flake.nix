@@ -76,6 +76,8 @@
               clippy
               rustfmt
               cargo-edit
+              bun
+              biome
             ];
           };
         };

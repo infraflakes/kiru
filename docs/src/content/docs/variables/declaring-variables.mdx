@@ -1,0 +1,56 @@
+---
+title: Declaring Variables
+description: var at the top level and inside bodies, how scope works, and what a value can contain.
+---
+
+You have already declared a variable: `var app = (todo);` in Hello, World!
+gave the text `todo` a name, and the rest of the file wrote `@(app)` instead of
+repeating it.
+
+```kiru
+var app = (todo);
+var user = (yourname);
+var repo = (@(user)/@(app));
+```
+
+The declaration ends with `;`, like every declaration. The name follows the
+same rule as every identifier: a letter or `_` first, then letters, digits, and
+underscores.
+
+## Where Declarations Live
+
+A `var` at the top level belongs to the file. Any body below it can read the
+value, and later top-level vars can build on earlier ones, as `repo` does
+above.
+
+A `var` inside a function or a run body belongs to that body and is visible
+from its declaration to the end of the body. It may shadow a file variable
+without changing the file variable for anyone else:
+
+```kiru
+var mode = (fast);
+
+run ci {
+  var mode = (thorough);    # this body sees the body value
+  log(@(mode));             # thorough
+};
+```
+
+There is one deliberate exception to top-level visibility: inside a `fn`, file
+variables are not visible at all. A function receives data only through its
+parameters. [Scope and Validation](../../functions/scope-and-validation/)
+explains the reasoning.
+
+## What a Value Can Contain
+
+A value is a template, so it can mix text, references, and command
+substitution, including nothing at all:
+
+```kiru
+var note = ();
+var os = ($(uname -s));
+```
+
+Values that contain `$()` are the interesting case: they do not run when the
+file is compiled. [Command Values and
+Reuse](../command-values/) covers when they run and how often.

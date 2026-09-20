@@ -1,0 +1,80 @@
+---
+title: Running Commands
+description: log, exec, and cd - the three primitives that print, run, and move.
+---
+
+The statements in the Hello, World! bundles were primitives: the built-in
+statements that do the work.
+
+```kiru
+fn test(app) {
+  log(Testing @(app)...);
+  exec(printf 'tested @(app)\n');
+};
+```
+
+`log` added a row with a message, and `exec` ran a shell command. The third
+primitive, `cd`, changes the working directory for the rest of the body. Each
+takes at most one argument, and `()` is a valid empty one.
+
+## `log`
+
+`log(message);` adds a message to the run's output:
+
+```kiru
+log(building @(app));
+```
+
+`log();` prints an empty line. Because the argument is a template, it can mix
+text, references, and substitutions like any other value.
+
+## `exec`
+
+`exec(command);` runs its argument as a shell command with live output:
+
+```kiru
+exec(cargo build --release);
+```
+
+The region after `exec(` is raw text, with two rules of its own. A `;` inside
+is literal, so shell one-liners work; and plain parentheses are text as long as
+they balance, so `exec(echo (sub))` passes the parentheses through.
+
+> Note: A literal unmatched `)` cannot be written directly, because it would
+> close the region. Produce it with a substitution:
+>
+> ```kiru
+> exec(echo $(printf ')'));
+> ```
+
+When the command exits non-zero, `exec` fails and the run stops ([Failure and
+Cancellation](../../runs/failure-and-cancellation/)). Substitutions inside the
+command are resolved first, so `exec(echo @(msg))` runs with the value in
+place.
+
+## `cd`
+
+`cd(path);` changes the working directory for the rest of the body:
+
+```kiru
+cd(docs);
+exec(bun install);
+```
+
+A relative path is resolved from the current directory, so `cd` calls compose.
+The target must exist and be a directory; otherwise the statement fails with
+the reason. The change lasts until the enclosing body ends, which is how
+`project` blocks restore your original directory when they close ([Projects and
+Context](../../runs/projects/)).
+
+## Arity
+
+Each of these takes one argument, so a second top-level word is an error rather
+than data:
+
+```kiru
+log(a;b);    # error: log takes 1 argument, got 2
+```
+
+Nested parentheses shield a `;` from being read as a separator ([Text and
+Whitespace](../../values/text-and-whitespace/)).

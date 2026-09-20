@@ -1,0 +1,54 @@
+---
+title: Concurrency
+description: async blocks start now and join at the end of the enclosing body, on a copy of the context.
+---
+
+Sequential statements are the default. When two pieces of work do not depend on
+each other, an `async` block starts its body immediately and the enclosing body
+joins it before finishing. Here the tests and the build start together:
+
+```kiru
+run ci {
+  project(myapp) {
+    async() {
+      test(myapp);
+    };
+    async() {
+      build(myapp);
+    };
+  };
+};
+```
+
+The run is not done until both async blocks have finished.
+
+## Context Is Copied
+
+An async body runs on a copy of the context it was declared in. A `cd` or an
+`env` inside it changes the copy, never the parent, so siblings cannot
+interfere with each other:
+
+```kiru
+async() {
+  cd(backend);
+  exec(cargo build);
+};
+
+exec(pwd);   # still the directory from before the async block
+```
+
+Values that compute commands follow the same rule: a value already computed
+when the copy is made is carried in; otherwise the first use inside the copy
+computes its own, and the result stays there ([Command Values and
+Reuse](../../variables/command-values/)).
+
+## Join at the End
+
+An async body is joined when the body that contains it ends, which is what
+makes `;` a reliable "then": by the time the next statement executes, every
+async block before it has finished. Its rows appear grouped in the progress
+view, so steps that ran at the same time read as one unit.
+
+The parentheses of `async()` are empty; whitespace inside them is layout. The
+block takes a body, not an argument, because there is nothing to configure -
+concurrency is structural.

@@ -1,6 +1,7 @@
 [profile.ci]
 source = "main.kiru"
 output = "kirufile"
+timeout = 600
 
 [profile.ci.project.kiru]
 dir = "."

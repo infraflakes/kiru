@@ -1,0 +1,46 @@
+---
+title: Installation
+description: Install kiru with the install script, or build it from source.
+---
+
+import CopyCommand from '../../../components/CopyCommand.svelte';
+
+The first step is to install kiru. It ships as a single binary, and the install
+script puts it in `~/.local/bin`:
+
+<CopyCommand client:load command="curl -sSf https://raw.githubusercontent.com/infraflakes/kiru/main/install.sh | sh" />
+
+Confirm the installation by asking for the version:
+
+```console
+$ kiru version
+kiru 0.4.0
+```
+
+If your shell reports that `kiru` was not found, `~/.local/bin` is not on your
+`PATH`. Add it to your shell's startup file and open a new terminal.
+
+## Building from Source
+
+The repository is a Rust project with a Nix flake, and the flake is the supply
+chain the project itself uses:
+
+```console
+$ git clone https://github.com/infraflakes/kiru
+$ cd kiru
+$ nix build .#default
+```
+
+The binary lands in `result/bin/kiru`. Without Nix, a plain Cargo build works
+too, and the binary lands in `target/release/kiru`:
+
+```console
+$ cargo build --release
+```
+
+## What Else You Need
+
+kiru runs your commands through a shell, so you need one. `sh` is enough to
+start, and a profile can name a different shell later. Projects that opt into
+direnv also need `direnv` installed and a `.envrc` in the repository; projects
+without the flag run their commands plain.

@@ -1,0 +1,50 @@
+---
+title: Command Values and Reuse
+description: When a value containing $() runs, why it runs only once per context, and why nothing is frozen into the program.
+---
+
+A value can hold a command instead of text. This program reads the current git
+branch once and reports it twice:
+
+```kiru
+var branch = ($(git branch --show-current));
+
+run ci {
+  log(building @(branch));   # the command runs here, once
+  log(testing @(branch));    # same text, no second run
+};
+```
+
+Compiling the file does not run the command, and neither does declaring the
+variable. The command runs the first time the value is needed during a run, and
+the text it produced is reused for every reference after that.
+
+## Why Not at Compile Time
+
+Compiling is side-effect free. `kiru compile` checks the file and writes a
+portable program; it never runs your commands. That keeps a compiled file
+usable on another machine, and it keeps a build from touching a repository just
+because it was compiled.
+
+The cost is that a value is not a constant you can read at compile time. The
+benefit is that the program always reflects the machine it runs on.
+
+## When It Runs
+
+Lazily and once per execution context:
+
+- If a value is never referenced, its command never runs.
+- If it is referenced, the first reference runs it and stores the text; later
+  references reuse that text.
+- Each `async` body runs on a copy of the context. A value already computed
+  when the copy is made is carried into it; otherwise the first use inside that
+  copy computes its own. Results never leak between contexts.
+
+> Note: A failed command is not an error here either; it leaves the empty
+> string, so probing with `$(command -v ...)` stays simple.
+
+## What Gets Compiled
+
+The compiled program stores the command text once, and every reference points
+at that entry, so a large value never duplicates through the file. The text a
+command produces at run time exists only while the run is executing.

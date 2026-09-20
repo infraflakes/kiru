@@ -1,0 +1,39 @@
+---
+title: Entry Points and Sequencing
+description: run blocks, how statements execute in order, and how the progress view is shaped.
+---
+
+The last block of the Hello, World! file is the entry point:
+
+```kiru
+run ci {
+  project(todo) {
+    test(@(app));
+    build(@(app));
+  };
+};
+```
+
+`kiru run ci -p default` executes that block and nothing else. A file can hold
+as many run blocks as you like; compiling once makes them all available by
+name. Run blocks are entry points, not functions, so one run cannot call
+another - shared work belongs in a `fn` that both runs call.
+
+## Semicolon Means Then
+
+Every statement in a body ends with `;`, and the next statement runs after the
+one before it finishes. A failing step stops the sequence, so `;` is a promise
+that the previous step succeeded. There is no `if` around a single statement:
+branching is the `switch` primitive ([Switch and
+Case](../../primitives/switch/)), and running things at the same time is
+`async` ([Concurrency](../concurrency/)).
+
+## What You See While It Runs
+
+Each statement that does work gets a row in the live view, and the row shows
+what it is doing and how it ended. A function call expands into the rows of the
+statements it was compiled from, and an `async` block groups its rows together.
+When a row fails, it shows its error once and the run unwinds from there.
+
+The same view is printed when output is not a terminal, so logs and CI output
+stay readable: the live TUI is a convenience, not a different mode.

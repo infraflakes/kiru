@@ -1,0 +1,53 @@
+---
+title: Projects and Context
+description: Running a body in a repository's directory and environment.
+---
+
+Steps rarely run in one directory. A `project` block switches a body into a
+repository's context for the duration of the block and restores the previous
+context when it ends:
+
+```kiru
+run ci {
+  project(backend) {
+    exec(cargo test);
+  };
+  project(frontend) {
+    exec(bun test);
+  };
+};
+```
+
+The two commands run in different directories even though they are written in
+the same block. The directory, and the environment that goes with it, come from
+the project's entry in `kiru.toml` ([Projects and
+Direnv](../../configuration/projects/)).
+
+Statements outside every `project` block run at the invocation context: the
+directory `kiru` was started from, with the environment it inherited.
+
+## The Name Is Resolved at Run Time
+
+The name in `project(name)` is a template, so it can be built from values:
+
+```kiru
+var target = ($(cat .target));
+
+run deploy {
+  project(@(target)) {
+    exec(./deploy.sh);
+  };
+};
+```
+
+Because of that, the project is looked up when the block is entered, and an
+unknown or empty name fails the run with an error on the block's first row.
+For a dynamic name, the rows inside the block are annotated with the project
+they actually ran under, so a loop over several repositories stays readable.
+
+## Context Is Scoped
+
+`cd` and `env` inside a `project` block change that block only, and an `async`
+body never leaks its context into its siblings ([Concurrency](../concurrency/)).
+When the block ends, the previous directory and environment are back, which
+makes a sequence of project blocks safe to read top to bottom.

@@ -1,0 +1,64 @@
+---
+title: Files and Imports
+description: How main.kiru and kiru.toml split the work from the machine, and how imports join one namespace.
+---
+
+The Hello, World! program was a single file. When the work grows, it can be
+split: an import pulls another file into the program at the point where it
+appears, and the result is still one program.
+
+## The Two Files
+
+Two filenames appear throughout this wiki, and they have different jobs.
+`main.kiru` holds the work: values, bundles of steps, and entry points. It
+never mentions this machine, so it can be committed next to the code it builds.
+`kiru.toml` holds the machine: which file to compile, where the program goes,
+and which repositories the work may enter. It stays local.
+
+## Pulling in Another File
+
+Suppose a second file declares a bundle named `check`:
+
+```kiru
+# shared.kiru
+fn check {
+  log(running checks);
+};
+```
+
+A program that needs it imports the file:
+
+```kiru
+# build.kiru
+import(./shared.kiru);
+
+run ci {
+  check();
+};
+```
+
+The path is relative to the file that contains the import, and the import
+places `shared.kiru`'s declarations into the program from that line onward.
+Imports themselves are statements at the top level, alongside `var`, `fn`, and
+`run`, and they end with `;` like any other declaration.
+
+## Paths Are Templates
+
+The path is a template, so it can be built from values the way any other
+argument can:
+
+```kiru
+var configs = (~/work/configs);
+import(@(configs)/common.kiru);
+```
+
+That resolves to `~/work/configs/common.kiru`, read relative to the importing
+file unless the path is absolute.
+
+## One Namespace
+
+Everything the imported file declares joins the program, as if it had been
+written where the import appears. Later pages rely on that rule: [Declaration
+Order and Namespaces](../declaration-order/) describes what happens when two
+declarations share a name, and [Functions](../../functions/declaring-and-calling/)
+describes how imported bundles are called.

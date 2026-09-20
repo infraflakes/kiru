@@ -1,0 +1,56 @@
+---
+title: Failure and Cancellation
+description: The first failure stops the run, processes are stopped in groups, and exit codes tell the story.
+---
+
+When a command exits non-zero, `exec` fails and the rest of the run stops. This
+program runs one command that fails:
+
+```kiru
+run ci {
+  project(todo) {
+    exec(exit 3);
+    log(never reached);
+  };
+};
+```
+
+Running it prints a failed row for the command, the error it reported, and a
+cancelled row for everything that never ran:
+
+```console
+$ kiru run ci -p default
+✗ exec: exit 3 [todo]
+│    Error: execution failed: exit 3: exited with code 3
+■ log: never reached [todo]
+```
+
+## The First Failure Stops the Run
+
+When a statement fails, the rest of the run stops. Running processes are
+stopped, pending siblings are cancelled, and the failing row shows its error
+exactly once. The steps that already completed keep their result in the final
+view, so the dump tells you how far the run got.
+
+A command failing does not have to fail the run: `exec` aborts on a non-zero
+exit, but `$()` used as a value does not. A failed substitution leaves the
+empty string, which is what makes probes like `$(command -v docker)` useful
+([Command Substitution](../../values/command-substitution/)).
+
+## Cancelling from Outside
+
+Ctrl+C, or a termination signal to `kiru`, takes the same path as a task
+failure: every live command is stopped first, then kiru exits. Each command is
+its own process-group leader, so stopping it reaches wrappers and grandchildren
+rather than leaving orphans behind. On Linux, kiru's children also receive a
+parent-death signal, so an interrupted run cannot silently outlive its parent.
+
+## Exit Codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Everything succeeded. |
+| `1` | A task failed, or an infrastructure error was reported. |
+| `130` | Cancelled: Ctrl+C, `q` in the live view, or a termination signal. |
+
+The same codes apply when output is not a terminal, which is what CI relies on.

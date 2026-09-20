@@ -1,0 +1,59 @@
+---
+title: Profiles
+description: The complete unit of configuration - source, output, shell, timeout - and how paths resolve.
+---
+
+The Hello, World! setup already contained a profile. It is the unit of
+configuration that every command works with:
+
+```toml
+[profile.default]
+source = "main.kiru"     # the file to compile, relative to this kiru.toml
+output = "kirufile"      # where the program goes, filename included
+shell = "sh"             # the shell every exec runs through
+timeout = 300            # optional, seconds per command
+
+[profile.default.project.todo]
+url = "git@github.com:you/todo.git"
+dir = "~/projects/todo"
+```
+
+The top level of `kiru.toml` declares only `[profile.<name>]` tables. Each
+profile is self-contained: where the work comes from, where the compiled
+program goes, and how commands run.
+
+## Fields
+
+| Field | Meaning |
+| --- | --- |
+| `source` | The `.kiru` file to compile. |
+| `output` | The compiled program's path. |
+| `shell` | The shell that `exec` and `$()` run through. |
+| `timeout` | Optional seconds per command; a command that outlives it is stopped. |
+| `project.<name>` | Repository contexts for `project(...)` blocks. |
+
+`source` and `output` are paths: relative to the `kiru.toml`, or absolute, with
+`~` and `$HOME` expanded. `compile` creates any missing parent directories of
+`output`, and the output filename is yours to choose.
+
+## Several Profiles, Several Machines
+
+Because a profile is a complete unit, a machine with more than one job uses
+more than one profile:
+
+```toml
+[profile.default]
+source = "main.kiru"
+output = "kirufile"
+shell = "sh"
+
+[profile.ci]
+source = "src/main.kiru"
+output = "dist/ci/compiled"
+```
+
+Commands pick one profile with `-p`; an unknown profile is an error that lists
+the available ones. The compiled program carries no machine state, so a `ci`
+profile can compile in a pipeline and the artifact can be inspected like any
+other build output. [CLI Basics](../../getting-started/cli-basics/) shows that
+workflow, and [CLI](../../cli/) documents every command and flag.

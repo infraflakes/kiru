@@ -1,0 +1,67 @@
+---
+title: Text and Whitespace
+description: The parenthesized template, why spaces inside it are data, and where semicolons matter.
+---
+
+Every value in kiru is written between parentheses. You have already written
+one:
+
+```kiru
+var app = (todo);
+```
+
+Everything between the parentheses is text: letters, digits, spaces, `#`. The
+region ends at the `)` that closes the opening `(`, so a pair of plain
+parentheses inside it is text as well, as long as it is balanced.
+
+## Spaces Are Characters
+
+Whitespace between statements and tokens is free, but inside a region it is
+part of the text. These two calls pass different arguments:
+
+```kiru
+deploy(app;release);      # two arguments: `app` and `release`
+deploy(app; release);     # two arguments: `app` and ` release`
+```
+
+The same applies to parameters and `env` pairs. If a leading space is not what
+you meant, remove it; there is no implicit trimming.
+
+## Semicolons
+
+Outside a region, `;` is a separator: it ends a declaration, separates
+parameters, and separates call arguments. At the top level of an argument list
+it always separates, which is why constructs that take a single argument
+(`log`, `cd`, `switch`, `project`, ...) treat a second top-level word as an
+arity error rather than data. Nested parentheses are text, and they shield a
+semicolon from being read as a separator.
+
+The exception is `exec`, whose region is raw text: there `;` is literal and
+never separates. [Running Commands](../../primitives/running-commands/) covers
+what that means for shell one-liners.
+
+## The Keyword Must Touch Its Parens
+
+A statement is a call, and the keyword and its opening parenthesis must be
+adjacent:
+
+```kiru
+log(building);     # a statement
+log (building);    # not a statement
+```
+
+Whitespace between other tokens is free, so `var app = (todo);` is the same as
+`var  app=(todo);`. The adjacency is what lets a reader tell a primitive from a
+function call at a glance.
+
+## Empty Is Data
+
+`()` is an empty string, and an empty string is a valid value like any other:
+
+```kiru
+var note = ();
+log(@(note));
+```
+
+> Note: `()` and a region holding only spaces are different values. `( )` is a
+> single space, because inside a region every character counts.

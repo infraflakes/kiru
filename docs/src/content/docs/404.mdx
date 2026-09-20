@@ -1,0 +1,16 @@
+---
+title: Page not found
+template: splash
+editUrl: false
+---
+
+import { LinkCard } from '@astrojs/starlight/components';
+
+That page does not exist. The sidebar and search cover everything currently
+published.
+
+<LinkCard
+  title="Getting started"
+  description="Install kiru and run your first job."
+  href={`${import.meta.env.BASE_URL}getting-started/installation/`}
+/>

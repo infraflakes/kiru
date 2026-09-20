@@ -82,3 +82,46 @@ run ci_kiru {
   async() { test_kiru(); };
   async() { build_kiru(); };
 };
+
+fn install_docs_kiru {
+  exec(bun install --frozen-lockfile);
+};
+
+run serve_docs_kiru {
+  project(kiru) {
+    cd(docs);
+    log(Serving the doc page locally...);
+    exec(bun run preview);
+  };
+};
+
+run update_docs_kiru {
+  project(kiru) {
+    cd(docs);
+    log(Updating docs dependencies...);
+    exec(bun update);
+    install_docs_kiru();
+  };
+};
+
+run check_docs_kiru {
+  project(kiru) {
+    cd(docs);
+    log(Formatting the docs with Biome...);
+    exec(biome check --write .);
+    log(Checking the docs with Biome...);
+    exec(biome check .);
+    log(Type-checking the docs...);
+    exec(bun run types);
+  };
+};
+
+run build_docs_kiru {
+  project(kiru) {
+    cd(docs);
+    log(Installing docs dependencies...);
+    install_docs_kiru();
+    log(Building the docs site...);
+    exec(bun run build);
+  };
+};
