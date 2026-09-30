@@ -2,6 +2,8 @@
 
 use std::path::PathBuf;
 
+use unicode_width::UnicodeWidthChar;
+
 use crate::syntax::Span;
 
 /// One compiler error tied to a source file and byte range.
@@ -23,7 +25,8 @@ impl Diagnostic {
 
     /// Render as `path:line:column: error: message`, followed by every line
     /// the span covers and a caret underline. Tabs are expanded to four-column
-    /// stops so the underline stays aligned.
+    /// stops and characters take their Unicode display width, so the underline
+    /// stays aligned.
     pub(crate) fn render(&self, source: &str) -> String {
         let start = self.span.start.min(source.len());
         let end = self.span.end.min(source.len()).max(start);
@@ -72,17 +75,18 @@ impl Diagnostic {
 const TAB_WIDTH: usize = 4;
 
 /// The column that follows `character` when it is appended at `column`. A tab
-/// advances to the next tab stop, every other character occupies one column.
+/// advances to the next tab stop, a combining mark occupies no column, and
+/// every other displayable character occupies its Unicode width.
 fn next_column(column: usize, character: char) -> usize {
     if character == '\t' {
         column + TAB_WIDTH - (column % TAB_WIDTH)
     } else {
-        column + 1
+        column + character.width().unwrap_or(0)
     }
 }
 
 /// The number of terminal columns a text occupies, counting a tab to the next
-/// four-column stop.
+/// four-column stop and a combining mark to no column.
 fn display_width(text: &str) -> usize {
     text.chars().fold(0, next_column)
 }
@@ -149,5 +153,16 @@ mod tests {
                 "main.kiru:1:5: error: bad value\n    value\n    ^^^^^\n",
             ),
         ]);
+    }
+
+    #[test]
+    fn caret_aligns_after_a_wide_character() {
+        expect_renders(&[(
+            "wide character before the span",
+            Span::new(3, 4),
+            "unknown name",
+            "漢x\n",
+            "main.kiru:1:3: error: unknown name\n漢x\n  ^\n",
+        )]);
     }
 }

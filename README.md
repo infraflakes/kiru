@@ -11,7 +11,7 @@
 >
 > Many docs are temporarily LLM generated for now.
 
-Kiru is a statically typed, compiled process orchestration language. Its compiler, kc, checks a program and bundles it into a standalone executable.
+Kiru is a statically typed, compiled process orchestration language.
 
 ## Install
 

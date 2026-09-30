@@ -8,6 +8,15 @@ use std::sync::{Arc, Mutex};
 use std::thread::{JoinHandle, ThreadId};
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "linux")]
+use nix::errno::Errno;
+#[cfg(target_os = "linux")]
+use nix::sys::prctl::set_pdeathsig;
+use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, killpg, sigaction};
+use nix::unistd::Pid;
+#[cfg(target_os = "linux")]
+use nix::unistd::getppid;
+
 use super::Panic;
 use crate::compiler::Command;
 
@@ -168,7 +177,7 @@ impl RuntimeState {
         self.interrupted.store(signal, Ordering::SeqCst);
         self.halted.store(true, Ordering::SeqCst);
         self.cancelled.store(true, Ordering::SeqCst);
-        self.signal_all(libc::SIGTERM);
+        self.signal_all(Signal::SIGTERM);
     }
 
     /// Publish a group. The id is stored before the slot is marked in use, so
@@ -198,12 +207,12 @@ impl RuntimeState {
         }
     }
 
-    fn signal_all(&self, signal: i32) {
+    fn signal_all(&self, signal: Signal) {
         for slot in 0..MAX_GROUPS {
             if self.slots_in_use[slot].load(Ordering::SeqCst) {
                 let pgid = self.group_ids[slot].load(Ordering::SeqCst);
                 if pgid > 0 {
-                    killpg(pgid, signal);
+                    signal_group(pgid, signal);
                 }
             }
         }
@@ -216,14 +225,16 @@ static SIGNAL_HANDLER_TARGET: AtomicPtr<RuntimeState> = AtomicPtr::new(std::ptr:
 /// process because the handler keeps a raw pointer to it.
 pub(crate) fn install_signal_handlers(state: &Arc<RuntimeState>) -> std::io::Result<()> {
     SIGNAL_HANDLER_TARGET.store(Arc::as_ptr(state).cast_mut(), Ordering::SeqCst);
-    unsafe {
-        let mut action: libc::sigaction = std::mem::zeroed();
-        action.sa_sigaction = handle_signal as *const () as usize;
-        libc::sigemptyset(&mut action.sa_mask);
-        for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
-            if libc::sigaction(signal, &action, std::ptr::null_mut()) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
+    let action = SigAction::new(
+        SigHandler::Handler(handle_signal),
+        SaFlags::empty(),
+        SigSet::empty(),
+    );
+    for signal in [Signal::SIGINT, Signal::SIGTERM, Signal::SIGHUP] {
+        // SAFETY: the action outlives this call, and the handler is a plain
+        // `extern "C"` function that only touches atomics and `killpg`.
+        unsafe {
+            sigaction(signal, &action).map_err(std::io::Error::from)?;
         }
     }
     Ok(())
@@ -355,7 +366,7 @@ fn execute(state: &RuntimeState, spec: CommandSpec<'_>) -> Result<Outcome, Panic
         .map_err(|error| failure(state, spec.line, &error.to_string()))?;
     let pgid = child.id() as i32;
     if !state.register(pgid) {
-        killpg(pgid, libc::SIGKILL);
+        signal_group(pgid, Signal::SIGKILL);
         let _ = child.wait();
         return Err(failure(state, spec.line, "too many concurrent commands"));
     }
@@ -412,19 +423,19 @@ fn wait_for_stop(
         let now = Instant::now();
         if terminating.is_none() {
             if state.cancelled() {
-                killpg(pgid, libc::SIGTERM);
+                signal_group(pgid, Signal::SIGTERM);
                 terminating = Some(now);
             } else if let Some(deadline) = deadline
                 && now >= deadline
             {
-                killpg(pgid, libc::SIGTERM);
+                signal_group(pgid, Signal::SIGTERM);
                 terminating = Some(now);
                 timed_out = true;
             }
         } else if let Some(started) = terminating
             && now.duration_since(started) >= STOP_GRACE
         {
-            killpg(pgid, libc::SIGKILL);
+            signal_group(pgid, Signal::SIGKILL);
             terminating = Some(now);
         }
         std::thread::sleep(POLL_INTERVAL);
@@ -461,15 +472,15 @@ fn command_for(spec: &CommandSpec<'_>) -> ProcessCommand {
 
     command.process_group(0);
     #[cfg(target_os = "linux")]
+    // SAFETY: the closure runs between fork and exec, and only calls
+    // async-signal-safe functions (prctl, getppid, and an errno error).
     unsafe {
         command.pre_exec(|| {
-            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
+            set_pdeathsig(Signal::SIGKILL).map_err(std::io::Error::from)?;
             // The parent may have died between fork and prctl; in that case
             // the death signal was already delivered or never will be.
-            if libc::getppid() == 1 {
-                libc::_exit(1);
+            if getppid() == Pid::from_raw(1) {
+                return Err(std::io::Error::from(Errno::ESRCH));
             }
             Ok(())
         });
@@ -500,10 +511,10 @@ fn read_stream(mut stdout: impl Read, forward: bool) -> String {
         .to_owned()
 }
 
-fn killpg(pgid: i32, signal: i32) {
-    unsafe {
-        libc::killpg(pgid, signal);
-    }
+/// Send `signal` to the process group `pgid`. A group whose last process has
+/// already exited makes the call fail, which is not a runtime failure.
+fn signal_group(pgid: i32, signal: Signal) {
+    let _ = killpg(Pid::from_raw(pgid), signal);
 }
 
 /// Report a runtime failure and record it. The failure unwinds only the body
