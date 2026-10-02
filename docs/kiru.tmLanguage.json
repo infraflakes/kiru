@@ -1,0 +1,52 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Kiru",
+  "scopeName": "source.kiru",
+  "fileTypes": ["kiru"],
+  "aliases": ["kiru"],
+  "patterns": [
+    {
+      "name": "comment.line.number-sign.kiru",
+      "match": "#.*$"
+    },
+    {
+      "name": "string.quoted.double.kiru",
+      "begin": "\"",
+      "end": "\""
+    },
+    {
+      "name": "keyword.control.kiru",
+      "match": "\\b(?:module|import|switch|case|default|defer|return)\\b"
+    },
+    {
+      "name": "keyword.declaration.kiru",
+      "match": "\\bfn\\b"
+    },
+    {
+      "name": "support.type.kiru",
+      "match": "\\b(?:txt|rec)\\b"
+    },
+    {
+      "match": "\\b(fn)(\\s+)([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "3": { "name": "entity.name.function.kiru" }
+      }
+    },
+    {
+      "name": "entity.name.function.kiru",
+      "match": "\\b([A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()"
+    },
+    {
+      "name": "punctuation.separator.namespace.kiru",
+      "match": "::"
+    },
+    {
+      "name": "punctuation.separator.kiru",
+      "match": "[;,.]"
+    },
+    {
+      "name": "punctuation.section.kiru",
+      "match": "[(){}]"
+    }
+  ]
+}

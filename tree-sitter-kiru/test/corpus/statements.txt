@@ -1,0 +1,114 @@
+==================
+statements
+==================
+
+fn work(rec project) {
+  txt log = "";
+
+  rec local = {
+    name = "step",
+  };
+
+  log = log + "x";
+  std::async(project.run());
+  std::wait();
+  std::command("echo hi").env({ KIRU_MESSAGE = log }).stream();
+  defer {
+    std::command("rm -rf " + log).stream();
+  };
+};
+
+---
+
+(source_file
+  (function_declaration
+    (identifier)
+    (parameter_list
+      (parameter
+        (identifier)))
+    (block
+      (text_binding
+        (identifier)
+        (expression
+          (string)))
+      (record_binding
+        (identifier)
+        (record_literal
+          (record_field
+            (identifier)
+            (expression
+              (string)))))
+      (assignment_statement
+        (identifier)
+        (expression
+          (binary_expression
+            (expression
+              (path
+                (identifier)))
+            (expression
+              (string)))))
+      (expression_statement
+        (expression
+          (call_expression
+            (path
+              (namespace
+                (identifier))
+              (identifier))
+            (argument_list
+              (expression
+                (method_call
+                  (path
+                    (identifier))
+                  (identifier)
+                  (argument_list)))))))
+      (expression_statement
+        (expression
+          (call_expression
+            (path
+              (namespace
+                (identifier))
+              (identifier))
+            (argument_list))))
+      (expression_statement
+        (expression
+          (method_call
+            (method_call
+              (call_expression
+                (path
+                  (namespace
+                    (identifier))
+                  (identifier))
+                (argument_list
+                  (expression
+                    (string))))
+              (identifier)
+              (argument_list
+                (expression
+                  (record_literal
+                    (record_field
+                      (identifier)
+                      (expression
+                        (path
+                          (identifier))))))))
+            (identifier)
+            (argument_list))))
+      (defer_statement
+        (block
+          (expression_statement
+            (expression
+              (method_call
+                (call_expression
+                  (path
+                    (namespace
+                      (identifier))
+                    (identifier))
+                  (argument_list
+                    (expression
+                      (binary_expression
+                        (expression
+                          (string))
+                        (expression
+                          (path
+                            (identifier)))))))
+                (identifier)
+                (argument_list)))))))))

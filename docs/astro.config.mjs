@@ -1,5 +1,6 @@
 // @ts-check
 
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import starlight from '@astrojs/starlight';
 import svelte from '@astrojs/svelte';
@@ -9,6 +10,19 @@ import { defineConfig } from 'astro/config';
 // The site reads only `docs/`, but Vite is allowed to serve from the
 // repository root so the dev server can follow symlinked tooling.
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
+
+// The Kiru TextMate grammar is read from disk next to this config so the
+// fences highlight as `kiru` regardless of the working directory the build
+// starts from.
+//
+// Astro's content cache keeps the highlighted markup of the pages it has
+// already rendered, so a build after editing `kiru.tmLanguage.json` reuses the
+// old colors unless the caches are dropped first. Clear `docs/.astro`,
+// `docs/node_modules/.astro` and `docs/node_modules/.vite`, or run
+// `bun run build --force`, before trusting a grammar change.
+const kiruGrammar = JSON.parse(
+  readFileSync(fileURLToPath(new URL('./kiru.tmLanguage.json', import.meta.url)), 'utf-8'),
+);
 
 export default defineConfig({
   site: 'https://kiru.infraflakes.fyi',
@@ -190,8 +204,8 @@ export default defineConfig({
         { label: 'Appendix C. Grammar', slug: 'appendix/c-grammar' },
       ],
       tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 3 },
-      // Kiru has no highlighter yet; fences highlight as shell.
-      expressiveCode: { shiki: { langAlias: { kiru: 'sh' } } },
+      // The Kiru grammar supplied above teaches Shiki the `kiru` language.
+      expressiveCode: { shiki: { langs: [kiruGrammar] } },
     }),
     svelte(),
   ],

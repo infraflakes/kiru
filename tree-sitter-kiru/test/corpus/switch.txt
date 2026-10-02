@@ -1,0 +1,57 @@
+==================
+switch statements
+==================
+
+fn choose(txt flag) {
+  switch(flag) {
+    case("") { run_default(); };
+    case("--p") { print_path(); };
+    default { std::eprint("unknown flag"); };
+  };
+};
+
+---
+
+(source_file
+  (function_declaration
+    (identifier)
+    (parameter_list
+      (parameter
+        (identifier)))
+    (block
+      (switch_statement
+        (expression
+          (path
+            (identifier)))
+        (case_clause
+          (expression
+            (string))
+          (block
+            (expression_statement
+              (expression
+                (call_expression
+                  (path
+                    (identifier))
+                  (argument_list))))))
+        (case_clause
+          (expression
+            (string))
+          (block
+            (expression_statement
+              (expression
+                (call_expression
+                  (path
+                    (identifier))
+                  (argument_list))))))
+        (default_clause
+          (block
+            (expression_statement
+              (expression
+                (call_expression
+                  (path
+                    (namespace
+                      (identifier))
+                    (identifier))
+                  (argument_list
+                    (expression
+                      (string))))))))))))

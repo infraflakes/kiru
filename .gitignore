@@ -1,5 +1,5 @@
 .direnv
-kiru
+/kiru
 bin/
 out/
 /main

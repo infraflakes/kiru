@@ -1,0 +1,108 @@
+==================
+paths, chains, and expressions
+==================
+
+txt value = ::root::value + other::name;
+
+fn run(rec project, txt message) {
+  command("echo " + message)
+    .in(project.dir)
+    .direnv()
+    .env({ KIRU_MESSAGE = message })
+    .shell("/bin/sh")
+    .timeout("5")
+    .stream()
+    .code();
+  return(::helper() + project.name);
+};
+
+---
+
+(source_file
+  (text_binding
+    (identifier)
+    (expression
+      (binary_expression
+        (expression
+          (path
+            (root_namespace)
+            (namespace
+              (identifier))
+            (identifier)))
+        (expression
+          (path
+            (namespace
+              (identifier))
+            (identifier))))))
+  (function_declaration
+    (identifier)
+    (parameter_list
+      (parameter
+        (identifier))
+      (parameter
+        (identifier)))
+    (block
+      (expression_statement
+        (expression
+          (method_call
+            (method_call
+              (method_call
+                (method_call
+                  (method_call
+                    (method_call
+                      (method_call
+                        (call_expression
+                          (path
+                            (identifier))
+                          (argument_list
+                            (expression
+                              (binary_expression
+                                (expression
+                                  (string))
+                                (expression
+                                  (path
+                                    (identifier)))))))
+                        (identifier)
+                        (argument_list
+                          (expression
+                            (field_access
+                              (path
+                                (identifier))
+                              (identifier)))))
+                      (identifier)
+                      (argument_list))
+                    (identifier)
+                    (argument_list
+                      (expression
+                        (record_literal
+                          (record_field
+                            (identifier)
+                            (expression
+                              (path
+                                (identifier))))))))
+                  (identifier)
+                  (argument_list
+                    (expression
+                      (string))))
+                (identifier)
+                (argument_list
+                  (expression
+                    (string))))
+              (identifier)
+              (argument_list))
+            (identifier)
+            (argument_list))))
+      (return_statement
+        (expression
+          (binary_expression
+            (expression
+              (call_expression
+                (path
+                  (root_namespace)
+                  (identifier))
+                (argument_list)))
+            (expression
+              (field_access
+                (path
+                  (identifier))
+                (identifier)))))))))

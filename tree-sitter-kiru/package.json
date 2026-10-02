@@ -1,0 +1,33 @@
+{
+  "name": "tree-sitter-kiru",
+  "version": "0.1.0",
+  "description": "Tree-sitter grammar for the kiru language",
+  "license": "MIT",
+  "keywords": [
+    "tree-sitter",
+    "kiru",
+    "parser"
+  ],
+  "files": [
+    "grammar.js",
+    "queries",
+    "src"
+  ],
+  "tree-sitter": [
+    {
+      "scope": "source.kiru",
+      "file-types": [
+        "kiru"
+      ],
+      "highlights": "queries/kiru/highlights.scm",
+      "locals": "queries/kiru/locals.scm"
+    }
+  ],
+  "scripts": {
+    "generate": "tree-sitter generate",
+    "test": "tree-sitter test"
+  },
+  "devDependencies": {
+    "tree-sitter-cli": "^0.26.0"
+  }
+}

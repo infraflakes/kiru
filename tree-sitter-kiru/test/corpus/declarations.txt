@@ -1,0 +1,38 @@
+==================
+text and record declarations
+==================
+
+txt greeting = "hello" + " world";
+
+rec project = {
+  name = "kiru",
+  dir = ".",
+  direnv = "true",
+};
+
+---
+
+(source_file
+  (text_binding
+    (identifier)
+    (expression
+      (binary_expression
+        (expression
+          (string))
+        (expression
+          (string)))))
+  (record_binding
+    (identifier)
+    (record_literal
+      (record_field
+        (identifier)
+        (expression
+          (string)))
+      (record_field
+        (identifier)
+        (expression
+          (string)))
+      (record_field
+        (identifier)
+        (expression
+          (string))))))

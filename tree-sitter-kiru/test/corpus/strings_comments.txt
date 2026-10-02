@@ -1,0 +1,17 @@
+==================
+strings and comments
+==================
+
+# a leading comment
+txt banner = "line one
+line two\twith escape \"quoted\""; # trailing comment
+
+---
+
+(source_file
+  (comment)
+  (text_binding
+    (identifier)
+    (expression
+      (string)))
+  (comment))

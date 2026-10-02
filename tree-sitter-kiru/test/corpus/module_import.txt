@@ -1,0 +1,29 @@
+==================
+module and imports
+==================
+
+module app::tools;
+import "steps.kiru";
+import "../lib/io.kiru";
+
+fn main(rec args) {
+};
+
+---
+
+(source_file
+  (module_declaration
+    (path
+      (namespace
+        (identifier))
+      (identifier)))
+  (import_declaration
+    (string))
+  (import_declaration
+    (string))
+  (function_declaration
+    (identifier)
+    (parameter_list
+      (parameter
+        (identifier)))
+    (block)))

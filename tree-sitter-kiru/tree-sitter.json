@@ -1,0 +1,39 @@
+{
+  "$schema": "https://tree-sitter.github.io/tree-sitter/assets/schemas/config.schema.json",
+  "grammars": [
+    {
+      "name": "kiru",
+      "camelcase": "Kiru",
+      "title": "kiru",
+      "scope": "source.kiru",
+      "file-types": [
+        "kiru"
+      ],
+      "injection-regex": "^kiru$",
+      "class-name": "TreeSitterKiru",
+      "highlights": "queries/kiru/highlights.scm",
+      "locals": "queries/kiru/locals.scm"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "MIT",
+    "description": "Tree-sitter grammar for the kiru language",
+    "authors": [
+      {
+        "name": "kiru contributors"
+      }
+    ],
+    "links": {
+      "repository": "https://github.com/infraflakes/kiru"
+    }
+  },
+  "bindings": {
+    "c": true,
+    "node": true,
+    "rust": false,
+    "swift": false,
+    "python": false,
+    "go": false
+  }
+}
