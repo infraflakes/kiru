@@ -10,10 +10,7 @@ Each parameter declares its kind before its name: `txt` accepts text and
 
 ```kiru
 fn clone(rec repo) {
-  return(std::command("git clone \"$URL\" \"$DIR\"")
-    .env({ URL = repo.url, DIR = repo.dir })
-    .stream()
-    .code());
+  return std::command({ Env = "URL='" + repo.url + "' DIR='" + repo.dir + "'", Mode = "exit code" }, "git clone \"$URL\" \"$DIR\"");
 };
 
 fn main() {
@@ -24,10 +21,10 @@ fn main() {
 };
 ```
 
-`clone` takes a record, reads `repo.url` and `repo.dir`, builds a command
-chain, sets the two values as environment variables, runs it, and returns
-the exit code as text; `main` switches on that code. The chain is consumed
-inside `clone`, so no command crosses the function boundary.
+`clone` takes a record, reads `repo.url` and `repo.dir`, sets them as
+environment variables in the spec, runs the command, and returns the exit
+code as text; `main` switches on that code. The line is consumed inside
+`clone`, so no command crosses the function boundary.
 
 ## Kinds Are Declared
 
@@ -37,25 +34,13 @@ disagreement is a compile error at the call. A parameter is the only place
 a kind is written, and every other kind is fixed by the declaration or the
 expression form; there is no inference.
 
-## Command Chains Cannot Cross a Boundary
+## A Spec and a Line Can Cross a Boundary
 
-A command chain is not data, so it cannot be passed or returned. A
-parameter is declared `txt` or `rec`, and neither is a chain; using a text
-value as a command is rejected at the use:
-
-```console
-$ kc main.kiru
-main.kiru:3:3: error: expected command, found text
-  j.stream();
-  ^
-```
-
-A function that needs to run a command builds it itself, or receives the
-text it needs. A helper that runs a command in a directory takes a record
-and a command line, not a chain, and builds the command inside. A call
-that never returns, such as `std::panic`, is not a value either: it may
-stand as a statement, but it cannot be passed as an argument, except as the
-invocation `std::async` spawns.
+The command spec is an ordinary record and the line is text, so a helper can
+take both and call `std::command` itself. A function that runs a command in a
+directory takes a record and a command line, and builds the call inside. A
+`panic;` is a statement, not a value, so it cannot be passed as an argument;
+`std::async` takes a call, not a statement.
 
 ## Read-Only
 
@@ -71,7 +56,7 @@ A function may return a parameter:
 
 ```kiru
 fn identity(txt value) {
-  return(value);
+  return value;
 };
 
 fn main() {

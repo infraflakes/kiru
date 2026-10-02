@@ -12,7 +12,7 @@ through, so every registered cleanup runs exactly once.
 ```kiru
 fn inner() {
   defer { std::print("inner cleanup"); };
-  std::panic();
+  panic;
 };
 
 fn outer() {
@@ -46,7 +46,7 @@ Within one body, defers run in reverse declaration order:
 fn body() {
   defer { std::print("first"); };
   defer { std::print("second"); };
-  std::panic();
+  panic;
 };
 ```
 
@@ -75,7 +75,7 @@ A panic inside a defer is reported, and the remaining defers still run:
 ```kiru
 fn messy() {
   defer { std::print("still runs"); };
-  defer { std::panic(); };
+  defer { panic; };
 };
 ```
 

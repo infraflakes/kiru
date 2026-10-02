@@ -6,34 +6,40 @@ description: The builtins provided by the runtime.
 The runtime provides these names directly:
 
 ```text
-std::command(text) -> command     a chain from one command line
-std::async(call) -> nothing       run a call on a new thread
-std::wait() -> nothing            join the calling thread's asyncs
-std::panic() -> never             record failure, run defers, exit nonzero
+std::run(text) -> record { out, code }   run one command line
+std::async(call) -> nothing               run a call on a new thread
+std::wait() -> nothing                    join the calling thread's asyncs
 ```
 
-## std::command
+## std::run
 
-`std::command` takes a command line and returns a command chain. It runs
-nothing and has no side effects; the command runs when a terminal, a
-`.stream` statement, or a standalone statement evaluates the chain.
+`std::run` takes one command line, runs it through the shell, streams stdout
+live, and returns a record with the captured stdout in `out` and the exit
+code in `code`. A record from a call is read through its fields:
+
+```kiru
+fn main() {
+  txt tag = std::run("git describe --always").out;
+  txt code = std::run("make").code;
+  std::print(tag + " " + code);
+};
+```
 
 The line is passed to a shell, so quoting, pipes, and redirection are the
-shell's business. A value that should not be interpreted by the shell
-belongs in `.env`, as the shipped library does for messages; [written by
-Kiru](/stdlib/02-written-by-kiru/) shows the pattern.
+shell's business. The record-driven `std::command` is the usual way to run a
+command; [the command spec](/effects/06-commands/02-builders/) describes it.
 
 ## std::async
 
-`std::async(call)` evaluates the invocation's receiver and arguments in the
-current body, starts it on a new thread, and yields nothing. The argument is
-any call expression or method chain: a user function, a native such as
-`std::panic`, or a chain such as `std::command("x").code()`. It is a
-statement and may appear only inside a function body.
+`std::async(call)` evaluates the invocation's arguments in the current body,
+starts it on a new thread, and yields nothing. The argument is any call: a
+user function, a native, or a call such as
+`std::command({ Mode = "stdout" }, "echo hi")`. It is a statement and may
+appear only inside a function body.
 
 ```kiru
 fn work(txt label) {
-  std::command("echo " + label).stream();
+  std::command({ Mode = "stdout" }, "echo " + label);
 };
 
 fn main() {
@@ -43,19 +49,19 @@ fn main() {
 };
 ```
 
-There is no handle: the spawn stands alone, and `std::wait` joins the
-asyncs the calling thread spawned. [Threads](/effects/07-threads/01-threads/)
-covers the rules.
+There is no handle: the spawn stands alone, and `std::wait` joins the asyncs
+the calling thread spawned. [Threads](/effects/07-threads/01-threads/) covers
+the rules.
 
 ## std::wait
 
 `std::wait()` takes no argument and joins the asyncs the calling thread
 spawned, then continues. A thread started by `std::async` that calls
-`std::wait()` joins only its own children, usually none, and returns at
-once; the asyncs of other threads are untouched. Its result is the
-`nothing` kind: it can stand only as a discarded statement. At the end of
-the run, after the entry body ends, the runtime joins every thread still
-running, whatever spawned it.
+`std::wait()` joins only its own children, usually none, and returns at once;
+the asyncs of other threads are untouched. Its result is the `nothing` kind:
+it can stand only as a discarded statement. At the end of the run, after the
+entry body ends, the runtime joins every thread still running, whatever
+spawned it.
 
 ```kiru
 fn main() {
@@ -63,9 +69,9 @@ fn main() {
 };
 ```
 
-## std::panic
+## panic
 
-`std::panic` records that the run failed and unwinds the body that called
-it; the run exits nonzero once every thread joins. It takes no arguments.
-The message-carrying form is `std::eprint`, which is Kiru source built on
-top of `panic`.
+`panic;` is a keyword statement. It records that the run failed and unwinds
+the body that ran it; the run exits nonzero once every thread joins. The
+message-carrying form is `std::eprint`, which is Kiru source built on top of
+`panic`.

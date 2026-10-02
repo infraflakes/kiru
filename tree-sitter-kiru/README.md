@@ -93,9 +93,9 @@ a value, a parameter, a field, a record key or a namespace, shares one color,
 and operators and punctuation keep the colorscheme's own subdued styling.
 
 Kiru has one kind of callable, so a function in the root namespace, a function
-in another namespace, a function the standard library provides and a method on
-a value are all captured as `@function`, the same color as the declaration they
-come from. The captures are the standard Neovim names, so any colorscheme that
+in another namespace, and a function the standard library provides are all
+captured as `@function`, the same color as the declaration they come from.
+The captures are the standard Neovim names, so any colorscheme that
 supports Tree-sitter highlighting works without extra groups: `@comment`,
 `@string`, `@keyword`, `@keyword.function`, `@type`, `@variable`, `@function`,
 `@operator`, `@punctuation.bracket` and `@punctuation.delimiter`.

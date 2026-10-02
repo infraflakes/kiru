@@ -6,10 +6,9 @@
 //! program's value table. `std::async` starts an OS thread; `std::wait`
 //! joins the threads the calling thread spawned. This module owns the run
 //! loop, the runtime handle, and the shared helpers; the grammar layers live
-//! in the expression, method, and statement submodules.
+//! in the expression and statement submodules.
 
 mod expressions;
-mod methods;
 mod statements;
 
 #[cfg(test)]

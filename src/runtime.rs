@@ -1,4 +1,5 @@
-//! Running a compiled program: the interpreter, threads, defers, and commands.
+//! Running a compiled program: the interpreter, threads, defers, and the
+//! process kernel.
 
 mod interpreter;
 mod process;

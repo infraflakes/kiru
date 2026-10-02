@@ -29,6 +29,7 @@ impl Parser {
             TokenKind::Txt => Ok(Statement::Text(self.parse_text_binding()?)),
             TokenKind::Rec => Ok(Statement::Rec(self.parse_rec_binding()?)),
             TokenKind::Return => self.parse_return(),
+            TokenKind::Panic => self.parse_panic(),
             TokenKind::Defer => self.parse_defer(),
             TokenKind::Switch => self.parse_switch(),
             TokenKind::Ident(_) if matches!(self.peek(1).kind, TokenKind::Equals) => {
@@ -42,15 +43,23 @@ impl Parser {
         }
     }
 
-    /// Parse a `return(expression);` statement, which uses the same
-    /// parentheses as a call.
+    /// Parse a `return;` or `return expression;` statement.
     fn parse_return(&mut self) -> Result<Statement, ParseError> {
         let start = self.advance().start;
-        self.expect(&TokenKind::LParen, "after `return`")?;
-        let value = self.parse_expression()?;
-        self.expect(&TokenKind::RParen, "after the returned value")?;
+        let value = if self.check(&TokenKind::Semi) {
+            None
+        } else {
+            Some(self.parse_expression()?)
+        };
         let span = self.span_through_semicolon(start, "after the return")?;
         Ok(Statement::Return { value, span })
+    }
+
+    /// Parse a `panic;` statement.
+    fn parse_panic(&mut self) -> Result<Statement, ParseError> {
+        let start = self.advance().start;
+        let span = self.span_through_semicolon(start, "after `panic`")?;
+        Ok(Statement::Panic { span })
     }
 
     /// Parse a `defer { ... };` statement.

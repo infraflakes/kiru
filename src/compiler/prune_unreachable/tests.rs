@@ -33,13 +33,12 @@ fn drops_std_the_entry_never_reaches() {
         !names.contains(&"eprint"),
         "an unreached std helper must be dropped: {names:?}"
     );
-    assert!(!names.contains(&"panic"));
 }
 
 #[test]
 fn drops_unreachable_user_declarations() {
     let mut program = checked(
-        "fn unused() { return(\"\"); };\n\
+        "fn unused() { return \"\"; };\n\
          txt dead = \"x\";\n\
          rec dead_record = { key = \"v\" };\n\
          fn main() {};",
@@ -51,8 +50,8 @@ fn drops_unreachable_user_declarations() {
 #[test]
 fn retains_transitive_calls() {
     let mut program = checked(
-        "fn leaf() { return(\"\"); };\n\
-         fn middle() { return(leaf()); };\n\
+        "fn leaf() { return \"\"; };\n\
+         fn middle() { return leaf(); };\n\
          fn helper() { middle(); };\n\
          fn main() { helper(); };",
     );
@@ -69,7 +68,7 @@ fn retains_module_values_the_entry_reads() {
     let mut program = checked(
         "txt greeting = \"hi\";\n\
          rec backend = { dir = \"/x\" };\n\
-         fn read(rec repo) { return(repo.dir); };\n\
+         fn read(rec repo) { return repo.dir; };\n\
          fn main() { std::print(greeting); std::print(read(backend)); };",
     );
     retain(&mut program);
@@ -83,7 +82,7 @@ fn retains_module_values_the_entry_reads() {
 fn a_retained_program_still_checks() {
     let mut program = checked(
         "rec backend = { dir = \"/x\" };\n\
-         fn read(rec repo) { return(repo.dir); };\n\
+         fn read(rec repo) { return repo.dir; };\n\
          fn main() { std::print(read(backend)); };",
     );
     retain(&mut program);
@@ -93,7 +92,7 @@ fn a_retained_program_still_checks() {
 #[test]
 fn a_retained_program_still_runs() {
     let mut program = checked(
-        "fn answer() { return(\"42\"); };\n\
+        "fn answer() { return \"42\"; };\n\
          fn main() { answer(); };",
     );
     retain(&mut program);
@@ -108,7 +107,7 @@ fn a_retained_program_still_runs() {
 fn retained_module_values_still_evaluate() {
     let mut program = checked(
         "txt base = \"a\";\n\
-         fn f() { return(base + \"b\"); };\n\
+         fn f() { return base + \"b\"; };\n\
          fn main() { f(); };",
     );
     retain(&mut program);

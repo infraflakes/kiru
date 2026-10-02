@@ -1,22 +1,22 @@
 ---
 title: Panic
-description: std::panic, std::eprint, and the shape of a failing run.
+description: panic, std::eprint, and the shape of a failing run.
 ---
 
-`std::panic` records that the run failed and unwinds the body that called
-it. The run continues until the entry body ends; then every thread joins and
-the process exits nonzero.
+`panic;` records that the run failed and unwinds the body that ran it. The
+run continues until the entry body ends; then every thread joins and the
+process exits nonzero.
 
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
 fn give_up() {
-  std::panic();
+  panic;
 };
 ```
 
-A call to `std::panic` is `never`: it is a statement and ends the run, so
-the function that calls it is void and needs no `return`.
+`panic;` is a statement, not a value: it ends the run, so the function that
+runs it is void and needs no `return`.
 
 `std::eprint(message)` writes one line to stderr and then panics:
 
@@ -39,7 +39,7 @@ $ echo $?
 1
 ```
 
-`std::eprint` is void and ends in `std::panic();`, so it stands only as a
+`std::eprint` is void and ends in `panic;`, so it stands only as a
 statement. `std::eprint("")` panics with no output, for the rare case where
 the exit code is the whole message.
 
@@ -56,9 +56,9 @@ running. When the entry body ends, the runtime joins every thread and then
 decides the exit code.
 
 :::note
-A runtime error the engine detects, such as an empty directory or a command
-that cannot start, records the same failure. Ctrl+C, SIGTERM, and SIGHUP
-are the only events that stop the running process groups.
+A runtime error the engine detects, such as a command that cannot start,
+records the same failure. Ctrl+C, SIGTERM, and SIGHUP are the only events
+that stop the running process groups.
 :::
 
 ## Defers Run
@@ -69,9 +69,9 @@ Cleanup registered with `defer` runs on the panic path:
 
 ```kiru
 fn release() {
-  txt scratch = std::command("mktemp -d").out();
-  defer { std::command("rm -rf " + scratch).stream(); };
-  std::command("cargo build --release").stream();   # may fail
+  txt scratch = std::command({ Mode = "stdout" }, "mktemp -d");
+  defer { std::command({ Mode = "stdout" }, "rm -rf " + scratch); };
+  std::command({ Mode = "stdout" }, "cargo build --release");   # may fail
 };
 ```
 
@@ -83,6 +83,6 @@ A panic inside a defer is reported, and the remaining defers still run.
 
 :::note
 A nonzero exit code, by itself, is data; the program decides what it means.
-`std::panic` is how a program declares failure, and runtime errors the
+`panic` is how a program declares failure, and runtime errors the
 engine detects take the same path.
 :::

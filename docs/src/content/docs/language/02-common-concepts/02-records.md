@@ -32,8 +32,8 @@ the last value.
 
 ## Fields Are Text
 
-Every value in a record is a text expression. Records do not nest and do
-not hold command chains:
+Every value in a record is a text expression. Records do not nest and every
+field is text:
 
 ```console
 $ kc main.kiru
@@ -44,9 +44,9 @@ rec nested = { inner = { a = "1" } };
 
 ```console
 $ kc main.kiru
-main.kiru:1:23: error: expected text, found command
-rec command = { run = std::command("ls") };
-                      ^^^^^^^^^^^^^^^^^^
+main.kiru:1:24: error: expected text, found record
+rec result = { run = std::run("ls") };
+                       ^^^^^^^^^^^^^^
 ```
 
 Both fields are rejected because the value is not text. Because every field
@@ -65,8 +65,8 @@ main.kiru:3:11: error: expected `;` after the expression, found `=`
 ```
 
 To change a record, assign a new record to the binding, or build the record
-at the point of use. Records flow into `.env` and into function parameters,
-and are otherwise ordinary values.
+at the point of use. Records flow into function parameters and into a command
+spec, and are otherwise ordinary values.
 
 ## Records as Arguments
 
@@ -75,12 +75,12 @@ A record literal may appear anywhere a record is expected:
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
-fn build(txt line, rec env) {
-  return(std::command(line).env(env).stream().code());
+fn build(txt line, rec spec) {
+  return std::command(spec, line);
 };
 
 fn main() {
-  txt code = build("cargo build", { CARGO_TERM_COLOR = "never" });
+  txt code = build("cargo build", { Mode = "exit code" });
   std::print("code " + code);
 };
 ```

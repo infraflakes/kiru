@@ -57,8 +57,13 @@ fn walk_statement(visitor: &mut impl Visitor, statement: &Statement) {
     match statement {
         Statement::Bind { value, .. }
         | Statement::Assign { value, .. }
-        | Statement::Expression(value)
-        | Statement::Return { value, .. } => walk_expression(visitor, value),
+        | Statement::Expression(value) => walk_expression(visitor, value),
+        Statement::Return { value, .. } => {
+            if let Some(value) = value {
+                walk_expression(visitor, value);
+            }
+        }
+        Statement::Panic { .. } => {}
         Statement::Switch {
             subject,
             cases,
@@ -83,8 +88,13 @@ fn walk_statement_mut(visitor: &mut impl VisitorMut, statement: &mut Statement) 
     match statement {
         Statement::Bind { value, .. }
         | Statement::Assign { value, .. }
-        | Statement::Expression(value)
-        | Statement::Return { value, .. } => walk_expression_mut(visitor, value),
+        | Statement::Expression(value) => walk_expression_mut(visitor, value),
+        Statement::Return { value, .. } => {
+            if let Some(value) = value {
+                walk_expression_mut(visitor, value);
+            }
+        }
+        Statement::Panic { .. } => {}
         Statement::Switch {
             subject,
             cases,
@@ -104,8 +114,8 @@ fn walk_statement_mut(visitor: &mut impl VisitorMut, statement: &mut Statement) 
     }
 }
 
-/// Walk the children of one expression: records, call and method arguments,
-/// field and method targets, and the operands of an addition.
+/// Walk the children of one expression: records, call arguments, field
+/// targets, and the operands of an addition.
 fn walk_expression_children(visitor: &mut impl Visitor, expression: &Expression) {
     match expression {
         Expression::Text { .. } | Expression::Reference { .. } => {}
@@ -120,14 +130,6 @@ fn walk_expression_children(visitor: &mut impl Visitor, expression: &Expression)
             }
         }
         Expression::Field { target, .. } => walk_expression(visitor, target),
-        Expression::Method {
-            target, arguments, ..
-        } => {
-            walk_expression(visitor, target);
-            for argument in arguments {
-                walk_expression(visitor, argument);
-            }
-        }
         Expression::Add { left, right, .. } => {
             walk_expression(visitor, left);
             walk_expression(visitor, right);
@@ -150,14 +152,6 @@ fn walk_expression_children_mut(visitor: &mut impl VisitorMut, expression: &mut 
             }
         }
         Expression::Field { target, .. } => walk_expression_mut(visitor, target),
-        Expression::Method {
-            target, arguments, ..
-        } => {
-            walk_expression_mut(visitor, target);
-            for argument in arguments {
-                walk_expression_mut(visitor, argument);
-            }
-        }
         Expression::Add { left, right, .. } => {
             walk_expression_mut(visitor, left);
             walk_expression_mut(visitor, right);

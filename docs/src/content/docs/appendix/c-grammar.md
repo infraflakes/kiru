@@ -27,7 +27,8 @@ statement   := text
              | record
              | assignment
              | expression ";"
-             | "return" "(" expression ")" ";"
+             | "return" expression? ";"
+             | "panic" ";"
              | "switch" "(" expression ")" switch ";"
              | "defer" block ";"
 assignment  := ident "=" expression ";"
@@ -37,7 +38,7 @@ case        := "case" "(" expression ")" block ";"
 default     := "default" block ";"
 
 expression  := term ("+" term)*
-term        := primary ("." ident arguments?)*
+term        := primary ("." ident)*
 primary     := string
              | fields
              | path arguments?
@@ -66,14 +67,13 @@ error. There are no numeric literals.
   `fn ... { ... };`, `switch(...) { ... };`, `defer { ... };`.
 - A `path` may open with `::` to name the root namespace: `::value` and
   `::func()`.
-- A `return` uses the same parentheses as a call: `return(expr);`. It is
-  optional, and when present it is the last top-level statement of a function
-  other than `main`.
+- A `return` has no parentheses: `return;` ends a void function, and
+  `return expr;` returns a value. It may appear anywhere except inside
+  `defer`.
+- `panic;` is a keyword statement that ends the run.
 - Each parameter declares its kind before its name: `txt` is text and `rec`
   is a record. `main` takes at most one parameter, and it must be `rec`.
-- A bare statement must be a call or a method chain; a lone value is a
-  compile error.
-- A term with no arguments after `.` is a field access; a term with
-  `arguments` is a method call.
+- A bare statement must be a call; a lone value is a compile error.
+- A term with no arguments after `.` is a field access.
 - The reserved words are `module`, `import`, `fn`, `txt`, `rec`, `switch`,
-  `case`, `default`, `defer`, and `return`.
+  `case`, `default`, `defer`, `return`, and `panic`.

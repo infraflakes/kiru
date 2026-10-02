@@ -12,11 +12,12 @@
  *   file        := module? import* declaration*
  *   declaration := function | text | record
  *   statement   := text | record | assignment | expression ";"
- *                | "return" "(" expression ")" ";"
+ *                | "return" expression? ";"
+ *                | "panic" ";"
  *                | "switch" "(" expression ")" switch ";"
  *                | "defer" block ";"
  *   expression  := term ("+" term)*
- *   term        := primary ("." ident arguments?)*
+ *   term        := primary ("." ident)*
  *   primary     := string | fields | path arguments? | path
  *
  * Names are `::` qualified and may open with `::` to name the root namespace.
@@ -129,6 +130,7 @@ module.exports = grammar({
       $.record_binding,
       $.assignment_statement,
       $.return_statement,
+      $.panic_statement,
       $.switch_statement,
       $.defer_statement,
       $.expression_statement,
@@ -142,12 +144,16 @@ module.exports = grammar({
       ';',
     ),
 
-    // `return(expression);` uses the same parentheses as a call.
+    // `return;` ends a void function, `return expression;` returns a value.
     return_statement: $ => seq(
       'return',
-      '(',
-      field('value', $.expression),
-      ')',
+      optional(field('value', $.expression)),
+      ';',
+    ),
+
+    // `panic;` ends the run.
+    panic_statement: $ => seq(
+      'panic',
       ';',
     ),
 
@@ -205,11 +211,10 @@ module.exports = grammar({
       field('right', $.expression),
     )),
 
-    // A primary with any number of field accesses or method calls.
+    // A primary with any number of field accesses.
     _term: $ => choice(
       $.call_expression,
       $.field_access,
-      $.method_call,
       $.string,
       $.record_literal,
       $.path,
@@ -226,14 +231,6 @@ module.exports = grammar({
       field('target', $._term),
       '.',
       field('field', $.identifier),
-    )),
-
-    // `target.method(arguments)` calls a method on a value.
-    method_call: $ => prec.left(3, seq(
-      field('target', $._term),
-      '.',
-      field('method', $.identifier),
-      field('arguments', $.argument_list),
     )),
 
     // A comma separated argument list; a trailing comma is allowed.

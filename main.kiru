@@ -12,7 +12,7 @@ rec docs = {
 };
 
 fn report(txt label, txt code) {
-  return("  " + label + ": " + code + "\n");
+  return "  " + label + ": " + code + "\n";
 };
 
 # Sequential checks: collect every code, print the report, then stop if any
@@ -128,7 +128,7 @@ fn serve_docs() {
 fn release() {
   txt scratch = steps::capture("mktemp -d");
   defer {
-    std::command("rm -rf " + scratch).stream();
+    std::command({ Mode = "stdout" }, "rm -rf " + scratch);
   };
   build_release();
   steps::run("tar -czf " + scratch + "/kc.tar.gz -C target/release kc");

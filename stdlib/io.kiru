@@ -1,29 +1,61 @@
 # std/io.kiru
 #
-# print and eprint live at the std root; see the language page in docs.
+# The command abstraction and the two line writers live at the std root.
 
 module std;
 
-# The message travels through the environment, never through the shell
-# line, so its text cannot become syntax. \\n reaches printf as \n. print
-# returns text so it may be composed, and is commonly used as a statement.
-fn print(txt message) {
-  command("printf '%s\\n' \"$KIRU_MESSAGE\"")
-    .env({KIRU_MESSAGE = message})
-    .stream();
-  return("");
+# Run a command line and return the text the caller asked for.
+#
+# The spec is the official API; every entry is uppercase, and an absent or
+# empty entry is the default. `Mode` picks the result: "stdout" returns the
+# captured stdout, "exit code" returns the exit code, and an empty mode runs
+# quietly and returns "". `Env` is prepended as exported assignments, `Dir`
+# changes the working directory, and `Direnv` wraps the line with direnv.
+fn command(rec spec, txt line) {
+  txt command_line = line;
+
+  switch(spec.Dir) {
+    case("") {};
+    default { command_line = "cd " + spec.Dir + " && " + command_line; };
+  };
+
+  switch(spec.Env) {
+    case("") {};
+    default { command_line = "export " + spec.Env + "; " + command_line; };
+  };
+
+  switch(spec.Direnv) {
+    case("") {};
+    default { command_line = "direnv exec " + spec.Dir + " sh -c '" + command_line + "'"; };
+  };
+
+  switch(spec.Mode) {
+    case("") {
+      command_line = "{ " + command_line + "; } >/dev/null 2>&1";
+    };
+    default {};
+  };
+
+  switch(spec.Mode) {
+    case("stdout")    { return run(command_line).out; };
+    case("exit code") { return run(command_line).code; };
+    default           { run(command_line); return ""; };
+  };
 };
 
-# A void function: it writes the message and stops the run. An empty message
-# panics with no output.
+# Write a line to stdout. The message travels through the environment as one
+# single quoted shell word.
+fn print(txt message) {
+  command({ Env = "KIRU_MESSAGE='" + message + "'", Mode = "stdout" }, "printf '%s\\n' \"$KIRU_MESSAGE\"");
+};
+
+# Write a line to stderr and stop the run. An empty message panics silently.
 fn eprint(txt message) {
   switch(message) {
     case("") {};
     default {
-      command("printf '%s\\n' \"$KIRU_MESSAGE\" >&2")
-        .env({KIRU_MESSAGE = message})
-        .stream();
+      command({ Env = "KIRU_MESSAGE='" + message + "'", Mode = "stdout" }, "printf '%s\\n' \"$KIRU_MESSAGE\" >&2");
     };
   };
-  panic();
+  panic;
 };

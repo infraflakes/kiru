@@ -14,10 +14,9 @@ been checked for:
 | Arity | wrong number of arguments |
 | Parameters | a parameter without `txt` or `rec`, `main` with a `txt` parameter |
 | Statements | a lone value or expression as a statement |
-| Kinds | text where a record is required, command bound to a `txt`, a void call bound or passed |
-| Returns | a return that is not last, a return in `main`, a return of a void call |
+| Kinds | text where a record is required, a void call bound or passed |
+| Returns | a value function that can fall through, a return inside `defer`, a return of a void call |
 | Cases | duplicate case data |
-| Chain rules | a method twice, `.out()` and `.code()` together |
 | Threads | `std::async` outside a function |
 
 Each failure prints a positioned diagnostic and exits `1`.
@@ -27,12 +26,9 @@ Each failure prints a positioned diagnostic and exits `1`.
 The engine reports these failures at run time:
 
 ```text
-empty dir
-invalid computed timeout
 spawn failure (command not found, permission denied)
-direnv failure
 too many concurrent commands
-std::panic
+panic
 ```
 
 Each records the failure, runs pending defers, and the process exits
@@ -46,6 +42,6 @@ failure model.
 Compilation reads sources and writes a binary. It runs no commands and no
 program code. A program's top-level values are evaluated by the compiled
 binary at startup, on the machine that runs it, which is why a home
-directory comes from `std::command("echo $HOME").out()`; [module
+directory comes from `std::command({ Mode = "stdout" }, "echo $HOME")`; [module
 values](/language/03-names-and-scope/05-module-values/) covers that
 evaluation.

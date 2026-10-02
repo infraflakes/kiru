@@ -44,7 +44,7 @@ a parameter, it declares a new `txt`:
 fn normalize(txt name) {
   txt cleaned = name;
   cleaned = cleaned + "!";
-  return(cleaned);
+  return cleaned;
 };
 ```
 

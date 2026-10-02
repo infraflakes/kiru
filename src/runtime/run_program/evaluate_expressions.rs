@@ -1,9 +1,8 @@
-//! Expression evaluation: text, records, references, calls, fields, methods.
+//! Expression evaluation: text, records, references, calls, and fields.
 
-use crate::compiler::{
-    Command, DeclarationId, DeclarationKind, Expression, Field, Native, Record, Value,
-};
+use crate::compiler::{DeclarationId, DeclarationKind, Expression, Field, Native, Record, Value};
 use crate::runtime::Panic;
+use crate::runtime::process;
 
 use super::{Environment, Runtime};
 
@@ -34,12 +33,6 @@ impl Runtime {
                 };
                 Ok(Value::Text(record.get(name).to_owned()))
             }
-            Expression::Method {
-                target,
-                method,
-                arguments,
-                ..
-            } => self.eval_method(target, *method, arguments, env),
             Expression::Add { left, right, .. } => {
                 let left = self.eval_text(left, env)?;
                 let right = self.eval_text(right, env)?;
@@ -77,27 +70,34 @@ impl Runtime {
     ) -> Result<Value, Panic> {
         match &self.program.declaration(callee).kind {
             DeclarationKind::Function(_) => self.call_declaration(callee, values),
-            DeclarationKind::Native(Native::Command) => {
+            DeclarationKind::Native(Native::Run) => {
                 let Some(value) = values.pop() else {
                     return Err(self.fail());
                 };
-                Ok(Value::Command(Command::new(self.text_value(value)?)))
+                let line = self.text_value(value)?;
+                let outcome = process::run(
+                    &self.state,
+                    &line,
+                    true,
+                    true,
+                    self.default_shell.as_deref(),
+                )?;
+                let mut record = Record::new();
+                record.set("out".to_owned(), outcome.output);
+                record.set("code".to_owned(), outcome.code.to_string());
+                Ok(Value::Record(record))
             }
             DeclarationKind::Native(Native::Wait) => {
                 self.state.join_children(std::thread::current().id());
                 Ok(Value::Nothing)
             }
-            DeclarationKind::Native(Native::Panic) => {
-                self.state.panic();
-                Err(Panic)
-            }
             _ => Err(self.fail()),
         }
     }
 
-    /// Start an invocation on its own OS thread. The invocation's receiver
-    /// and arguments are evaluated here, at the spawn site; the thread then
-    /// runs the call or method with those values. `std::async` yields nothing.
+    /// Start a call on its own OS thread. The invocation's arguments are
+    /// evaluated here, at the spawn site; the thread then runs the call with
+    /// those values. `std::async` yields nothing.
     fn spawn_thread(&self, arguments: &[Expression], env: &Environment) -> Result<Value, Panic> {
         let Some(invocation) = arguments.first() else {
             return Err(self.fail());
@@ -112,26 +112,7 @@ impl Runtime {
                 let callee = *callee;
                 let runtime = self.detached();
                 self.state.spawn_thread(move || {
-                    if let Ok(value) = runtime.invoke_call(callee, values) {
-                        let _ = runtime.execute_produced_value(value);
-                    }
-                });
-                Ok(Value::Nothing)
-            }
-            Expression::Method {
-                target,
-                method,
-                arguments: method_arguments,
-                ..
-            } => {
-                let target = self.eval(target, env)?;
-                let values = self.eval_arguments(method_arguments, env)?;
-                let method = *method;
-                let runtime = self.detached();
-                self.state.spawn_thread(move || {
-                    if let Ok(value) = runtime.invoke_method(target, method, values) {
-                        let _ = runtime.execute_produced_value(value);
-                    }
+                    let _ = runtime.invoke_call(callee, values);
                 });
                 Ok(Value::Nothing)
             }

@@ -22,7 +22,7 @@ fn pick(txt mode) {
     case("fast") { value = "fast"; };
     default { value = "safe"; };
   };
-  return(value);
+  return value;
 };
 
 fn main() {

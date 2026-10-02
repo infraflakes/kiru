@@ -96,43 +96,41 @@ fn entry_and_return_rules() {
         ),
         (
             "function with a return",
-            "fn f() { return(\"a\"); };\nfn main() {};",
+            "fn f() { return \"a\"; };\nfn main() {};",
+        ),
+        (
+            "an early return in a case arm with a final return",
+            "fn f(txt s) { switch(s) { case(\"a\") { return \"a\"; }; }; return \"\"; };\nfn main() {};",
+        ),
+        (
+            "unreachable code after a return",
+            "fn f() { return \"a\"; return \"b\"; };\nfn main() {};",
+        ),
+        ("return in main is discarded", "fn main() { return \"\"; };"),
+        (
+            "a value function that panics on every other path",
+            "fn f(txt s) { switch(s) { case(\"a\") { return \"a\"; }; default { panic; }; }; };\nfn main() {};",
         ),
     ]);
     expect_rejections(&[
         (
-            "return before the last statement",
-            "fn f() { return(\"a\"); return(\"b\"); };\nfn main() {};",
-            "`f` may only `return` as its last statement",
-        ),
-        (
-            "return inside a case body",
-            "fn f(txt s) { switch(s) { case(\"a\") { return(\"a\"); }; }; return(\"\"); };\nfn main() {};",
-            "`f` may only `return` as its last statement",
-        ),
-        (
             "return inside a defer body",
-            "fn f() { defer { return(\"a\"); }; return(\"\"); };\nfn main() {};",
-            "`f` may only `return` as its last statement",
+            "fn f() { defer { return \"a\"; }; return \"\"; };\nfn main() {};",
+            "`f` must not `return` inside `defer`",
         ),
         (
-            "return in main",
-            "fn main() { return(\"\"); };",
-            "`main` must not contain `return`",
+            "a value function that can fall through",
+            "fn f(txt s) { switch(s) { case(\"a\") { return \"a\"; }; }; };\nfn main() {};",
+            "`f` returns text but can fall through; every path must end in `return` or `panic`",
         ),
         (
-            "returning a command chain",
-            "fn f() { return(std::command(\"x\")); };\nfn main() {};",
-            "expected text or record, found command",
-        ),
-        (
-            "returning a panic",
-            "fn f() { return(std::panic()); };\nfn main() {};",
-            "expected text or record, found never",
+            "returns of different kinds",
+            "fn f(txt s) { switch(s) { case(\"a\") { return \"a\"; }; default { return { k = \"v\" }; }; }; };\nfn main() {};",
+            "expected text, found record",
         ),
         (
             "returning a void call",
-            "fn work() {};\nfn f() { return(work()); };\nfn main() {};",
+            "fn work() {};\nfn f() { return work(); };\nfn main() {};",
             "expected text or record, found nothing",
         ),
     ]);
@@ -140,96 +138,75 @@ fn entry_and_return_rules() {
 
 #[test]
 fn panic_and_void_rules() {
-    expect_accepts(&[("panic as a statement", "fn main() { std::panic(); };")]);
+    expect_accepts(&[("panic as a statement", "fn main() { panic; };")]);
     expect_rejections(&[
-        (
-            "panic as a text argument",
-            "fn take(txt x) {};\nfn main() { take(std::panic()); };",
-            "expected text, found never",
-        ),
-        (
-            "panic as a record argument",
-            "fn read(rec repo) {};\nfn main() { read(std::panic()); };",
-            "expected record, found never",
-        ),
-        (
-            "panic as a binding",
-            "fn main() { txt x = std::panic(); };",
-            "expected text, found never",
-        ),
-        (
-            "panic as a record field",
-            "fn main() { rec r = { k = std::panic() }; };",
-            "expected text, found never",
-        ),
-        (
-            "panic in a case pattern",
-            "fn main() { switch(\"a\") { case(std::panic()) {}; }; };",
-            "expected text, found never",
-        ),
         (
             "eprint bound to text",
             "fn main() { txt x = std::eprint(\"x\"); };",
+            "expected text, found nothing",
+        ),
+        (
+            "eprint passed as a text argument",
+            "fn take(txt x) {};\nfn main() { take(std::eprint(\"x\")); };",
+            "expected text, found nothing",
+        ),
+        (
+            "eprint in a record field",
+            "fn main() { rec r = { k = std::eprint(\"x\") }; };",
             "expected text, found nothing",
         ),
     ]);
 }
 
 #[test]
-fn command_chain_rules() {
+fn run_and_field_rules() {
     expect_accepts(&[
         (
-            "command terminal returned and chained at the call site",
-            "fn quiet(txt line) { return(std::command(line).out()); };\nfn main() { txt code = quiet(\"echo hi\"); };",
+            "run field returned through a function",
+            "fn quiet(txt line) { return std::run(line).out; };\nfn main() { txt code = quiet(\"echo hi\"); };",
         ),
         (
-            "command terminal chained alongside a call",
-            "fn quiet(txt line) { return(std::command(line).out()); };\nfn main() { txt code = std::command(\"x\").code(); quiet(\"y\"); };",
+            "run code field",
+            "fn code(txt line) { return std::run(line).code; };\nfn main() {};",
         ),
         (
-            "top-level command terminal",
-            "txt x = std::command(\"echo hi\").out();\nfn main() {};",
+            "run at a module value",
+            "txt x = std::run(\"echo hi\").out;\nfn main() {};",
         ),
         (
-            "command terminal inside a record",
-            "rec r = { out = std::command(\"echo hi\").out() };\nfn main() {};",
+            "run field inside a record",
+            "rec r = { out = std::run(\"echo hi\").out };\nfn main() {};",
+        ),
+        (
+            "run as a bare statement",
+            "fn main() { std::run(\"true\"); };",
         ),
     ]);
     expect_rejections(&[
         (
-            "duplicate method in a chain",
-            "fn main() { std::command(\"x\").stream().stream().out(); };",
-            "`.stream` is called twice in one command chain",
+            "run bound to text",
+            "fn main() { txt x = std::run(\"ls\"); };",
+            "expected text, found record",
         ),
         (
-            "out and code combined",
-            "fn main() { std::command(\"x\").out().code(); };",
-            "`.out()` and `.code()` cannot be combined",
+            "run passed as a text argument",
+            "fn take(txt x) {};\nfn main() { take(std::run(\"ls\")); };",
+            "expected text, found record",
         ),
         (
-            "command bound to text",
-            "fn main() { txt x = std::command(\"ls\"); };",
-            "expected text, found command",
+            "run without an argument",
+            "fn main() { std::run(); };",
+            "`std::run` takes 1 arguments, found 0",
         ),
         (
-            "command parameter",
-            "fn run(txt j) { j.stream(); };\nfn main() {};",
-            "expected command, found text",
+            "run with a record argument",
+            "fn main() { std::run({}); };",
+            "expected text, found record",
         ),
         (
-            "command passed as a text argument",
-            "fn take(txt x) {};\nfn main() { take(std::command(\"ls\")); };",
-            "expected text, found command",
-        ),
-        (
-            "non-numeric timeout literal",
-            "fn main() { std::command(\"x\").timeout(\"abc\").stream(); };",
-            "a timeout literal must be whole seconds",
-        ),
-        (
-            "method on text",
-            "fn main() { \"a\".stream(); };",
-            "expected command, found text",
+            "field access on text",
+            "fn main() { txt x = \"a\".b; };",
+            "expected record, found text",
         ),
     ]);
 }
@@ -239,19 +216,19 @@ fn text_and_record_rules() {
     expect_accepts(&[
         (
             "record argument",
-            "fn read(rec repo) { return(repo.dir); };\nfn main() { read({ dir = \"/x\" }); };",
+            "fn read(rec repo) { return repo.dir; };\nfn main() { read({ dir = \"/x\" }); };",
         ),
         (
             "record parameter through a call",
-            "rec backend = { dir = \"/b\" };\nfn read_it(rec repo) { return(repo.dir); };\nfn main() { read_it(backend); };",
+            "rec backend = { dir = \"/b\" };\nfn read_it(rec repo) { return repo.dir; };\nfn main() { read_it(backend); };",
         ),
         (
             "text parameter through a call",
-            "fn identity(txt value) { return(value); };\nfn main() { std::print(identity(\"x\")); };",
+            "fn identity(txt value) { return value; };\nfn main() { std::print(identity(\"x\")); };",
         ),
         (
             "record parameter through a call with a literal",
-            "fn identity(rec repo) { return(repo.dir); };\nfn main() { std::print(identity({ dir = \"/x\" })); };",
+            "fn identity(rec repo) { return repo.dir; };\nfn main() { std::print(identity({ dir = \"/x\" })); };",
         ),
     ]);
     expect_rejections(&[
@@ -261,18 +238,13 @@ fn text_and_record_rules() {
             "expected text, found record",
         ),
         (
-            "field access on text",
-            "fn main() { txt x = \"a\".b; };",
-            "expected record, found text",
-        ),
-        (
             "text parameter used as a record",
             "fn f(txt x) { txt a = x; txt b = x.b; };\nfn main() { f(\"s\"); };",
             "expected record, found text",
         ),
         (
             "text where a record is required",
-            "fn read(rec repo) { return(repo.dir); };\nfn main() { read(\"x\"); };",
+            "fn read(rec repo) { return repo.dir; };\nfn main() { read(\"x\"); };",
             "expected record, found text",
         ),
     ]);
@@ -283,7 +255,7 @@ fn async_wait_and_defer_rules() {
     expect_accepts(&[
         (
             "async and defer",
-            "fn work() {};\nfn main() {\nstd::async(work());\nstd::wait();\ndefer { std::command(\"b\").stream(); };\n};",
+            "fn work() {};\nfn main() {\nstd::async(work());\nstd::wait();\ndefer { std::run(\"b\"); };\n};",
         ),
         (
             "void function as a statement and an async invocation",
@@ -291,11 +263,11 @@ fn async_wait_and_defer_rules() {
         ),
         (
             "async of a native call",
-            "fn main() { std::async(std::panic()); };",
+            "fn main() { std::async(std::wait()); };",
         ),
         (
-            "async of a method chain",
-            "fn main() { std::async(std::command(\"true\").code()); };",
+            "async of a call returning a record",
+            "fn main() { std::async(std::run(\"true\")); };",
         ),
         (
             "bare async statement",
@@ -320,7 +292,7 @@ fn async_wait_and_defer_rules() {
         (
             "async of a non-call",
             "fn main() { std::async(\"work\"); };",
-            "`std::async` takes a call or a method chain",
+            "`std::async` takes a call",
         ),
         (
             "async at the module level",
@@ -355,15 +327,15 @@ fn bindings_and_scope_rules() {
     expect_accepts(&[
         (
             "defer body declares into its enclosing body",
-            "fn f() {\ntxt x = \"a\";\ndefer { txt y = \"b\"; x = y; };\nreturn(x);\n};\nfn main() {};",
+            "fn f() {\ntxt x = \"a\";\ndefer { txt y = \"b\"; x = y; };\nreturn x;\n};\nfn main() {};",
         ),
         (
             "case patterns of any text expression",
-            "fn pick() { return(\"a\"); };\nfn main() { switch(\"a\") { case(pick()) {}; }; };",
+            "fn pick() { return \"a\"; };\nfn main() { switch(\"a\") { case(pick()) {}; }; };",
         ),
         (
             "case patterns that differ structurally",
-            "fn pick() { return(\"a\"); };\nfn other() { return(\"a\"); };\nfn main() {\nswitch(\"a\") { case(pick()) {}; case(other()) {}; };\n};",
+            "fn pick() { return \"a\"; };\nfn other() { return \"a\"; };\nfn main() {\nswitch(\"a\") { case(pick()) {}; case(other()) {}; };\n};",
         ),
     ]);
     expect_rejections(&[
@@ -399,12 +371,12 @@ fn bindings_and_scope_rules() {
         ),
         (
             "defer declared name is not visible after the defer",
-            "fn f() {\ndefer { txt hidden = \"b\"; };\nreturn(hidden);\n};\nfn main() {};",
+            "fn f() {\ndefer { txt hidden = \"b\"; };\nreturn hidden;\n};\nfn main() {};",
             "unknown name `hidden`",
         ),
         (
             "structurally duplicate call case patterns",
-            "fn pick() { return(\"a\"); };\nfn main() {\nswitch(\"a\") { case(pick()) {}; case(pick()) {}; };\n};",
+            "fn pick() { return \"a\"; };\nfn main() {\nswitch(\"a\") { case(pick()) {}; case(pick()) {}; };\n};",
             "duplicate case pattern",
         ),
         (
@@ -424,7 +396,7 @@ fn name_and_call_rules() {
         ),
         (
             "a value and a function share a name",
-            "fn build() { return(\"built\"); };\ntxt build = \"text\";\nfn main() { std::print(build); std::print(build()); };",
+            "fn build() { return \"built\"; };\ntxt build = \"text\";\nfn main() { std::print(build); std::print(build()); };",
         ),
     ]);
     expect_rejections(&[
@@ -469,29 +441,29 @@ fn name_and_call_rules() {
 #[test]
 fn statement_form_rules() {
     expect_accepts(&[(
-        "bare call and method statements",
-        "fn work() {};\nfn main() {\nwork();\nstd::command(\"true\").out();\nstd::panic();\n};",
+        "bare call and panic statements",
+        "fn work() {};\nfn main() {\nwork();\nstd::run(\"true\");\npanic;\n};",
     )]);
     expect_rejections(&[
         (
             "bare literal statement",
             "fn main() { \"x\"; };",
-            "a statement must be a call or a method chain",
+            "a statement must be a call",
         ),
         (
             "bare reference statement",
             "fn main() { txt name = \"x\"; name; };",
-            "a statement must be a call or a method chain",
+            "a statement must be a call",
         ),
         (
             "bare record statement",
             "fn main() { { k = \"v\" }; };",
-            "a statement must be a call or a method chain",
+            "a statement must be a call",
         ),
         (
             "bare add statement",
             "fn main() { \"a\" + \"b\"; };",
-            "a statement must be a call or a method chain",
+            "a statement must be a call",
         ),
     ]);
 }
@@ -500,12 +472,15 @@ fn statement_form_rules() {
 fn checks_the_shipped_library_kinds() {
     let program = checked(
         "rec backend = { dir = \"/kiru\" };\n\
-         fn read(rec repo) { return(repo.dir); };\n\
+         fn read(rec repo) { return repo.dir; };\n\
          fn main() {\n\
            std::print(\"x\");\n\
            read(backend);\n\
          };",
     );
+
+    let command = declaration(&program, &["std"], "command");
+    assert_eq!(program.declaration(command).derived.kind, Some(Kind::Text));
 
     let print = declaration(&program, &["std"], "print");
     assert_eq!(
@@ -515,7 +490,7 @@ fn checks_the_shipped_library_kinds() {
             .kind,
         Some(Kind::Text)
     );
-    assert_eq!(program.declaration(print).derived.kind, Some(Kind::Text));
+    assert_eq!(program.declaration(print).derived.kind, Some(Kind::Nothing));
 
     let eprint = declaration(&program, &["std"], "eprint");
     assert_eq!(

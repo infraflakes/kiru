@@ -16,7 +16,7 @@
     },
     {
       "name": "keyword.control.kiru",
-      "match": "\\b(?:module|import|switch|case|default|defer|return)\\b"
+      "match": "\\b(?:module|import|switch|case|default|defer|return|panic)\\b"
     },
     {
       "name": "keyword.declaration.kiru",

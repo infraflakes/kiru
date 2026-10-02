@@ -13,12 +13,12 @@ mod visit;
 
 pub(crate) use kinds::{Kind, Position, fits};
 pub(crate) use nodes::{
-    BindingKind, Case, Command, Declaration, DeclarationId, DeclarationKind, Derived, Expression,
-    Field, File, FileId, Function, NameTable, Namespace, NamespaceId, Program, Record, Statement,
-    Value, namespace_path,
+    BindingKind, Case, Declaration, DeclarationId, DeclarationKind, Derived, Expression, Field,
+    File, FileId, Function, NameTable, Namespace, NamespaceId, Program, Record, Statement, Value,
+    namespace_path,
 };
 pub(crate) use registry::{
-    Accept, BUILTIN_NAMESPACE, ENTRY_FUNCTION, Method, NATIVE_ROWS, Native, method_row, native_row,
+    Accept, BUILTIN_NAMESPACE, ENTRY_FUNCTION, NATIVE_ROWS, Native, native_row,
 };
 pub(crate) use visit::{
     Visitor, VisitorMut, walk_expression, walk_expression_mut, walk_statements, walk_statements_mut,

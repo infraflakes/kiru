@@ -11,12 +11,12 @@ matches:
 ```kiru
 fn build() {
   std::print("building");
-  return("");
+  return "";
 };
 
 fn test() {
   std::print("testing");
-  return("");
+  return "";
 };
 
 fn main(rec args) {
@@ -58,7 +58,7 @@ fn classify(txt mode) {
     case("fast") { result = "literal"; };
     case(fast) { result = "value"; };
   };
-  return(result);
+  return result;
 };
 
 fn main() {
@@ -92,7 +92,7 @@ call:
 
 ```kiru
 fn name() {
-  return("a");
+  return "a";
 };
 
 fn pick(txt target) {
@@ -101,7 +101,7 @@ fn pick(txt target) {
     case(target) { result = "chosen"; };
     case(name()) { result = "named"; };
   };
-  return(result);
+  return result;
 };
 
 fn main() {
@@ -112,7 +112,7 @@ fn main() {
 The pattern `target` holds text, so it compares like a literal; the program
 prints `chosen`.
 
-A record or a command chain is not text, so it cannot be a pattern:
+A record is not text, so it cannot be a pattern:
 
 ```console
 $ kc main.kiru
@@ -148,7 +148,7 @@ is done. To share behavior, call a function from several arms:
 
 ```kiru
 fn run(txt mode) {
-  return("running " + mode);
+  return "running " + mode;
 };
 
 fn main(rec args) {

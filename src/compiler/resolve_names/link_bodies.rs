@@ -1,7 +1,7 @@
 //! Linking bodies: resolve every name into an edge and build the model.
 //!
 //! The linking pass walks each pending declaration's parsed body, creating
-//! local bindings and resolving references, calls, and methods into edges to
+//! local bindings and resolving references and calls into edges to
 //! declaration nodes. After linking, no phase resolves a name again.
 
 use std::collections::HashMap;
@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use crate::compiler::loader::{LoadedProgram, Origin};
 use crate::compiler::{
     BUILTIN_NAMESPACE, BindingKind, Case, Declaration, DeclarationId, DeclarationKind, Derived,
-    Diagnostic, Expression, Field, FileId, Function, Kind, Method, NamespaceId, Program, Statement,
+    Diagnostic, Expression, Field, FileId, Function, Kind, NamespaceId, Program, Statement,
     namespace_path,
 };
 use crate::syntax::Span;
@@ -253,10 +253,14 @@ impl Builder {
                     ));
                 }
                 ParsedStatement::Return { value, span } => {
-                    linked.push(Statement::Return {
-                        value: self.link_expression(value, context)?,
-                        span: *span,
-                    });
+                    let value = match value {
+                        Some(value) => Some(self.link_expression(value, context)?),
+                        None => None,
+                    };
+                    linked.push(Statement::Return { value, span: *span });
+                }
+                ParsedStatement::Panic { span } => {
+                    linked.push(Statement::Panic { span: *span });
                 }
                 ParsedStatement::Switch {
                     subject,
@@ -378,31 +382,6 @@ impl Builder {
                 name_span: *name_span,
                 span: *span,
             },
-            ParsedExpression::Method {
-                target,
-                name,
-                name_span,
-                arguments,
-                span,
-            } => {
-                let Some(method) = Method::from_name(name) else {
-                    return Err(Diagnostic::new(
-                        &self.files[context.file.0].path,
-                        *name_span,
-                        format!("unknown method `.{name}`"),
-                    ));
-                };
-                let mut linked_arguments = Vec::new();
-                for argument in arguments {
-                    linked_arguments.push(self.link_expression(argument, context)?);
-                }
-                Expression::Method {
-                    target: Box::new(self.link_expression(target, context)?),
-                    method,
-                    arguments: linked_arguments,
-                    span: *span,
-                }
-            }
             ParsedExpression::Add { left, right, span } => Expression::Add {
                 left: Box::new(self.link_expression(left, context)?),
                 right: Box::new(self.link_expression(right, context)?),

@@ -1,44 +1,40 @@
 ---
 title: Calls
-description: Expression statements, command statements, and discarded results.
+description: Expression statements, command calls, and discarded results.
 ---
 
-A statement can be a call or a command chain:
+A statement can be a call:
 
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
 fn main() {
   std::print("hello");
-  std::command("cargo test").stream();
+  std::command({ Mode = "stdout" }, "cargo test");
 };
 ```
 
-The result of a call statement is discarded. A command chain that stands
-alone as a statement runs the command and binds nothing.
+The result of a call statement is discarded. A `std::command` call that
+stands alone as a statement runs the command and binds nothing.
 
 ## A Bare Statement Must Be a Call
 
-A bare expression statement must be a call or a method chain. A call, a
-native, a chain, an async spawn, and a wait are all legal:
+A bare expression statement must be a call. A function call, a native call,
+an async spawn, and a wait are all legal:
 
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
-fn f() {
-  return("");
-};
-
 fn work() {
-  return("");
+  return "";
 };
 
 fn main() {
-  f();
-  std::command("x").out();
+  work();
+  std::command({ Mode = "stdout" }, "x");
   std::async(work());
   std::wait();
-  std::panic();
+  panic;
 };
 ```
 
@@ -47,7 +43,7 @@ is a compile error:
 
 ```console
 $ kc main.kiru
-main.kiru:2:3: error: a statement must be a call or a method chain
+main.kiru:2:3: error: a statement must be a call
   "x";
   ^^^
 ```
@@ -62,29 +58,18 @@ statement. Binding, passing, or returning it is a compile error; [return and
 void](/language/02-common-concepts/07-return-and-recursion/) shows the
 diagnostics.
 
-## A Bare Command Runs
+## A Command Call Runs
 
-A command chain in a function body runs even without `.out` or `.code`.
-It binds no value, and its stdout is not shown unless `.stream` is in the
-chain:
-
-<span class="filename">Filename: src/main.kiru</span>
-
-```kiru
-fn main() {
-  std::command("rm -rf build");   # runs; output is not shown
-};
-```
-
-`.stream` shows stdout live. `.code` and `.out` bind text, and a chain
-used as a statement discards that text after running:
+A `std::command` call in a function body runs. The spec's `Mode` decides what
+comes back and whether stdout shows:
 
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
 fn main() {
-  std::command("echo hi").stream();   # runs and shows "hi"
-  std::command("true").code();        # runs; the code is discarded
+  std::command({}, "rm -rf build");                       # runs quietly
+  std::command({ Mode = "stdout" }, "echo hi");           # runs and shows "hi"
+  std::command({ Mode = "exit code" }, "true");           # runs; the code is discarded
 };
 ```
 
@@ -92,6 +77,10 @@ fn main() {
 $ ./app
 hi
 ```
+
+`Mode = "stdout"` and `Mode = "exit code"` stream stdout live; an empty
+`Mode` discards it. A call used as a statement discards the returned text
+after running.
 
 ## Call Statements and Functions
 
@@ -101,7 +90,7 @@ A call to a function returning text discards the text:
 
 ```kiru
 fn compute() {
-  return("ignored");
+  return "ignored";
 };
 
 fn main() {
@@ -114,19 +103,17 @@ stores it, prints it, or returns it.
 
 ## Evaluation Order
 
-In a call, arguments are evaluated left to right before the call. In a
-chain, the target is evaluated before the method's arguments:
+In a call, arguments are evaluated left to right before the call:
 
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
 txt version = "1";
-rec env = { A = "1" };
 
 fn main() {
-  std::command("echo " + version).env(env).stream();
+  std::command({ Mode = "stdout" }, "echo " + version);
 };
 ```
 
-`version` and `env` are resolved before the command runs; the chain runs
-once, when the statement executes, and the program prints `1`.
+`version` is resolved before the command runs; the call runs once, when the
+statement executes, and the program prints `1`.

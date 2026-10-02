@@ -9,13 +9,13 @@ description: Starting a function on its own thread, joining threads, and failure
 
 ```kiru
 fn work() {
-  std::command("echo working").stream();
+  std::command({ Mode = "stdout" }, "echo working");
 };
 
 fn main() {
   std::async(work());
   std::wait();
-  std::command("echo done").stream();
+  std::command({ Mode = "stdout" }, "echo done");
 };
 ```
 
@@ -71,18 +71,18 @@ Each `std::async` starts one thread; output can interleave:
 
 ```kiru
 fn check_format() {
-  std::command("echo format").stream();
+  std::command({ Mode = "stdout" }, "echo format");
 };
 
 fn check_lints() {
-  std::command("echo lints").stream();
+  std::command({ Mode = "stdout" }, "echo lints");
 };
 
 fn main() {
   std::async(check_format());
   std::async(check_lints());
   std::wait();
-  std::command("echo done").stream();
+  std::command({ Mode = "stdout" }, "echo done");
 };
 ```
 
@@ -92,15 +92,15 @@ returns.
 
 ## What May Be Started
 
-The argument is any call expression or method chain. A user function, a
-native such as `std::panic`, and a chain such as
-`std::command("cargo build").stream()` are all accepted:
+The argument is any call. A user function, a native such as `std::wait()`,
+and a call such as `std::command({ Mode = "stdout" }, "cargo build")` are all
+accepted:
 
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
 fn main() {
-  std::async(std::command("cargo build").stream());
+  std::async(std::command({ Mode = "stdout" }, "cargo build"));
   std::wait();
 };
 ```
@@ -112,7 +112,7 @@ call `std::async`:
 
 ```kiru
 fn work() {
-  std::command("echo working").stream();
+  std::command({ Mode = "stdout" }, "echo working");
 };
 
 txt worker = std::async(work());
@@ -140,7 +140,7 @@ runs to completion, and a failure in it is still observed.
 
 ## Failure
 
-A `std::panic` in any thread, including one started with `std::async`, makes
+A `panic` in any thread, including one started with `std::async`, makes
 the run exit nonzero. The panic unwinds the body that raised it and runs
 that body's defers; it leaves every other body running. When the entry body
 ends, the runtime joins the remaining threads and exits nonzero.

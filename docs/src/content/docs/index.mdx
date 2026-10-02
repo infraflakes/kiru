@@ -18,9 +18,10 @@ Compile strict, simple, concurrent programs to self-contained binaries.
 
 ## Features
 
-- **Commands as the primitive.** `std::command` chains a command line with
-  its environment, working directory, shell, and timeout, then streams or
-  captures the result. See [Building a
+- **Commands as the primitive.** `std::run` runs one command line and
+  returns `{ out, code }`, and `std::command` is the record-driven abstraction
+  over it: a spec whose uppercase entries enable the working directory, the
+  environment, and direnv. See [Running a
   command](/effects/06-commands/01-building-a-command/).
 - **Statically typed.** Names, arity, and kinds are fixed and checked before a binary is built, so a wrong value cannot reach runtime. See [Types](/language/04-types/01-types/).
 - **Failure and cleanup.** `defer` registers cleanup, a panic records

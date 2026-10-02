@@ -26,6 +26,7 @@
   "default"
   "defer"
   "return"
+  "panic"
 ] @keyword
 
 ; `fn` introduces a function; `txt` and `rec` are the two value kinds.
@@ -50,9 +51,6 @@
 (call_expression
   callee: (path
     name: (identifier) @function))
-
-(method_call
-  method: (identifier) @function)
 
 ; Operators.
 [

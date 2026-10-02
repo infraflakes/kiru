@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use crate::compiler::{
     Accept, BindingKind, DeclarationId, DeclarationKind, Diagnostic, Expression, Field, FileId,
-    Kind, Method, Native, Position, Program, Statement, fits, method_row, native_row,
+    Kind, Native, Position, Program, Statement, fits, native_row,
 };
 use crate::syntax::Span;
 
@@ -64,20 +64,19 @@ impl<'a> Walk<'a> {
                 } => self.assign(*declaration, *name_span, value)?,
                 Statement::Expression(expression) => {
                     // A bare statement must do something: call a function or
-                    // native, or run a command chain. A value on its own is
-                    // dead text, so the shape is rejected before the kind.
-                    if !matches!(
-                        expression,
-                        Expression::Call { .. } | Expression::Method { .. }
-                    ) {
-                        return Err(self.error(
-                            expression.span(),
-                            "a statement must be a call or a method chain",
-                        ));
+                    // native. A value on its own is dead text, so the shape is
+                    // rejected before the kind.
+                    if !matches!(expression, Expression::Call { .. }) {
+                        return Err(self.error(expression.span(), "a statement must be a call"));
                     }
                     self.require(expression, Position::Statement)?;
                 }
-                Statement::Return { value, .. } => self.return_value(value)?,
+                Statement::Return { value, .. } => {
+                    if let Some(value) = value {
+                        self.return_value(value)?;
+                    }
+                }
+                Statement::Panic { .. } => {}
                 Statement::Switch {
                     subject,
                     cases,
@@ -165,10 +164,19 @@ impl<'a> Walk<'a> {
     }
 
     /// Validate a returned expression and record the function's return kind.
+    /// Every value return in one function must carry the same kind.
     fn return_value(&mut self, value: &Expression) -> Result<(), Diagnostic> {
         let actual = self.require(value, Position::Return)?;
-        self.return_kind = Some(actual);
-        Ok(())
+        match self.return_kind {
+            Some(existing) if existing != actual => Err(self.error(
+                value.span(),
+                format!("expected {}, found {}", existing.name(), actual.name()),
+            )),
+            _ => {
+                self.return_kind = Some(actual);
+                Ok(())
+            }
+        }
     }
 
     pub(super) fn fields(&mut self, fields: &[Field]) -> Result<(), Diagnostic> {
@@ -198,12 +206,6 @@ impl<'a> Walk<'a> {
                 self.require(target, Position::RecordBinding)?;
                 Ok(Kind::Text)
             }
-            Expression::Method {
-                target,
-                method,
-                arguments,
-                span,
-            } => self.method(target, *method, arguments, *span),
             Expression::Add { left, right, .. } => {
                 self.require(left, Position::TextBinding)?;
                 self.require(right, Position::TextBinding)?;
@@ -299,22 +301,16 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// `Accept::Invocation`: the argument must be an invocation, a call or a
-    /// method chain. Its own arguments are checked here, because a spawned
-    /// thread evaluates them at the spawn site.
+    /// `Accept::Invocation`: the argument must be a call. Its own arguments
+    /// are checked here, because a spawned thread evaluates them at the spawn
+    /// site.
     fn invocation_argument(
         &mut self,
         display: &str,
         argument: &Expression,
     ) -> Result<(), Diagnostic> {
-        if !matches!(
-            argument,
-            Expression::Call { .. } | Expression::Method { .. }
-        ) {
-            return Err(self.error(
-                argument.span(),
-                format!("`{display}` takes a call or a method chain"),
-            ));
+        if !matches!(argument, Expression::Call { .. }) {
+            return Err(self.error(argument.span(), format!("`{display}` takes a call")));
         }
         self.expression(argument)?;
         Ok(())
@@ -340,64 +336,6 @@ impl<'a> Walk<'a> {
         Ok(())
     }
 
-    fn method(
-        &mut self,
-        target: &Expression,
-        method: Method,
-        arguments: &[Expression],
-        span: Span,
-    ) -> Result<Kind, Diagnostic> {
-        let row = method_row(method);
-        if arguments.len() != row.accepts.len() {
-            return Err(self.error(
-                span,
-                format!(
-                    "`.{}` takes {} arguments, found {}",
-                    row.name,
-                    row.accepts.len(),
-                    arguments.len()
-                ),
-            ));
-        }
-        self.validate_chain(target, method, span)?;
-        self.require(target, Position::ChainTarget)?;
-        let display = format!(".{}", row.name);
-        for (argument, accept) in arguments.iter().zip(row.accepts) {
-            self.argument_accept(&display, argument, *accept)?;
-        }
-        if method == Method::Timeout
-            && let Expression::Text { value, span } = &arguments[0]
-            && (value.is_empty() || !value.chars().all(|character| character.is_ascii_digit()))
-        {
-            return Err(self.error(*span, "a timeout literal must be whole seconds"));
-        }
-        Ok(row.returns)
-    }
-
-    /// A command chain calls each method at most once, and `.out()` and
-    /// `.code()` cannot be combined.
-    fn validate_chain(
-        &self,
-        target: &Expression,
-        method: Method,
-        span: Span,
-    ) -> Result<(), Diagnostic> {
-        let mut chain = Vec::new();
-        collect_chain_methods(target, &mut chain);
-        if chain.contains(&method) {
-            return Err(self.error(
-                span,
-                format!("`.{}` is called twice in one command chain", method.name()),
-            ));
-        }
-        if method_row(method).is_terminal()
-            && chain.iter().any(|other| method_row(*other).is_terminal())
-        {
-            return Err(self.error(span, "`.out()` and `.code()` cannot be combined"));
-        }
-        Ok(())
-    }
-
     /// Require a value whose kind fits a position, returning its kind. The
     /// position names the usage; the message names that requirement.
     pub(super) fn require(
@@ -414,14 +352,6 @@ impl<'a> Walk<'a> {
             expression.span(),
             format!("expected {}, found {}", required.name(), actual.name()),
         ))
-    }
-}
-
-/// Collect the methods a command chain applies, innermost first.
-fn collect_chain_methods(target: &Expression, found: &mut Vec<Method>) {
-    if let Expression::Method { target, method, .. } = target {
-        found.push(*method);
-        collect_chain_methods(target, found);
     }
 }
 
@@ -447,24 +377,6 @@ fn structurally_equal(left: &Expression, right: &Expression) -> bool {
                 ..
             },
         ) => a == b && arguments_equal(a_arguments, b_arguments),
-        (
-            Expression::Method {
-                target: a,
-                method: a_method,
-                arguments: a_arguments,
-                ..
-            },
-            Expression::Method {
-                target: b,
-                method: b_method,
-                arguments: b_arguments,
-                ..
-            },
-        ) => {
-            a_method == b_method
-                && structurally_equal(a, b)
-                && arguments_equal(a_arguments, b_arguments)
-        }
         (
             Expression::Field {
                 target: a,

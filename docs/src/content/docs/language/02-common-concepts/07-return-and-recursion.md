@@ -3,14 +3,15 @@ title: Return and Void
 description: The return rule, void functions, and why there is no recursion.
 ---
 
-`return(expr);` ends the function with that value. It uses the same
-parentheses as a call:
+A function ends when its body ends. `return` is an early exit: `return expr;`
+ends the function with text or record, and `return;` ends a void function
+with no value.
 
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
 fn greeting(txt name) {
-  return("hello, " + name);
+  return "hello, " + name;
 };
 ```
 
@@ -19,59 +20,46 @@ result.
 
 ## The Return Rule
 
-- `return(...)` is optional.
-- When present, it may only be the last statement of a function declaration.
-- It may not stand inside a `switch`, a `case`, a `default`, a `defer`, or
-  any other nested block.
+- `return` is optional.
+- It may appear anywhere, including inside a `switch` arm, except inside
+  `defer`.
+- Every value return in one function carries the same kind, and that kind is
+  the function's kind.
+- A function with a value return must not fall through: every path must end in
+  `return`, `panic`, or a `switch` with a `default` whose every arm ends in a
+  terminator. Statements after a terminator are unreachable and are allowed.
 - The returned value must be text or record.
-- `main` is void and must not contain `return` at all.
+- `main` is void for every caller, so it may `return;` or `return expr;` and
+  a returned value is discarded.
 
-A return that is not the last statement is an error:
-
-```console
-$ kc main.kiru
-main.kiru:2:3: error: `f` may only `return` as its last statement
-  return("x");
-  ^^^^^^^^^^^^
-```
-
-`main` declares no value, so a return in it is rejected:
-
-```console
-$ kc main.kiru
-main.kiru:2:3: error: `main` must not contain `return`
-  return("x");
-  ^^^^^^^^^^^^
-```
-
-A return that sits in a nested block is also an error. The workaround is to
-assign the result and return once at the end:
-
-<span class="filename">Filename: src/main.kiru</span>
+An early return in a switch arm is allowed, and the final return settles the
+kind:
 
 ```kiru
 fn pick(txt s) {
-  txt result = "";
   switch(s) {
-    case("a") { result = "first"; };
-    default { result = "other"; };
+    case("a") { return "first"; };
+    default {};
   };
-  return(result);
-};
-
-fn main() {
-  std::print(pick("a"));
+  return "other";
 };
 ```
 
-`pick` assigns inside the arm and has a single return, so the program
-prints `first`.
+A value function that can fall through is an error:
+
+```console
+$ kc main.kiru
+main.kiru:1:4: error: `pick` returns text but can fall through; every path must end in `return` or `panic`
+fn pick(txt s) { switch(s) { case("a") { return "first"; }; }; };
+   ^^^^
+```
 
 ## A Function Without return Is Void
 
-When a function has no `return`, it is void, and its call has the `nothing`
-kind. A void call may only be a statement, or the invocation `std::async`
-spawns. Binding, passing, storing, or returning it is a compile error:
+When a function has no value return, it is void, and its call has the
+`nothing` kind. A void call may only be a statement, or the invocation
+`std::async` spawns. Binding, passing, storing, or returning it is a compile
+error:
 
 ```console
 $ kc main.kiru
@@ -80,20 +68,13 @@ fn main() { txt x = note("hi"); };
                     ^^^^^^^^^^
 ```
 
-```console
-$ kc main.kiru
-main.kiru:2:24: error: expected text, found nothing
-fn main() { std::print(note("hi")); };
-                       ^^^^^^^^^^
-```
-
 A `return` of a void call is rejected because the returned value must be
 text or record:
 
 ```console
 $ kc main.kiru
 main.kiru:2:17: error: expected text or record, found nothing
-fn f() { return(note("hi")); };
+fn f() { return note("hi"); };
                 ^^^^^^^^^^
 ```
 
@@ -110,6 +91,12 @@ fn main() {
   note("hello");
 };
 ```
+
+## panic
+
+`panic;` is a keyword statement that ends the run. It is a terminator, so a
+value function may end in it, and it is allowed inside `defer` where `return`
+is not.
 
 ## No Recursion
 

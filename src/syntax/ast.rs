@@ -95,8 +95,14 @@ pub(crate) enum Statement {
         span: Span,
     },
     Expression(Expression),
+    /// An early exit. A value return carries text or record; a valueless
+    /// return ends a void function.
     Return {
-        value: Expression,
+        value: Option<Expression>,
+        span: Span,
+    },
+    /// The keyword statement `panic;`, which ends the run.
+    Panic {
         span: Span,
     },
     Switch {
@@ -150,13 +156,6 @@ pub(crate) enum Expression {
         name_span: Span,
         span: Span,
     },
-    Method {
-        target: Box<Expression>,
-        name: String,
-        name_span: Span,
-        arguments: Vec<Expression>,
-        span: Span,
-    },
     Add {
         left: Box<Expression>,
         right: Box<Expression>,
@@ -172,7 +171,6 @@ impl Expression {
             | Expression::Name { span, .. }
             | Expression::Call { span, .. }
             | Expression::Field { span, .. }
-            | Expression::Method { span, .. }
             | Expression::Add { span, .. } => *span,
         }
     }

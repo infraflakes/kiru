@@ -90,7 +90,7 @@ pub(crate) fn verify(program: &Program) {
 }
 
 /// The structural checks over one body: every span is ordered, every edge
-/// points at a declaration, and every method and native row exists.
+/// points at a declaration, and every native row exists.
 struct StructuralCheck<'a> {
     program: &'a Program,
 }
@@ -121,9 +121,6 @@ impl Visitor for StructuralCheck<'_> {
                 assert!(name_span.start <= name_span.end);
                 let _ = name;
             }
-            Expression::Method { method, .. } => {
-                let _ = method.name();
-            }
             Expression::Add { .. } => {}
         }
     }
@@ -148,6 +145,7 @@ impl Visitor for StructuralCheck<'_> {
             }
             Statement::Expression(_) => {}
             Statement::Return { span, .. } => assert!(span.start <= span.end),
+            Statement::Panic { span } => assert!(span.start <= span.end),
             Statement::Switch { span, cases, .. } => {
                 assert!(span.start <= span.end);
                 for case in cases {

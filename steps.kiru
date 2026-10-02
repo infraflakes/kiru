@@ -8,15 +8,7 @@ module steps;
 # Run a command in a project directory, streaming its output. A nonzero code
 # fails the run with the project and command named.
 fn run_in(rec project, txt line) {
-  txt code = "";
-  switch(project.direnv) {
-    case("true") {
-      code = std::command(line).in(project.dir).direnv().stream().code();
-    };
-    default {
-      code = std::command(line).in(project.dir).stream().code();
-    };
-  };
+  txt code = std::command({ Dir = project.dir, Direnv = project.direnv, Mode = "exit code" }, line);
   switch(code) {
     case("0") {};
     default { std::eprint(project.name + ": " + line); };
@@ -25,7 +17,7 @@ fn run_in(rec project, txt line) {
 
 # Run a command in the current directory, streaming its output.
 fn run(txt line) {
-  switch(std::command(line).stream().code()) {
+  switch(std::command({ Mode = "exit code" }, line)) {
     case("0") {};
     default { std::eprint(line); };
   };
@@ -33,19 +25,10 @@ fn run(txt line) {
 
 # Run a command in a project directory and return its code, streaming it.
 fn code_in(rec project, txt line) {
-  txt code = "";
-  switch(project.direnv) {
-    case("true") {
-      code = std::command(line).in(project.dir).direnv().stream().code();
-    };
-    default {
-      code = std::command(line).in(project.dir).stream().code();
-    };
-  };
-  return(code);
+  return std::command({ Dir = project.dir, Direnv = project.direnv, Mode = "exit code" }, line);
 };
 
-# Run a command quietly and return its trimmed stdout.
+# Run a command and return its trimmed stdout.
 fn capture(txt line) {
-  return(std::command(line).out());
+  return std::command({ Mode = "stdout" }, line);
 };

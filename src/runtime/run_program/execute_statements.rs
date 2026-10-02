@@ -1,29 +1,12 @@
-//! Statement execution: binds, assignments, returns, switches, and defers.
+//! Statement execution: binds, assignments, returns, panic, switches, and
+//! defers.
 
 use crate::compiler::{Statement, Value};
 use crate::runtime::Panic;
-use crate::runtime::process;
 
 use super::{Environment, Runtime};
 
 impl Runtime {
-    /// Run the value a call or method chain produced the way a bare statement
-    /// does: a command runs, forwarding stdout only when `.stream()` is set,
-    /// and any other value is discarded. A detached thread runs its produced
-    /// value through this, so an async start executes like a statement.
-    pub(super) fn execute_produced_value(&self, value: Value) -> Result<(), Panic> {
-        if let Value::Command(command) = value {
-            process::run(
-                &self.state,
-                &command,
-                false,
-                command.stream,
-                self.default_shell.as_deref(),
-            )?;
-        }
-        Ok(())
-    }
-
     /// Run the statements of one body. Nested blocks share the environment
     /// and the defer list, so a switch arm assigns the enclosing bindings.
     pub(super) fn exec_statements<'statement>(
@@ -47,10 +30,18 @@ impl Runtime {
                     env.insert(*declaration, value);
                 }
                 Statement::Expression(expression) => {
-                    self.execute_produced_value(self.eval(expression, env)?)?;
+                    // A bare call runs and its result is discarded.
+                    let _ = self.eval(expression, env)?;
                 }
                 Statement::Return { value, .. } => {
-                    return Ok(Some(self.eval(value, env)?));
+                    return Ok(Some(match value {
+                        Some(value) => self.eval(value, env)?,
+                        None => Value::Nothing,
+                    }));
+                }
+                Statement::Panic { .. } => {
+                    self.state.panic();
+                    return Err(Panic);
                 }
                 Statement::Switch {
                     subject,

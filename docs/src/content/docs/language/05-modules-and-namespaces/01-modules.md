@@ -42,7 +42,7 @@ A file `tasks.kiru` that declares the parent namespace:
 module tasks;
 
 fn root_name() {
-  return("tasks");
+  return "tasks";
 };
 ```
 
@@ -56,7 +56,7 @@ module tasks::build;
 import "tasks.kiru";
 
 fn label() {
-  return(root_name());
+  return root_name();
 };
 ```
 

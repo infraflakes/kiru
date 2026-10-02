@@ -10,7 +10,7 @@ declaration order, before `main` runs:
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
-txt home = std::command("echo $HOME").out();
+txt home = std::command({ Mode = "stdout" }, "echo $HOME");
 
 rec backend = {
   name = "backend",
@@ -36,7 +36,7 @@ rec backend = {
 };
 
 fn where() {
-  return(backend.dir);
+  return backend.dir;
 };
 ```
 
@@ -46,12 +46,12 @@ many times it is called.
 ## What May Initialize a Module Value
 
 Any expression that produces text or a record may be a module value's
-initializer. A command chain is allowed:
+initializer. A call is allowed:
 
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
-txt version = std::command("git describe --always").out();
+txt version = std::command({ Mode = "stdout" }, "git describe --always");
 ```
 
 A thread cannot start at module level: `std::async` is only allowed
@@ -65,18 +65,18 @@ Compiling the program runs no commands. The compiled binary evaluates the
 module values when it starts, so `version` above is the output of `git
 describe` on the machine that runs the binary, not on the machine that
 compiled it. A home directory needs no special syntax because
-`std::command("echo $HOME").out()` asks the machine directly.
+`std::command({ Mode = "stdout" }, "echo $HOME")` asks the machine directly.
 
 ## Module Values and Bodies
 
-A function body works the same way, with one addition: a command chain may
-stand bare as a statement, where it runs and binds nothing:
+A function body works the same way, with one addition: a call may stand bare
+as a statement, where it runs and binds nothing:
 
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
 fn main() {
-  std::command("cargo test").stream();
+  std::command({ Mode = "stdout" }, "cargo test");
 };
 ```
 

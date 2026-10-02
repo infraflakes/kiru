@@ -1,9 +1,9 @@
 //! The kind system: every value a program can produce, and where each kind
 //! may stand.
 //!
-//! Text and record are the only data kinds. `Command` marks a command chain
-//! (a value that builds toward a command), `Nothing` the no-value result of a
-//! void call, and `Never` a call that does not return.
+//! Text and record are the only data kinds. `Nothing` is the no-value result
+//! of a void call. Flow terminators such as `return` and `panic` are
+//! statements, not values, so no kind marks them.
 //!
 //! Compatibility is a subset relation over usage sets. Every concrete kind is
 //! one bit, group constants name the combinations a position or a call asks
@@ -14,9 +14,7 @@
 pub(crate) enum Kind {
     Text,
     Record,
-    Command,
     Nothing,
-    Never,
 }
 
 impl Kind {
@@ -25,9 +23,7 @@ impl Kind {
         match self {
             Kind::Text => "text",
             Kind::Record => "record",
-            Kind::Command => "command",
             Kind::Nothing => "nothing",
-            Kind::Never => "never",
         }
     }
 
@@ -36,9 +32,7 @@ impl Kind {
         match self {
             Kind::Text => Usage::TEXT,
             Kind::Record => Usage::RECORD,
-            Kind::Command => Usage::COMMAND,
             Kind::Nothing => Usage::NOTHING,
-            Kind::Never => Usage::NEVER,
         }
     }
 }
@@ -53,21 +47,13 @@ impl Usage {
     pub(crate) const TEXT: Usage = Usage(1 << 0);
     /// A lone record value.
     pub(crate) const RECORD: Usage = Usage(1 << 1);
-    /// A lone command chain.
-    pub(crate) const COMMAND: Usage = Usage(1 << 2);
     /// The no-value result of a void call.
-    pub(crate) const NOTHING: Usage = Usage(1 << 3);
-    /// A call that does not return.
-    pub(crate) const NEVER: Usage = Usage(1 << 4);
+    pub(crate) const NOTHING: Usage = Usage(1 << 2);
 
     /// The data a program stores or reads: text and record.
     pub(crate) const DATA: Usage = Usage::TEXT.union(Usage::RECORD);
     /// Every kind a bare statement may discard.
-    pub(crate) const DISCARDABLE: Usage = Usage::TEXT
-        .union(Usage::RECORD)
-        .union(Usage::COMMAND)
-        .union(Usage::NOTHING)
-        .union(Usage::NEVER);
+    pub(crate) const DISCARDABLE: Usage = Usage::TEXT.union(Usage::RECORD).union(Usage::NOTHING);
 
     /// The union of two usages.
     pub(crate) const fn union(self, other: Usage) -> Usage {
@@ -81,12 +67,8 @@ impl Usage {
             "text"
         } else if self == Usage::RECORD {
             "record"
-        } else if self == Usage::COMMAND {
-            "command"
         } else if self == Usage::NOTHING {
             "nothing"
-        } else if self == Usage::NEVER {
-            "never"
         } else if self == Usage::DATA {
             "text or record"
         } else {
@@ -118,8 +100,6 @@ pub(crate) enum Position {
     Statement,
     /// A `case` pattern or a `switch` subject.
     CasePattern,
-    /// The target of a method call.
-    ChainTarget,
 }
 
 impl Position {
@@ -132,7 +112,6 @@ impl Position {
             Position::Return => Usage::DATA,
             Position::Statement => Usage::DISCARDABLE,
             Position::CasePattern => Usage::TEXT,
-            Position::ChainTarget => Usage::COMMAND,
         }
     }
 }
@@ -141,13 +120,7 @@ impl Position {
 mod tests {
     use super::*;
 
-    const CONCRETE_KINDS: &[Kind] = &[
-        Kind::Text,
-        Kind::Record,
-        Kind::Command,
-        Kind::Nothing,
-        Kind::Never,
-    ];
+    const CONCRETE_KINDS: &[Kind] = &[Kind::Text, Kind::Record, Kind::Nothing];
 
     const EVERY_POSITION: &[Position] = &[
         Position::TextBinding,
@@ -156,7 +129,6 @@ mod tests {
         Position::Return,
         Position::Statement,
         Position::CasePattern,
-        Position::ChainTarget,
     ];
 
     #[test]
@@ -178,30 +150,13 @@ mod tests {
     }
 
     #[test]
-    fn nothing_and_never_are_accepted_only_as_a_statement() {
+    fn nothing_is_accepted_only_as_a_statement() {
         for position in EVERY_POSITION {
             let statement = *position == Position::Statement;
             assert_eq!(
                 fits(Usage::NOTHING, position.required_usage()),
                 statement,
                 "nothing accepted at {position:?}"
-            );
-            assert_eq!(
-                fits(Usage::NEVER, position.required_usage()),
-                statement,
-                "never accepted at {position:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn command_is_accepted_only_as_a_statement_or_a_chain_target() {
-        for position in EVERY_POSITION {
-            let allowed = matches!(position, Position::Statement | Position::ChainTarget);
-            assert_eq!(
-                fits(Usage::COMMAND, position.required_usage()),
-                allowed,
-                "command accepted at {position:?}"
             );
         }
     }

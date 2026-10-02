@@ -1,34 +1,68 @@
 ---
 title: Written by Kiru
-description: print and eprint, the library written in Kiru.
+description: command, print, and eprint, the library written in Kiru.
 ---
 
 The rest of the standard library is Kiru source embedded in the compiler
 and loaded into every program.
 
 ```text
-std::print(text) -> text           write a line to stdout, returns ""
-std::eprint(text) -> nothing       write a line to stderr, then panic; "" silently
+std::command(spec, text) -> text    run one line and return the mode's text
+std::print(text) -> nothing         write a line to stdout
+std::eprint(text) -> nothing        write a line to stderr, then panic; "" silently
 ```
 
-Both functions live in the `std` namespace, so the unqualified `command`
-inside them is `std::command`.
+All three live in the `std` namespace, so the unqualified `run` inside
+`command` is `std::run`.
+
+## command
+
+```kiru
+fn command(rec spec, txt line) {
+  txt command_line = line;
+
+  switch(spec.Dir) {
+    case("") {};
+    default { command_line = "cd " + spec.Dir + " && " + command_line; };
+  };
+
+  switch(spec.Env) {
+    case("") {};
+    default { command_line = "export " + spec.Env + "; " + command_line; };
+  };
+
+  switch(spec.Direnv) {
+    case("") {};
+    default { command_line = "direnv exec " + spec.Dir + " sh -c '" + command_line + "'"; };
+  };
+
+  switch(spec.Mode) {
+    case("") {
+      command_line = "{ " + command_line + "; } >/dev/null 2>&1";
+    };
+    default {};
+  };
+
+  switch(spec.Mode) {
+    case("stdout")    { return run(command_line).out; };
+    case("exit code") { return run(command_line).code; };
+    default           { run(command_line); return ""; };
+  };
+};
+```
+
+`command` is text: every path returns, and an empty `Mode` returns `""`.
 
 ## print
 
 ```kiru
 fn print(txt message) {
-  command("printf '%s\\n' \"$KIRU_MESSAGE\"")
-    .env({ KIRU_MESSAGE = message })
-    .stream();
-  return("");
+  command({ Env = "KIRU_MESSAGE='" + message + "'", Mode = "stdout" }, "printf '%s\\n' \"$KIRU_MESSAGE\"");
 };
 ```
 
-`print` returns the empty string, so a call is text and may be composed or
-used as a statement. The message travels through the environment, never
-through the command line, so its text cannot become shell syntax. A message
-containing quotes, `$(...)`, or newlines prints exactly as written.
+`print` is void. The message travels through the environment as one single
+quoted shell word.
 
 ## eprint
 
@@ -37,22 +71,18 @@ fn eprint(txt message) {
   switch(message) {
     case("") {};
     default {
-      command("printf '%s\\n' \"$KIRU_MESSAGE\" >&2")
-        .env({ KIRU_MESSAGE = message })
-        .stream();
+      command({ Env = "KIRU_MESSAGE='" + message + "'", Mode = "stdout" }, "printf '%s\\n' \"$KIRU_MESSAGE\" >&2");
     };
   };
-  panic();
+  panic;
 };
 ```
 
-`eprint` is void: it has no `return`, and its body ends in `std::panic();`.
-An empty message skips the print and panics silently. Otherwise the message
-goes to stderr and the run ends. Because the call is void, it may only stand
-as a statement.
+`eprint` is void: it has no `return`, and its body ends in `panic;`. An empty
+message skips the print and panics silently.
 
 ## Embedding
 
-The library is loaded into every program before the entry file, so its
-names are always in `std`. A program that never prints does not carry
-`eprint`, because unused library declarations are dropped at compile time.
+The library is loaded into every program before the entry file, so its names
+are always in `std`. A program that never prints does not carry `eprint`,
+because unused library declarations are dropped at compile time.

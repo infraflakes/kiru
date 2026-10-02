@@ -1,4 +1,4 @@
-//! Command execution: process groups, timeouts, signals, and terminals.
+//! Process execution: process groups, signals, and stopping.
 
 use std::io::{ErrorKind, Read, Write};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
@@ -18,7 +18,6 @@ use nix::unistd::Pid;
 use nix::unistd::getppid;
 
 use super::Panic;
-use crate::compiler::Command;
 
 /// The most process groups one run can track at once. A run that exceeds it
 /// fails rather than silently leaking an untracked group.
@@ -138,13 +137,13 @@ impl RuntimeState {
         self.interrupted.load(Ordering::SeqCst)
     }
 
-    /// Whether the run has failed anywhere, through a `std::panic` or a
+    /// Whether the run has failed anywhere, through a `panic;` or a
     /// runtime failure. The exit code uses this after every thread joins.
     pub(crate) fn panicked(&self) -> bool {
         self.panicked.load(Ordering::SeqCst)
     }
 
-    /// `std::panic`: record that the run failed. A panic stops only the body
+    /// `panic;`: record that the run failed. A panic stops only the body
     /// that raised it; it never signals another body's process groups, so a
     /// panic in one thread leaves the others running.
     pub(crate) fn panic(&self) {
@@ -255,84 +254,29 @@ pub(crate) struct Outcome {
     pub(crate) output: String,
 }
 
-/// Run one command. `capture` binds stdout, `forward` streams it live.
+/// Run one command line through the default shell. `capture` binds stdout,
+/// `forward` streams it live; stderr is always inherited.
 pub(crate) fn run(
     state: &RuntimeState,
-    command: &Command,
+    line: &str,
     capture: bool,
     forward: bool,
     default_shell: Option<&str>,
 ) -> Result<Outcome, Panic> {
-    let dir = command.dir.as_deref();
-
-    if let Some(dir) = dir
-        && dir.is_empty()
-    {
-        return Err(failure(state, &command.line, "dir is empty"));
-    }
-    if command.direnv && dir.is_none() {
-        return Err(failure(state, &command.line, "direnv needs a dir"));
-    }
-
-    if command.direnv
-        && let Some(dir) = dir
-    {
-        let allowed = execute(
-            state,
-            CommandSpec {
-                program: "direnv",
-                arguments: vec!["allow".to_owned(), dir.to_owned()],
-                dir: Some(dir),
-                env: &[],
-                capture: false,
-                forward: true,
-                timeout: None,
-                line: &command.line,
-            },
-        )?;
-        if allowed.code != 0 {
-            return Ok(Outcome {
-                code: allowed.code,
-                output: String::new(),
-            });
-        }
-    }
-
-    // An explicit `.shell(...)` is used verbatim, empty included; only when no
-    // shell is set does the `$SHELL` default, then `sh`, apply.
-    let shell = match command.shell.as_deref() {
-        Some(shell) => shell,
-        None => default_shell
-            .filter(|shell| !shell.is_empty())
-            .unwrap_or("sh"),
-    };
-
-    let (program, arguments) = if command.direnv && dir.is_some() {
-        (
-            "direnv",
-            vec![
-                "exec".to_owned(),
-                dir.unwrap_or_default().to_owned(),
-                shell.to_owned(),
-                "-c".to_owned(),
-                command.line.clone(),
-            ],
-        )
-    } else {
-        (shell, vec!["-c".to_owned(), command.line.clone()])
-    };
+    let shell = default_shell
+        .filter(|shell| !shell.is_empty())
+        .unwrap_or("sh");
 
     execute(
         state,
         CommandSpec {
-            program,
-            arguments,
-            dir,
-            env: command.env.entries(),
+            program: shell,
+            arguments: vec!["-c".to_owned(), line.to_owned()],
+            dir: None,
+            env: &[],
             capture,
             forward,
-            timeout: command.timeout,
-            line: &command.line,
+            line,
         },
     )
 }
@@ -345,21 +289,12 @@ struct CommandSpec<'a> {
     env: &'a [(String, String)],
     capture: bool,
     forward: bool,
-    timeout: Option<u64>,
     /// The text shown when the command cannot run.
     line: &'a str,
 }
 
 /// Spawn, track, and wait for one command line in its own process group.
 fn execute(state: &RuntimeState, spec: CommandSpec<'_>) -> Result<Outcome, Panic> {
-    let deadline = match spec.timeout.filter(|seconds| *seconds > 0) {
-        Some(seconds) => match Instant::now().checked_add(Duration::from_secs(seconds)) {
-            Some(deadline) => Some(deadline),
-            None => return Err(failure(state, spec.line, "timeout is too large")),
-        },
-        None => None,
-    };
-
     let mut command = command_for(&spec);
     let mut child = command
         .spawn()
@@ -383,9 +318,9 @@ fn execute(state: &RuntimeState, spec: CommandSpec<'_>) -> Result<Outcome, Panic
         None
     };
 
-    let waited = wait_for_stop(state, &mut child, pgid, deadline, spec.line);
+    let waited = wait_for_stop(state, &mut child, pgid, spec.line);
     state.unregister(pgid);
-    let (status, timed_out) = waited?;
+    let status = waited?;
 
     let output = match reader {
         Some(handle) => handle.join().unwrap_or_default(),
@@ -397,25 +332,23 @@ fn execute(state: &RuntimeState, spec: CommandSpec<'_>) -> Result<Outcome, Panic
     }
 
     Ok(Outcome {
-        code: if timed_out { 124 } else { exit_code(status) },
+        code: exit_code(status),
         output,
     })
 }
 
-/// Poll the child while watching for cancellation and the timeout deadline.
-/// A stop condition sends SIGTERM, then SIGKILL after the grace period.
+/// Poll the child while watching for cancellation. A stop condition sends
+/// SIGTERM, then SIGKILL after the grace period.
 fn wait_for_stop(
     state: &RuntimeState,
     child: &mut std::process::Child,
     pgid: i32,
-    deadline: Option<Instant>,
     line_for_errors: &str,
-) -> Result<(ExitStatus, bool), Panic> {
+) -> Result<ExitStatus, Panic> {
     let mut terminating: Option<Instant> = None;
-    let mut timed_out = false;
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => return Ok((status, timed_out)),
+            Ok(Some(status)) => return Ok(status),
             Ok(None) => {}
             Err(error) => return Err(failure(state, line_for_errors, &error.to_string())),
         }
@@ -425,12 +358,6 @@ fn wait_for_stop(
             if state.cancelled() {
                 signal_group(pgid, Signal::SIGTERM);
                 terminating = Some(now);
-            } else if let Some(deadline) = deadline
-                && now >= deadline
-            {
-                signal_group(pgid, Signal::SIGTERM);
-                terminating = Some(now);
-                timed_out = true;
             }
         } else if let Some(started) = terminating
             && now.duration_since(started) >= STOP_GRACE

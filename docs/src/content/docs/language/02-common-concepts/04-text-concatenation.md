@@ -9,7 +9,7 @@ description: Concatenation, and why it is the only operator.
 
 ```kiru
 fn label(txt name, txt code) {
-  return("  " + name + ": " + code + "\n");
+  return "  " + name + ": " + code + "\n";
 };
 
 fn main() {
@@ -55,7 +55,7 @@ fn same(txt a, txt b) {
   switch(a) {
     case(b) { result = "same"; };
   };
-  return(result);
+  return result;
 };
 
 fn main() {
@@ -77,7 +77,7 @@ any computation over them is a command's job:
 
 ```kiru
 txt count = "1";
-txt next = std::command("expr " + count + " + 1").out();
+txt next = std::command({ Mode = "stdout" }, "expr " + count + " + 1");
 
 fn main() {
   std::print(next);
@@ -93,8 +93,8 @@ evaluation.
 
 Because `+` only concatenates, a command line is always a string built from
 strings. The language never parses or reinterprets it. A value that should
-reach a command as data rather than as shell syntax goes through `.env`, as
-`std::print` does; [written by
+reach a command as data rather than as shell syntax goes through the spec's
+`Env` entry, as `std::print` does; [written by
 Kiru](/stdlib/02-written-by-kiru/) shows how. The
 plus operator never changes quoting, so the shell sees exactly the text
 that was built.

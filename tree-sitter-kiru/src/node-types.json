@@ -97,6 +97,10 @@
           "named": true
         },
         {
+          "type": "panic_statement",
+          "named": true
+        },
+        {
           "type": "record_binding",
           "named": true
         },
@@ -220,10 +224,6 @@
           "named": true
         },
         {
-          "type": "method_call",
-          "named": true
-        },
-        {
           "type": "path",
           "named": true
         },
@@ -277,10 +277,6 @@
           },
           {
             "type": "field_access",
-            "named": true
-          },
-          {
-            "type": "method_call",
             "named": true
           },
           {
@@ -352,62 +348,6 @@
     }
   },
   {
-    "type": "method_call",
-    "named": true,
-    "fields": {
-      "arguments": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "argument_list",
-            "named": true
-          }
-        ]
-      },
-      "method": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "identifier",
-            "named": true
-          }
-        ]
-      },
-      "target": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "call_expression",
-            "named": true
-          },
-          {
-            "type": "field_access",
-            "named": true
-          },
-          {
-            "type": "method_call",
-            "named": true
-          },
-          {
-            "type": "path",
-            "named": true
-          },
-          {
-            "type": "record_literal",
-            "named": true
-          },
-          {
-            "type": "string",
-            "named": true
-          }
-        ]
-      }
-    }
-  },
-  {
     "type": "module_declaration",
     "named": true,
     "fields": {
@@ -437,6 +377,11 @@
         }
       ]
     }
+  },
+  {
+    "type": "panic_statement",
+    "named": true,
+    "fields": {}
   },
   {
     "type": "parameter",
@@ -586,7 +531,7 @@
     "fields": {
       "value": {
         "multiple": false,
-        "required": true,
+        "required": false,
         "types": [
           {
             "type": "expression",
@@ -752,6 +697,10 @@
   },
   {
     "type": "module",
+    "named": false
+  },
+  {
+    "type": "panic",
     "named": false
   },
   {

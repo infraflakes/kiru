@@ -22,29 +22,17 @@ impl Parser {
         Ok(left)
     }
 
-    /// Parse a primary expression followed by any field or method chains.
+    /// Parse a primary expression followed by any field accesses.
     fn parse_postfix(&mut self) -> Result<Expression, ParseError> {
         let mut expression = self.parse_primary()?;
         while self.eat(&TokenKind::Dot) {
             let (name, name_span) = self.expect_identifier("after `.`")?;
             let span = expression.span().merge(name_span);
-            expression = if self.check(&TokenKind::LParen) {
-                let (arguments, arguments_span) = self.parse_arguments()?;
-                let span = span.merge(arguments_span);
-                Expression::Method {
-                    target: Box::new(expression),
-                    name,
-                    name_span,
-                    arguments,
-                    span,
-                }
-            } else {
-                Expression::Field {
-                    target: Box::new(expression),
-                    name,
-                    name_span,
-                    span,
-                }
+            expression = Expression::Field {
+                target: Box::new(expression),
+                name,
+                name_span,
+                span,
             };
         }
         Ok(expression)

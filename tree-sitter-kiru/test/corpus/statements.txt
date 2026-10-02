@@ -10,12 +10,13 @@ fn work(rec project) {
   };
 
   log = log + "x";
-  std::async(project.run());
+  std::async(work());
   std::wait();
-  std::command("echo hi").env({ KIRU_MESSAGE = log }).stream();
+  std::command({ Env = "KIRU_MESSAGE=" + log, Mode = "stdout" }, "echo hi");
   defer {
-    std::command("rm -rf " + log).stream();
+    std::command({ Mode = "stdout" }, "rm -rf " + log);
   };
+  panic;
 };
 
 ---
@@ -56,10 +57,9 @@ fn work(rec project) {
               (identifier))
             (argument_list
               (expression
-                (method_call
+                (call_expression
                   (path
                     (identifier))
-                  (identifier)
                   (argument_list)))))))
       (expression_statement
         (expression
@@ -71,8 +71,33 @@ fn work(rec project) {
             (argument_list))))
       (expression_statement
         (expression
-          (method_call
-            (method_call
+          (call_expression
+            (path
+              (namespace
+                (identifier))
+              (identifier))
+            (argument_list
+              (expression
+                (record_literal
+                  (record_field
+                    (identifier)
+                    (expression
+                      (binary_expression
+                        (expression
+                          (string))
+                        (expression
+                          (path
+                            (identifier))))))
+                  (record_field
+                    (identifier)
+                    (expression
+                      (string)))))
+              (expression
+                (string))))))
+      (defer_statement
+        (block
+          (expression_statement
+            (expression
               (call_expression
                 (path
                   (namespace
@@ -80,35 +105,16 @@ fn work(rec project) {
                   (identifier))
                 (argument_list
                   (expression
-                    (string))))
-              (identifier)
-              (argument_list
-                (expression
-                  (record_literal
-                    (record_field
-                      (identifier)
+                    (record_literal
+                      (record_field
+                        (identifier)
+                        (expression
+                          (string)))))
+                  (expression
+                    (binary_expression
+                      (expression
+                        (string))
                       (expression
                         (path
-                          (identifier))))))))
-            (identifier)
-            (argument_list))))
-      (defer_statement
-        (block
-          (expression_statement
-            (expression
-              (method_call
-                (call_expression
-                  (path
-                    (namespace
-                      (identifier))
-                    (identifier))
-                  (argument_list
-                    (expression
-                      (binary_expression
-                        (expression
-                          (string))
-                        (expression
-                          (path
-                            (identifier)))))))
-                (identifier)
-                (argument_list)))))))))
+                          (identifier)))))))))))
+      (panic_statement))))

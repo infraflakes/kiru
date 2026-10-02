@@ -14,7 +14,7 @@ import "tasks.kiru";
 The path is relative to the importing file, or absolute. A relative path
 such as `tasks.kiru` means the file next to the importer. The path is a
 fixed string literal; a path under a home directory is built at run time
-with `std::command("echo $HOME").out()` and concatenation, not with an
+with `std::command({ Mode = "stdout" }, "echo $HOME")` and concatenation, not with an
 import.
 
 An import makes the loaded file's namespace reachable with `::`; it does

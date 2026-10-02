@@ -3,7 +3,15 @@ function declarations
 ==================
 
 fn report(txt label, txt code) {
-  return("  " + label + ": " + code + "\n");
+  return "  " + label + ": " + code + "\n";
+};
+
+fn stop() {
+  return;
+};
+
+fn end() {
+  panic;
 };
 
 fn main(rec args) {
@@ -44,6 +52,16 @@ fn empty() {
                     (identifier)))))
             (expression
               (string)))))))
+  (function_declaration
+    (identifier)
+    (parameter_list)
+    (block
+      (return_statement)))
+  (function_declaration
+    (identifier)
+    (parameter_list)
+    (block
+      (panic_statement)))
   (function_declaration
     (identifier)
     (parameter_list

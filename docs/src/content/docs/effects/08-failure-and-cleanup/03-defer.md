@@ -10,13 +10,13 @@ on the normal path, on a return, and when a panic unwinds the body.
 
 ```kiru
 fn release() {
-  txt scratch = std::command("mktemp -d").out();
+  txt scratch = std::command({ Mode = "stdout" }, "mktemp -d");
 
   defer {
-    std::command("rm -rf " + scratch).stream();
+    std::command({ Mode = "stdout" }, "rm -rf " + scratch);
   };
 
-  std::command("true").stream();
+  std::command({ Mode = "stdout" }, "true");
 };
 ```
 

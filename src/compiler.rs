@@ -22,10 +22,10 @@ pub(crate) use embed::{append, capture, read, restore};
 pub(crate) use link::link;
 pub(crate) use loader::{LoadedProgram, load};
 pub(crate) use model::{
-    Accept, BUILTIN_NAMESPACE, BindingKind, Case, Command, Declaration, DeclarationId,
-    DeclarationKind, Derived, ENTRY_FUNCTION, Expression, Field, File, FileId, Function, Kind,
-    Method, NATIVE_ROWS, NameTable, Namespace, NamespaceId, Native, Position, Program, Record,
-    Statement, Value, Visitor, VisitorMut, fits, method_row, namespace_path, native_row,
-    walk_expression, walk_expression_mut, walk_statements, walk_statements_mut,
+    Accept, BUILTIN_NAMESPACE, BindingKind, Case, Declaration, DeclarationId, DeclarationKind,
+    Derived, ENTRY_FUNCTION, Expression, Field, File, FileId, Function, Kind, NATIVE_ROWS,
+    NameTable, Namespace, NamespaceId, Native, Position, Program, Record, Statement, Value,
+    Visitor, VisitorMut, fits, namespace_path, native_row, walk_expression, walk_expression_mut,
+    walk_statements, walk_statements_mut,
 };
 pub(crate) use reach::retain;

@@ -30,7 +30,7 @@ $ ./app verify
 
 Compilation performs every check: syntax and escapes, modules and imports,
 names and declaration order, call arity, kinds, body and return rules,
-command-chain rules, and thread rules. The list is catalogued in
+and thread rules. The list is catalogued in
 [compile-time
 checks](/language/09-entry-and-the-cli/03-compile-time-checks/).
 

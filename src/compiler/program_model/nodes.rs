@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::RwLock;
 
 use crate::compiler::loader::Origin;
-use crate::compiler::{Kind, Method, Native};
+use crate::compiler::{Kind, Native};
 use crate::syntax::Span;
 
 /// The identity of a loaded file.
@@ -295,12 +295,6 @@ pub(crate) enum Expression {
         name_span: Span,
         span: Span,
     },
-    Method {
-        target: Box<Expression>,
-        method: Method,
-        arguments: Vec<Expression>,
-        span: Span,
-    },
     Add {
         left: Box<Expression>,
         right: Box<Expression>,
@@ -316,7 +310,6 @@ impl Expression {
             | Expression::Reference { span, .. }
             | Expression::Call { span, .. }
             | Expression::Field { span, .. }
-            | Expression::Method { span, .. }
             | Expression::Add { span, .. } => *span,
         }
     }
@@ -345,8 +338,14 @@ pub(crate) enum Statement {
         span: Span,
     },
     Expression(Expression),
+    /// An early exit. A value return carries text or record; a valueless
+    /// return ends a void function.
     Return {
-        value: Expression,
+        value: Option<Expression>,
+        span: Span,
+    },
+    /// The keyword statement `panic;`, which ends the run.
+    Panic {
         span: Span,
     },
     Switch {
@@ -368,25 +367,22 @@ pub(crate) struct Case {
     pub(crate) span: Span,
 }
 
-/// A runtime value: text, a record of text, a command that has not run yet,
-/// or the no-value result of a void call.
+/// A runtime value: text, a record of text, or the no-value result of a void
+/// call.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum Value {
     Text(String),
     Record(Record),
-    Command(Command),
     Nothing,
 }
 
 impl Kind {
     /// The kind a runtime value carries. This is the dynamic counterpart of
-    /// the checker's static kind: a value only ever holds one concrete kind,
-    /// and `Never` has no value representation.
+    /// the checker's static kind: a value only ever holds one concrete kind.
     pub(crate) fn of(value: &Value) -> Kind {
         match value {
             Value::Text(_) => Kind::Text,
             Value::Record(_) => Kind::Record,
-            Value::Command(_) => Kind::Command,
             Value::Nothing => Kind::Nothing,
         }
     }
@@ -419,45 +415,6 @@ impl Record {
             .map(|(_, value)| value.as_str())
             .unwrap_or("")
     }
-
-    /// The fields in insertion order.
-    pub(crate) fn entries(&self) -> &[(String, String)] {
-        &self.entries
-    }
-}
-
-/// A command that has not run yet. Builders configure it; the last setting
-/// of a key wins, and `stream` makes stdout show when it runs.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(crate) struct Command {
-    pub(crate) line: String,
-    pub(crate) dir: Option<String>,
-    pub(crate) direnv: bool,
-    pub(crate) env: Record,
-    pub(crate) shell: Option<String>,
-    pub(crate) timeout: Option<u64>,
-    pub(crate) stream: bool,
-}
-
-impl Command {
-    pub(crate) fn new(line: String) -> Self {
-        Self {
-            line,
-            dir: None,
-            direnv: false,
-            env: Record::new(),
-            shell: None,
-            timeout: None,
-            stream: false,
-        }
-    }
-
-    /// Add or override environment entries from a record.
-    pub(crate) fn merge_env(&mut self, record: &Record) {
-        for (key, value) in record.entries() {
-            self.env.set(key.clone(), value.clone());
-        }
-    }
 }
 
 #[cfg(test)]
@@ -469,17 +426,13 @@ mod tests {
         match kind {
             Kind::Text => Value::Text(String::new()),
             Kind::Record => Value::Record(Record::new()),
-            Kind::Command => Value::Command(Command::new(String::new())),
             Kind::Nothing => Value::Nothing,
-            Kind::Never => {
-                panic!("{kind:?} has no runtime value")
-            }
         }
     }
 
     #[test]
     fn every_concrete_kind_round_trips_through_a_value() {
-        for kind in [Kind::Text, Kind::Record, Kind::Command, Kind::Nothing] {
+        for kind in [Kind::Text, Kind::Record, Kind::Nothing] {
             assert_eq!(
                 Kind::of(&value_of(kind)),
                 kind,

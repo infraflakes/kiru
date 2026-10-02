@@ -5,15 +5,8 @@ paths, chains, and expressions
 txt value = ::root::value + other::name;
 
 fn run(rec project, txt message) {
-  command("echo " + message)
-    .in(project.dir)
-    .direnv()
-    .env({ KIRU_MESSAGE = message })
-    .shell("/bin/sh")
-    .timeout("5")
-    .stream()
-    .code();
-  return(::helper() + project.name);
+  command({ Dir = project.dir, Env = "KIRU_MESSAGE=" + message }, "echo " + message);
+  return ::helper() + project.name;
 };
 
 ---
@@ -44,54 +37,35 @@ fn run(rec project, txt message) {
     (block
       (expression_statement
         (expression
-          (method_call
-            (method_call
-              (method_call
-                (method_call
-                  (method_call
-                    (method_call
-                      (method_call
-                        (call_expression
-                          (path
-                            (identifier))
-                          (argument_list
-                            (expression
-                              (binary_expression
-                                (expression
-                                  (string))
-                                (expression
-                                  (path
-                                    (identifier)))))))
-                        (identifier)
-                        (argument_list
-                          (expression
-                            (field_access
-                              (path
-                                (identifier))
-                              (identifier)))))
-                      (identifier)
-                      (argument_list))
+          (call_expression
+            (path
+              (identifier))
+            (argument_list
+              (expression
+                (record_literal
+                  (record_field
                     (identifier)
-                    (argument_list
-                      (expression
-                        (record_literal
-                          (record_field
-                            (identifier)
-                            (expression
-                              (path
-                                (identifier))))))))
-                  (identifier)
-                  (argument_list
                     (expression
-                      (string))))
-                (identifier)
-                (argument_list
+                      (field_access
+                        (path
+                          (identifier))
+                        (identifier))))
+                  (record_field
+                    (identifier)
+                    (expression
+                      (binary_expression
+                        (expression
+                          (string))
+                        (expression
+                          (path
+                            (identifier))))))))
+              (expression
+                (binary_expression
                   (expression
-                    (string))))
-              (identifier)
-              (argument_list))
-            (identifier)
-            (argument_list))))
+                    (string))
+                  (expression
+                    (path
+                      (identifier)))))))))
       (return_statement
         (expression
           (binary_expression

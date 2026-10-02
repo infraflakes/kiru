@@ -15,7 +15,7 @@ everything it spawned with one signal:
 
 ```text
 kiru
-|-- group 101: sh -c "cargo build"    (.stream)
+|-- group 101: sh -c "cargo build"    (stdout shown)
 |     `-- rustc
 `-- group 102: sh -c "bun run build"  (another thread)
       `-- node

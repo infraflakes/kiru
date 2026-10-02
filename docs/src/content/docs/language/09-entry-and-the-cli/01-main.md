@@ -33,7 +33,8 @@ and the parameter name is chosen by the author.
 - The entry file must declare `main` in the root namespace.
 - `main` takes zero or one parameter.
 - A parameter must be declared `rec` and receives the args record.
-- `main` is void: it must not contain `return`.
+- `main` is void: no caller binds its value, so `return;` and `return expr;`
+  both end it and a returned value is discarded.
 - A `main` declared inside a module is an ordinary function.
 
 An entry file with no `main`, or a `main` with two parameters, is a
@@ -87,7 +88,7 @@ are void, so each call is a statement.
 
 `main` produces no value. A program's result is its exit code: `0` when the
 body finishes, nonzero on panic, and `130` on SIGINT, SIGTERM, or SIGHUP.
-To fail a run, call `std::panic` or `std::eprint`; [exit codes and
+To fail a run, run `panic;` or call `std::eprint`; [exit codes and
 failure](/effects/06-commands/05-exit-codes-and-failure/) covers
 failure.
 

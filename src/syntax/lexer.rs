@@ -165,6 +165,7 @@ impl<'a> Lexer<'a> {
             "default" => TokenKind::Default,
             "defer" => TokenKind::Defer,
             "return" => TokenKind::Return,
+            "panic" => TokenKind::Panic,
             _ => TokenKind::Ident(text.to_owned()),
         };
         Token {
