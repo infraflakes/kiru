@@ -7,14 +7,14 @@ use crate::compiler::{
     walk_expression_mut, walk_statements_mut,
 };
 
-use super::collect::collect_reachable_declarations;
+use super::mark_reachable::collect_reachable_declarations;
 
 /// Keep only the declarations the entry reaches, remapping every id.
-pub(crate) fn retain(program: &mut Program) {
+pub(crate) fn prune_unreachable(program: &mut Program) {
     let reachable = collect_reachable_declarations(program);
     let mapping = compact(program, &reachable);
     remap(program, &mapping);
-    crate::compiler::link::verify(program);
+    crate::compiler::resolve_names::verify(program);
 }
 
 /// Move the reachable declarations into a fresh vector, in their old order,
@@ -81,19 +81,16 @@ fn remap_declaration(declaration: &mut Declaration, mapping: &[Option<Declaratio
     if let Some(owner) = &mut declaration.owner {
         *owner = mapped(mapping, *owner);
     }
+    for parameter in &mut declaration.parameters {
+        *parameter = mapped(mapping, *parameter);
+    }
     let mut remapper = EdgeRemapper { mapping };
     match &mut declaration.kind {
         DeclarationKind::Function(function) => {
-            for parameter in &mut function.parameters {
-                *parameter = mapped(mapping, *parameter);
-            }
             walk_statements_mut(&mut remapper, &mut function.body);
         }
-        DeclarationKind::Text(expression) => walk_expression_mut(&mut remapper, expression),
-        DeclarationKind::Record(fields) => {
-            for field in fields {
-                walk_expression_mut(&mut remapper, &mut field.value);
-            }
+        DeclarationKind::Text(expression) | DeclarationKind::Record(expression) => {
+            walk_expression_mut(&mut remapper, expression);
         }
         DeclarationKind::Binding(_) | DeclarationKind::Native(_) => {}
     }

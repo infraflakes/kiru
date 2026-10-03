@@ -1,0 +1,22 @@
+module kiru;
+
+fn build_docs(rec docs) {
+  run(docs, "bun install --frozen-lockfile");
+  run(docs, "bun run build");
+};
+
+fn check_docs(rec docs) {
+  run(docs, "biome check .");
+  run(docs, "biome lint .");
+  run(docs, "bun run types");
+};
+
+fn format_docs(rec docs) {
+  run(docs, "biome format --write .");
+  run(docs, "biome check --write .");
+};
+
+fn update_docs(rec docs) {
+  run(docs, "bun update");
+  run(docs, "biome migrate");
+};

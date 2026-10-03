@@ -17,14 +17,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Build Kiru Static Binary via Docker
+      - name: Build Kiru Compiler Static Binary via Docker
         run: |
           docker build --target bin --output type=local,dest=bin .
 
       - name: Package and Checksum
         run: |
           cd bin
-          NAME="kiru-${{ github.ref_name }}-linux-x86_64"
+          NAME="kc-${{ github.ref_name }}-linux-x86_64"
           mv kc "$NAME"
           sha256sum "$NAME" > "$NAME.sha256"
 

@@ -6,7 +6,7 @@ txt value = ::root::value + other::name;
 
 fn run(rec project, txt message) {
   command({ Dir = project.dir, Env = "KIRU_MESSAGE=" + message }, "echo " + message);
-  return ::helper() + project.name;
+  return(::helper() + project.name);
 };
 
 ---

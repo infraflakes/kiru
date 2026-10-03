@@ -64,6 +64,8 @@ fn walk_statement(visitor: &mut impl Visitor, statement: &Statement) {
             }
         }
         Statement::Panic { .. } => {}
+        Statement::Async { call, .. } => walk_expression(visitor, call),
+        Statement::Wait { .. } => {}
         Statement::Switch {
             subject,
             cases,
@@ -95,6 +97,8 @@ fn walk_statement_mut(visitor: &mut impl VisitorMut, statement: &mut Statement) 
             }
         }
         Statement::Panic { .. } => {}
+        Statement::Async { call, .. } => walk_expression_mut(visitor, call),
+        Statement::Wait { .. } => {}
         Statement::Switch {
             subject,
             cases,

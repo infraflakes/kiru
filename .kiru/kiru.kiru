@@ -1,0 +1,21 @@
+module kiru;
+
+fn build_kiru(rec project) {
+  run(project, "cargo build --release");
+};
+
+fn check_kiru(rec project) {
+  run(project, "cargo test");
+  run(project, "cargo clippy --all-targets -- -D warnings");
+  run(project, "cargo fmt --check");
+};
+
+fn format_kiru(rec project) {
+  run(project, "cargo clippy --fix --allow-dirty");
+  run(project, "cargo fmt");
+};
+
+fn update_kiru(rec kiru) {
+  run(kiru, "cargo update --verbose");
+  run(kiru, "cargo upgrade --verbose --verbose");
+};

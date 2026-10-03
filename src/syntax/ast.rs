@@ -67,12 +67,13 @@ pub(crate) struct TextBinding {
     pub(crate) span: Span,
 }
 
-/// A `rec name = { ... };` declaration or statement.
+/// A `rec name = expression;` declaration or statement. The expression is a
+/// record literal, a record variable, or a call returning a record.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct RecBinding {
     pub(crate) name: String,
     pub(crate) name_span: Span,
-    pub(crate) fields: Vec<Field>,
+    pub(crate) value: Expression,
     pub(crate) span: Span,
 }
 
@@ -96,13 +97,24 @@ pub(crate) enum Statement {
     },
     Expression(Expression),
     /// An early exit. A value return carries text or record; a valueless
-    /// return ends a void function.
+    /// return ends a function that returns nothing.
     Return {
         value: Option<Expression>,
         span: Span,
     },
     /// The keyword statement `panic;`, which ends the run.
     Panic {
+        span: Span,
+    },
+    /// The keyword statement `async <call>;`, which spawns the call on a new
+    /// thread.
+    Async {
+        call: Expression,
+        span: Span,
+    },
+    /// The keyword statement `wait;`, which joins the asyncs the calling
+    /// thread spawned.
+    Wait {
         span: Span,
     },
     Switch {

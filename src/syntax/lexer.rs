@@ -166,6 +166,8 @@ impl<'a> Lexer<'a> {
             "defer" => TokenKind::Defer,
             "return" => TokenKind::Return,
             "panic" => TokenKind::Panic,
+            "async" => TokenKind::Async,
+            "wait" => TokenKind::Wait,
             _ => TokenKind::Ident(text.to_owned()),
         };
         Token {
@@ -272,11 +274,11 @@ mod tests {
     #[test]
     fn lexes_paths_and_comments() {
         assert_eq!(
-            kinds("std::wait(); # done"),
+            kinds("std::run(); # done"),
             vec![
                 TokenKind::Ident("std".to_owned()),
                 TokenKind::PathSep,
-                TokenKind::Ident("wait".to_owned()),
+                TokenKind::Ident("run".to_owned()),
                 TokenKind::LParen,
                 TokenKind::RParen,
                 TokenKind::Semi,

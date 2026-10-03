@@ -2,19 +2,18 @@
 
 use std::sync::Arc;
 
-use crate::compiler::{Program, restore};
+use crate::compiler::{Program, deserialize_program};
 use crate::runtime;
 
 /// Decode the payload and run the embedded program with the words after the
 /// program name.
 pub(crate) fn run(bytes: &[u8], words: &[String]) -> i32 {
-    let program: Program = match restore(bytes) {
+    let program: Program = match deserialize_program(bytes) {
         Ok(program) => program,
         Err(error) => {
             eprintln!("kc: corrupt program: {error}");
             return 1;
         }
     };
-    let default_shell = std::env::var("SHELL").ok();
-    runtime::run(Arc::new(program), words, default_shell)
+    runtime::run(Arc::new(program), words)
 }

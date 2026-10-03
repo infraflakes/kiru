@@ -1,6 +1,6 @@
 ---
 title: Types
-description: Text and record are data; nothing is the result of a void call.
+description: Text and record are data; nothing is the result of a call that returns no value.
 ---
 
 Every value has one of three kinds:
@@ -8,11 +8,12 @@ Every value has one of three kinds:
 ```text
 text       string data
 record     a map of names to text
-nothing    the result of a void call
+nothing    the result of a call that returns no value
 ```
 
 `text` and `record` are data. `nothing` is an execution marker: it describes
-the no-value result of a void call, not data the program stores.
+the no-value result of a call that returns no value, not data the program
+stores.
 
 ## Data
 
@@ -33,8 +34,9 @@ special to the type system.
 
 ## Nothing
 
-`nothing` is the result of a void call. A function without a value return is
-void, and its call stands only as a discarded statement:
+`nothing` is the result of a call that returns no value. A function with no
+return, or whose returns have no common kind, is `nothing`, and its call
+stands only as a discarded statement:
 
 <span class="filename">Filename: src/main.kiru</span>
 
@@ -59,4 +61,4 @@ fn stop() {
 };
 ```
 
-`stop` is void: it has no `return`, and `panic;` is its last statement.
+`stop` is `nothing`: it has no `return`, and `panic;` is its last statement.

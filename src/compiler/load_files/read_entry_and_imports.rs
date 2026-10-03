@@ -6,9 +6,9 @@ use std::path::{Path, PathBuf};
 use crate::syntax;
 use crate::syntax::Span;
 
-use super::error::LoadError;
-use super::files::{LoadedFile, LoadedProgram, Origin};
-use super::imports::resolve_import;
+use super::load_error::LoadError;
+use super::loaded_program::{LoadedFile, LoadedProgram, Origin};
+use super::resolve_import_paths::resolve_import;
 
 /// The standard library, compiled into every program and always visible.
 ///
@@ -17,7 +17,7 @@ pub(crate) const EMBEDDED: &[(&str, &str)] =
     &[("<std>/io.kiru", include_str!("../../../stdlib/io.kiru"))];
 
 /// Load the entry file and everything it imports.
-pub(crate) fn load(entry: &Path) -> Result<LoadedProgram, LoadError> {
+pub(crate) fn load_files(entry: &Path) -> Result<LoadedProgram, LoadError> {
     let entry_path = entry.canonicalize().map_err(|_| LoadError {
         path: entry.to_path_buf(),
         span: Span::new(0, 0),

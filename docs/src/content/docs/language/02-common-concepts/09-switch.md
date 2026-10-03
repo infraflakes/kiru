@@ -11,12 +11,12 @@ matches:
 ```kiru
 fn build() {
   std::print("building");
-  return "";
+  return("");
 };
 
 fn test() {
   std::print("testing");
-  return "";
+  return("");
 };
 
 fn main(rec args) {
@@ -34,8 +34,8 @@ missing command runs the `default` arm.
 ## The Rules
 
 - The subject produces text.
-- Every case pattern produces text: a literal, a variable, a call,
-  `.code`, `.out`, or any other text expression.
+- Every case pattern produces text: a literal, a variable, a call, or any
+  other text expression.
 - Matching is exact text comparison; the first match wins.
 - The untaken arms are not executed.
 - `default` is optional, is not compared, and runs when nothing matched.
@@ -58,7 +58,7 @@ fn classify(txt mode) {
     case("fast") { result = "literal"; };
     case(fast) { result = "value"; };
   };
-  return result;
+  return(result);
 };
 
 fn main() {
@@ -92,7 +92,7 @@ call:
 
 ```kiru
 fn name() {
-  return "a";
+  return("a");
 };
 
 fn pick(txt target) {
@@ -101,7 +101,7 @@ fn pick(txt target) {
     case(target) { result = "chosen"; };
     case(name()) { result = "named"; };
   };
-  return result;
+  return(result);
 };
 
 fn main() {
@@ -148,7 +148,7 @@ is done. To share behavior, call a function from several arms:
 
 ```kiru
 fn run(txt mode) {
-  return "running " + mode;
+  return("running " + mode);
 };
 
 fn main(rec args) {

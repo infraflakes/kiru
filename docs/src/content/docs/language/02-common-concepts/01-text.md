@@ -63,7 +63,7 @@ fn label(txt value) {
   switch(value) {
     case("") { result = "unset"; };
   };
-  return result;
+  return(result);
 };
 
 fn main() {

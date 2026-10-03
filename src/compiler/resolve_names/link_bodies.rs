@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use crate::compiler::loader::{LoadedProgram, Origin};
+use crate::compiler::load_files::{LoadedProgram, Origin};
 use crate::compiler::{
     BUILTIN_NAMESPACE, BindingKind, Case, Declaration, DeclarationId, DeclarationKind, Derived,
     Diagnostic, Expression, Field, FileId, Function, Kind, NamespaceId, Program, Statement,
@@ -18,12 +18,12 @@ use crate::syntax::{
     Statement as ParsedStatement,
 };
 
-use super::registration::{Builder, Registry, Skeleton};
+use super::register_declarations::{Builder, Registry, Skeleton};
 
 /// Build the program model. On failure the parsed program is left untouched
 /// except for the declarations already consumed, so the caller can still
 /// render the diagnostic against its sources.
-pub(crate) fn link(loaded: &mut LoadedProgram) -> Result<Program, Diagnostic> {
+pub(crate) fn resolve_names(loaded: &mut LoadedProgram) -> Result<Program, Diagnostic> {
     let entry_file = FileId(loaded.entry);
     let parsed: Vec<Vec<ParsedDeclaration>> = loaded
         .files
@@ -45,7 +45,7 @@ pub(crate) fn link(loaded: &mut LoadedProgram) -> Result<Program, Diagnostic> {
     let entry = builder.resolve_entry(loaded, entry_file, &parsed)?;
     builder.link_declarations(&parsed)?;
     let program = builder.finish(entry);
-    super::integrity::verify(&program);
+    super::check_invariants::verify(&program);
     Ok(program)
 }
 
@@ -60,7 +60,7 @@ impl Builder {
             let order = pending.order;
             let declaration = &parsed[file.0][pending.syntax_index];
 
-            let kind = match declaration {
+            let (kind, parameters) = match declaration {
                 ParsedDeclaration::Function(function) => {
                     let mut scopes = Scopes::default();
                     scopes.push();
@@ -73,7 +73,7 @@ impl Builder {
                         order,
                     };
                     let mut parameters = Vec::new();
-                    for (index, parameter) in function.parameters.iter().enumerate() {
+                    for parameter in &function.parameters {
                         let id = self.declare_local(
                             context.scopes,
                             LocalDeclaration {
@@ -82,7 +82,7 @@ impl Builder {
                                 name: &parameter.name,
                                 name_span: parameter.span,
                                 owner: pending.declaration,
-                                binding: BindingKind::Parameter(index),
+                                binding: BindingKind::Parameter,
                                 declared_kind: Some(parameter_kind(parameter.kind)),
                             },
                         )?;
@@ -90,7 +90,7 @@ impl Builder {
                         parameters.push(id);
                     }
                     let body = self.link_statements(&function.body, &mut context)?;
-                    DeclarationKind::Function(Function { parameters, body })
+                    (DeclarationKind::Function(Function { body }), parameters)
                 }
                 ParsedDeclaration::Text(text) => {
                     let mut scopes = Scopes::default();
@@ -102,7 +102,10 @@ impl Builder {
                         current_is_function: false,
                         order,
                     };
-                    DeclarationKind::Text(self.link_expression(&text.value, &mut context)?)
+                    (
+                        DeclarationKind::Text(self.link_expression(&text.value, &mut context)?),
+                        Vec::new(),
+                    )
                 }
                 ParsedDeclaration::Rec(record) => {
                     let mut scopes = Scopes::default();
@@ -114,7 +117,10 @@ impl Builder {
                         current_is_function: false,
                         order,
                     };
-                    DeclarationKind::Record(self.link_fields(&record.fields, &mut context)?)
+                    (
+                        DeclarationKind::Record(self.link_expression(&record.value, &mut context)?),
+                        Vec::new(),
+                    )
                 }
             };
             self.declarations[pending.declaration.0] = Some(Declaration {
@@ -124,6 +130,7 @@ impl Builder {
                 namespace,
                 order,
                 owner: None,
+                parameters,
                 kind,
                 derived: Derived::default(),
             });
@@ -203,7 +210,7 @@ impl Builder {
                     });
                 }
                 ParsedStatement::Rec(record) => {
-                    let fields = self.link_fields(&record.fields, context)?;
+                    let value = self.link_expression(&record.value, context)?;
                     let binding = self.declare_local(
                         context.scopes,
                         LocalDeclaration {
@@ -219,10 +226,7 @@ impl Builder {
                     context.scopes.declare(&record.name, binding);
                     linked.push(Statement::Bind {
                         declaration: binding,
-                        value: Expression::Record {
-                            fields,
-                            span: record.span,
-                        },
+                        value,
                         span: record.span,
                     });
                 }
@@ -261,6 +265,15 @@ impl Builder {
                 }
                 ParsedStatement::Panic { span } => {
                     linked.push(Statement::Panic { span: *span });
+                }
+                ParsedStatement::Async { call, span } => {
+                    linked.push(Statement::Async {
+                        call: self.link_expression(call, context)?,
+                        span: *span,
+                    });
+                }
+                ParsedStatement::Wait { span } => {
+                    linked.push(Statement::Wait { span: *span });
                 }
                 ParsedStatement::Switch {
                     subject,

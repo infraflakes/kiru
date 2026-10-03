@@ -9,7 +9,7 @@ description: Concatenation, and why it is the only operator.
 
 ```kiru
 fn label(txt name, txt code) {
-  return "  " + name + ": " + code + "\n";
+  return("  " + name + ": " + code + "\n");
 };
 
 fn main() {
@@ -55,7 +55,7 @@ fn same(txt a, txt b) {
   switch(a) {
     case(b) { result = "same"; };
   };
-  return result;
+  return(result);
 };
 
 fn main() {
@@ -65,8 +65,8 @@ fn main() {
 
 `same` starts with `different` and overwrites it when `a` matches `b`, so
 the program prints `same`. A case pattern may be any text expression,
-including another variable, a call, `.code`, or `.out`, so comparing two
-texts is a switch with one case and no default.
+including another variable or a call, so comparing two texts is a switch with
+one case and no default.
 
 ## No Arithmetic
 
@@ -77,15 +77,19 @@ any computation over them is a command's job:
 
 ```kiru
 txt count = "1";
-txt next = std::command({ Mode = "stdout" }, "expr " + count + " + 1");
+txt below_two = std::command({}, "test " + count + " -lt 2");
 
 fn main() {
-  std::print(next);
+  switch(below_two) {
+    case("0") { std::print("count is below two"); };
+    default { std::print("count is two or more"); };
+  };
 };
 ```
 
-`next` is a module value: the command runs once at startup, on the machine
-that runs the program, and the program prints `2`. [Module
+`below_two` is a module value: the command runs once at startup, on the
+machine that runs the program, and `switch` reads its exit code. A
+computation reaches Kiru as an exit code, never as command output. [Module
 values](/language/03-names-and-scope/05-module-values/) covers that
 evaluation.
 
@@ -93,8 +97,8 @@ evaluation.
 
 Because `+` only concatenates, a command line is always a string built from
 strings. The language never parses or reinterprets it. A value that should
-reach a command as data rather than as shell syntax goes through the spec's
-`Env` entry, as `std::print` does; [written by
-Kiru](/stdlib/02-written-by-kiru/) shows how. The
+reach a command as data rather than as shell syntax is escaped with
+`std::quote`, or carried through the spec's `Env` entry with caller-side
+quoting; [written by Kiru](/stdlib/02-written-by-kiru/) shows how. The
 plus operator never changes quoting, so the shell sees exactly the text
 that was built.

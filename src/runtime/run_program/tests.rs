@@ -1,11 +1,11 @@
 //! Engine tests. They call functions directly instead of running the entry,
-//! so no process output is captured. Only the tests that build commands
+//! so no command output is captured. Only the tests that build commands
 //! spawn processes.
 
 use std::time::{Duration, Instant};
 
 use crate::compiler::{Program, Value};
-use crate::compiler::{analyze, link, load};
+use crate::compiler::{load_files, resolve_names, validate_program};
 
 use super::Runtime;
 
@@ -15,9 +15,9 @@ fn program(source: &str) -> Program {
     let directory = tempfile::tempdir().expect("temp dir");
     let path = directory.path().join("main.kiru");
     std::fs::write(&path, source).expect("write file");
-    let mut loaded = load(&path).expect("loads");
-    let mut program = link(&mut loaded).expect("links");
-    analyze(&mut program).expect("checks");
+    let mut loaded = load_files(&path).expect("loads");
+    let mut program = resolve_names(&mut loaded).expect("links");
+    validate_program(&mut program).expect("checks");
     program
 }
 
@@ -74,37 +74,37 @@ fn evaluates_expressions() {
     expect_text_results(&[
         (
             "returns a text value",
-            "fn answer() { return \"42\"; };\nfn main() {};",
+            "fn answer() { return(\"42\"); };\nfn main() {};",
             "answer",
             "42",
         ),
         (
             "missing field reads empty",
-            "fn f() { rec r = { a = \"1\" }; return r.b + \"!\"; };\nfn main() {};",
+            "fn f() { rec r = { a = \"1\" }; return(r.b + \"!\"); };\nfn main() {};",
             "f",
             "!",
         ),
         (
             "duplicate key last wins",
-            "fn f() { rec r = { a = \"1\", a = \"2\" }; return r.a; };\nfn main() {};",
+            "fn f() { rec r = { a = \"1\", a = \"2\" }; return(r.a); };\nfn main() {};",
             "f",
             "2",
         ),
         (
             "defer does not change the returned value",
-            "fn f() { txt x = \"a\"; defer { x = \"b\"; }; return x; };\nfn main() {};",
+            "fn f() { txt x = \"a\"; defer { x = \"b\"; }; return(x); };\nfn main() {};",
             "f",
             "a",
         ),
         (
             "defer body uses its own local",
-            "fn f() { txt x = \"a\"; defer { txt y = \"b\"; x = y; }; return x; };\nfn main() {};",
+            "fn f() { txt x = \"a\"; defer { txt y = \"b\"; x = y; }; return(x); };\nfn main() {};",
             "f",
             "a",
         ),
         (
             "module values are evaluated once at startup",
-            "txt base = \"a\";\ntxt derived = base + \"b\";\nfn f() { return derived + base; };\nfn main() {};",
+            "txt base = \"a\";\ntxt derived = base + \"b\";\nfn f() { return(derived + base); };\nfn main() {};",
             "f",
             "aba",
         ),
@@ -131,7 +131,7 @@ fn switch_takes_the_first_match_then_default() {
              case(a) { found = \"two\"; };\n\
              default { found = \"other\"; };\n\
            };\n\
-           return found;\n\
+           return(found);\n\
          };\n\
          fn main() {};",
     );
@@ -146,15 +146,15 @@ fn switch_takes_the_first_match_then_default() {
 }
 
 #[test]
-fn run_out_field_captures_stdout() {
-    let runtime = runtime("fn f() { return std::run(\"echo hi\").out; };\nfn main() {};");
-    assert_eq!(call_text(&runtime, "f"), "hi");
+fn run_returns_the_exit_code() {
+    let runtime = runtime("fn f() { return(std::run(\"exit 3\")); };\nfn main() {};");
+    assert_eq!(call_text(&runtime, "f"), "3");
 }
 
 #[test]
-fn run_code_field_binds_the_exit_code() {
-    let runtime = runtime("fn f() { return std::run(\"exit 3\").code; };\nfn main() {};");
-    assert_eq!(call_text(&runtime, "f"), "3");
+fn run_returns_zero_on_success() {
+    let runtime = runtime("fn f() { return(std::run(\"true\")); };\nfn main() {};");
+    assert_eq!(call_text(&runtime, "f"), "0");
 }
 
 #[test]
@@ -162,7 +162,7 @@ fn a_bare_run_statement_runs() {
     let directory = tempfile::tempdir().expect("temp dir");
     let marker = directory.path().join("ran");
     let source = format!(
-        "fn f() {{ std::run(\"touch {}\"); return \"ok\"; }};\nfn main() {{}};",
+        "fn f() {{ std::run(\"touch {}\"); return(\"ok\"); }};\nfn main() {{}};",
         marker.display()
     );
     assert_eq!(call_text(&runtime(&source), "f"), "ok");
@@ -195,8 +195,8 @@ fn panic_runs_pending_defers() {
 #[test]
 fn async_does_not_wait_for_the_call() {
     let runtime = runtime(
-        "fn worker() { return \"w\"; };\n\
-         fn f() { std::async(worker()); return \"done\"; };\n\
+        "fn worker() { return(\"w\"); };\n\
+         fn f() { async worker(); return(\"done\"); };\n\
          fn main() {};",
     );
     assert_eq!(call_text(&runtime, "f"), "done");
@@ -208,7 +208,7 @@ fn wait_blocks_until_the_thread_finishes() {
     let marker = directory.path().join("finished");
     let source = format!(
         "fn worker() {{ std::run(\"sleep 0.2; touch {}\"); }};\n\
-         fn f() {{ std::async(worker()); std::wait(); return \"done\"; }};\n\
+         fn f() {{ async worker(); wait; return(\"done\"); }};\n\
          fn main() {{}};",
         marker.display()
     );
@@ -225,11 +225,11 @@ fn wait_joins_every_outstanding_thread() {
     let source = format!(
         "fn work(txt marker) {{ std::run(\"sleep 0.2; touch \" + marker); }};\n\
          fn f() {{\n\
-           std::async(work(\"{first}\"));\n\
-           std::async(work(\"{second}\"));\n\
-           std::async(work(\"{third}\"));\n\
-           std::wait();\n\
-           return \"done\";\n\
+           async work(\"{first}\");\n\
+           async work(\"{second}\");\n\
+           async work(\"{third}\");\n\
+           wait;\n\
+           return(\"done\");\n\
          }};\nfn main() {{}};",
         first = first.display(),
         second = second.display(),
@@ -246,10 +246,10 @@ fn a_second_wait_returns_immediately() {
     let runtime = runtime(
         "fn worker() {};\n\
          fn f() {\n\
-           std::async(worker());\n\
-           std::wait();\n\
-           std::wait();\n\
-           return \"done\";\n\
+           async worker();\n\
+           wait;\n\
+           wait;\n\
+           return(\"done\");\n\
          };\n\
          fn main() {};",
     );
@@ -259,8 +259,8 @@ fn a_second_wait_returns_immediately() {
 #[test]
 fn wait_inside_a_spawned_thread_returns_without_joining_its_spawner() {
     let runtime = runtime(
-        "fn worker() { std::wait(); };\n\
-         fn f() { std::async(worker()); std::wait(); return \"done\"; };\n\
+        "fn worker() { wait; };\n\
+         fn f() { async worker(); wait; return(\"done\"); };\n\
          fn main() {};",
     );
     assert_eq!(call_text(&runtime, "f"), "done");
@@ -272,8 +272,8 @@ fn wait_inside_a_spawned_thread_joins_its_own_children() {
     let marker = directory.path().join("finished");
     let source = format!(
         "fn child() {{ std::run(\"sleep 0.2; touch {}\"); }};\n\
-         fn worker() {{ std::async(child()); std::wait(); }};\n\
-         fn f() {{ std::async(worker()); std::wait(); return \"done\"; }};\n\
+         fn worker() {{ async child(); wait; }};\n\
+         fn f() {{ async worker(); wait; return(\"done\"); }};\n\
          fn main() {{}};",
         marker.display()
     );
@@ -288,7 +288,7 @@ fn wait_inside_a_spawned_thread_joins_its_own_children() {
 fn panic_in_an_async_thread_sets_the_panicked_flag() {
     let runtime = runtime(
         "fn worker() { panic; };\n\
-         fn f() { std::async(worker()); return \"done\"; };\n\
+         fn f() { async worker(); return(\"done\"); };\n\
          fn main() {};",
     );
     // The detached panic can reach the caller before or after `f` returns.
@@ -308,9 +308,9 @@ fn panic_in_a_waited_thread_is_remembered_without_stopping_the_caller() {
     let runtime = runtime(
         "fn worker() { panic; };\n\
          fn f() {\n\
-           std::async(worker());\n\
-           std::wait();\n\
-           return \"done\";\n\
+           async worker();\n\
+           wait;\n\
+           return(\"done\");\n\
          };\n\
          fn main() {};",
     );
@@ -330,9 +330,9 @@ fn async_over_a_run_call_runs_on_the_thread() {
     let marker = directory.path().join("ran");
     let source = format!(
         "fn f() {{\n\
-           std::async(std::run(\"touch {}\"));\n\
-           std::wait();\n\
-           return \"done\";\n\
+           async std::run(\"touch {}\");\n\
+           wait;\n\
+           return(\"done\");\n\
          }};\n\
          fn main() {{}};",
         marker.display()
@@ -347,9 +347,9 @@ fn async_of_a_command_call_runs_in_its_directory() {
     let marker = directory.path().join("ran");
     let source = format!(
         "fn f() {{\n\
-           std::async(std::command({{ Dir = \"{}\" }}, \"touch ran\"));\n\
-           std::wait();\n\
-           return \"done\";\n\
+           async std::command({{ Dir = \"{}\" }}, \"touch ran\");\n\
+           wait;\n\
+           return(\"done\");\n\
          }};\n\
          fn main() {{}};",
         directory.path().display()
@@ -369,10 +369,10 @@ fn a_panic_in_one_thread_does_not_cancel_another_threads_command() {
         "fn worker() {{ panic; }};\n\
          fn other() {{ std::run(\"sleep 0.2; touch {}\"); }};\n\
          fn f() {{\n\
-           std::async(worker());\n\
-           std::async(other());\n\
-           std::wait();\n\
-           return \"done\";\n\
+           async worker();\n\
+           async other();\n\
+           wait;\n\
+           return(\"done\");\n\
          }};\n\
          fn main() {{}};",
         marker.display()
@@ -396,7 +396,7 @@ fn a_panic_in_a_defer_does_not_stop_the_other_defers() {
            defer {{ std::run(\"touch {first}\"); }};\n\
            defer {{ panic; }};\n\
            defer {{ std::run(\"touch {last}\"); }};\n\
-           return \"\";\n\
+           return(\"\");\n\
          }};\n\
          fn main() {{}};",
         first = first.display(),

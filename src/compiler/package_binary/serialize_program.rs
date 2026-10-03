@@ -4,18 +4,18 @@ use crate::compiler::Program;
 
 /// Serialize a linked and checked program to the payload a compiled binary
 /// carries.
-pub(crate) fn capture(program: &Program) -> Result<Vec<u8>, String> {
+pub(crate) fn serialize_program(program: &Program) -> Result<Vec<u8>, String> {
     postcard::to_allocvec(program).map_err(|error| error.to_string())
 }
 
 /// Recover the program from a payload read out of an executable.
-pub(crate) fn restore(bytes: &[u8]) -> Result<Program, String> {
+pub(crate) fn deserialize_program(bytes: &[u8]) -> Result<Program, String> {
     postcard::from_bytes(bytes).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::compiler::{check, link, loader};
+    use crate::compiler::{load_files, resolve_names, validate_program};
 
     #[test]
     fn program_round_trips_through_bytes() {
@@ -28,12 +28,12 @@ mod tests {
              fn main() { std::print(title); };",
         )
         .expect("write file");
-        let mut loaded = loader::load(&path).expect("loads");
-        let mut program = link::link(&mut loaded).expect("links");
-        check::analyze(&mut program).expect("checks");
+        let mut loaded = load_files::load_files(&path).expect("loads");
+        let mut program = resolve_names::resolve_names(&mut loaded).expect("links");
+        validate_program::validate_program(&mut program).expect("checks");
 
-        let bytes = super::capture(&program).expect("serializes");
-        let restored = super::restore(&bytes).expect("deserializes");
+        let bytes = super::serialize_program(&program).expect("serializes");
+        let restored = super::deserialize_program(&bytes).expect("deserializes");
         assert_eq!(restored.entry, program.entry);
         assert_eq!(restored.declarations.len(), program.declarations.len());
         assert!(

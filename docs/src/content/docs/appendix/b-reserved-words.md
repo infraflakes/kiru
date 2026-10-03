@@ -7,6 +7,7 @@ These words are reserved and may not be used as names:
 
 ```text
 module  import  fn  txt  rec  switch  case  default  defer  return  panic
+async  wait
 ```
 
 plus the `std` namespace.
@@ -24,13 +25,14 @@ plus the `std` namespace.
 | `case` | a switch pattern |
 | `default` | the fallback arm |
 | `defer` | register cleanup |
-| `return` | end a function early, with a value or without |
+| `return` | end a function early, with `return();` or `return(expr);` |
 | `panic` | end the run |
+| `async` | start a call on its own thread |
+| `wait` | join the calling thread's asyncs |
 
 ## Everything Else Is Free
 
-`command`, `async`, `wait`, and `print` are not reserved; the shipped ones
-are reached with `std::`. A program may declare its own `command` function in
-its own namespace, and `std::command` remains the shipped one. `txt` and
-`rec` are keywords, but `var` and `record` are ordinary identifiers a program
-may use.
+`command`, `print`, and `quote` are not reserved; the shipped ones are reached
+with `std::`. A program may declare its own `command` function in its own
+namespace, and `std::command` remains the shipped one. `txt` and `rec` are
+keywords, but `var` and `record` are ordinary identifiers a program may use.

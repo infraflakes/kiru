@@ -10,7 +10,7 @@ A statement can be a call:
 ```kiru
 fn main() {
   std::print("hello");
-  std::command({ Mode = "stdout" }, "cargo test");
+  std::command({}, "cargo test");
 };
 ```
 
@@ -19,21 +19,22 @@ stands alone as a statement runs the command and binds nothing.
 
 ## A Bare Statement Must Be a Call
 
-A bare expression statement must be a call. A function call, a native call,
-an async spawn, and a wait are all legal:
+A bare expression statement must be a call. A function call and a native call
+are both legal, and the keyword statements `async <call>;`, `wait;`, and
+`panic;` stand bare as well:
 
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
 fn work() {
-  return "";
+  return("");
 };
 
 fn main() {
   work();
-  std::command({ Mode = "stdout" }, "x");
-  std::async(work());
-  std::wait();
+  std::command({}, "x");
+  async work();
+  wait;
   panic;
 };
 ```
@@ -51,25 +52,26 @@ main.kiru:2:3: error: a statement must be a call
 The same error covers `{ k = "v" };` and `a + b;`. Each computes a value
 that nothing uses, so the language asks for a call that does something.
 
-## A Void Call
+## A Nothing Call
 
-A call to a void function has the `nothing` kind, so it may stand only as a
-statement. Binding, passing, or returning it is a compile error; [return and
-void](/language/02-common-concepts/07-return-and-recursion/) shows the
+A call to a function that returns nothing has the `nothing` kind, so it may
+stand only as a statement. Binding, passing, or returning it is a compile
+error; [return and
+nothing](/language/02-common-concepts/07-return-and-recursion/) shows the
 diagnostics.
 
 ## A Command Call Runs
 
-A `std::command` call in a function body runs. The spec's `Mode` decides what
-comes back and whether stdout shows:
+A `std::command` call in a function body runs. It returns its exit code as
+text, and the spec's `Stream` entry decides what is rendered:
 
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
 fn main() {
-  std::command({}, "rm -rf build");                       # runs quietly
-  std::command({ Mode = "stdout" }, "echo hi");           # runs and shows "hi"
-  std::command({ Mode = "exit code" }, "true");           # runs; the code is discarded
+  std::command({}, "rm -rf build");                    # returns "0", renders nothing
+  std::command({}, "echo hi");                         # returns "0", renders hi
+  std::command({ Stream = "null" }, "true");           # returns "0", renders nothing
 };
 ```
 
@@ -78,9 +80,10 @@ $ ./app
 hi
 ```
 
-`Mode = "stdout"` and `Mode = "exit code"` stream stdout live; an empty
-`Mode` discards it. A call used as a statement discards the returned text
-after running.
+Every call returns its exit code, so `"0"` means success. The default
+`Stream` renders stdout and stderr live; `Stream = "stderr"` discards stdout
+and renders stderr, and `Stream = "null"` discards both. A call used as a
+statement discards the returned exit code after running.
 
 ## Call Statements and Functions
 
@@ -90,7 +93,7 @@ A call to a function returning text discards the text:
 
 ```kiru
 fn compute() {
-  return "ignored";
+  return("ignored");
 };
 
 fn main() {
@@ -111,9 +114,9 @@ In a call, arguments are evaluated left to right before the call:
 txt version = "1";
 
 fn main() {
-  std::command({ Mode = "stdout" }, "echo " + version);
+  std::command({}, "echo " + version);
 };
 ```
 
 `version` is resolved before the command runs; the call runs once, when the
-statement executes, and the program prints `1`.
+statement executes, and the program renders `1`.

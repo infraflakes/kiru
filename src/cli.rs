@@ -6,12 +6,12 @@
 //! program's arguments. Otherwise the words select help, version, or a
 //! compilation.
 
-mod args;
-mod compile;
-mod embedded;
-mod help;
+mod compile_request;
+mod parse_arguments;
+mod print_help;
+mod run_embedded;
 
-use args::Request;
+use parse_arguments::Request;
 
 /// A command-line usage error. Its text is printed after the `kc: ` prefix.
 pub(crate) struct CliError(pub(crate) String);
@@ -27,20 +27,22 @@ impl std::fmt::Display for CliError {
 pub(crate) fn run() -> i32 {
     let words: Vec<String> = std::env::args().skip(1).collect();
     if let Ok(executable) = std::env::current_exe()
-        && let Some(bytes) = crate::compiler::read(&executable)
+        && let Some(bytes) = crate::compiler::read_trailer(&executable)
     {
-        return embedded::run(&bytes, &words);
+        return run_embedded::run(&bytes, &words);
     }
-    match args::parse(&words) {
+    match parse_arguments::parse(&words) {
         Ok(Request::Help) => {
-            help::print_help();
+            print_help::print_help();
             0
         }
         Ok(Request::Version) => {
-            help::print_version();
+            print_help::print_version();
             0
         }
-        Ok(Request::Compile { entry, output }) => compile::compile(&entry, output.as_deref()),
+        Ok(Request::Compile { entry, output }) => {
+            compile_request::compile(&entry, output.as_deref())
+        }
         Err(error) => {
             eprintln!("kc: {error}");
             1

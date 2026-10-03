@@ -9,7 +9,7 @@ A function is declared with `fn`:
 
 ```kiru
 fn banner(txt name) {
-  return "=== " + name + " ===";
+  return("=== " + name + " ===");
 };
 ```
 
@@ -25,7 +25,7 @@ allowed, and duplicate parameter names are a compile error.
 
 ```kiru
 fn banner(txt name) {
-  return "=== " + name + " ===";
+  return("=== " + name + " ===");
 };
 
 fn main() {
@@ -52,10 +52,10 @@ main.kiru:6:14: error: `banner` takes 1 arguments, found 0
 Arguments are evaluated left to right before the call. A function cannot be
 used as a value; a bare function name in an expression is an error.
 
-A function may end with `return expr;`, and then it is text or record. A
-function with no `return` is void, and its call may only stand as a
-statement or as the invocation `std::async` spawns; [return and
-void](/language/02-common-concepts/07-return-and-recursion/) covers the
+A function may end with `return(expr);`, and then it is text or record. A
+function with no `return` returns nothing, and its call may only stand as a
+statement; [return and
+nothing](/language/02-common-concepts/07-return-and-recursion/) covers the
 rule.
 
 ## Order of Declarations

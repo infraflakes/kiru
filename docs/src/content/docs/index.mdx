@@ -19,16 +19,17 @@ Compile strict, simple, concurrent programs to self-contained binaries.
 ## Features
 
 - **Commands as the primitive.** `std::run` runs one command line and
-  returns `{ out, code }`, and `std::command` is the record-driven abstraction
+  returns its exit code, and `std::command` is the record-driven abstraction
   over it: a spec whose uppercase entries enable the working directory, the
-  environment, and direnv. See [Running a
+  environment, direnv, and output streaming. `std::quote` escapes text as one
+  shell word. See [Running a
   command](/effects/06-commands/01-building-a-command/).
 - **Statically typed.** Names, arity, and kinds are fixed and checked before a binary is built, so a wrong value cannot reach runtime. See [Types](/language/04-types/01-types/).
 - **Failure and cleanup.** `defer` registers cleanup, a panic records
   failure, and signals stop every process group. See [Failure and
   Cleanup](/effects/08-failure-and-cleanup/01-panic/).
-- **Concurrency.** `std::async` starts a call on its own thread and
-  `std::wait` joins the asyncs the calling thread spawned; the runtime
+- **Concurrency.** `async <call>;` starts a call on its own thread and
+  `wait;` joins the asyncs the calling thread spawned; the runtime
   joins every remaining thread before exit. See
   [Threads](/effects/07-threads/01-threads/).
 - **Self-contained binaries.** A compiled program is one file that holds

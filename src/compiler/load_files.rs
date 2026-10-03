@@ -4,12 +4,12 @@
 //! file, depth first and once per canonical path. Importing a file that is
 //! already being loaded is an import cycle.
 
-mod error;
-mod files;
-mod imports;
-mod loading;
+mod load_error;
+mod loaded_program;
+mod read_entry_and_imports;
+mod resolve_import_paths;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use files::{LoadedProgram, Origin};
-pub(crate) use loading::load;
+pub(crate) use loaded_program::{LoadedProgram, Origin};
+pub(crate) use read_entry_and_imports::load_files;

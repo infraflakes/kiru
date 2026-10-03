@@ -1,199 +1,22 @@
-import "steps.kiru";
+import "entry.kiru";
 
 rec kiru = {
   name = "kiru",
-  dir = ".",
-  direnv = "true",
+  Dir = ".",
+  Direnv = "true"
 };
 
 rec docs = {
   name = "docs",
-  dir = "docs",
-};
-
-fn report(txt label, txt code) {
-  return "  " + label + ": " + code + "\n";
-};
-
-# Sequential checks: collect every code, print the report, then stop if any
-# step failed so the report is never lost.
-fn check_rust() {
-  txt log = "";
-  txt bad = "";
-
-  txt clippy = steps::code_in(kiru, "cargo clippy --all-targets -- -D warnings");
-  log = log + report("clippy", clippy);
-  switch(clippy) { case("0") {}; default { bad = "yes"; }; };
-
-  txt test = steps::code_in(kiru, "cargo test");
-  log = log + report("test", test);
-  switch(test) { case("0") {}; default { bad = "yes"; }; };
-
-  txt fmt = steps::code_in(kiru, "cargo fmt --check");
-  log = log + report("fmt", fmt);
-  switch(fmt) { case("0") {}; default { bad = "yes"; }; };
-
-  std::print(log);
-  switch(bad) { case("") {}; default { std::eprint("a rust step failed"); }; };
-};
-
-fn check_docs() {
-  txt log = "";
-  txt bad = "";
-
-  txt biome = steps::code_in(docs, "biome check .");
-  log = log + report("biome", biome);
-  switch(biome) { case("0") {}; default { bad = "yes"; }; };
-
-  txt types = steps::code_in(docs, "bun run types");
-  log = log + report("types", types);
-  switch(types) { case("0") {}; default { bad = "yes"; }; };
-
-  std::print(log);
-  switch(bad) { case("") {}; default { std::eprint("a docs step failed"); }; };
-};
-
-fn check_all() {
-  check_rust();
-  check_docs();
-};
-
-# Parallel checks: every step runs on its own thread, then std::wait joins
-# them all before the run continues.
-fn check_parallel() {
-  std::async(steps::run_in(kiru, "cargo clippy --all-targets -- -D warnings"));
-  std::async(steps::run_in(kiru, "cargo fmt --check"));
-  std::async(steps::run_in(docs, "biome check ."));
-  std::wait();
-  std::print("parallel checks finished");
-};
-
-fn build_release() {
-  steps::run_in(kiru, "cargo build --release");
-};
-
-fn build_nix() {
-  steps::run_in(kiru, "nix build .#default");
-};
-
-fn build_container() {
-  txt runtime = steps::capture("command -v docker || command -v podman");
-  switch(runtime) {
-    case("") { std::eprint("no container runtime found"); };
-    default {
-      std::print("building container with " + runtime);
-      steps::run_in(kiru, runtime + " build --output type=local,dest=bin .");
-    };
-  };
-};
-
-fn clean() {
-  steps::run_in(kiru, "rm -rf bin result");
-  std::print("cleaned bin and result");
-};
-
-# Apply the fixes clippy and rustfmt can make, then leave the tree formatted.
-fn format() {
-  steps::run_in(kiru, "cargo clippy --fix --allow-dirty");
-  steps::run_in(kiru, "cargo fmt");
-  std::print("formatted");
-};
-
-fn update() {
-  steps::run_in(kiru, "cargo update");
-  steps::run_in(kiru, "cargo upgrade");
-  steps::run_in(kiru, "nix flake update");
-  std::print("updated dependencies");
-};
-
-# CI runs the checks and the release build at the same time.
-fn ci() {
-  std::async(check_rust());
-  std::async(build_release());
-  std::wait();
-  std::print("ci finished");
-};
-
-fn build_docs() {
-  steps::run_in(docs, "bun install --frozen-lockfile");
-  steps::run_in(docs, "bun run build");
-};
-
-fn serve_docs() {
-  steps::run_in(docs, "bun run preview");
-};
-
-# A release builds the binary, packs it in a temporary directory, and copies
-# the archive out before the defer cleans the directory up.
-fn release() {
-  txt scratch = steps::capture("mktemp -d");
-  defer {
-    std::command({ Mode = "stdout" }, "rm -rf " + scratch);
-  };
-  build_release();
-  steps::run("tar -czf " + scratch + "/kc.tar.gz -C target/release kc");
-  steps::run("cp " + scratch + "/kc.tar.gz kc.tar.gz");
-  std::print("wrote kc.tar.gz");
-};
-
-txt usage_kiru = "usage: kiru <flag>
-
-flags:
-  (none)          sequential rust and docs checks
-  check           same as no flag
-  check-rust      rust checks only
-  check-docs      docs checks only
-  check-parallel  parallel streaming checks
-  build           cargo build --release
-  build-nix       nix build .#default
-  build-container docker or podman build into bin
-  clean           remove bin and result
-  format          apply clippy and rustfmt fixes
-  update          cargo update, cargo upgrade, nix flake update
-  ci              checks and release build in parallel
-  release         build the binary and pack kc.tar.gz";
-
-txt usage_docs = "usage: docs <flag>
-
-flags:
-  (none)  build the site
-  check   check the site
-  serve   preview the site";
-
-txt usage = usage_kiru + "\n\n" + usage_docs;
-
-fn kiru_command(txt flag) {
-  switch(flag) {
-    case("") { check_all(); };
-    case("check") { check_all(); };
-    case("check-rust") { check_rust(); };
-    case("check-docs") { check_docs(); };
-    case("check-parallel") { check_parallel(); };
-    case("build") { build_release(); };
-    case("build-nix") { build_nix(); };
-    case("build-container") { build_container(); };
-    case("clean") { clean(); };
-    case("format") { format(); };
-    case("update") { update(); };
-    case("ci") { ci(); };
-    case("release") { release(); };
-    default { std::eprint(usage_kiru); };
-  };
-};
-
-fn docs_command(txt flag) {
-  switch(flag) {
-    case("") { build_docs(); };
-    case("check") { check_docs(); };
-    case("serve") { serve_docs(); };
-    default { std::eprint(usage_docs); };
-  };
+  Dir = "docs",
+  Direnv = "true"
 };
 
 fn main(rec args) {
   switch(args.cmd) {
-    case("kiru") { kiru_command(args.flag); };
-    case("docs") { docs_command(args.flag); };
-    default { std::eprint(usage); };
+    case("kiru") { kiru::kiru_command(kiru, args.flag); };
+    case("docs") { kiru::docs_command(docs, args.flag); };
+    case("all") { kiru::all_command(kiru, docs, args.flag); };
+    default { std::eprint(kiru::usage); };
   };
 };

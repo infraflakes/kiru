@@ -10,11 +10,11 @@ fn work(rec project) {
   };
 
   log = log + "x";
-  std::async(work());
-  std::wait();
-  std::command({ Env = "KIRU_MESSAGE=" + log, Mode = "stdout" }, "echo hi");
+  async work();
+  wait;
+  std::command({ Env = "KIRU_MESSAGE=" + log }, "echo hi");
   defer {
-    std::command({ Mode = "stdout" }, "rm -rf " + log);
+    std::command({ Stream = "null" }, "rm -rf " + log);
   };
   panic;
 };
@@ -34,11 +34,12 @@ fn work(rec project) {
           (string)))
       (record_binding
         (identifier)
-        (record_literal
-          (record_field
-            (identifier)
-            (expression
-              (string)))))
+        (expression
+          (record_literal
+            (record_field
+              (identifier)
+              (expression
+                (string))))))
       (assignment_statement
         (identifier)
         (expression
@@ -48,27 +49,13 @@ fn work(rec project) {
                 (identifier)))
             (expression
               (string)))))
-      (expression_statement
+      (async_statement
         (expression
           (call_expression
             (path
-              (namespace
-                (identifier))
-              (identifier))
-            (argument_list
-              (expression
-                (call_expression
-                  (path
-                    (identifier))
-                  (argument_list)))))))
-      (expression_statement
-        (expression
-          (call_expression
-            (path
-              (namespace
-                (identifier))
               (identifier))
             (argument_list))))
+      (wait_statement)
       (expression_statement
         (expression
           (call_expression
@@ -87,11 +74,7 @@ fn work(rec project) {
                           (string))
                         (expression
                           (path
-                            (identifier))))))
-                  (record_field
-                    (identifier)
-                    (expression
-                      (string)))))
+                            (identifier))))))))
               (expression
                 (string))))))
       (defer_statement

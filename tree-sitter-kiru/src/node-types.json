@@ -41,6 +41,22 @@
     }
   },
   {
+    "type": "async_statement",
+    "named": true,
+    "fields": {
+      "call": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "expression",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "binary_expression",
     "named": true,
     "fields": {
@@ -89,6 +105,10 @@
           "named": true
         },
         {
+          "type": "async_statement",
+          "named": true
+        },
+        {
           "type": "defer_statement",
           "named": true
         },
@@ -114,6 +134,10 @@
         },
         {
           "type": "text_binding",
+          "named": true
+        },
+        {
+          "type": "wait_statement",
           "named": true
         }
       ]
@@ -477,7 +501,7 @@
         "required": true,
         "types": [
           {
-            "type": "record_literal",
+            "type": "expression",
             "named": true
           }
         ]
@@ -635,6 +659,11 @@
     }
   },
   {
+    "type": "wait_statement",
+    "named": true,
+    "fields": {}
+  },
+  {
     "type": "(",
     "named": false
   },
@@ -664,6 +693,10 @@
   },
   {
     "type": "=",
+    "named": false
+  },
+  {
+    "type": "async",
     "named": false
   },
   {
@@ -721,6 +754,10 @@
   },
   {
     "type": "txt",
+    "named": false
+  },
+  {
+    "type": "wait",
     "named": false
   },
   {

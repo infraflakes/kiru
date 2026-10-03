@@ -1,4 +1,4 @@
-use super::link;
+use super::resolve_names;
 use crate::compiler::{DeclarationKind, Expression, Program, Statement};
 
 fn linked(files: &[(&str, &str)], entry: &str) -> Result<Program, String> {
@@ -7,8 +7,9 @@ fn linked(files: &[(&str, &str)], entry: &str) -> Result<Program, String> {
         let path = directory.path().join(name);
         std::fs::write(&path, source).expect("write file");
     }
-    let mut program = crate::compiler::loader::load(&directory.path().join(entry)).expect("loads");
-    link(&mut program).map_err(|diagnostic| diagnostic.message)
+    let mut program =
+        crate::compiler::load_files::load_files(&directory.path().join(entry)).expect("loads");
+    resolve_names(&mut program).map_err(|diagnostic| diagnostic.message)
 }
 
 fn accept(files: &[(&str, &str)], entry: &str) -> Program {

@@ -32,7 +32,7 @@ txt app = "kiru";          # visible below
 fn show() {
   txt local = "x";         # visible only inside show
   std::print(app + local);
-  return "";
+  return("");
 };
 ```
 

@@ -1,12 +1,12 @@
-//! Running a compiled program: the interpreter, threads, defers, and the
-//! process kernel.
+//! Running a compiled program: the run loop, threads, defers, and the process
+//! kernel.
 
-mod interpreter;
-mod process;
+mod manage_processes;
+mod run_program;
 
 #[cfg(test)]
-pub(crate) use interpreter::Runtime;
-pub(crate) use interpreter::run;
+pub(crate) use run_program::Runtime;
+pub(crate) use run_program::run;
 
 /// A failure that unwinds the body that raised it and runs its defers. It
 /// leaves every other body running; the run exits nonzero once the entry body

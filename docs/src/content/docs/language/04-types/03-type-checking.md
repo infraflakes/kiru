@@ -18,7 +18,7 @@ declared kind. Here `message` is declared `txt`, so it accepts text:
 ```kiru
 fn announce(txt message) {
   std::print(message);
-  return "";
+  return("");
 };
 
 fn main() {
@@ -33,7 +33,7 @@ any record:
 
 ```kiru
 fn run_spec(rec spec, txt line) {
-  return std::command(spec, line);
+  return(std::command(spec, line));
 };
 ```
 
@@ -59,11 +59,14 @@ Every expression has a kind without inference:
 - `left + right` is text, and both sides must be text;
 - a field access is text, and its receiver must be a record;
 - a call takes the kind of its callee: text or record when the function
-  returns, or `nothing` when it is void;
-- a native call takes the kind its registry row declares, so `std::run` is a
-  record and `std::wait` is `nothing`.
+  returns, or `nothing` when it returns no value;
+- a native call takes the kind its registry row declares, so `std::run`
+  returns text;
+- a shipped Kiru function has its kind derived like any other, so `std::print`
+  returns nothing.
 
-A function with a value return is that kind; a function without one is void.
+A function whose returns share one kind has that kind; a function with no
+return, or whose returns have no common kind, is `nothing`.
 There is no unconstrained return to settle later, and no cycle in the kinds
 to converge.
 

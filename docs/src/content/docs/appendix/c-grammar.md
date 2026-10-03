@@ -14,7 +14,7 @@ import      := "import" string ";"
 declaration := function | text | record
 function    := "fn" ident "(" params? ")" block ";"
 text        := "txt" ident "=" expression ";"
-record      := "rec" ident "=" fields ";"
+record      := "rec" ident "=" expression ";"
 
 params      := kind ident ("," kind ident)* ","?
 kind        := "txt" | "rec"
@@ -27,8 +27,10 @@ statement   := text
              | record
              | assignment
              | expression ";"
-             | "return" expression? ";"
+             | "return" "(" expression? ")" ";"
              | "panic" ";"
+             | "async" expression ";"
+             | "wait" ";"
              | "switch" "(" expression ")" switch ";"
              | "defer" block ";"
 assignment  := ident "=" expression ";"
@@ -67,13 +69,17 @@ error. There are no numeric literals.
   `fn ... { ... };`, `switch(...) { ... };`, `defer { ... };`.
 - A `path` may open with `::` to name the root namespace: `::value` and
   `::func()`.
-- A `return` has no parentheses: `return;` ends a void function, and
-  `return expr;` returns a value. It may appear anywhere except inside
-  `defer`.
+- A `return` is parenthesized: `return();` ends a `nothing` function, and
+  `return(expr);` returns text or record. It may appear anywhere, including
+  inside `defer`, where it ends that defer body and its value is discarded.
 - `panic;` is a keyword statement that ends the run.
+- `async <call>;` spawns a call on its own thread and binds nothing; `wait;`
+  joins the asyncs the calling thread spawned.
+- A `rec` binding takes an expression that is a record literal, a record
+  variable, or a call returning a record.
 - Each parameter declares its kind before its name: `txt` is text and `rec`
   is a record. `main` takes at most one parameter, and it must be `rec`.
 - A bare statement must be a call; a lone value is a compile error.
 - A term with no arguments after `.` is a field access.
 - The reserved words are `module`, `import`, `fn`, `txt`, `rec`, `switch`,
-  `case`, `default`, `defer`, `return`, and `panic`.
+  `case`, `default`, `defer`, `return`, `panic`, `async`, and `wait`.

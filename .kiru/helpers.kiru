@@ -1,0 +1,25 @@
+module kiru;
+
+# Sequential step: stream the command's output; a non-zero exit stops the run.
+fn run(rec project, txt line) {
+  std::log("Running '" + line + "'");
+  txt code = std::command({
+    Dir = project.Dir,
+    Env = project.Env,
+    Direnv = project.Direnv,
+  }, line);
+  switch(code) {
+    case("0") { std::log("'" + line + "' ran successfully"); };
+    default { std::eprint("'" + line + "' failed"); };
+  };
+};
+
+# Orchestrated step: hide stdout, keep stderr for debugging, return the code.
+fn status(rec project, txt line) {
+  return(std::command({
+    Dir = project.Dir,
+    Env = project.Env,
+    Direnv = project.Direnv,
+    Stream = "stderr",
+  }, line));
+};

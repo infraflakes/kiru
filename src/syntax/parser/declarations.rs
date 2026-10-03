@@ -85,17 +85,19 @@ impl Parser {
         })
     }
 
-    /// Parse a `rec name = { ... };` declaration or statement.
+    /// Parse a `rec name = expression;` declaration or statement. The
+    /// expression is a record literal, a record variable, or a call returning
+    /// a record.
     pub(super) fn parse_rec_binding(&mut self) -> Result<RecBinding, ParseError> {
         let start = self.advance().start;
         let (name, name_span) = self.expect_identifier("in a record binding")?;
         self.expect(&TokenKind::Equals, "after the binding name")?;
-        let (fields, _) = self.parse_record_fields()?;
-        let span = self.span_through_semicolon(start, "after the record")?;
+        let value = self.parse_expression()?;
+        let span = self.span_through_semicolon(start, "after the initializer")?;
         Ok(RecBinding {
             name,
             name_span,
-            fields,
+            value,
             span,
         })
     }

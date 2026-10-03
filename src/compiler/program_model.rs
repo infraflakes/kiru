@@ -1,25 +1,25 @@
-//! The program model: files, namespaces, declarations, bindings, and linked
+//! The program graph: files, namespaces, declarations, bindings, and resolved
 //! expressions.
 //!
 //! A declaration is a node with identity, a reference is an edge to a node,
-//! and results a phase derives are properties of nodes. No phase keeps a
-//! table keyed by position; linking resolves every name, and no later phase
-//! repeats that work.
+//! and results a stage derives are properties of nodes. No stage keeps a table
+//! keyed by position; the resolution stage resolves every name, and no later
+//! stage repeats that work.
 
-mod kinds;
+mod callable_registry;
 mod nodes;
-mod registry;
-mod visit;
+mod traverse_program;
+mod value_kinds;
 
-pub(crate) use kinds::{Kind, Position, fits};
+pub(crate) use callable_registry::{
+    BUILTIN_NAMESPACE, ENTRY_FUNCTION, NATIVE_ROWS, Native, Row, native_row,
+};
 pub(crate) use nodes::{
     BindingKind, Case, Declaration, DeclarationId, DeclarationKind, Derived, Expression, Field,
     File, FileId, Function, NameTable, Namespace, NamespaceId, Program, Record, Statement, Value,
     namespace_path,
 };
-pub(crate) use registry::{
-    Accept, BUILTIN_NAMESPACE, ENTRY_FUNCTION, NATIVE_ROWS, Native, native_row,
-};
-pub(crate) use visit::{
+pub(crate) use traverse_program::{
     Visitor, VisitorMut, walk_expression, walk_expression_mut, walk_statements, walk_statements_mut,
 };
+pub(crate) use value_kinds::{Kind, Position, fits};

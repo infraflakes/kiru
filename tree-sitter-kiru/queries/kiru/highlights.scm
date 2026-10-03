@@ -27,6 +27,8 @@
   "defer"
   "return"
   "panic"
+  "async"
+  "wait"
 ] @keyword
 
 ; `fn` introduces a function; `txt` and `rec` are the two value kinds.
@@ -42,9 +44,9 @@
 (identifier) @variable
 
 ; Kiru has one kind of callable. A function in the root namespace, a function
-; in another namespace, a function the standard library provides and a method
-; on a value are all entries in one registry, so all of them are named the
-; same color as the function they are declared by.
+; in another namespace and a function the standard library provides are all
+; entries in one registry, so all of them are named the same color as the
+; function they are declared by.
 (function_declaration
   name: (identifier) @function)
 

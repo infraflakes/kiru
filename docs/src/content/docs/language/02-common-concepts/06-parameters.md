@@ -10,7 +10,7 @@ Each parameter declares its kind before its name: `txt` accepts text and
 
 ```kiru
 fn clone(rec repo) {
-  return std::command({ Env = "URL='" + repo.url + "' DIR='" + repo.dir + "'", Mode = "exit code" }, "git clone \"$URL\" \"$DIR\"");
+  return(std::command({ Env = "URL='" + repo.url + "' DIR='" + repo.dir + "'" }, "git clone \"$URL\" \"$DIR\""));
 };
 
 fn main() {
@@ -40,7 +40,7 @@ The command spec is an ordinary record and the line is text, so a helper can
 take both and call `std::command` itself. A function that runs a command in a
 directory takes a record and a command line, and builds the call inside. A
 `panic;` is a statement, not a value, so it cannot be passed as an argument;
-`std::async` takes a call, not a statement.
+`async` takes a call, not a statement.
 
 ## Read-Only
 
@@ -56,7 +56,7 @@ A function may return a parameter:
 
 ```kiru
 fn identity(txt value) {
-  return value;
+  return(value);
 };
 
 fn main() {

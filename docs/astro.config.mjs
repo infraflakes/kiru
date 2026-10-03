@@ -136,9 +136,9 @@ export default defineConfig({
               slug: 'effects/06-commands/01-building-a-command',
             },
             { label: '6.2 Builders', slug: 'effects/06-commands/02-builders' },
-            { label: '6.3 Terminals', slug: 'effects/06-commands/03-terminals' },
+            { label: '6.3 Streaming Levels', slug: 'effects/06-commands/03-terminals' },
             {
-              label: '6.4 Streaming and Capturing',
+              label: '6.4 Output and Errors',
               slug: 'effects/06-commands/04-streaming-and-capturing',
             },
             {

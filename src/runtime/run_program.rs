@@ -3,13 +3,13 @@
 //!
 //! Module values are evaluated once at startup, before `main`. Names are
 //! edges: a reference reads the environment of the running body or the
-//! program's value table. `std::async` starts an OS thread; `std::wait`
+//! program's value table. The `async` keyword starts an OS thread; `wait`
 //! joins the threads the calling thread spawned. This module owns the run
 //! loop, the runtime handle, and the shared helpers; the grammar layers live
 //! in the expression and statement submodules.
 
-mod expressions;
-mod statements;
+mod evaluate_expressions;
+mod execute_statements;
 
 #[cfg(test)]
 mod tests;
@@ -22,7 +22,7 @@ use crate::compiler::{
 };
 use crate::runtime::Panic;
 
-use super::process::{self, RuntimeState};
+use super::manage_processes::{self as process, RuntimeState};
 
 /// The bindings one body runs with. A function call starts an empty
 /// environment and binds its parameter nodes; nested blocks share it.
@@ -31,7 +31,7 @@ pub(super) type Environment = HashMap<DeclarationId, Value>;
 /// Run a program's entry with the words after the program name. Returns the
 /// process exit code: zero on success, one on failure or panic, and 130 when
 /// a signal arrived.
-pub(crate) fn run(program: Arc<Program>, words: &[String], default_shell: Option<String>) -> i32 {
+pub(crate) fn run(program: Arc<Program>, words: &[String]) -> i32 {
     let arguments = match build_arguments_record(words) {
         Ok(record) => record,
         Err(message) => {
@@ -50,7 +50,7 @@ pub(crate) fn run(program: Arc<Program>, words: &[String], default_shell: Option
     let runtime = Runtime {
         program,
         state: Arc::clone(&state),
-        default_shell,
+        muted: false,
     };
     let started = match runtime.evaluate_module_values() {
         Ok(()) => runtime.call_entry(arguments).is_ok(),
@@ -85,17 +85,20 @@ pub(super) fn build_arguments_record(words: &[String]) -> Result<Record, &'stati
 pub(crate) struct Runtime {
     pub(super) program: Arc<Program>,
     pub(super) state: Arc<RuntimeState>,
-    pub(super) default_shell: Option<String>,
+    /// Whether this thread owns the terminal. Only the entry thread does, so a
+    /// thread spawned by `async` writes nothing to stdout or stderr.
+    pub(super) muted: bool,
 }
 
 impl Runtime {
     /// Call the entry, passing the args record when the entry takes one.
     fn call_entry(&self, arguments: Record) -> Result<Value, Panic> {
         let entry = self.program.entry;
-        let DeclarationKind::Function(function) = &self.program.declaration(entry).kind else {
+        let declaration = self.program.declaration(entry);
+        let DeclarationKind::Function(_) = &declaration.kind else {
             return Err(self.fail());
         };
-        let arguments = if function.parameters.is_empty() {
+        let arguments = if declaration.parameters.is_empty() {
             Vec::new()
         } else {
             vec![Value::Record(arguments)]
@@ -109,15 +112,15 @@ impl Runtime {
         declaration: DeclarationId,
         arguments: Vec<Value>,
     ) -> Result<Value, Panic> {
-        let DeclarationKind::Function(function) = &self.program.declaration(declaration).kind
-        else {
+        let node = self.program.declaration(declaration);
+        let DeclarationKind::Function(function) = &node.kind else {
             return Err(self.fail());
         };
-        if function.parameters.len() != arguments.len() {
+        if node.parameters.len() != arguments.len() {
             return Err(self.fail());
         }
         let mut env = Environment::new();
-        for (parameter, argument) in function.parameters.iter().zip(arguments) {
+        for (parameter, argument) in node.parameters.iter().zip(arguments) {
             env.insert(*parameter, argument);
         }
         self.exec_body(&function.body, &mut env)
@@ -143,8 +146,9 @@ impl Runtime {
         for id in ids {
             let env = Environment::new();
             let value = match &self.program.declaration(id).kind {
-                DeclarationKind::Text(expression) => self.eval(expression, &env)?,
-                DeclarationKind::Record(fields) => Value::Record(self.eval_fields(fields, &env)?),
+                DeclarationKind::Text(expression) | DeclarationKind::Record(expression) => {
+                    self.eval(expression, &env)?
+                }
                 _ => continue,
             };
             debug_assert_eq!(
@@ -191,7 +195,7 @@ impl Runtime {
         Runtime {
             program: Arc::clone(&self.program),
             state: Arc::clone(&self.state),
-            default_shell: self.default_shell.clone(),
+            muted: true,
         }
     }
 
@@ -202,20 +206,6 @@ impl Runtime {
     ) -> Result<String, Panic> {
         let value = self.eval(expression, env)?;
         self.text_value(value)
-    }
-
-    /// Evaluate every argument expression in order. The spawn site calls this
-    /// before starting a thread, so a thread body receives plain values.
-    pub(super) fn eval_arguments(
-        &self,
-        arguments: &[Expression],
-        env: &Environment,
-    ) -> Result<Vec<Value>, Panic> {
-        let mut values = Vec::with_capacity(arguments.len());
-        for argument in arguments {
-            values.push(self.eval(argument, env)?);
-        }
-        Ok(values)
     }
 
     /// The text of a value, or a failure when it is not text.
@@ -241,7 +231,7 @@ impl Runtime {
         let runtime = Self {
             program: Arc::new(program),
             state: Arc::new(RuntimeState::new()),
-            default_shell: None,
+            muted: false,
         };
         runtime
             .evaluate_module_values()

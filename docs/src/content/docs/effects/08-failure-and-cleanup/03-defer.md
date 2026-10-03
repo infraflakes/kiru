@@ -10,19 +10,19 @@ on the normal path, on a return, and when a panic unwinds the body.
 
 ```kiru
 fn release() {
-  txt scratch = std::command({ Mode = "stdout" }, "mktemp -d");
+  std::command({}, "mkdir -p /tmp/kiru-release");
 
   defer {
-    std::command({ Mode = "stdout" }, "rm -rf " + scratch);
+    std::command({}, "rm -rf /tmp/kiru-release");
   };
 
-  std::command({ Mode = "stdout" }, "true");
+  std::command({}, "true");
 };
 ```
 
-`mktemp -d` creates a directory and `scratch` binds its path. The defer
-registers a removal that runs when `release` exits, so the directory is
-removed whether the body succeeds or fails.
+The first command creates the staging directory at a known path, and the
+defer registers its removal, so the directory is removed whether the body
+succeeds or fails.
 
 ## LIFO Order
 
@@ -90,13 +90,37 @@ main.kiru:6:14: error: unknown name `temp`
              ^^^^
 ```
 
+## Return Inside a Defer
+
+`return` is allowed inside a defer. It ends that defer body, and its value is
+discarded; the enclosing body still returns normally. Later defers still run:
+
+<span class="filename">Filename: src/main.kiru</span>
+
+```kiru
+fn main() {
+  defer {
+    std::print("cleanup");
+    return();
+    std::print("unreachable");
+  };
+  std::print("body");
+};
+```
+
+```console
+$ ./app
+body
+cleanup
+```
+
 ## Defers and Threads
 
 The runtime joins every remaining thread before the program exits. A
 function that starts a thread and needs its work finished before its own
-return still calls `std::wait()`, which joins the asyncs the calling thread
-spawned. A function started with `std::async` may register its own defers;
-they run when its body ends.
+return still runs `wait;`, which joins the asyncs the calling thread spawned.
+A function started with `async` may register its own defers; they run when its
+body ends.
 
 ## During Unwind
 

@@ -275,7 +275,7 @@
           "name": "value",
           "content": {
             "type": "SYMBOL",
-            "name": "record_literal"
+            "name": "expression"
           }
         },
         {
@@ -329,6 +329,14 @@
         },
         {
           "type": "SYMBOL",
+          "name": "async_statement"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "wait_statement"
+        },
+        {
+          "type": "SYMBOL",
           "name": "switch_statement"
         },
         {
@@ -378,6 +386,10 @@
           "value": "return"
         },
         {
+          "type": "STRING",
+          "value": "("
+        },
+        {
           "type": "CHOICE",
           "members": [
             {
@@ -395,6 +407,10 @@
         },
         {
           "type": "STRING",
+          "value": ")"
+        },
+        {
+          "type": "STRING",
           "value": ";"
         }
       ]
@@ -405,6 +421,40 @@
         {
           "type": "STRING",
           "value": "panic"
+        },
+        {
+          "type": "STRING",
+          "value": ";"
+        }
+      ]
+    },
+    "async_statement": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "async"
+        },
+        {
+          "type": "FIELD",
+          "name": "call",
+          "content": {
+            "type": "SYMBOL",
+            "name": "expression"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": ";"
+        }
+      ]
+    },
+    "wait_statement": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "wait"
         },
         {
           "type": "STRING",

@@ -1,22 +1,24 @@
 # std/io.kiru
 #
-# The command abstraction and the two line writers live at the std root.
+# The command abstraction and the three line writers live at the std root.
 
 module std;
 
-# Run a command line and return the text the caller asked for.
+# Run a command line and return its exit code as text.
 #
 # The spec is the official API; every entry is uppercase, and an absent or
-# empty entry is the default. `Mode` picks the result: "stdout" returns the
-# captured stdout, "exit code" returns the exit code, and an empty mode runs
-# quietly and returns "". `Env` is prepended as exported assignments, `Dir`
-# changes the working directory, and `Direnv` wraps the line with direnv.
+# empty entry is the default. `Dir` changes the working directory, `Env` is
+# prepended as exported assignments, and `Direnv` wraps the line with direnv
+# when it is exactly "true". `Stream` selects what is rendered while the
+# command runs: absent renders both stdout and stderr live, "stderr" hides
+# stdout and renders stderr, and "null" hides both. Nothing is captured;
+# `quote` makes the text safe for the shell.
 fn command(rec spec, txt line) {
   txt command_line = line;
 
   switch(spec.Dir) {
     case("") {};
-    default { command_line = "cd " + spec.Dir + " && " + command_line; };
+    default { command_line = "cd " + quote(spec.Dir) + " && " + command_line; };
   };
 
   switch(spec.Env) {
@@ -25,37 +27,40 @@ fn command(rec spec, txt line) {
   };
 
   switch(spec.Direnv) {
-    case("") {};
-    default { command_line = "direnv exec " + spec.Dir + " sh -c '" + command_line + "'"; };
-  };
-
-  switch(spec.Mode) {
-    case("") {
-      command_line = "{ " + command_line + "; } >/dev/null 2>&1";
-    };
+    case("true") { command_line = "direnv exec " + quote(spec.Dir) + " sh -c " + quote(command_line); };
     default {};
   };
 
-  switch(spec.Mode) {
-    case("stdout")    { return run(command_line).out; };
-    case("exit code") { return run(command_line).code; };
-    default           { run(command_line); return ""; };
+  switch(spec.Stream) {
+    case("stderr") { command_line = "{ " + command_line + "; } > /dev/null"; };
+    case("null") { command_line = "{ " + command_line + "; } > /dev/null 2>&1"; };
+    default {};
   };
+
+  return(run(command_line));
 };
 
-# Write a line to stdout. The message travels through the environment as one
-# single quoted shell word.
+# Write a line to stdout.
 fn print(txt message) {
-  command({ Env = "KIRU_MESSAGE='" + message + "'", Mode = "stdout" }, "printf '%s\\n' \"$KIRU_MESSAGE\"");
+  run("printf '%s\\n' " + quote(message));
 };
 
-# Write a line to stderr and stop the run. An empty message panics silently.
+# Write a prefix and a message, coloring the prefix on a terminal. `color` is
+# an ANSI SGR code and `fd` is "1" for stdout or "2" for stderr.
+fn emit(txt color, txt prefix, txt fd, txt message) {
+  txt quoted = quote(message);
+  txt colored = "'\\033[" + color + "m" + prefix + "\\033[0m %s\\n'";
+  txt plain = "'" + prefix + " %s\\n'";
+  run("if [ -t " + fd + " ]; then printf " + colored + " " + quoted + " >&" + fd + "; else printf " + plain + " " + quoted + " >&" + fd + "; fi");
+};
+
+# Write an "INFO:" line to stdout, yellow on a terminal.
+fn log(txt message) {
+  emit("33", "INFO:", "1", message);
+};
+
+# Write an "ERROR:" line to stderr, red on a terminal, then stop the run.
 fn eprint(txt message) {
-  switch(message) {
-    case("") {};
-    default {
-      command({ Env = "KIRU_MESSAGE='" + message + "'", Mode = "stdout" }, "printf '%s\\n' \"$KIRU_MESSAGE\" >&2");
-    };
-  };
+  emit("31", "ERROR:", "2", message);
   panic;
 };

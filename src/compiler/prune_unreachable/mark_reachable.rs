@@ -19,17 +19,13 @@ pub(super) fn collect_reachable_declarations(program: &Program) -> HashSet<Decla
             continue;
         }
         let declaration = program.declaration(id);
+        collector
+            .pending
+            .extend(declaration.parameters.iter().copied());
         if let Some(function) = declaration.function() {
-            collector
-                .pending
-                .extend(function.parameters.iter().copied());
             walk_statements(&mut collector, &function.body);
         } else if let Some(expression) = declaration.initializer() {
             walk_expression(&mut collector, expression);
-        } else if let Some(fields) = declaration.fields() {
-            for field in fields {
-                walk_expression(&mut collector, &field.value);
-            }
         }
     }
     reachable

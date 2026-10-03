@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::loading::{EMBEDDED, load};
+use super::read_entry_and_imports::{EMBEDDED, load_files};
 use crate::syntax;
 
 fn write(directory: &Path, name: &str, contents: &str) -> PathBuf {
@@ -30,7 +30,7 @@ fn loads_imports_once_and_depth_first() {
     write(directory.path(), "b.kiru", "import \"shared.kiru\";\n");
     write(directory.path(), "shared.kiru", "txt s = \"s\";\n");
 
-    let program = load(&entry).expect("loads");
+    let program = load_files(&entry).expect("loads");
     assert_eq!(program.files.len(), EMBEDDED.len() + 4);
     let order = program.ordered_files();
     assert_eq!(order.len(), 4);
@@ -52,7 +52,7 @@ fn loads_imports_once_and_depth_first() {
 fn reports_missing_import() {
     let directory = tempfile::tempdir().expect("temp dir");
     let entry = write(directory.path(), "entry.kiru", "import \"gone.kiru\";\n");
-    let error = load(&entry).expect_err("missing import fails");
+    let error = load_files(&entry).expect_err("missing import fails");
     assert!(
         error.message.contains("cannot find import gone.kiru"),
         "{}",
@@ -70,7 +70,7 @@ fn reports_import_cycle() {
     let directory = tempfile::tempdir().expect("temp dir");
     let entry = write(directory.path(), "entry.kiru", "import \"a.kiru\";\n");
     write(directory.path(), "a.kiru", "import \"entry.kiru\";\n");
-    let error = load(&entry).expect_err("cycle fails");
+    let error = load_files(&entry).expect_err("cycle fails");
     assert!(error.message.contains("import cycle"), "{}", error.message);
 }
 
@@ -78,7 +78,7 @@ fn reports_import_cycle() {
 fn reports_parse_error_with_file_and_position() {
     let directory = tempfile::tempdir().expect("temp dir");
     let entry = write(directory.path(), "entry.kiru", "fn f( {\n");
-    let error = load(&entry).expect_err("parse error fails");
+    let error = load_files(&entry).expect_err("parse error fails");
     assert!(
         error.render().contains("entry.kiru:1:7"),
         "{}",

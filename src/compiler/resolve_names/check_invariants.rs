@@ -46,16 +46,17 @@ pub(crate) fn verify(program: &Program) {
         if let Some(owner) = declaration.owner {
             assert!(owner.0 < declaration_count);
         }
+        for parameter in &declaration.parameters {
+            assert!(parameter.0 < declaration_count);
+            assert_eq!(program.declaration(*parameter).owner, Some(id));
+        }
         match &declaration.kind {
             DeclarationKind::Function(function) => {
-                for parameter in &function.parameters {
-                    assert!(parameter.0 < declaration_count);
-                    assert_eq!(program.declaration(*parameter).owner, Some(id));
-                }
                 verify_statements(program, &function.body);
             }
-            DeclarationKind::Text(expression) => verify_expression(program, expression),
-            DeclarationKind::Record(fields) => verify_fields(program, fields),
+            DeclarationKind::Text(expression) | DeclarationKind::Record(expression) => {
+                verify_expression(program, expression);
+            }
             DeclarationKind::Binding(binding) => {
                 let _ = binding;
             }
@@ -146,6 +147,8 @@ impl Visitor for StructuralCheck<'_> {
             Statement::Expression(_) => {}
             Statement::Return { span, .. } => assert!(span.start <= span.end),
             Statement::Panic { span } => assert!(span.start <= span.end),
+            Statement::Async { span, .. } => assert!(span.start <= span.end),
+            Statement::Wait { span } => assert!(span.start <= span.end),
             Statement::Switch { span, cases, .. } => {
                 assert!(span.start <= span.end);
                 for case in cases {
@@ -174,12 +177,4 @@ fn verify_statements(program: &Program, statements: &[Statement]) {
 fn verify_expression(program: &Program, expression: &Expression) {
     let mut check = StructuralCheck { program };
     walk_expression(&mut check, expression);
-}
-
-fn verify_fields(program: &Program, fields: &[Field]) {
-    assert_field_spans(fields);
-    let mut check = StructuralCheck { program };
-    for field in fields {
-        walk_expression(&mut check, &field.value);
-    }
 }

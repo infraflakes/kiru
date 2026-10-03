@@ -7,9 +7,9 @@ queries for syntax highlighting and local scope resolution.
 Kiru source files use the `.kiru` extension. The grammar covers the accepted
 syntax in the language spec: an optional `module` path, `import`
 declarations, `fn`/`txt`/`rec` declarations, assignments, `return`,
-`switch`/`case`/`default`, `defer`, `::` qualified paths (including a leading
-`::`), strings that may span lines, and `#` comments. There are no numeric
-literals in kiru.
+`panic`, `async`, `wait`, `switch`/`case`/`default`, `defer`, `::` qualified
+paths (including a leading `::`), strings that may span lines, and `#`
+comments. There are no numeric literals in kiru.
 
 ## Layout
 

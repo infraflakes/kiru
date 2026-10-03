@@ -2,7 +2,7 @@
 
 use crate::compiler::{DeclarationId, DeclarationKind, Expression, Field, Native, Record, Value};
 use crate::runtime::Panic;
-use crate::runtime::process;
+use crate::runtime::manage_processes as process;
 
 use super::{Environment, Runtime};
 
@@ -47,17 +47,40 @@ impl Runtime {
         arguments: &[Expression],
         env: &Environment,
     ) -> Result<Value, Panic> {
-        // `async` takes an invocation rather than a value, so its argument
-        // must not be evaluated here: evaluating it would run the call on the
-        // spawning thread instead of the new one.
-        if matches!(
-            self.program.declaration(callee).kind,
-            DeclarationKind::Native(Native::Async)
-        ) {
-            return self.spawn_thread(arguments, env);
-        }
         let values = self.eval_arguments(arguments, env)?;
         self.invoke_call(callee, values)
+    }
+
+    /// Evaluate every argument expression in order.
+    pub(super) fn eval_arguments(
+        &self,
+        arguments: &[Expression],
+        env: &Environment,
+    ) -> Result<Vec<Value>, Panic> {
+        let mut values = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            values.push(self.eval(argument, env)?);
+        }
+        Ok(values)
+    }
+
+    /// Spawn one call on its own OS thread. The call's arguments are evaluated
+    /// here, at the spawn site; the thread then runs the call with those
+    /// values. The `async` statement calls this.
+    pub(super) fn spawn_call(&self, call: &Expression, env: &Environment) -> Result<(), Panic> {
+        let Expression::Call {
+            callee, arguments, ..
+        } = call
+        else {
+            return Err(self.fail());
+        };
+        let values = self.eval_arguments(arguments, env)?;
+        let callee = *callee;
+        let runtime = self.detached();
+        self.state.spawn_thread(move || {
+            let _ = runtime.invoke_call(callee, values);
+        });
+        Ok(())
     }
 
     /// Run a function or a native with already evaluated arguments. The spawn
@@ -75,46 +98,15 @@ impl Runtime {
                     return Err(self.fail());
                 };
                 let line = self.text_value(value)?;
-                let outcome = process::run(
-                    &self.state,
-                    &line,
-                    true,
-                    true,
-                    self.default_shell.as_deref(),
-                )?;
-                let mut record = Record::new();
-                record.set("out".to_owned(), outcome.output);
-                record.set("code".to_owned(), outcome.code.to_string());
-                Ok(Value::Record(record))
+                let code = process::run(&self.state, &line, self.muted)?;
+                Ok(Value::Text(code.to_string()))
             }
-            DeclarationKind::Native(Native::Wait) => {
-                self.state.join_children(std::thread::current().id());
-                Ok(Value::Nothing)
-            }
-            _ => Err(self.fail()),
-        }
-    }
-
-    /// Start a call on its own OS thread. The invocation's arguments are
-    /// evaluated here, at the spawn site; the thread then runs the call with
-    /// those values. `std::async` yields nothing.
-    fn spawn_thread(&self, arguments: &[Expression], env: &Environment) -> Result<Value, Panic> {
-        let Some(invocation) = arguments.first() else {
-            return Err(self.fail());
-        };
-        match invocation {
-            Expression::Call {
-                callee,
-                arguments: call_arguments,
-                ..
-            } => {
-                let values = self.eval_arguments(call_arguments, env)?;
-                let callee = *callee;
-                let runtime = self.detached();
-                self.state.spawn_thread(move || {
-                    let _ = runtime.invoke_call(callee, values);
-                });
-                Ok(Value::Nothing)
+            DeclarationKind::Native(Native::Quote) => {
+                let Some(value) = values.pop() else {
+                    return Err(self.fail());
+                };
+                let text = self.text_value(value)?;
+                Ok(Value::Text(process::quote_shell_word(&text)))
             }
             _ => Err(self.fail()),
         }

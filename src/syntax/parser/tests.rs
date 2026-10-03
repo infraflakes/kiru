@@ -45,7 +45,7 @@ fn parses_function_with_switch_and_calls() {
         "fn main(rec args) {\n\
            switch(args.cmd) {\n\
              case(\"ci\") { \n\
-               txt code = std::run(\"cargo test\").code;\n\
+               txt code = std::run(\"cargo test\");\n\
                txt done = \"done\" + code;\n\
                std::print(done);\n\
              };\n\
@@ -64,7 +64,7 @@ fn parses_function_with_switch_and_calls() {
 
 #[test]
 fn parses_typed_parameters() {
-    let file = parse("fn f(txt a, rec b) { return a; };");
+    let file = parse("fn f(txt a, rec b) { return(a); };");
     let Declaration::Function(function) = &file.declarations[0] else {
         panic!("expected a function");
     };
@@ -76,7 +76,7 @@ fn parses_typed_parameters() {
 
 #[test]
 fn rejects_a_parameter_without_a_kind() {
-    let message = parse_error("fn f(a) { return a; };");
+    let message = parse_error("fn f(a) { return(a); };");
     assert!(message.contains("expected `txt` or `rec`"), "{message}");
 }
 
@@ -84,17 +84,23 @@ fn rejects_a_parameter_without_a_kind() {
 fn parses_async_call_and_defer() {
     let file = parse(
         "fn run() {\n\
-           std::async(other());\n\
+           async other();\n\
            defer { std::run(\"clean\"); };\n\
-           std::wait();\n\
+           wait;\n\
          };",
     );
     let Declaration::Function(function) = &file.declarations[0] else {
         panic!("expected a function");
     };
-    assert!(matches!(function.body[0], Statement::Expression(_)));
+    assert!(matches!(function.body[0], Statement::Async { .. }));
     assert!(matches!(function.body[1], Statement::Defer { .. }));
-    assert!(matches!(function.body[2], Statement::Expression(_)));
+    assert!(matches!(function.body[2], Statement::Wait { .. }));
+}
+
+#[test]
+fn rejects_nested_async() {
+    let message = parse_error("fn main() { async async work(); };");
+    assert!(message.contains("expected an expression"), "{message}");
 }
 
 #[test]
@@ -117,7 +123,7 @@ fn parses_a_rooted_path() {
 
 #[test]
 fn parses_value_void_and_panic_returns() {
-    let file = parse("fn f(txt a) { return a; };\nfn g() { return; };\nfn h() { panic; };");
+    let file = parse("fn f(txt a) { return(a); };\nfn g() { return(); };\nfn h() { panic; };");
     let Declaration::Function(value) = &file.declarations[0] else {
         panic!("expected a function");
     };
@@ -125,11 +131,11 @@ fn parses_value_void_and_panic_returns() {
         value.body[0],
         Statement::Return { value: Some(_), .. }
     ));
-    let Declaration::Function(void) = &file.declarations[1] else {
+    let Declaration::Function(empty) = &file.declarations[1] else {
         panic!("expected a function");
     };
     assert!(matches!(
-        void.body[0],
+        empty.body[0],
         Statement::Return { value: None, .. }
     ));
     let Declaration::Function(panics) = &file.declarations[2] else {

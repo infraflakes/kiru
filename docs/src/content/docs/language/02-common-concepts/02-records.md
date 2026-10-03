@@ -42,11 +42,13 @@ rec nested = { inner = { a = "1" } };
                        ^^^^^^^^^^^
 ```
 
+A field also rejects a call that returns a record:
+
 ```console
 $ kc main.kiru
-main.kiru:1:24: error: expected text, found record
-rec result = { run = std::run("ls") };
-                       ^^^^^^^^^^^^^^
+main.kiru:1:22: error: expected text, found record
+rec result = { run = spec() };
+                     ^^^^^^
 ```
 
 Both fields are rejected because the value is not text. Because every field
@@ -70,17 +72,19 @@ spec, and are otherwise ordinary values.
 
 ## Records as Arguments
 
-A record literal may appear anywhere a record is expected:
+A record value may appear anywhere a record is expected, and a `rec` binding
+accepts exactly what a text position accepts for a record: a record literal, a
+record variable, or a call returning a record:
 
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
 fn build(txt line, rec spec) {
-  return std::command(spec, line);
+  return(std::command(spec, line));
 };
 
 fn main() {
-  txt code = build("cargo build", { Mode = "exit code" });
+  txt code = build("cargo build", { Stream = "stderr" });
   std::print("code " + code);
 };
 ```

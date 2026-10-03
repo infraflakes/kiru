@@ -1,19 +1,23 @@
 ---
-title: Modes
-description: stdout, exit code, and the empty mode.
+title: Streaming levels
+description: What a command renders while it runs.
 ---
 
-`Mode` decides what `std::command` returns:
+`std::command` renders a command's streams through the `Stream` entry, which
+wraps the line so the hidden streams go to `/dev/null`. Nothing is ever
+captured, so the choice is only about what a person sees:
 
-| Mode | returns |
-| --- | --- |
-| `"stdout"` | the captured stdout |
-| `"exit code"` | the exit code as text |
-| empty | `""`, and the line runs quietly |
+| `Stream` | stdout | stderr |
+| --- | --- | --- |
+| empty | shown live | shown live |
+| `"stderr"` | hidden | shown live |
+| `"null"` | hidden | hidden |
 
-    txt out = std::command({ Mode = "stdout" }, "echo hi");
-    txt code = std::command({ Mode = "exit code" }, "exit 3");
-    std::command({}, "touch built");
+```kiru
+std::command({}, "echo hi");                 # both streams show
+std::command({ Stream = "stderr" }, "make"); # only stderr shows
+std::command({ Stream = "null" }, "make");   # nothing shows
+```
 
-A function has one kind, so `std::command` always returns text; the empty mode
-returns the empty string, which the call site discards.
+`"stderr"` is the usual choice for a parallel step: its stdout is noise, but a
+failure still prints its diagnostics.

@@ -1,6 +1,6 @@
 ---
 title: Bindings
-description: The binding table, and why the void marker cannot be stored.
+description: The binding table, and why the nothing kind cannot be stored.
 ---
 
 Each kind has exactly one binding form. This is the table the compiler
@@ -9,20 +9,20 @@ enforces:
 | Kind | Bound by | Notes |
 | --- | --- | --- |
 | `text` | `txt` | literals, `+`, field access, references, and calls returning text |
-| `record` | `rec` | fields are text expressions only |
-| `nothing` | nothing | a void call; a discarded statement only |
+| `record` | `rec` | a record literal, a record variable, or a call returning a record |
+| `nothing` | nothing | a nothing call; a discarded statement only |
 
 ## Text Binds to txt
 
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
-txt version = std::command({ Mode = "stdout" }, "git describe --always");
+txt code = std::command({}, "git describe --always");
 ```
 
-`std::command` yields text; `txt` stores it. A result is data, so it can also
-stand in a record field or pass as an argument like any other text.
-[Text](/language/02-common-concepts/01-text/) and
+`std::command` yields text, the command's exit code; `txt` stores it. A
+result is data, so it can also stand in a record field or pass as an argument
+like any other text. [Text](/language/02-common-concepts/01-text/) and
 [text concatenation](/language/02-common-concepts/04-text-concatenation/)
 cover the text kind.
 
@@ -39,11 +39,12 @@ rec env = {
 
 Every field is a text expression. Records do not nest;
 [records](/language/02-common-concepts/02-records/) has the full rule. A
-record is bound from a record literal, never from a call.
+record is bound from a record literal, a record variable, or a call returning
+a record.
 
-## Void Calls Are Never Bound
+## Nothing Calls Are Never Bound
 
-A void call is `nothing`, so it cannot be stored:
+A `nothing` call is not data, so it cannot be stored:
 
 ```console
 $ kc main.kiru

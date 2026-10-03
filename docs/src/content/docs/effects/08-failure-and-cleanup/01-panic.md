@@ -16,9 +16,10 @@ fn give_up() {
 ```
 
 `panic;` is a statement, not a value: it ends the run, so the function that
-runs it is void and needs no `return`.
+runs it is `nothing` and needs no `return`.
 
-`std::eprint(message)` writes one line to stderr and then panics:
+`std::eprint(message)` writes an `ERROR:` line to stderr, red when stderr is a
+terminal, and then panics:
 
 <span class="filename">Filename: src/main.kiru</span>
 
@@ -34,14 +35,13 @@ fn main() {
 
 ```console
 $ ./app
-cannot continue: missing token
+ERROR: cannot continue: missing token
 $ echo $?
 1
 ```
 
-`std::eprint` is void and ends in `panic;`, so it stands only as a
-statement. `std::eprint("")` panics with no output, for the rare case where
-the exit code is the whole message.
+`std::eprint` is `nothing` and ends in `panic;`, so it stands only as a
+statement.
 
 ## What a Panic Does
 
@@ -69,9 +69,13 @@ Cleanup registered with `defer` runs on the panic path:
 
 ```kiru
 fn release() {
-  txt scratch = std::command({ Mode = "stdout" }, "mktemp -d");
-  defer { std::command({ Mode = "stdout" }, "rm -rf " + scratch); };
-  std::command({ Mode = "stdout" }, "cargo build --release");   # may fail
+  std::command({}, "mkdir -p /tmp/kiru-release");
+
+  defer {
+    std::command({}, "rm -rf /tmp/kiru-release");
+  };
+
+  std::command({}, "cargo build --release");   # may fail
 };
 ```
 

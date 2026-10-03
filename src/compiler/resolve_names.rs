@@ -1,15 +1,15 @@
-//! Linking: build the program model from parsed files.
+//! Resolving names: build the program graph from parsed files.
 //!
-//! Linking registers every declaration into its namespace, resolves every
+//! This stage registers every declaration into its namespace, resolves every
 //! name into an edge to a node, and selects the entry: the entry file's own
-//! root `main`. After linking, no phase resolves a name again.
+//! root `main`. After this stage, no later stage resolves a name again.
 
-mod bodies;
-mod integrity;
-mod registration;
+mod check_invariants;
+mod link_bodies;
+mod register_declarations;
 
 #[cfg(test)]
 mod tests;
 
-pub(crate) use bodies::link;
-pub(crate) use integrity::verify;
+pub(crate) use check_invariants::verify;
+pub(crate) use link_bodies::resolve_names;

@@ -2,8 +2,8 @@
 //! may stand.
 //!
 //! Text and record are the only data kinds. `Nothing` is the no-value result
-//! of a void call. Flow terminators such as `return` and `panic` are
-//! statements, not values, so no kind marks them.
+//! of a call that returns nothing. Flow terminators such as `return` and
+//! `panic` are statements, not values, so no kind marks them.
 //!
 //! Compatibility is a subset relation over usage sets. Every concrete kind is
 //! one bit, group constants name the combinations a position or a call asks
@@ -47,13 +47,13 @@ impl Usage {
     pub(crate) const TEXT: Usage = Usage(1 << 0);
     /// A lone record value.
     pub(crate) const RECORD: Usage = Usage(1 << 1);
-    /// The no-value result of a void call.
+    /// The no-value result of a call that returns nothing.
     pub(crate) const NOTHING: Usage = Usage(1 << 2);
 
     /// The data a program stores or reads: text and record.
     pub(crate) const DATA: Usage = Usage::TEXT.union(Usage::RECORD);
     /// Every kind a bare statement may discard.
-    pub(crate) const DISCARDABLE: Usage = Usage::TEXT.union(Usage::RECORD).union(Usage::NOTHING);
+    pub(crate) const DISCARDABLE: Usage = Usage::DATA.union(Usage::NOTHING);
 
     /// The union of two usages.
     pub(crate) const fn union(self, other: Usage) -> Usage {

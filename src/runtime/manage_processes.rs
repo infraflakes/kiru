@@ -1,6 +1,5 @@
 //! Process execution: process groups, signals, and stopping.
 
-use std::io::{ErrorKind, Read, Write};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::process::{Command as ProcessCommand, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
@@ -31,9 +30,9 @@ const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// State shared by every body: whether the run is stopping, which signal
 /// arrived, whether the run has failed, the process groups currently
-/// running, and the threads `std::async` has started.
+/// running, and the threads `async` has started.
 ///
-/// A wait joins the threads its own thread spawned; the run joins any
+/// A `wait` joins the threads its own thread spawned; the run joins any
 /// remainder after the entry body ends.
 pub(crate) struct RuntimeState {
     interrupted: AtomicI32,
@@ -45,8 +44,8 @@ pub(crate) struct RuntimeState {
     threads: Mutex<Vec<ChildThread>>,
 }
 
-/// One thread `std::async` started, remembered together with the id of the
-/// thread that spawned it. The pair lets `std::wait` join exactly the
+/// One thread `async` started, remembered together with the id of the
+/// thread that spawned it. The pair lets `wait` join exactly the
 /// caller's own children.
 struct ChildThread {
     parent: ThreadId,
@@ -248,34 +247,17 @@ extern "C" fn handle_signal(signal: i32) {
     }
 }
 
-/// What a finished command produced.
-pub(crate) struct Outcome {
-    pub(crate) code: i32,
-    pub(crate) output: String,
-}
-
-/// Run one command line through the default shell. `capture` binds stdout,
-/// `forward` streams it live; stderr is always inherited.
-pub(crate) fn run(
-    state: &RuntimeState,
-    line: &str,
-    capture: bool,
-    forward: bool,
-    default_shell: Option<&str>,
-) -> Result<Outcome, Panic> {
-    let shell = default_shell
-        .filter(|shell| !shell.is_empty())
-        .unwrap_or("sh");
-
+/// Run one command line through the POSIX shell and return its exit code. The
+/// shell is fixed so that `std::quote`'s POSIX escaping always holds. `muted`
+/// is true on a thread that does not own the terminal: stdout and stderr are
+/// then discarded. Nothing is captured.
+pub(crate) fn run(state: &RuntimeState, line: &str, muted: bool) -> Result<i32, Panic> {
     execute(
         state,
         CommandSpec {
-            program: shell,
+            program: "/bin/sh",
             arguments: vec!["-c".to_owned(), line.to_owned()],
-            dir: None,
-            env: &[],
-            capture,
-            forward,
+            muted,
             line,
         },
     )
@@ -285,56 +267,38 @@ pub(crate) fn run(
 struct CommandSpec<'a> {
     program: &'a str,
     arguments: Vec<String>,
-    dir: Option<&'a str>,
-    env: &'a [(String, String)],
-    capture: bool,
-    forward: bool,
+    muted: bool,
     /// The text shown when the command cannot run.
     line: &'a str,
 }
 
 /// Spawn, track, and wait for one command line in its own process group.
-fn execute(state: &RuntimeState, spec: CommandSpec<'_>) -> Result<Outcome, Panic> {
+fn execute(state: &RuntimeState, spec: CommandSpec<'_>) -> Result<i32, Panic> {
     let mut command = command_for(&spec);
     let mut child = command
         .spawn()
-        .map_err(|error| failure(state, spec.line, &error.to_string()))?;
+        .map_err(|error| failure(state, spec.line, &error.to_string(), spec.muted))?;
     let pgid = child.id() as i32;
     if !state.register(pgid) {
         signal_group(pgid, Signal::SIGKILL);
         let _ = child.wait();
-        return Err(failure(state, spec.line, "too many concurrent commands"));
+        return Err(failure(
+            state,
+            spec.line,
+            "too many concurrent commands",
+            spec.muted,
+        ));
     }
 
-    let reader = if spec.capture {
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| failure(state, spec.line, "stdout is not piped for capture"))?;
-        Some(std::thread::spawn(move || {
-            read_stream(stdout, spec.forward)
-        }))
-    } else {
-        None
-    };
-
-    let waited = wait_for_stop(state, &mut child, pgid, spec.line);
+    let waited = wait_for_stop(state, &mut child, pgid, spec.line, spec.muted);
     state.unregister(pgid);
     let status = waited?;
-
-    let output = match reader {
-        Some(handle) => handle.join().unwrap_or_default(),
-        None => String::new(),
-    };
 
     if state.cancelled() {
         return Err(Panic);
     }
 
-    Ok(Outcome {
-        code: exit_code(status),
-        output,
-    })
+    Ok(exit_code(status))
 }
 
 /// Poll the child while watching for cancellation. A stop condition sends
@@ -344,13 +308,16 @@ fn wait_for_stop(
     child: &mut std::process::Child,
     pgid: i32,
     line_for_errors: &str,
+    muted: bool,
 ) -> Result<ExitStatus, Panic> {
     let mut terminating: Option<Instant> = None;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => return Ok(status),
             Ok(None) => {}
-            Err(error) => return Err(failure(state, line_for_errors, &error.to_string())),
+            Err(error) => {
+                return Err(failure(state, line_for_errors, &error.to_string(), muted));
+            }
         }
 
         let now = Instant::now();
@@ -381,21 +348,14 @@ fn exit_code(status: ExitStatus) -> i32 {
 fn command_for(spec: &CommandSpec<'_>) -> ProcessCommand {
     let mut command = ProcessCommand::new(spec.program);
     command.args(&spec.arguments);
-    if let Some(dir) = spec.dir {
-        command.current_dir(dir);
-    }
-    for (key, value) in spec.env {
-        command.env(key, value);
-    }
     command.stdin(Stdio::inherit());
-    command.stderr(Stdio::inherit());
-    command.stdout(if spec.capture {
-        Stdio::piped()
-    } else if spec.forward {
-        Stdio::inherit()
+    if spec.muted {
+        command.stdout(Stdio::null());
+        command.stderr(Stdio::null());
     } else {
-        Stdio::null()
-    });
+        command.stdout(Stdio::inherit());
+        command.stderr(Stdio::inherit());
+    }
 
     command.process_group(0);
     #[cfg(target_os = "linux")]
@@ -415,29 +375,6 @@ fn command_for(spec: &CommandSpec<'_>) -> ProcessCommand {
     command
 }
 
-fn read_stream(mut stdout: impl Read, forward: bool) -> String {
-    let mut bytes = Vec::new();
-    let mut chunk = [0u8; 8192];
-    loop {
-        match stdout.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(count) => {
-                if forward {
-                    let mut out = std::io::stdout();
-                    let _ = out.write_all(&chunk[..count]);
-                    let _ = out.flush();
-                }
-                bytes.extend_from_slice(&chunk[..count]);
-            }
-            Err(error) if error.kind() == ErrorKind::Interrupted => continue,
-            Err(_) => break,
-        }
-    }
-    String::from_utf8_lossy(&bytes)
-        .trim_end_matches(['\n', '\r'])
-        .to_owned()
-}
-
 /// Send `signal` to the process group `pgid`. A group whose last process has
 /// already exited makes the call fail, which is not a runtime failure.
 fn signal_group(pgid: i32, signal: Signal) {
@@ -445,9 +382,29 @@ fn signal_group(pgid: i32, signal: Signal) {
 }
 
 /// Report a runtime failure and record it. The failure unwinds only the body
-/// that hit it; the run still exits nonzero after every thread joins.
-fn failure(state: &RuntimeState, line: &str, reason: &str) -> Panic {
+/// that hit it; the run still exits nonzero after every thread joins. A muted
+/// thread does not own the terminal, so it prints nothing.
+fn failure(state: &RuntimeState, line: &str, reason: &str, muted: bool) -> Panic {
     state.record_failure();
-    eprintln!("kiru: {line}: {reason}");
+    if !muted {
+        eprintln!("kiru: {line}: {reason}");
+    }
     Panic
+}
+
+/// Escape text as one POSIX shell word: wrap it in single quotes and replace
+/// an embedded quote with the `'\''` sequence, so the shell reads exactly the
+/// text and nothing else.
+pub(crate) fn quote_shell_word(text: &str) -> String {
+    let mut quoted = String::with_capacity(text.len() + 2);
+    quoted.push('\'');
+    for character in text.chars() {
+        if character == '\'' {
+            quoted.push_str("'\\''");
+        } else {
+            quoted.push(character);
+        }
+    }
+    quoted.push('\'');
+    quoted
 }

@@ -61,10 +61,10 @@ no way to skip a defer.
 
 ## Threads
 
-A thread started by `std::async` runs a function body with its own defers;
-they run when that body ends. A function that starts a thread and wants that
-thread's cleanup finished before it returns calls `std::wait()` first. The
-runtime also joins every remaining thread before the program exits.
+A thread started by `async` runs a function body with its own defers; they run
+when that body ends. A function that starts a thread and wants that thread's
+cleanup finished before it returns runs `wait;` first. The runtime also joins
+every remaining thread before the program exits.
 
 ## A Defer That Panics
 

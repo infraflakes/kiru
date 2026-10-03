@@ -59,7 +59,7 @@ one name:
 
 ```kiru
 txt thing = "value thing";
-fn thing() { return "function thing"; };
+fn thing() { return("function thing"); };
 fn main() {
   std::print(thing);
   std::print(thing());

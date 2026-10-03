@@ -1,6 +1,6 @@
 ---
 title: The Entry Function
-description: The two signatures, the void rule, and dispatch.
+description: The two signatures, the return rule, and dispatch.
 ---
 
 Running a compiled program calls the entry file's own `main`, declared in
@@ -33,8 +33,8 @@ and the parameter name is chosen by the author.
 - The entry file must declare `main` in the root namespace.
 - `main` takes zero or one parameter.
 - A parameter must be declared `rec` and receives the args record.
-- `main` is void: no caller binds its value, so `return;` and `return expr;`
-  both end it and a returned value is discarded.
+- `main` is an ordinary function: its kind is derived like any other, and the
+  runtime discards whatever it returns. It may `return();` or `return(expr);`.
 - A `main` declared inside a module is an ordinary function.
 
 An entry file with no `main`, or a `main` with two parameters, is a
@@ -82,12 +82,13 @@ fn main(rec args) {
 
 `./app deploy` runs `deploy_all`; `./app deploy backend` runs `deploy`; any
 other input prints the usage line to stderr and exits nonzero. The helpers
-are void, so each call is a statement.
+return nothing, so each call is a statement.
 
 ## The Result
 
-`main` produces no value. A program's result is its exit code: `0` when the
-body finishes, nonzero on panic, and `130` on SIGINT, SIGTERM, or SIGHUP.
+The runtime discards `main`'s value. A program's result is its exit code: `0`
+when the body finishes, nonzero on panic, and `130` on SIGINT, SIGTERM, or
+SIGHUP.
 To fail a run, run `panic;` or call `std::eprint`; [exit codes and
 failure](/effects/06-commands/05-exit-codes-and-failure/) covers
 failure.

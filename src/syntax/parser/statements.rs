@@ -30,6 +30,8 @@ impl Parser {
             TokenKind::Rec => Ok(Statement::Rec(self.parse_rec_binding()?)),
             TokenKind::Return => self.parse_return(),
             TokenKind::Panic => self.parse_panic(),
+            TokenKind::Async => self.parse_async(),
+            TokenKind::Wait => self.parse_wait(),
             TokenKind::Defer => self.parse_defer(),
             TokenKind::Switch => self.parse_switch(),
             TokenKind::Ident(_) if matches!(self.peek(1).kind, TokenKind::Equals) => {
@@ -43,14 +45,16 @@ impl Parser {
         }
     }
 
-    /// Parse a `return;` or `return expression;` statement.
+    /// Parse a `return();` or `return(expression);` statement.
     fn parse_return(&mut self) -> Result<Statement, ParseError> {
         let start = self.advance().start;
-        let value = if self.check(&TokenKind::Semi) {
+        self.expect(&TokenKind::LParen, "after `return`")?;
+        let value = if self.check(&TokenKind::RParen) {
             None
         } else {
             Some(self.parse_expression()?)
         };
+        self.expect(&TokenKind::RParen, "after the returned value")?;
         let span = self.span_through_semicolon(start, "after the return")?;
         Ok(Statement::Return { value, span })
     }
@@ -60,6 +64,22 @@ impl Parser {
         let start = self.advance().start;
         let span = self.span_through_semicolon(start, "after `panic`")?;
         Ok(Statement::Panic { span })
+    }
+
+    /// Parse an `async <call>;` statement. The call is any expression; the
+    /// checker requires it to be a call.
+    fn parse_async(&mut self) -> Result<Statement, ParseError> {
+        let start = self.advance().start;
+        let call = self.parse_expression()?;
+        let span = self.span_through_semicolon(start, "after `async`")?;
+        Ok(Statement::Async { call, span })
+    }
+
+    /// Parse a `wait;` statement.
+    fn parse_wait(&mut self) -> Result<Statement, ParseError> {
+        let start = self.advance().start;
+        let span = self.span_through_semicolon(start, "after `wait`")?;
+        Ok(Statement::Wait { span })
     }
 
     /// Parse a `defer { ... };` statement.

@@ -7,7 +7,7 @@ const MAGIC: &[u8; 8] = b"KIRUPROG";
 const TRAILER: usize = 16;
 
 /// Append the payload trailer to a compiled binary.
-pub(crate) fn append(path: &Path, payload: &[u8]) -> std::io::Result<()> {
+pub(crate) fn attach_trailer(path: &Path, payload: &[u8]) -> std::io::Result<()> {
     let mut file = std::fs::OpenOptions::new().append(true).open(path)?;
     file.write_all(payload)?;
     file.write_all(&(payload.len() as u64).to_le_bytes())?;
@@ -16,7 +16,7 @@ pub(crate) fn append(path: &Path, payload: &[u8]) -> std::io::Result<()> {
 }
 
 /// Read the payload from an executable, or `None` when it has no trailer.
-pub(crate) fn read(path: &Path) -> Option<Vec<u8>> {
+pub(crate) fn read_trailer(path: &Path) -> Option<Vec<u8>> {
     let mut file = std::fs::File::open(path).ok()?;
     let length = file.metadata().ok()?.len();
     if length < TRAILER as u64 {

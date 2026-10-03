@@ -14,10 +14,10 @@ been checked for:
 | Arity | wrong number of arguments |
 | Parameters | a parameter without `txt` or `rec`, `main` with a `txt` parameter |
 | Statements | a lone value or expression as a statement |
-| Kinds | text where a record is required, a void call bound or passed |
-| Returns | a value function that can fall through, a return inside `defer`, a return of a void call |
+| Kinds | text where a record is required, a nothing call bound or passed |
+| Returns | a value function that can fall through, a return of a nothing call |
 | Cases | duplicate case data |
-| Threads | `std::async` outside a function |
+| Threads | an `async` nested inside another `async` |
 
 Each failure prints a positioned diagnostic and exits `1`.
 
@@ -41,7 +41,8 @@ failure model.
 
 Compilation reads sources and writes a binary. It runs no commands and no
 program code. A program's top-level values are evaluated by the compiled
-binary at startup, on the machine that runs it, which is why a home
-directory comes from `std::command({ Mode = "stdout" }, "echo $HOME")`; [module
+binary at startup, on the machine that runs it, which is why the exit code
+of a startup command such as `std::command({}, "echo $HOME")` is not known
+until the binary runs; [module
 values](/language/03-names-and-scope/05-module-values/) covers that
 evaluation.

@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 
 use crate::compiler::{
-    Accept, BindingKind, DeclarationId, DeclarationKind, Diagnostic, Expression, Field, FileId,
-    Kind, Native, Position, Program, Statement, fits, native_row,
+    BindingKind, DeclarationId, DeclarationKind, Diagnostic, Expression, Field, FileId, Kind,
+    Position, Program, Statement, fits,
 };
 use crate::syntax::Span;
 
@@ -18,20 +18,15 @@ use crate::syntax::Span;
 pub(super) struct Walk<'a> {
     program: &'a Program,
     file: FileId,
-    /// Whether the walked body is lexically inside a function. `std::async`
-    /// is only allowed inside a function, so a module initializer cannot
-    /// spawn.
-    inside_function: bool,
     pub(super) locals: HashMap<DeclarationId, Kind>,
     pub(super) return_kind: Option<Kind>,
 }
 
 impl<'a> Walk<'a> {
-    pub(super) fn new(program: &'a Program, file: FileId, inside_function: bool) -> Self {
+    pub(super) fn new(program: &'a Program, file: FileId) -> Self {
         Self {
             program,
             file,
-            inside_function,
             locals: HashMap::new(),
             return_kind: None,
         }
@@ -47,7 +42,7 @@ impl<'a> Walk<'a> {
             .get(&id)
             .copied()
             .or(self.program.declaration(id).derived.kind)
-            .unwrap_or(Kind::Text)
+            .expect("every visited binding and callable carries a kind")
     }
 
     pub(super) fn statements(&mut self, statements: &[Statement]) -> Result<(), Diagnostic> {
@@ -77,6 +72,13 @@ impl<'a> Walk<'a> {
                     }
                 }
                 Statement::Panic { .. } => {}
+                Statement::Async { call, .. } => {
+                    if !matches!(call, Expression::Call { .. }) {
+                        return Err(self.error(call.span(), "`async` takes a call"));
+                    }
+                    self.expression(call)?;
+                }
+                Statement::Wait { .. } => {}
                 Statement::Switch {
                     subject,
                     cases,
@@ -134,7 +136,7 @@ impl<'a> Walk<'a> {
         value: &Expression,
     ) -> Result<(), Diagnostic> {
         match &self.program.declaration(declaration).kind {
-            DeclarationKind::Binding(BindingKind::Parameter(_)) => {
+            DeclarationKind::Binding(BindingKind::Parameter) => {
                 let name = self.program.declaration(declaration).name.clone();
                 Err(self.error(
                     name_span,
@@ -234,86 +236,38 @@ impl<'a> Walk<'a> {
         callee_span: Span,
         arguments: &[Expression],
     ) -> Result<Kind, Diagnostic> {
-        match &self.program.declaration(callee).kind {
-            DeclarationKind::Native(native) => {
-                let row = native_row(*native);
-                self.arity(callee, callee_span, arguments, row.accepts.len())?;
-                if *native == Native::Async && !self.inside_function {
-                    return Err(self.error(
-                        callee_span,
-                        "`std::async` is only allowed inside a function",
-                    ));
-                }
-                let display = self.program.display(callee);
-                for (argument, accept) in arguments.iter().zip(row.accepts) {
-                    self.argument_accept(&display, argument, *accept)?;
-                }
-                Ok(row.returns)
-            }
-            DeclarationKind::Function(function) => {
-                let parameters = function.parameters.clone();
-                self.arity(callee, callee_span, arguments, parameters.len())?;
-                for (argument, parameter) in arguments.iter().zip(&parameters) {
-                    // A parameter carries the kind its declaration writes, so
-                    // every argument is checked against that fixed kind.
-                    let expected = self.kind_of(*parameter);
-                    let actual = self.expression(argument)?;
-                    if actual != expected {
-                        return Err(self.error(
-                            argument.span(),
-                            format!("expected {}, found {}", expected.name(), actual.name()),
-                        ));
-                    }
-                }
-                Ok(self
-                    .program
-                    .declaration(callee)
-                    .derived
-                    .kind
-                    .unwrap_or(Kind::Nothing))
-            }
-            _ => Err(self.error(
+        let declaration = self.program.declaration(callee);
+        if !matches!(
+            declaration.kind,
+            DeclarationKind::Function(_) | DeclarationKind::Native(_)
+        ) {
+            return Err(self.error(
                 callee_span,
                 format!("`{}` is not a function", self.program.display(callee)),
-            )),
+            ));
         }
+        let parameters = declaration.parameters.clone();
+        let returns = declaration.derived.kind.unwrap_or(Kind::Nothing);
+        self.arity(callee, callee_span, arguments, parameters.len())?;
+        for (argument, parameter) in arguments.iter().zip(&parameters) {
+            let required = self.kind_of(*parameter);
+            self.require_kind(argument, required)?;
+        }
+        Ok(returns)
     }
 
-    /// Check one argument against a registry row entry.
-    fn argument_accept(
-        &mut self,
-        display: &str,
-        argument: &Expression,
-        accept: Accept,
-    ) -> Result<(), Diagnostic> {
-        match accept {
-            Accept::Usage(required) => {
-                let actual = self.expression(argument)?;
-                if fits(actual.usage(), required) {
-                    return Ok(());
-                }
-                Err(self.error(
-                    argument.span(),
-                    format!("expected {}, found {}", required.name(), actual.name()),
-                ))
-            }
-            Accept::Invocation => self.invocation_argument(display, argument),
+    /// Require one argument to fit a parameter's kind. This is the one rule
+    /// for every callable, so a native and a user function are checked the same
+    /// way.
+    fn require_kind(&mut self, argument: &Expression, required: Kind) -> Result<(), Diagnostic> {
+        let actual = self.expression(argument)?;
+        if fits(actual.usage(), required.usage()) {
+            return Ok(());
         }
-    }
-
-    /// `Accept::Invocation`: the argument must be a call. Its own arguments
-    /// are checked here, because a spawned thread evaluates them at the spawn
-    /// site.
-    fn invocation_argument(
-        &mut self,
-        display: &str,
-        argument: &Expression,
-    ) -> Result<(), Diagnostic> {
-        if !matches!(argument, Expression::Call { .. }) {
-            return Err(self.error(argument.span(), format!("`{display}` takes a call")));
-        }
-        self.expression(argument)?;
-        Ok(())
+        Err(self.error(
+            argument.span(),
+            format!("expected {}, found {}", required.name(), actual.name()),
+        ))
     }
 
     fn arity(

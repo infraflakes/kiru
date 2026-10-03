@@ -43,6 +43,12 @@ impl Runtime {
                     self.state.panic();
                     return Err(Panic);
                 }
+                Statement::Async { call, .. } => {
+                    self.spawn_call(call, env)?;
+                }
+                Statement::Wait { .. } => {
+                    self.state.join_children(std::thread::current().id());
+                }
                 Statement::Switch {
                     subject,
                     cases,

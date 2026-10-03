@@ -23,16 +23,17 @@ rec project = {
           (string)))))
   (record_binding
     (identifier)
-    (record_literal
-      (record_field
-        (identifier)
-        (expression
-          (string)))
-      (record_field
-        (identifier)
-        (expression
-          (string)))
-      (record_field
-        (identifier)
-        (expression
-          (string))))))
+    (expression
+      (record_literal
+        (record_field
+          (identifier)
+          (expression
+            (string)))
+        (record_field
+          (identifier)
+          (expression
+            (string)))
+        (record_field
+          (identifier)
+          (expression
+            (string)))))))

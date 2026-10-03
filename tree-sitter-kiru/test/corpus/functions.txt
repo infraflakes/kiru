@@ -3,11 +3,11 @@ function declarations
 ==================
 
 fn report(txt label, txt code) {
-  return "  " + label + ": " + code + "\n";
+  return("  " + label + ": " + code + "\n");
 };
 
 fn stop() {
-  return;
+  return();
 };
 
 fn end() {

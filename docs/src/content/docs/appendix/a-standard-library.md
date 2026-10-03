@@ -6,9 +6,8 @@ description: Every shipped name, its signature, and its behavior.
 ## Runtime Builtins
 
 ```text
-std::run(text) -> record { out, code }   run one command line
-std::async(call) -> nothing               run a call on a new thread
-std::wait() -> nothing                    join the calling thread's asyncs
+std::run(text) -> text   run one command line and return its exit code
+std::quote(text) -> text       escape text as one shell word
 ```
 
 [Runtime builtins](/stdlib/01-runtime-builtins/) describes each one.
@@ -17,16 +16,19 @@ std::wait() -> nothing                    join the calling thread's asyncs
 
 ```text
 panic;          end the run, run defers, exit nonzero
-return;         end a void function early
-return expr;    end a function with text or record
+return();       end a nothing function early
+return(expr);   end a function with text or record
+async <call>;   run a call on a new thread
+wait;           join the calling thread's asyncs
 ```
 
 ## Written by Kiru
 
 ```text
-std::command(spec, text) -> text    run one line and return the mode's text
+std::command(spec, line) -> text    run one line and return its exit code
 std::print(text) -> nothing         write a line to stdout
-std::eprint(text) -> nothing        write a line to stderr, then panic; "" silently
+std::log(text) -> nothing           write an "INFO:" line to stdout
+std::eprint(text) -> nothing        write an "ERROR:" line to stderr, then panic
 ```
 
 [Written by Kiru](/stdlib/02-written-by-kiru/) shows the source and the spec.
@@ -38,7 +40,7 @@ std::eprint(text) -> nothing        write a line to stderr, then panic; "" silen
 
 | Entry | Effect |
 | --- | --- |
-| `Mode` | `"stdout"`, `"exit code"`, or empty |
-| `Dir` | run after `cd <Dir> &&` |
-| `Env` | prepend `export <Env>;` |
-| `Direnv` | wrap with `direnv exec <Dir> sh -c` |
+| `Dir` | run after `cd <Dir> &&`, with `Dir` quoted by `std::quote` |
+| `Env` | prepend `export <Env>;`, used as written |
+| `Direnv` | wrap with `direnv exec <Dir> sh -c` only when it is exactly `"true"`, quoting `Dir` and the line |
+| `Stream` | wrap the line so stdout and/or stderr are hidden: empty renders both, `"stderr"` hides stdout, `"null"` hides both |

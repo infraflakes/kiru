@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::RwLock;
 
-use crate::compiler::loader::Origin;
+use crate::compiler::load_files::Origin;
 use crate::compiler::{Kind, Native};
 use crate::syntax::Span;
 
@@ -31,7 +31,7 @@ pub(crate) struct Program {
     pub(crate) entry: DeclarationId,
     /// Module values, keyed by node identity. The compiler ships no values:
     /// the binary evaluates every top-level initializer at startup and stores
-    /// the result here. The lock lets `main` and the threads `std::async`
+    /// the result here. The lock lets `main` and the threads `async`
     /// starts share stored values.
     #[serde(skip)]
     pub(crate) values: RwLock<HashMap<DeclarationId, Value>>,
@@ -199,6 +199,9 @@ pub(crate) struct Declaration {
     pub(crate) order: usize,
     /// The function that owns a parameter or local binding.
     pub(crate) owner: Option<DeclarationId>,
+    /// The parameter nodes of a callable, in order. A native and a user
+    /// function both carry them, so the checker has one call path.
+    pub(crate) parameters: Vec<DeclarationId>,
     pub(crate) kind: DeclarationKind,
     pub(crate) derived: Derived,
 }
@@ -212,18 +215,12 @@ impl Declaration {
         }
     }
 
-    /// The initializer expression when this node is a text value.
+    /// The initializer expression when this node is a text or record value.
     pub(crate) fn initializer(&self) -> Option<&Expression> {
         match &self.kind {
-            DeclarationKind::Text(expression) => Some(expression),
-            _ => None,
-        }
-    }
-
-    /// The fields when this node is a record value.
-    pub(crate) fn fields(&self) -> Option<&[Field]> {
-        match &self.kind {
-            DeclarationKind::Record(fields) => Some(fields),
+            DeclarationKind::Text(expression) | DeclarationKind::Record(expression) => {
+                Some(expression)
+            }
             _ => None,
         }
     }
@@ -242,8 +239,10 @@ pub(crate) enum DeclarationKind {
     /// A module-level `txt`; the startup pass evaluates it once and it holds
     /// text.
     Text(Expression),
-    /// A module-level `rec`; the startup pass evaluates its fields once.
-    Record(Vec<Field>),
+    /// A module-level `rec`; the startup pass evaluates it once. The
+    /// expression is a record literal, a record variable, or a call returning
+    /// a record.
+    Record(Expression),
     /// A parameter or local binding.
     Binding(BindingKind),
     Native(Native),
@@ -251,7 +250,8 @@ pub(crate) enum DeclarationKind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum BindingKind {
-    Parameter(usize),
+    /// A function parameter.
+    Parameter,
     /// A `txt` binding; it holds text.
     Text,
     /// A `rec` binding.
@@ -260,7 +260,6 @@ pub(crate) enum BindingKind {
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Function {
-    pub(crate) parameters: Vec<DeclarationId>,
     pub(crate) body: Vec<Statement>,
 }
 
@@ -339,13 +338,22 @@ pub(crate) enum Statement {
     },
     Expression(Expression),
     /// An early exit. A value return carries text or record; a valueless
-    /// return ends a void function.
+    /// return ends a function that returns nothing.
     Return {
         value: Option<Expression>,
         span: Span,
     },
     /// The keyword statement `panic;`, which ends the run.
     Panic {
+        span: Span,
+    },
+    /// The keyword statement `async <call>;`, which spawns the call.
+    Async {
+        call: Expression,
+        span: Span,
+    },
+    /// The keyword statement `wait;`, which joins the calling thread's asyncs.
+    Wait {
         span: Span,
     },
     Switch {
@@ -367,8 +375,8 @@ pub(crate) struct Case {
     pub(crate) span: Span,
 }
 
-/// A runtime value: text, a record of text, or the no-value result of a void
-/// call.
+/// A runtime value: text, a record of text, or the no-value result of a call
+/// that returns nothing.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum Value {
     Text(String),

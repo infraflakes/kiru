@@ -9,10 +9,11 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-use crate::compiler::loader::{LoadedProgram, Origin};
+use crate::compiler::load_files::{LoadedProgram, Origin};
 use crate::compiler::{
-    BUILTIN_NAMESPACE, Declaration, DeclarationId, DeclarationKind, Derived, Diagnostic,
-    ENTRY_FUNCTION, File, FileId, Kind, NATIVE_ROWS, NameTable, Namespace, NamespaceId, Program,
+    BUILTIN_NAMESPACE, BindingKind, Declaration, DeclarationId, DeclarationKind, Derived,
+    Diagnostic, ENTRY_FUNCTION, File, FileId, Kind, NATIVE_ROWS, NameTable, Namespace, NamespaceId,
+    Native, Program, Row,
 };
 use crate::syntax::Span;
 use crate::syntax::{Declaration as ParsedDeclaration, ParameterKind};
@@ -148,6 +149,7 @@ impl Builder {
             namespace,
             order,
             owner,
+            parameters: Vec::new(),
             kind,
             derived: Derived { kind: derived_kind },
         }));
@@ -197,17 +199,20 @@ impl Builder {
         Ok(id)
     }
 
-    /// Create a native function node with a fixed kind and no file.
+    /// Create a native callable node and its parameter nodes. A native has no
+    /// file and no body, but it carries parameters exactly like a user
+    /// function, so the checker has one call path. Its result kind is known at
+    /// registration, so it is seeded directly.
     fn declare_native(
         &mut self,
         namespace: NamespaceId,
-        name: &str,
-        kind: DeclarationKind,
+        row: &'static Row,
+        native: Native,
     ) -> DeclarationId {
         let order = self.order;
         let id = self.create_node(
             Skeleton {
-                name: name.to_owned(),
+                name: row.name.to_owned(),
                 name_span: Span::new(0, 0),
                 file: None,
                 namespace,
@@ -215,13 +220,37 @@ impl Builder {
                 syntax_index: None,
             },
             None,
-            Some(kind),
-            None,
+            Some(DeclarationKind::Native(native)),
+            Some(row.returns),
         );
-        let _ = self.namespaces[namespace.0]
+        self.namespaces[namespace.0]
             .functions
-            .insert(name.to_owned(), id);
+            .insert(row.name.to_owned(), id)
+            .expect("native names are unique, so a builtin never collides");
         self.order += 1;
+
+        let mut parameters = Vec::new();
+        for kind in row.parameters {
+            let parameter = self.create_node(
+                Skeleton {
+                    name: String::new(),
+                    name_span: Span::new(0, 0),
+                    file: None,
+                    namespace,
+                    order: self.order,
+                    syntax_index: None,
+                },
+                Some(id),
+                Some(DeclarationKind::Binding(BindingKind::Parameter)),
+                Some(*kind),
+            );
+            parameters.push(parameter);
+            self.order += 1;
+        }
+        self.declarations[id.0]
+            .as_mut()
+            .expect("a native node is built during registration")
+            .parameters = parameters;
         id
     }
 
@@ -233,7 +262,7 @@ impl Builder {
                     .map(|segment| (*segment).to_owned())
                     .collect::<Vec<String>>(),
             );
-            self.declare_native(namespace, row.name, DeclarationKind::Native(*native));
+            self.declare_native(namespace, row, *native);
         }
     }
 

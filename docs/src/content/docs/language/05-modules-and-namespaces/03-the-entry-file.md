@@ -22,7 +22,7 @@ module tools;
 
 fn main() {
   std::print("not the entry");
-  return "";
+  return("");
 };
 ```
 
@@ -60,6 +60,6 @@ fn note() {};
 
 The parameter is optional. `fn main()` ignores the command line;
 `fn main(rec args)` receives the args record. Both are valid, and a
-program that reads no arguments declares the first. The entry `main` is
-void: no caller binds its value, so `return;` and `return expr;` both end it
-and a returned value is discarded.
+program that reads no arguments declares the first. The entry `main` is an
+ordinary function: its kind is derived like any other, and the runtime
+discards whatever it returns. It may `return();` or `return(expr);`.

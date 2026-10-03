@@ -12,8 +12,10 @@
  *   file        := module? import* declaration*
  *   declaration := function | text | record
  *   statement   := text | record | assignment | expression ";"
- *                | "return" expression? ";"
+ *                | "return" "(" expression? ")" ";"
  *                | "panic" ";"
+ *                | "async" expression ";"
+ *                | "wait" ";"
  *                | "switch" "(" expression ")" switch ";"
  *                | "defer" block ";"
  *   expression  := term ("+" term)*
@@ -106,12 +108,14 @@ module.exports = grammar({
       ';',
     ),
 
-    // `rec name = { key = expression, ... };` at the top level or as a local.
+    // `rec name = expression;` at the top level or as a local binding. The
+    // expression is a record literal, a record variable, or a call returning
+    // a record, so it uses the general expression rule.
     record_binding: $ => seq(
       'rec',
       field('name', $.identifier),
       '=',
-      field('value', $.record_literal),
+      field('value', $.expression),
       ';',
     ),
 
@@ -131,6 +135,8 @@ module.exports = grammar({
       $.assignment_statement,
       $.return_statement,
       $.panic_statement,
+      $.async_statement,
+      $.wait_statement,
       $.switch_statement,
       $.defer_statement,
       $.expression_statement,
@@ -144,16 +150,33 @@ module.exports = grammar({
       ';',
     ),
 
-    // `return;` ends a void function, `return expression;` returns a value.
+    // `return();` ends a `nothing` function, `return(expression);` returns a
+    // value. Both forms are parenthesized.
     return_statement: $ => seq(
       'return',
+      '(',
       optional(field('value', $.expression)),
+      ')',
       ';',
     ),
 
     // `panic;` ends the run.
     panic_statement: $ => seq(
       'panic',
+      ';',
+    ),
+
+    // `async expression;` spawns the call on its own thread. The checker
+    // requires the expression to be a call.
+    async_statement: $ => seq(
+      'async',
+      field('call', $.expression),
+      ';',
+    ),
+
+    // `wait;` joins the asyncs the calling thread spawned.
+    wait_statement: $ => seq(
+      'wait',
       ';',
     ),
 
