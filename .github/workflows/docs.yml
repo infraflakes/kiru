@@ -7,19 +7,27 @@ on:
     paths:
       - 'docs/**'
       - 'src/**'
+      - 'stdlib/**'
+      - '.kiru/**'
+      - 'entry.kiru'
       - 'main.kiru'
-      - 'steps.kiru'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - '**.nix'
+      - 'flake.lock'
       - '.github/workflows/docs.yml'
   pull_request:
     paths:
       - 'docs/**'
       - 'src/**'
+      - 'stdlib/**'
+      - '.kiru/**'
+      - 'entry.kiru'
       - 'main.kiru'
-      - 'steps.kiru'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - '**.nix'
+      - 'flake.lock'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 
@@ -27,12 +35,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: pages
-  cancel-in-progress: true
+  group: docs-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
@@ -42,6 +51,25 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+
+      - name: Cache bun packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('docs/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - name: Cache the Rust build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
 
       - name: Build the docs through kiru
         run: |
@@ -59,6 +87,7 @@ jobs:
     needs: build
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       pages: write
       id-token: write

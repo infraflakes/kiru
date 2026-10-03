@@ -6,6 +6,9 @@ on:
       - main
     paths:
       - 'src/**'
+      - 'stdlib/**'
+      - '.kiru/**'
+      - 'entry.kiru'
       - 'main.kiru'
       - 'Cargo.toml'
       - 'Cargo.lock'
@@ -15,35 +18,54 @@ on:
       - main
     paths:
       - 'src/**'
+      - 'stdlib/**'
+      - '.kiru/**'
+      - 'entry.kiru'
       - 'main.kiru'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/ci.yml'
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     container:
       image: rust:alpine
     steps:
       - name: Install Build Dependencies
         run: apk add --no-cache git
 
+      - name: Checkout code
+        uses: actions/checkout@v6
+
       - name: Install Rust Tools
         run: |
           rustup component add clippy rustfmt
 
-      - name: Checkout code
-        uses: actions/checkout@v6
+      - name: Cache the Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test
 
       - name: Build
         run: cargo build
-
-      - name: Checks
-        run: |
-          cargo clippy --all-targets -- -D warnings
-          cargo test
-          cargo fmt --check
 
       - name: Compile the pipeline
         run: ./target/debug/kc main.kiru
