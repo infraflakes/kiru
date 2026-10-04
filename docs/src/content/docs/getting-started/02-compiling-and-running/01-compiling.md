@@ -23,27 +23,13 @@ With `-o`, the output path is chosen explicitly:
 
 ```console
 $ kc main.kiru -o app
-$ ./app verify
+$ ./app
 ```
 
-## What the Compiler Checks
+A failure prints a positioned diagnostic and exits `1`; [compile-time
+checks](/language/09-entry-and-the-cli/03-compile-time-checks/) lists what the
+compiler proves.
 
-Compilation performs every check: syntax and escapes, modules and imports,
-names and declaration order, call arity, kinds, body and return rules,
-and thread rules. The list is catalogued in
-[compile-time
-checks](/language/09-entry-and-the-cli/03-compile-time-checks/).
-
-A failure prints a positioned diagnostic and exits `1`:
-
-```console
-$ kc broken.kiru
-broken.kiru:1:13: error: unknown name `nope`
-fn main() { nope(); };
-            ^^^^
-```
-
-If the program passes, the output is ready to run. The binary is
-self-contained: it holds the compiler and the program, so it can be copied,
-renamed, and shipped alone. There is no separate linking step and no
+The output is self-contained: it holds the compiler and the program, so it can
+be copied, renamed, and shipped alone. There is no separate linking step and no
 interpreter to install on the target machine.

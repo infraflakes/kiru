@@ -13,9 +13,6 @@ txt path = "projects/backend";
 txt empty = "";
 ```
 
-All three declarations bind text, including `empty`, which binds the empty
-string.
-
 Text may span lines. A newline inside the quotes is data:
 
 <span class="filename">Filename: src/main.kiru</span>
@@ -24,8 +21,6 @@ Text may span lines. A newline inside the quotes is data:
 txt message = "first line
 second line";
 ```
-
-`message` contains the newline character between the two lines.
 
 ## Escapes
 
@@ -48,35 +43,7 @@ txt s = "bad \q";
              ^^
 ```
 
-Everything else between the quotes is data, including a literal newline.
-
-## The Empty String
-
-`""` is an ordinary value everywhere: as an argument, a record value, an
-assignment, a switch pattern, and a switch subject.
-
-<span class="filename">Filename: src/main.kiru</span>
-
-```kiru
-fn label(txt value) {
-  txt result = value;
-  switch(value) {
-    case("") { result = "unset"; };
-  };
-  return(result);
-};
-
-fn main() {
-  std::print(label(""));
-};
-```
-
-The `case("")` arm matches the empty argument, so the program prints
-`unset`.
-
-## No Numbers
-
-There are no numeric literals, so numbers are text:
+`""` is an ordinary text value. There are no numeric literals, so numbers are text:
 
 <span class="filename">Filename: src/main.kiru</span>
 
@@ -85,5 +52,4 @@ txt retries = "3";
 txt timeout = "600";
 ```
 
-Arithmetic does not exist. A count is compared or concatenated as text, and
-anything that needs arithmetic is a command's job.
+Arithmetic does not exist.

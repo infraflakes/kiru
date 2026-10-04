@@ -14,5 +14,6 @@ switch(code) {
 };
 ```
 
-`std::eprint` writes to stderr and panics; `panic;` alone fails the run with
-no output. Only `panic;` and a runtime failure fail a run.
+A run fails only on `panic;`, on `std::eprint`, or on a runtime error the
+engine detects. [Panic](/effects/08-failure-and-cleanup/01-panic/) covers
+`std::eprint` and how a failing run unwinds.

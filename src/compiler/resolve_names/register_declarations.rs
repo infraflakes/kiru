@@ -2,28 +2,21 @@
 //!
 //! Registration builds the skeleton of the model: namespaces, declaration
 //! nodes, and the worklist of bodies still to link. The linking pass in
-//! `bodies` then fills every body. A namespace keeps two registries: values
+//! `link_bodies` then fills every body. A namespace keeps two registries: values
 //! are unique by name and functions are unique by name, so a function may
 //! share a name with a value.
 
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-use crate::compiler::load_files::{LoadedProgram, Origin};
+use crate::compiler::load_files::LoadedProgram;
 use crate::compiler::{
     BUILTIN_NAMESPACE, BindingKind, Declaration, DeclarationId, DeclarationKind, Derived,
     Diagnostic, ENTRY_FUNCTION, File, FileId, Kind, NATIVE_ROWS, NameTable, Namespace, NamespaceId,
-    Native, Program, Row,
+    Native, NativeRow, Origin, Program, Registry, duplicate_in_namespace,
 };
 use crate::syntax::Span;
-use crate::syntax::{Declaration as ParsedDeclaration, ParameterKind};
-
-/// Which registry of a namespace a declaration belongs to.
-#[derive(Clone, Copy)]
-pub(super) enum Registry {
-    Value,
-    Function,
-}
+use crate::syntax::{Declaration as ParsedDeclaration, ValueKind};
 
 /// Where a file declaration is written, for registration.
 struct DeclarationSite<'a> {
@@ -184,15 +177,12 @@ impl Builder {
             None,
             None,
         );
-        let table = match registry {
-            Registry::Value => &mut self.namespaces[namespace.0].values,
-            Registry::Function => &mut self.namespaces[namespace.0].functions,
-        };
+        let table = self.namespaces[namespace.0].table_mut(registry);
         if table.insert(name.to_owned(), id).is_err() {
             return Err(Diagnostic::new(
                 reported_path,
                 name_span,
-                format!("`{name}` is declared more than once in this namespace"),
+                duplicate_in_namespace(name),
             ));
         }
         self.order += 1;
@@ -206,7 +196,7 @@ impl Builder {
     fn declare_native(
         &mut self,
         namespace: NamespaceId,
-        row: &'static Row,
+        row: &'static NativeRow,
         native: Native,
     ) -> DeclarationId {
         let order = self.order;
@@ -273,14 +263,14 @@ impl Builder {
         parsed: &[ParsedDeclaration],
     ) -> Result<(), Diagnostic> {
         let loaded_file = &loaded.files[index];
-        let namespace_path: Vec<String> = loaded_file
+        let namespace_segments: &[String] = loaded_file
             .file
             .module
             .as_ref()
-            .map(|module| module.segments.clone())
-            .unwrap_or_default();
+            .map(|module| module.segments.as_slice())
+            .unwrap_or(&[]);
         if loaded_file.origin != Origin::Embedded
-            && namespace_path.first().map(String::as_str) == BUILTIN_NAMESPACE.first().copied()
+            && namespace_segments.first().map(String::as_str) == BUILTIN_NAMESPACE.first().copied()
         {
             let span = loaded_file
                 .file
@@ -294,7 +284,7 @@ impl Builder {
                 "`std` is reserved and cannot be declared",
             ));
         }
-        let namespace = self.ensure_namespace(&namespace_path);
+        let namespace = self.ensure_namespace(namespace_segments);
         let file = FileId(self.files.len());
         self.files.push(File {
             path: loaded_file.path.clone(),
@@ -309,8 +299,9 @@ impl Builder {
                 ParsedDeclaration::Function(function) => {
                     (&function.name, function.name_span, Registry::Function)
                 }
-                ParsedDeclaration::Text(text) => (&text.name, text.name_span, Registry::Value),
-                ParsedDeclaration::Rec(record) => (&record.name, record.name_span, Registry::Value),
+                ParsedDeclaration::Binding(binding) => {
+                    (&binding.name, binding.name_span, Registry::Value)
+                }
             };
             let id = self.declare(
                 DeclarationSite {
@@ -382,7 +373,7 @@ impl Builder {
             ));
         }
         if let Some(parameter) = function.parameters.first()
-            && parameter.kind != ParameterKind::Record
+            && parameter.kind != ValueKind::Record
         {
             return Err(Diagnostic::new(
                 path,

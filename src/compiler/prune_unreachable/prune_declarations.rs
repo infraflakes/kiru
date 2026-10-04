@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use crate::compiler::{
-    Declaration, DeclarationId, DeclarationKind, Expression, Program, Statement, VisitorMut,
+    Declaration, DeclarationId, Expression, Program, RwLockExt, Statement, VisitorMut,
     walk_expression_mut, walk_statements_mut,
 };
 
@@ -14,7 +14,7 @@ pub(crate) fn prune_unreachable(program: &mut Program) {
     let reachable = collect_reachable_declarations(program);
     let mapping = compact(program, &reachable);
     remap(program, &mapping);
-    crate::compiler::resolve_names::verify(program);
+    crate::compiler::verify_program(program);
 }
 
 /// Move the reachable declarations into a fresh vector, in their old order,
@@ -59,10 +59,7 @@ fn remap(program: &mut Program, mapping: &[Option<DeclarationId>]) {
 /// the remapped declaration ids. The table is empty at compile time, so this
 /// matters when a program is retained after it has already run.
 fn remap_values(program: &mut Program, mapping: &[Option<DeclarationId>]) {
-    let values = program
-        .values
-        .get_mut()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let values = program.values.get_mut_unpoisoned();
     if values.is_empty() {
         return;
     }
@@ -85,19 +82,16 @@ fn remap_declaration(declaration: &mut Declaration, mapping: &[Option<Declaratio
         *parameter = mapped(mapping, *parameter);
     }
     let mut remapper = EdgeRemapper { mapping };
-    match &mut declaration.kind {
-        DeclarationKind::Function(function) => {
-            walk_statements_mut(&mut remapper, &mut function.body);
-        }
-        DeclarationKind::Text(expression) | DeclarationKind::Record(expression) => {
-            walk_expression_mut(&mut remapper, expression);
-        }
-        DeclarationKind::Binding(_) | DeclarationKind::Native(_) => {}
+    if let Some(function) = declaration.function_mut() {
+        walk_statements_mut(&mut remapper, &mut function.body);
+    } else if let Some(expression) = declaration.initializer_mut() {
+        walk_expression_mut(&mut remapper, expression);
     }
 }
 
 /// Rewrites the edges a statement or expression carries: the binding a
-/// statement declares, and the declaration a reference or a call names.
+/// statement declares, and the declaration a reference or a call names. Every
+/// node kind is listed, so a new edge-bearing kind fails to compile.
 struct EdgeRemapper<'a> {
     mapping: &'a [Option<DeclarationId>],
 }
@@ -111,7 +105,10 @@ impl VisitorMut for EdgeRemapper<'_> {
             Expression::Call { callee, .. } => {
                 *callee = mapped(self.mapping, *callee);
             }
-            _ => {}
+            Expression::Text { .. }
+            | Expression::Record { .. }
+            | Expression::Field { .. }
+            | Expression::Add { .. } => {}
         }
     }
 
@@ -120,7 +117,13 @@ impl VisitorMut for EdgeRemapper<'_> {
             Statement::Bind { declaration, .. } | Statement::Assign { declaration, .. } => {
                 *declaration = mapped(self.mapping, *declaration);
             }
-            _ => {}
+            Statement::Expression(_)
+            | Statement::Return { .. }
+            | Statement::Panic { .. }
+            | Statement::Async { .. }
+            | Statement::Wait { .. }
+            | Statement::Switch { .. }
+            | Statement::Defer { .. } => {}
         }
     }
 }

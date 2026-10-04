@@ -5,7 +5,7 @@ use crate::syntax::Span;
 use super::token::{Token, TokenKind};
 
 /// A lexical error, positioned at the offending source range.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct LexError {
     pub(crate) span: Span,
     pub(crate) message: String,
@@ -82,7 +82,7 @@ impl<'a> Lexer<'a> {
                 continue;
             }
 
-            let simple = match current {
+            let single_character_token = match current {
                 '.' => Some(TokenKind::Dot),
                 ',' => Some(TokenKind::Comma),
                 ';' => Some(TokenKind::Semi),
@@ -94,7 +94,7 @@ impl<'a> Lexer<'a> {
                 ')' => Some(TokenKind::RParen),
                 _ => None,
             };
-            if let Some(kind) = simple {
+            if let Some(kind) = single_character_token {
                 self.advance();
                 tokens.push(Token {
                     kind,
@@ -250,7 +250,7 @@ mod tests {
     #[test]
     fn lexes_keywords_identifiers_and_punctuation() {
         assert_eq!(
-            kinds("fn build(rec repo) { return repo.dir; };"),
+            kinds("fn build(rec repo) { return(repo.dir); };"),
             vec![
                 TokenKind::Fn,
                 TokenKind::Ident("build".to_owned()),
@@ -260,9 +260,11 @@ mod tests {
                 TokenKind::RParen,
                 TokenKind::LBrace,
                 TokenKind::Return,
+                TokenKind::LParen,
                 TokenKind::Ident("repo".to_owned()),
                 TokenKind::Dot,
                 TokenKind::Ident("dir".to_owned()),
+                TokenKind::RParen,
                 TokenKind::Semi,
                 TokenKind::RBrace,
                 TokenKind::Semi,

@@ -3,11 +3,12 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use crate::compiler::Origin;
 use crate::syntax;
 use crate::syntax::Span;
 
 use super::load_error::LoadError;
-use super::loaded_program::{LoadedFile, LoadedProgram, Origin};
+use super::loaded_program::{LoadedFile, LoadedProgram};
 use super::resolve_import_paths::resolve_import;
 
 /// The standard library, compiled into every program and always visible.

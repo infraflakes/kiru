@@ -6,21 +6,23 @@
 //! kind is a change to this file alone. A visitor observes each node before
 //! its children are walked, which lets a mutable visitor rewrite a node's own
 //! edges before its subtree is visited.
+//!
+//! Both visitor methods are required, so each pass names every node kind it
+//! visits and lists every variant explicitly. A new node kind is then a
+//! compile error in every pass, not a silently missed node.
 
 use crate::compiler::{Expression, Statement};
 
-/// A read-only walk over a body. The default methods do nothing, so a pass
-/// overrides only the node kinds it cares about.
+/// A read-only walk over a body.
 pub(crate) trait Visitor {
-    fn expression(&mut self, _expression: &Expression) {}
-    fn statement(&mut self, _statement: &Statement) {}
+    fn expression(&mut self, expression: &Expression);
+    fn statement(&mut self, statement: &Statement);
 }
 
-/// A rewriting walk over a body. The default methods do nothing, so a pass
-/// overrides only the node kinds it changes.
+/// A rewriting walk over a body.
 pub(crate) trait VisitorMut {
-    fn expression(&mut self, _expression: &mut Expression) {}
-    fn statement(&mut self, _statement: &mut Statement) {}
+    fn expression(&mut self, expression: &mut Expression);
+    fn statement(&mut self, statement: &mut Statement);
 }
 
 /// Visit every statement and, recursively, every expression under it.

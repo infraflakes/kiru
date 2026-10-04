@@ -4,25 +4,12 @@
 
 use std::time::{Duration, Instant};
 
-use crate::compiler::{Program, Value};
-use crate::compiler::{load_files, resolve_names, validate_program};
+use crate::compiler::{Value, checked_program, prune_unreachable};
 
 use super::Runtime;
 
-/// Load, link, and check one source file. Module values are evaluated by
-/// `Runtime::for_testing`, exactly as a compiled binary does at startup.
-fn program(source: &str) -> Program {
-    let directory = tempfile::tempdir().expect("temp dir");
-    let path = directory.path().join("main.kiru");
-    std::fs::write(&path, source).expect("write file");
-    let mut loaded = load_files(&path).expect("loads");
-    let mut program = resolve_names(&mut loaded).expect("links");
-    validate_program(&mut program).expect("checks");
-    program
-}
-
 fn runtime(source: &str) -> Runtime {
-    Runtime::for_testing(program(source))
+    Runtime::for_testing(checked_program(source))
 }
 
 fn call_text(runtime: &Runtime, name: &str) -> String {
@@ -405,4 +392,33 @@ fn a_panic_in_a_defer_does_not_stop_the_other_defers() {
     assert!(runtime.call_root("f", Vec::new()).is_err());
     assert!(last.exists(), "the defer after the panic still runs");
     assert!(first.exists(), "the first registered defer runs last");
+}
+
+#[test]
+fn a_retained_program_still_runs() {
+    let mut program = checked_program(
+        "fn answer() { return(\"42\"); };\n\
+         fn main() { answer(); };",
+    );
+    prune_unreachable(&mut program);
+    let runtime = Runtime::for_testing(program);
+    let value = runtime
+        .call_root("answer", Vec::new())
+        .expect("the retained function runs");
+    assert_eq!(value, Value::Text("42".to_owned()));
+}
+
+#[test]
+fn retained_module_values_still_evaluate() {
+    let mut program = checked_program(
+        "txt base = \"a\";\n\
+         fn f() { return(base + \"b\"); };\n\
+         fn main() { f(); };",
+    );
+    prune_unreachable(&mut program);
+    let runtime = Runtime::for_testing(program);
+    let value = runtime
+        .call_root("f", Vec::new())
+        .expect("the retained module value evaluates");
+    assert_eq!(value, Value::Text("ab".to_owned()));
 }

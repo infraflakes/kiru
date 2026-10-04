@@ -16,21 +16,31 @@ mod package_binary;
 mod program_model;
 mod prune_unreachable;
 mod resolve_names;
+#[cfg(test)]
+mod test_support;
 mod validate_program;
 
 pub(crate) use compile_program::compile;
-pub(crate) use diagnostics::Diagnostic;
+pub(in crate::compiler) use diagnostics::{
+    Diagnostic, duplicate_in_namespace, duplicate_name, expected_instead, function_used_as_value,
+    value_called,
+};
 pub(crate) use load_files::{LoadedProgram, load_files};
 pub(crate) use package_binary::{
     attach_trailer, deserialize_program, read_trailer, serialize_program,
 };
+pub(in crate::compiler) use program_model::{
+    BUILTIN_NAMESPACE, BindingKind, Case, Declaration, Derived, ENTRY_FUNCTION, File, FileId,
+    Function, NATIVE_ROWS, NameTable, Namespace, NamespaceId, NativeRow, Origin, Position,
+    Registry, Usage, Visitor, VisitorMut, fits, namespace_at, namespace_path, verify_program,
+    walk_expression, walk_expression_mut, walk_statements, walk_statements_mut,
+};
 pub(crate) use program_model::{
-    BUILTIN_NAMESPACE, BindingKind, Case, Declaration, DeclarationId, DeclarationKind, Derived,
-    ENTRY_FUNCTION, Expression, Field, File, FileId, Function, Kind, NATIVE_ROWS, NameTable,
-    Namespace, NamespaceId, Native, Position, Program, Record, Row, Statement, Value, Visitor,
-    VisitorMut, fits, namespace_path, native_row, walk_expression, walk_expression_mut,
-    walk_statements, walk_statements_mut,
+    DeclarationId, DeclarationKind, Expression, Field, Kind, MutexExt, Native, Program, Record,
+    RwLockExt, Statement, Value, native_arity, validate_program_structure,
 };
 pub(crate) use prune_unreachable::prune_unreachable;
 pub(crate) use resolve_names::resolve_names;
+#[cfg(test)]
+pub(crate) use test_support::{checked_files, checked_program};
 pub(crate) use validate_program::validate_program;

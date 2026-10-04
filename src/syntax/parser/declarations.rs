@@ -1,9 +1,7 @@
 //! Declaration level grammar: modules, imports, functions, variables, and
 //! records.
 
-use crate::syntax::ast::{
-    Function, Import, ModulePath, Parameter, ParameterKind, RecBinding, TextBinding,
-};
+use crate::syntax::ast::{Binding, Function, Import, ModulePath, Parameter, ValueKind};
 use crate::syntax::token::TokenKind;
 
 use super::{ParseError, Parser};
@@ -53,11 +51,11 @@ impl Parser {
         let kind = match self.current().kind {
             TokenKind::Txt => {
                 self.advance();
-                ParameterKind::Text
+                ValueKind::Text
             }
             TokenKind::Rec => {
                 self.advance();
-                ParameterKind::Record
+                ValueKind::Record
             }
             _ => {
                 return Err(self.error_here(format!(
@@ -70,31 +68,17 @@ impl Parser {
         Ok(Parameter { kind, name, span })
     }
 
-    /// Parse a `txt name = expression;` declaration or statement.
-    pub(super) fn parse_text_binding(&mut self) -> Result<TextBinding, ParseError> {
+    /// Parse a `txt name = expression;` or `rec name = expression;`
+    /// declaration or statement. The expression is a record literal, a record
+    /// variable, or a call returning a value of the declared kind.
+    pub(super) fn parse_binding(&mut self, kind: ValueKind) -> Result<Binding, ParseError> {
         let start = self.advance().start;
-        let (name, name_span) = self.expect_identifier("in a text binding")?;
+        let (name, name_span) = self.expect_identifier("in a binding")?;
         self.expect(&TokenKind::Equals, "after the binding name")?;
         let value = self.parse_expression()?;
         let span = self.span_through_semicolon(start, "after the initializer")?;
-        Ok(TextBinding {
-            name,
-            name_span,
-            value,
-            span,
-        })
-    }
-
-    /// Parse a `rec name = expression;` declaration or statement. The
-    /// expression is a record literal, a record variable, or a call returning
-    /// a record.
-    pub(super) fn parse_rec_binding(&mut self) -> Result<RecBinding, ParseError> {
-        let start = self.advance().start;
-        let (name, name_span) = self.expect_identifier("in a record binding")?;
-        self.expect(&TokenKind::Equals, "after the binding name")?;
-        let value = self.parse_expression()?;
-        let span = self.span_through_semicolon(start, "after the initializer")?;
-        Ok(RecBinding {
+        Ok(Binding {
+            kind,
             name,
             name_span,
             value,

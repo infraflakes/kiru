@@ -3,19 +3,11 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+use crate::compiler::Origin;
 use crate::syntax::File;
 
-/// Where a loaded file came from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(crate) enum Origin {
-    /// A file seeded from the compiler's own sources.
-    Embedded,
-    /// A file read from the filesystem.
-    File,
-}
-
 /// A parsed file together with the resolved indexes of its imports.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct LoadedFile {
     pub(crate) path: PathBuf,
     pub(crate) source: String,
@@ -25,7 +17,7 @@ pub(crate) struct LoadedFile {
 }
 
 /// The whole program: every loaded file plus the entry index.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct LoadedProgram {
     pub(crate) entry: usize,
     pub(crate) files: Vec<LoadedFile>,

@@ -2,7 +2,7 @@
 
 use crate::syntax::Span;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum TokenKind {
     Ident(String),
     Text(String),
@@ -32,7 +32,7 @@ pub(crate) enum TokenKind {
     Eof,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Token {
     pub(crate) kind: TokenKind,
     pub(crate) span: Span,

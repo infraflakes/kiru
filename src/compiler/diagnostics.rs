@@ -22,7 +22,6 @@ impl Diagnostic {
             message: message.into(),
         }
     }
-
     /// Render as `path:line:column: error: message`, followed by every line
     /// the span covers and a caret underline. Tabs are expanded to four-column
     /// stops and characters take their Unicode display width, so the underline
@@ -69,6 +68,32 @@ impl Diagnostic {
         }
         rendered
     }
+}
+
+/// The message for a value of the wrong kind: `expected <required>, found
+/// <actual>`, where both names come from the kind system.
+pub(crate) fn expected_instead(required: &str, actual: &str) -> String {
+    format!("expected {required}, found {actual}")
+}
+
+/// The message for a function named where a value is required.
+pub(crate) fn function_used_as_value(name: &str) -> String {
+    format!("`{name}` is a function; call it")
+}
+
+/// The message for a value called as a function.
+pub(crate) fn value_called(name: &str) -> String {
+    format!("`{name}` is a value and cannot be called")
+}
+
+/// The message for a name declared more than once in one scope.
+pub(crate) fn duplicate_name(name: &str) -> String {
+    format!("`{name}` is declared more than once")
+}
+
+/// The message for a name declared more than once in one namespace.
+pub(crate) fn duplicate_in_namespace(name: &str) -> String {
+    format!("`{name}` is declared more than once in this namespace")
 }
 
 /// The width of one tab stop in columns.
@@ -142,8 +167,8 @@ mod tests {
                 "multiline span",
                 Span::new(8, 17),
                 "bad string",
-                "var s = \"one\ntwo\";\n",
-                "main.kiru:1:9: error: bad string\nvar s = \"one\n        ^^^^\ntwo\";\n^^^^\n",
+                "txt s = \"one\ntwo\";\n",
+                "main.kiru:1:9: error: bad string\ntxt s = \"one\n        ^^^^\ntwo\";\n^^^^\n",
             ),
             (
                 "carets aligned after tabs",

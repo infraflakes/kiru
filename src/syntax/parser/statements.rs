@@ -1,7 +1,7 @@
 //! Statement level grammar: blocks, statements, switches, and the statement
 //! forms that close with a semicolon.
 
-use crate::syntax::ast::{Case, Statement};
+use crate::syntax::ast::{Case, Statement, ValueKind};
 use crate::syntax::token::TokenKind;
 
 use super::{ParseError, Parser};
@@ -9,6 +9,7 @@ use super::{ParseError, Parser};
 impl Parser {
     /// Parse a `{ ... }` block into its statements.
     pub(super) fn parse_block(&mut self) -> Result<Vec<Statement>, ParseError> {
+        self.enter_nesting()?;
         self.expect(&TokenKind::LBrace, "to open a block")?;
         let mut statements = Vec::new();
         while !self.check(&TokenKind::RBrace) {
@@ -20,14 +21,15 @@ impl Parser {
             statements.push(self.parse_statement()?);
         }
         self.expect(&TokenKind::RBrace, "to close the block")?;
+        self.leave_nesting();
         Ok(statements)
     }
 
     /// Dispatch on the cursor token to parse one statement.
     fn parse_statement(&mut self) -> Result<Statement, ParseError> {
         match &self.current().kind {
-            TokenKind::Txt => Ok(Statement::Text(self.parse_text_binding()?)),
-            TokenKind::Rec => Ok(Statement::Rec(self.parse_rec_binding()?)),
+            TokenKind::Txt => Ok(Statement::Binding(self.parse_binding(ValueKind::Text)?)),
+            TokenKind::Rec => Ok(Statement::Binding(self.parse_binding(ValueKind::Record)?)),
             TokenKind::Return => self.parse_return(),
             TokenKind::Panic => self.parse_panic(),
             TokenKind::Async => self.parse_async(),

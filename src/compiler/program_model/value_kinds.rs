@@ -18,6 +18,9 @@ pub(crate) enum Kind {
 }
 
 impl Kind {
+    /// Every concrete kind, in declaration order.
+    pub(crate) const ALL: &'static [Kind] = &[Kind::Text, Kind::Record, Kind::Nothing];
+
     /// The name the diagnostics use.
     pub(crate) fn name(self) -> &'static str {
         match self {
@@ -60,16 +63,13 @@ impl Usage {
         Usage(self.0 | other.0)
     }
 
-    /// The name of a requirement, for diagnostics. A multi-bit group names
-    /// its members; a single-bit usage names its one kind.
+    /// The name of a requirement, for diagnostics. A single-bit usage names
+    /// its kind through the kind system; a group names its members.
     pub(crate) fn name(self) -> &'static str {
-        if self == Usage::TEXT {
-            "text"
-        } else if self == Usage::RECORD {
-            "record"
-        } else if self == Usage::NOTHING {
-            "nothing"
-        } else if self == Usage::DATA {
+        if let Some(kind) = Kind::ALL.iter().find(|kind| kind.usage() == self) {
+            return kind.name();
+        }
+        if self == Usage::DATA {
             "text or record"
         } else {
             "value"

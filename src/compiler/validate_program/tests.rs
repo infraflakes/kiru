@@ -1,28 +1,7 @@
-use super::validate_program;
-use crate::compiler::{DeclarationId, Kind, Program};
-use crate::compiler::{load_files, resolve_names};
+use crate::compiler::{DeclarationId, Kind, Program, checked_files, checked_program};
 
 fn check(files: &[(&str, &str)], entry: &str) -> Result<(), String> {
-    let directory = tempfile::tempdir().expect("temp dir");
-    for (name, source) in files {
-        let path = directory.path().join(name);
-        std::fs::write(&path, source).expect("write file");
-    }
-    let mut loaded = load_files::load_files(&directory.path().join(entry)).expect("loads");
-    let mut program =
-        resolve_names::resolve_names(&mut loaded).map_err(|diagnostic| diagnostic.message)?;
-    validate_program(&mut program).map_err(|diagnostic| diagnostic.message)
-}
-
-/// Load, link, and check one source file, returning the checked program.
-fn checked(source: &str) -> Program {
-    let directory = tempfile::tempdir().expect("temp dir");
-    let path = directory.path().join("main.kiru");
-    std::fs::write(&path, source).expect("write file");
-    let mut loaded = load_files::load_files(&path).expect("loads");
-    let mut program = resolve_names::resolve_names(&mut loaded).expect("links");
-    validate_program(&mut program).expect("checks");
-    program
+    checked_files(files, entry).map(|_| ())
 }
 
 /// The declaration a namespace path and a name resolve to, searched through
@@ -441,7 +420,7 @@ fn statement_form_rules() {
 
 #[test]
 fn checks_the_shipped_library_kinds() {
-    let program = checked(
+    let program = checked_program(
         "rec backend = { dir = \"/kiru\" };\n\
          fn read(rec repo) { return(repo.dir); };\n\
          fn main() {\n\

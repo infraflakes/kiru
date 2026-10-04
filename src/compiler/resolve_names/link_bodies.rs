@@ -6,19 +6,19 @@
 
 use std::collections::HashMap;
 
-use crate::compiler::load_files::{LoadedProgram, Origin};
+use crate::compiler::load_files::LoadedProgram;
 use crate::compiler::{
     BUILTIN_NAMESPACE, BindingKind, Case, Declaration, DeclarationId, DeclarationKind, Derived,
-    Diagnostic, Expression, Field, FileId, Function, Kind, NamespaceId, Program, Statement,
-    namespace_path,
+    Diagnostic, Expression, Field, FileId, Function, Kind, NamespaceId, Origin, Program, Registry,
+    Statement, duplicate_name, function_used_as_value, namespace_at, namespace_path, value_called,
 };
 use crate::syntax::Span;
 use crate::syntax::{
-    Declaration as ParsedDeclaration, Expression as ParsedExpression, ParameterKind,
-    Statement as ParsedStatement,
+    Declaration as ParsedDeclaration, Expression as ParsedExpression, Statement as ParsedStatement,
+    ValueKind,
 };
 
-use super::register_declarations::{Builder, Registry, Skeleton};
+use super::register_declarations::{Builder, Skeleton};
 
 /// Build the program model. On failure the parsed program is left untouched
 /// except for the declarations already consumed, so the caller can still
@@ -45,7 +45,7 @@ pub(crate) fn resolve_names(loaded: &mut LoadedProgram) -> Result<Program, Diagn
     let entry = builder.resolve_entry(loaded, entry_file, &parsed)?;
     builder.link_declarations(&parsed)?;
     let program = builder.finish(entry);
-    super::check_invariants::verify(&program);
+    crate::compiler::verify_program(&program);
     Ok(program)
 }
 
@@ -83,7 +83,7 @@ impl Builder {
                                 name_span: parameter.span,
                                 owner: pending.declaration,
                                 binding: BindingKind::Parameter,
-                                declared_kind: Some(parameter_kind(parameter.kind)),
+                                declared_kind: Some(declared_kind(parameter.kind)),
                             },
                         )?;
                         context.scopes.declare(&parameter.name, id);
@@ -92,7 +92,7 @@ impl Builder {
                     let body = self.link_statements(&function.body, &mut context)?;
                     (DeclarationKind::Function(Function { body }), parameters)
                 }
-                ParsedDeclaration::Text(text) => {
+                ParsedDeclaration::Binding(binding) => {
                     let mut scopes = Scopes::default();
                     let mut context = Context {
                         scopes: &mut scopes,
@@ -102,25 +102,12 @@ impl Builder {
                         current_is_function: false,
                         order,
                     };
-                    (
-                        DeclarationKind::Text(self.link_expression(&text.value, &mut context)?),
-                        Vec::new(),
-                    )
-                }
-                ParsedDeclaration::Rec(record) => {
-                    let mut scopes = Scopes::default();
-                    let mut context = Context {
-                        scopes: &mut scopes,
-                        namespace,
-                        file,
-                        current: pending.declaration,
-                        current_is_function: false,
-                        order,
+                    let expression = self.link_expression(&binding.value, &mut context)?;
+                    let kind = match binding.kind {
+                        ValueKind::Text => DeclarationKind::Text(expression),
+                        ValueKind::Record => DeclarationKind::Record(expression),
                     };
-                    (
-                        DeclarationKind::Record(self.link_expression(&record.value, &mut context)?),
-                        Vec::new(),
-                    )
+                    (kind, Vec::new())
                 }
             };
             self.declarations[pending.declaration.0] = Some(Declaration {
@@ -157,11 +144,7 @@ impl Builder {
         } = local;
         let reported = &self.files[file.0].path;
         if scopes.find(name).is_some() {
-            return Err(Diagnostic::new(
-                reported,
-                name_span,
-                format!("`{name}` is declared more than once"),
-            ));
+            return Err(Diagnostic::new(reported, name_span, duplicate_name(name)));
         }
         let order = self.skeletons[owner.0].order;
         let id = self.create_node(
@@ -188,46 +171,29 @@ impl Builder {
         let mut linked = Vec::new();
         for statement in statements {
             match statement {
-                ParsedStatement::Text(text) => {
-                    let value = self.link_expression(&text.value, context)?;
-                    let binding = self.declare_local(
+                ParsedStatement::Binding(binding) => {
+                    let value = self.link_expression(&binding.value, context)?;
+                    let binding_kind = match binding.kind {
+                        ValueKind::Text => BindingKind::Text,
+                        ValueKind::Record => BindingKind::Record,
+                    };
+                    let declaration = self.declare_local(
                         context.scopes,
                         LocalDeclaration {
                             file: context.file,
                             namespace: context.namespace,
-                            name: &text.name,
-                            name_span: text.name_span,
+                            name: &binding.name,
+                            name_span: binding.name_span,
                             owner: context.current,
-                            binding: BindingKind::Text,
+                            binding: binding_kind,
                             declared_kind: None,
                         },
                     )?;
-                    context.scopes.declare(&text.name, binding);
+                    context.scopes.declare(&binding.name, declaration);
                     linked.push(Statement::Bind {
-                        declaration: binding,
+                        declaration,
                         value,
-                        span: text.span,
-                    });
-                }
-                ParsedStatement::Rec(record) => {
-                    let value = self.link_expression(&record.value, context)?;
-                    let binding = self.declare_local(
-                        context.scopes,
-                        LocalDeclaration {
-                            file: context.file,
-                            namespace: context.namespace,
-                            name: &record.name,
-                            name_span: record.name_span,
-                            owner: context.current,
-                            binding: BindingKind::Record,
-                            declared_kind: None,
-                        },
-                    )?;
-                    context.scopes.declare(&record.name, binding);
-                    linked.push(Statement::Bind {
-                        declaration: binding,
-                        value,
-                        span: record.span,
+                        span: binding.span,
                     });
                 }
                 ParsedStatement::Assignment {
@@ -360,7 +326,6 @@ impl Builder {
             },
             ParsedExpression::Name { root, path, span } => Expression::Reference {
                 declaration: self.resolve(context, path, *root, *span, Registry::Value)?,
-                root: *root,
                 span: *span,
             },
             ParsedExpression::Call {
@@ -378,7 +343,6 @@ impl Builder {
                 }
                 Expression::Call {
                     callee: declaration,
-                    root: *root,
                     callee_span: *callee_span,
                     arguments: linked_arguments,
                     span: *span,
@@ -460,10 +424,10 @@ impl Builder {
         span: Span,
         registry: Registry,
     ) -> Result<Option<DeclarationId>, Diagnostic> {
-        let (name, search) = path
+        let (name, namespace_segments) = path
             .split_last()
             .expect("a name path has at least one segment");
-        if !root && search.is_empty() {
+        if !root && namespace_segments.is_empty() {
             let mut namespace = Some(context.namespace);
             while let Some(current) = namespace {
                 if let Some(found) = self.registry_lookup(current, name, registry) {
@@ -473,16 +437,19 @@ impl Builder {
             }
             return Ok(None);
         }
-        let namespace = if search.is_empty() {
+        let namespace = if namespace_segments.is_empty() {
             NamespaceId(0)
         } else {
-            match self.namespace_at(search) {
+            match self.namespace_at(namespace_segments) {
                 Some(namespace) => {
                     if !self.namespace_reachable(context.file, namespace) {
                         return Err(Diagnostic::new(
                             &self.files[context.file.0].path,
                             span,
-                            format!("namespace `{}` is not imported", search.join("::")),
+                            format!(
+                                "namespace `{}` is not imported",
+                                namespace_segments.join("::")
+                            ),
                         ));
                     }
                     namespace
@@ -503,20 +470,17 @@ impl Builder {
         span: Span,
         registry: Registry,
     ) -> Diagnostic {
-        let other = match registry {
-            Registry::Value => Registry::Function,
-            Registry::Function => Registry::Value,
-        };
+        let other_registry = registry.other();
         let display = display_path(path, root);
         let message = if self
-            .search(context, path, root, span, other)
+            .search(context, path, root, span, other_registry)
             .ok()
             .flatten()
             .is_some()
         {
             match registry {
-                Registry::Value => format!("`{display}` is a function; call it"),
-                Registry::Function => format!("`{display}` is a value and cannot be called"),
+                Registry::Value => function_used_as_value(&display),
+                Registry::Function => value_called(&display),
             }
         } else {
             format!("unknown name `{display}`")
@@ -531,18 +495,11 @@ impl Builder {
         name: &str,
         registry: Registry,
     ) -> Option<DeclarationId> {
-        match registry {
-            Registry::Value => self.namespaces[namespace.0].value(name),
-            Registry::Function => self.namespaces[namespace.0].function(name),
-        }
+        self.namespaces[namespace.0].lookup(registry, name)
     }
 
     fn namespace_at(&self, path: &[String]) -> Option<NamespaceId> {
-        let mut current = NamespaceId(0);
-        for segment in path {
-            current = *self.namespaces[current.0].children.get(segment)?;
-        }
-        Some(current)
+        namespace_at(&self.namespaces, path)
     }
 
     /// Whether a file may reach a namespace: its own, the implicit `std`
@@ -590,10 +547,10 @@ struct LocalDeclaration<'a> {
 
 /// The kind a written parameter keyword names. This is the only mapping from a
 /// parameter's declaration to the kind system.
-fn parameter_kind(kind: ParameterKind) -> Kind {
+fn declared_kind(kind: ValueKind) -> Kind {
     match kind {
-        ParameterKind::Text => Kind::Text,
-        ParameterKind::Record => Kind::Record,
+        ValueKind::Text => Kind::Text,
+        ValueKind::Record => Kind::Record,
     }
 }
 

@@ -46,12 +46,12 @@ fn print(txt message) {
 };
 
 # Write a prefix and a message, coloring the prefix on a terminal. `color` is
-# an ANSI SGR code and `fd` is "1" for stdout or "2" for stderr.
-fn emit(txt color, txt prefix, txt fd, txt message) {
+# an ANSI SGR code and `file_descriptor` is "1" for stdout or "2" for stderr.
+fn emit(txt color, txt prefix, txt file_descriptor, txt message) {
   txt quoted = quote(message);
   txt colored = "'\\033[" + color + "m" + prefix + "\\033[0m %s\\n'";
   txt plain = "'" + prefix + " %s\\n'";
-  run("if [ -t " + fd + " ]; then printf " + colored + " " + quoted + " >&" + fd + "; else printf " + plain + " " + quoted + " >&" + fd + "; fi");
+  run("if [ -t " + file_descriptor + " ]; then printf " + colored + " " + quoted + " >&" + file_descriptor + "; else printf " + plain + " " + quoted + " >&" + file_descriptor + "; fi");
 };
 
 # Write an "INFO:" line to stdout, yellow on a terminal.

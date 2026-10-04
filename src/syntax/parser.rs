@@ -13,12 +13,12 @@ mod tests;
 
 use crate::syntax::Span;
 
-use super::ast::{Declaration, Expression, Field, File};
+use super::ast::{Declaration, Expression, Field, File, ValueKind};
 use super::lexer::lex;
 use super::token::{Token, TokenKind};
 
 /// A parse error, positioned at the offending source range.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct ParseError {
     pub(crate) span: Span,
     pub(crate) message: String,
@@ -37,15 +37,35 @@ pub(crate) fn parse_file(source: &str) -> Result<File, ParseError> {
 struct Parser {
     tokens: Vec<Token>,
     position: usize,
+    depth: usize,
 }
 
 impl Parser {
+    /// The deepest nesting the parser accepts. A deeper block or record would
+    /// exhaust the stack during the recursive descent.
+    const MAX_NESTING: usize = 128;
+
     /// Build a parser over a token stream that ends with `Eof`.
     fn new(tokens: Vec<Token>) -> Self {
         Self {
             tokens,
             position: 0,
+            depth: 0,
         }
+    }
+
+    /// Count one level of nesting, rejecting input nested too deeply.
+    fn enter_nesting(&mut self) -> Result<(), ParseError> {
+        self.depth += 1;
+        if self.depth > Self::MAX_NESTING {
+            return Err(self.error_here("nesting is too deep"));
+        }
+        Ok(())
+    }
+
+    /// Leave one level of nesting.
+    fn leave_nesting(&mut self) {
+        self.depth -= 1;
     }
 
     /// The token at the cursor, falling back to the final `Eof` token.
@@ -168,11 +188,11 @@ impl Parser {
                 }
                 TokenKind::Txt => {
                     seen_declaration = true;
-                    declarations.push(Declaration::Text(self.parse_text_binding()?));
+                    declarations.push(Declaration::Binding(self.parse_binding(ValueKind::Text)?));
                 }
                 TokenKind::Rec => {
                     seen_declaration = true;
-                    declarations.push(Declaration::Rec(self.parse_rec_binding()?));
+                    declarations.push(Declaration::Binding(self.parse_binding(ValueKind::Record)?));
                 }
                 other => {
                     return Err(self.error_here(format!(

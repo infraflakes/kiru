@@ -20,13 +20,10 @@ fn release() {
 };
 ```
 
-The first command creates the staging directory at a known path, and the
-defer registers its removal, so the directory is removed whether the body
-succeeds or fails.
-
 ## LIFO Order
 
-Defers run in reverse declaration order:
+Defers run in reverse declaration order, and there is no priority, condition,
+or way to skip one, so the last thing acquired is the first thing released:
 
 <span class="filename">Filename: src/main.kiru</span>
 
@@ -42,9 +39,6 @@ $ ./app
 second registered, first run
 first registered, last run
 ```
-
-The second registration runs first, which matches resource acquisition: the
-last thing acquired is the first thing released.
 
 ## Sharing the Body's Bindings
 
@@ -68,8 +62,7 @@ $ ./app
 defer sees after
 ```
 
-The defer runs after the assignment, so it reads `after`. A name declared
-inside the defer belongs to the defer alone:
+A name declared inside the defer belongs to the defer alone:
 
 <span class="filename">Filename: src/main.kiru</span>
 
@@ -116,17 +109,15 @@ cleanup
 
 ## Defers and Threads
 
-The runtime joins every remaining thread before the program exits. A
-function that starts a thread and needs its work finished before its own
-return still runs `wait;`, which joins the asyncs the calling thread spawned.
-A function started with `async` may register its own defers; they run when its
-body ends.
+A function started with `async` registers its own defers, and they run when
+its body ends. [Threads](/effects/07-threads/01-threads/) covers waiting and
+joining.
 
 ## During Unwind
 
 When a panic unwinds a body, that body's defers run before the panic
-continues outward. Each body runs its defers as the panic passes through,
-so every registered cleanup runs exactly once, innermost first. A panic
-inside a defer is reported, and the remaining defers still run; the process
-exits nonzero. Because defers run on the panic path, they see the bindings
-as the body left them.
+continues outward. Each enclosing body runs its defers as the panic passes
+through, so every registered cleanup runs exactly once, innermost body first.
+A panic inside a defer is reported, and the remaining defers still run; the
+process exits nonzero. Because defers run on the panic path, they see the
+bindings as the body left them.

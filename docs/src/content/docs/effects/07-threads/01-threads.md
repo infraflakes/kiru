@@ -25,18 +25,17 @@ done
 ```
 
 The call's arguments are evaluated at the statement, in the current body,
-before the thread starts. The function then runs on the new thread. `wait;`
-takes no argument and joins the asyncs the calling thread spawned, so `done`
-prints only after `working` finishes. `work`'s own command writes nothing,
-because a thread started by `async` does not own the terminal; [the
-terminal](#only-the-entry-thread-owns-the-terminal) explains that.
+before the thread starts. `wait;` takes no argument and joins the asyncs the
+calling thread spawned; [the
+terminal](#only-the-entry-thread-owns-the-terminal) explains why the first
+command writes nothing.
 
 ## No Handles
 
-`async` is a keyword statement and yields nothing, and there is no handle to
-store. The spawn stands alone, so a thread cannot be bound, passed, returned,
-or kept in a record. There is no `std::async` function and no `std::thread`
-namespace:
+Each `async` starts exactly one thread and yields nothing, and there is no
+handle to store. The spawn stands alone, so a thread cannot be bound, passed,
+returned, or kept in a record. There is no `std::async` function and no
+`std::thread` namespace:
 
 ```console
 $ kc main.kiru
@@ -55,45 +54,23 @@ main.kiru:5:11: error: expected text, found nothing
           ^^^^^^
 ```
 
+`async` takes one call: a user function, or a call such as
+`std::command({}, "cargo build")`. It cannot contain another `async`, because
+`async` is a statement, not a call. A module value cannot be a thread either,
+because a spawn binds nothing; [module
+values](/language/03-names-and-scope/04-module-values/) covers that kind
+mismatch.
+
+```kiru
+fn main() {
+  async std::command({}, "cargo build");
+  wait;
+};
+```
+
 A bare `async work();` statement is legal; the runtime joins the thread before
 the program exits either way. [Waiting](#waiting) marks where the work is
 needed.
-
-:::tip
-Start the threads whose results a later step needs, run `wait;` once, and keep
-going. Because there are no handles, the wait is a barrier for every async the
-calling thread has started so far.
-:::
-
-## Many Threads
-
-Each `async` starts one thread. The two checks run at the same time, but only
-the entry thread owns the terminal, so neither check prints anything, and
-`done` always prints after `wait` returns:
-
-<span class="filename">Filename: src/main.kiru</span>
-
-```kiru
-fn check_format() {
-  std::command({}, "echo format");
-};
-
-fn check_lints() {
-  std::command({}, "echo lints");
-};
-
-fn main() {
-  async check_format();
-  async check_lints();
-  wait;
-  std::command({}, "echo done");
-};
-```
-
-```console
-$ ./app
-done
-```
 
 ## Only the Entry Thread Owns the Terminal
 
@@ -125,43 +102,6 @@ checks finished
 This is what keeps parallel output from interleaving: the terminal shows only
 what the entry thread writes.
 
-## What May Be Started
-
-`async` takes one call. A user function and a call such as
-`std::command({}, "cargo build")` are both accepted:
-
-<span class="filename">Filename: src/main.kiru</span>
-
-```kiru
-fn main() {
-  async std::command({}, "cargo build");
-  wait;
-};
-```
-
-An `async` cannot contain another `async`: `async` is a statement, not a call.
-A module value cannot be a thread either, because a spawn yields nothing and a
-value binding needs data:
-
-<span class="filename">Filename: src/main.kiru</span>
-
-```kiru
-fn work() {
-  std::command({}, "echo working");
-};
-
-txt worker = work();
-
-fn main() {};
-```
-
-```console
-$ kc main.kiru
-main.kiru:5:14: error: expected text, found nothing
-txt worker = work();
-             ^^^^^^
-```
-
 ## Waiting
 
 `wait;` joins the asyncs the calling thread spawned and then continues. A
@@ -176,14 +116,14 @@ is still observed.
 ## Failure
 
 A `panic;` in any thread, including one started with `async`, makes the run
-exit nonzero. The panic unwinds the body that raised it and runs that body's
-defers; it leaves every other body running. When the entry body ends, the
-runtime joins the remaining threads and exits nonzero. A panic on an async
-thread prints nothing, because that thread does not own the terminal; the
-entry thread reports the failure after `wait;`.
+exit nonzero. The panic unwinds the body that raised it and leaves every other
+body running; [Defer](/effects/08-failure-and-cleanup/03-defer/) covers the
+cleanup an unwind runs. When the entry body ends, the runtime joins the
+remaining threads and exits nonzero. The entry thread reports the failure
+after `wait;`.
 
 :::note
-Threads are OS threads. Each one runs a function body, does not own the
-terminal, and registers its own defers. There is no shared local state
-between threads; a thread sees only its arguments and the module values.
+Threads are OS threads. Each one runs a function body with its own scope.
+There is no shared local state between threads; a thread sees only its
+arguments and the module values.
 :::

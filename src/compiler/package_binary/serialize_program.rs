@@ -15,22 +15,15 @@ pub(crate) fn deserialize_program(bytes: &[u8]) -> Result<Program, String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::compiler::{load_files, resolve_names, validate_program};
+    use crate::compiler::checked_program;
 
     #[test]
     fn program_round_trips_through_bytes() {
-        let directory = tempfile::tempdir().expect("temp dir");
-        let path = directory.path().join("main.kiru");
-        std::fs::write(
-            &path,
+        let program = checked_program(
             "rec p = { dir = \"~/x\" };\n\
              txt title = \"kiru\";\n\
              fn main() { std::print(title); };",
-        )
-        .expect("write file");
-        let mut loaded = load_files::load_files(&path).expect("loads");
-        let mut program = resolve_names::resolve_names(&mut loaded).expect("links");
-        validate_program::validate_program(&mut program).expect("checks");
+        );
 
         let bytes = super::serialize_program(&program).expect("serializes");
         let restored = super::deserialize_program(&bytes).expect("deserializes");

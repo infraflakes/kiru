@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::RwLock;
 
-use crate::compiler::load_files::Origin;
 use crate::compiler::{Kind, Native};
 use crate::syntax::Span;
 
@@ -65,11 +64,7 @@ impl Program {
 
     /// The namespace at a path, when one exists.
     pub(crate) fn namespace_at(&self, path: &[String]) -> Option<NamespaceId> {
-        let mut current = self.root();
-        for segment in path {
-            current = *self.namespace(current).children.get(segment)?;
-        }
-        Some(current)
+        namespace_at(&self.namespaces, path)
     }
 
     /// The file a declaration came from. A native and a local binding have no
@@ -92,6 +87,15 @@ impl Program {
         path.push(declaration.name.clone());
         path.join("::")
     }
+}
+
+/// Where a loaded file came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) enum Origin {
+    /// A file seeded from the compiler's own sources.
+    Embedded,
+    /// A file read from the filesystem.
+    File,
 }
 
 /// One loaded file and the nodes it owns.
@@ -126,12 +130,45 @@ impl Namespace {
     pub(crate) fn function(&self, name: &str) -> Option<DeclarationId> {
         self.functions.get(name)
     }
+
+    /// One name looked up in one registry of this namespace.
+    pub(crate) fn lookup(&self, registry: Registry, name: &str) -> Option<DeclarationId> {
+        match registry {
+            Registry::Value => self.value(name),
+            Registry::Function => self.function(name),
+        }
+    }
+
+    /// One registry of this namespace, for registering a declaration.
+    pub(crate) fn table_mut(&mut self, registry: Registry) -> &mut NameTable {
+        match registry {
+            Registry::Value => &mut self.values,
+            Registry::Function => &mut self.functions,
+        }
+    }
+}
+
+/// Which registry of a namespace a name lives in.
+#[derive(Clone, Copy)]
+pub(crate) enum Registry {
+    Value,
+    Function,
+}
+
+impl Registry {
+    /// The other registry of the same namespace.
+    pub(crate) fn other(self) -> Registry {
+        match self {
+            Registry::Value => Registry::Function,
+            Registry::Function => Registry::Value,
+        }
+    }
 }
 
 /// One namespace registry: names that are unique within a namespace. A
 /// namespace keeps one for values and one for functions, so the duplicate
 /// rule lives here once. The table serializes exactly as the map it holds,
-/// so a compiled binary stores it as before.
+/// so a compiled binary stores it without a wrapper.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub(crate) struct NameTable {
@@ -166,7 +203,9 @@ impl NameTable {
     pub(crate) fn remap(&mut self, mapping: &[Option<DeclarationId>]) {
         self.entries.retain(|_, id| mapping[id.0].is_some());
         for id in self.entries.values_mut() {
-            *id = mapping[id.0].expect("a retained node only points at retained declarations");
+            if let Some(mapped) = mapping[id.0] {
+                *id = mapped;
+            }
         }
     }
 }
@@ -185,6 +224,16 @@ pub(crate) fn namespace_path(namespaces: &[Namespace], id: NamespaceId) -> Vec<S
     }
     segments.reverse();
     segments
+}
+
+/// The namespace at a path, walked over a namespace table. The program model
+/// and the linker both look namespaces up through this function.
+pub(crate) fn namespace_at(namespaces: &[Namespace], path: &[String]) -> Option<NamespaceId> {
+    let mut current = NamespaceId(0);
+    for segment in path {
+        current = *namespaces[current.0].children.get(segment)?;
+    }
+    Some(current)
 }
 
 /// One declaration or binding node.
@@ -211,7 +260,21 @@ impl Declaration {
     pub(crate) fn function(&self) -> Option<&Function> {
         match &self.kind {
             DeclarationKind::Function(function) => Some(function),
-            _ => None,
+            DeclarationKind::Text(_)
+            | DeclarationKind::Record(_)
+            | DeclarationKind::Binding(_)
+            | DeclarationKind::Native(_) => None,
+        }
+    }
+
+    /// The function body when this node is a function.
+    pub(crate) fn function_mut(&mut self) -> Option<&mut Function> {
+        match &mut self.kind {
+            DeclarationKind::Function(function) => Some(function),
+            DeclarationKind::Text(_)
+            | DeclarationKind::Record(_)
+            | DeclarationKind::Binding(_)
+            | DeclarationKind::Native(_) => None,
         }
     }
 
@@ -221,7 +284,21 @@ impl Declaration {
             DeclarationKind::Text(expression) | DeclarationKind::Record(expression) => {
                 Some(expression)
             }
-            _ => None,
+            DeclarationKind::Function(_)
+            | DeclarationKind::Binding(_)
+            | DeclarationKind::Native(_) => None,
+        }
+    }
+
+    /// The initializer expression when this node is a text or record value.
+    pub(crate) fn initializer_mut(&mut self) -> Option<&mut Expression> {
+        match &mut self.kind {
+            DeclarationKind::Text(expression) | DeclarationKind::Record(expression) => {
+                Some(expression)
+            }
+            DeclarationKind::Function(_)
+            | DeclarationKind::Binding(_)
+            | DeclarationKind::Native(_) => None,
         }
     }
 }
@@ -233,6 +310,7 @@ pub(crate) struct Derived {
     pub(crate) kind: Option<Kind>,
 }
 
+/// What a declaration node is.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) enum DeclarationKind {
     Function(Function),
@@ -248,6 +326,7 @@ pub(crate) enum DeclarationKind {
     Native(Native),
 }
 
+/// The role of a binding node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum BindingKind {
     /// A function parameter.
@@ -258,6 +337,7 @@ pub(crate) enum BindingKind {
     Record,
 }
 
+/// A function body; its parameters are separate nodes.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Function {
     pub(crate) body: Vec<Statement>,
@@ -274,16 +354,14 @@ pub(crate) enum Expression {
         fields: Vec<Field>,
         span: Span,
     },
-    /// A reference to a declaration or a binding. `root` marks an explicit
-    /// leading `::`, which resolves only against the root namespace.
+    /// A reference to a declaration or a binding. The leading `::`, if any,
+    /// was consumed by resolution and is not part of the edge.
     Reference {
         declaration: DeclarationId,
-        root: bool,
         span: Span,
     },
     Call {
         callee: DeclarationId,
-        root: bool,
         callee_span: Span,
         arguments: Vec<Expression>,
         span: Span,
@@ -314,6 +392,7 @@ impl Expression {
     }
 }
 
+/// One `key = expression` entry of a record literal.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Field {
     pub(crate) name: String,
@@ -322,6 +401,7 @@ pub(crate) struct Field {
     pub(crate) span: Span,
 }
 
+/// A linked statement.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) enum Statement {
     /// A local `txt` or `rec` binding and its initializer.
@@ -368,6 +448,7 @@ pub(crate) enum Statement {
     },
 }
 
+/// One `case(pattern) { ... };` arm of a switch.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Case {
     pub(crate) pattern: Expression,

@@ -1,7 +1,7 @@
 //! End to end tests for the parser grammar layers.
 
 use super::parse_file;
-use crate::syntax::ast::{Declaration, File, ParameterKind, Statement};
+use crate::syntax::ast::{Declaration, File, Statement, ValueKind};
 
 fn parse(source: &str) -> File {
     parse_file(source).expect("source parses")
@@ -58,7 +58,7 @@ fn parses_function_with_switch_and_calls() {
     };
     assert_eq!(function.name, "main");
     assert_eq!(function.parameters[0].name, "args");
-    assert_eq!(function.parameters[0].kind, ParameterKind::Record);
+    assert_eq!(function.parameters[0].kind, ValueKind::Record);
     assert_eq!(function.body.len(), 1);
 }
 
@@ -69,9 +69,9 @@ fn parses_typed_parameters() {
         panic!("expected a function");
     };
     assert_eq!(function.parameters[0].name, "a");
-    assert_eq!(function.parameters[0].kind, ParameterKind::Text);
+    assert_eq!(function.parameters[0].kind, ValueKind::Text);
     assert_eq!(function.parameters[1].name, "b");
-    assert_eq!(function.parameters[1].kind, ParameterKind::Record);
+    assert_eq!(function.parameters[1].kind, ValueKind::Record);
 }
 
 #[test]
@@ -171,7 +171,7 @@ fn parser_errors() {
         ),
         (
             "namespaced declaration",
-            "foo::bar backend = { dir = \"b\" };\n",
+            "foo::bar rec x = { dir = \"b\" };\n",
             "expected a declaration, found `foo`",
         ),
     ]);

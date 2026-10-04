@@ -4,8 +4,6 @@
 mod manage_processes;
 mod run_program;
 
-#[cfg(test)]
-pub(crate) use run_program::Runtime;
 pub(crate) use run_program::run;
 
 /// A failure that unwinds the body that raised it and runs its defers. It

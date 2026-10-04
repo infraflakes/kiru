@@ -3,8 +3,7 @@ title: Compile-Time Checks
 description: Everything the compiler proves, and the failures left for run time.
 ---
 
-The compiler is where correctness is decided. A program that compiles has
-been checked for:
+A program that compiles has been checked for:
 
 | Check | Example failure |
 | --- | --- |
@@ -31,18 +30,15 @@ too many concurrent commands
 panic
 ```
 
-Each records the failure, runs pending defers, and the process exits
-nonzero once every thread joins. Signals also stop the running process
-groups and exit `130`. [Exit codes and
-failure](/effects/06-commands/05-exit-codes-and-failure/) covers the
-failure model.
+Each records the failure, runs pending defers, and the process exits nonzero
+once every thread joins. [Exit codes and
+failure](/effects/06-commands/04-exit-codes-and-failure/) covers the failure
+model, and [Signals](/effects/08-failure-and-cleanup/02-signals/) covers exit
+code 130.
 
 ## Compilation Evaluates Nothing
 
-Compilation reads sources and writes a binary. It runs no commands and no
-program code. A program's top-level values are evaluated by the compiled
-binary at startup, on the machine that runs it, which is why the exit code
-of a startup command such as `std::command({}, "echo $HOME")` is not known
-until the binary runs; [module
-values](/language/03-names-and-scope/05-module-values/) covers that
-evaluation.
+Compilation reads sources and writes a binary; it runs no commands and no
+program code. [Module
+values](/language/03-names-and-scope/04-module-values/) covers when top-level
+values are evaluated.

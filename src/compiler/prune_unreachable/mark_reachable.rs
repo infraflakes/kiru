@@ -33,6 +33,7 @@ pub(super) fn collect_reachable_declarations(program: &Program) -> HashSet<Decla
 
 /// Collects the declaration ids a body points at: the binding a statement
 /// declares, the declaration a reference names, and the callee a call names.
+/// Every node kind is listed, so a new edge-bearing kind fails to compile.
 struct ReachableCollector {
     pending: Vec<DeclarationId>,
 }
@@ -42,16 +43,25 @@ impl Visitor for ReachableCollector {
         match expression {
             Expression::Reference { declaration, .. } => self.pending.push(*declaration),
             Expression::Call { callee, .. } => self.pending.push(*callee),
-            _ => {}
+            Expression::Text { .. }
+            | Expression::Record { .. }
+            | Expression::Field { .. }
+            | Expression::Add { .. } => {}
         }
     }
 
     fn statement(&mut self, statement: &Statement) {
         match statement {
             Statement::Bind { declaration, .. } | Statement::Assign { declaration, .. } => {
-                self.pending.push(*declaration)
+                self.pending.push(*declaration);
             }
-            _ => {}
+            Statement::Expression(_)
+            | Statement::Return { .. }
+            | Statement::Panic { .. }
+            | Statement::Async { .. }
+            | Statement::Wait { .. }
+            | Statement::Switch { .. }
+            | Statement::Defer { .. } => {}
         }
     }
 }

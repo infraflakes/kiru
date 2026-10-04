@@ -20,19 +20,12 @@ split across files. A file without a `module` declaration belongs to the
 names](/language/03-names-and-scope/02-unique-names/) explains the
 duplicate-name rules.
 
-## Two Registries
-
-A namespace holds values and functions in two registries. A value name is
-declared once and a function name is declared once, and a function may
-share a name with a value because `name` and `name(...)` disambiguate. Two
-values, or two functions, with one name in a namespace are an error.
-
 ## Nested Paths
 
 Paths nest, so a namespace `tasks::build` lives inside `tasks`. An
-unqualified name in `tasks::build` is looked up in that namespace, then in
-its parent, and so on to the root; a name in `tasks::build` wins over a
-name of the same spelling in `tasks`.
+unqualified name is looked up in its own namespace, then in each parent,
+and a closer declaration wins over one of the same spelling further out. A
+file reaches another namespace by importing it; [imports](/language/05-modules-and-namespaces/02-imports/) covers that syntax, and the examples below use it.
 
 A file `tasks.kiru` that declares the parent namespace:
 
@@ -73,9 +66,6 @@ fn main() {
 };
 ```
 
-Inside `tasks::build::label`, `root_name` resolves to
-`tasks::root_name`, so the program prints `tasks`.
-
 ## The Reserved std Namespace
 
 `std` is reserved and implicit. User code cannot declare anything under it:
@@ -87,7 +77,7 @@ module std;
 ^^^^^^^^^^^
 ```
 
-The standard library lives there and is always visible: `std::command`
+The standard library lives there and is always visible: `std::print`
 resolves in every file without an import. [Appendix
 A](/appendix/a-standard-library/) lists the shipped names.
 
@@ -95,8 +85,7 @@ A](/appendix/a-standard-library/) lists the shipped names.
 
 A qualified name is looked up in the namespace it names:
 `tasks::build::label` searches `tasks::build`, and a namespace is reachable
-only when the file imports it directly or is declared in it. An unqualified
-name climbs: the current namespace, then each parent, then the root.
+only when the file imports it directly or is declared in it.
 
 A leading `::` names the root namespace explicitly, so `::name` and
 `::build()` reach the root even when a local or an inner namespace shadows

@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::compiler::{
-    DeclarationId, DeclarationKind, Expression, Kind, Program, Record, Statement, Value,
+    DeclarationId, DeclarationKind, Expression, Kind, Program, Record, RwLockExt, Statement, Value,
 };
 use crate::runtime::Panic;
 
@@ -35,7 +35,7 @@ pub(crate) fn run(program: Arc<Program>, words: &[String]) -> i32 {
     let arguments = match build_arguments_record(words) {
         Ok(record) => record,
         Err(message) => {
-            eprintln!("{message}");
+            eprintln!("{}: {message}", process::DIAGNOSTIC_PREFIX);
             return 1;
         }
     };
@@ -44,15 +44,18 @@ pub(crate) fn run(program: Arc<Program>, words: &[String]) -> i32 {
     // outlive the run, including a partially installed handler set.
     std::mem::forget(Arc::clone(&state));
     if let Err(error) = process::install_signal_handlers(&state) {
-        eprintln!("kiru: cannot install signal handlers: {error}");
+        eprintln!(
+            "{}: cannot install signal handlers: {error}",
+            process::DIAGNOSTIC_PREFIX
+        );
         return 1;
     }
     let runtime = Runtime {
         program,
         state: Arc::clone(&state),
-        muted: false,
+        output_muted: false,
     };
-    let started = match runtime.evaluate_module_values() {
+    let entry_succeeded = match runtime.evaluate_module_values() {
         Ok(()) => runtime.call_entry(arguments).is_ok(),
         Err(_) => false,
     };
@@ -61,7 +64,7 @@ pub(crate) fn run(program: Arc<Program>, words: &[String]) -> i32 {
     state.join_all_threads();
     if state.interrupted() != 0 {
         130
-    } else if state.panicked() || !started {
+    } else if state.panicked() || !entry_succeeded {
         1
     } else {
         0
@@ -85,9 +88,10 @@ pub(super) fn build_arguments_record(words: &[String]) -> Result<Record, &'stati
 pub(crate) struct Runtime {
     pub(super) program: Arc<Program>,
     pub(super) state: Arc<RuntimeState>,
-    /// Whether this thread owns the terminal. Only the entry thread does, so a
-    /// thread spawned by `async` writes nothing to stdout or stderr.
-    pub(super) muted: bool,
+    /// Whether this thread's output is muted. The entry thread owns the
+    /// terminal and is not muted; a thread started by `async` is muted, so its
+    /// commands write nothing to stdout or stderr.
+    pub(super) output_muted: bool,
 }
 
 impl Runtime {
@@ -134,33 +138,22 @@ impl Runtime {
             .declarations
             .iter()
             .enumerate()
-            .filter(|(_, declaration)| {
-                matches!(
-                    declaration.kind,
-                    DeclarationKind::Text(_) | DeclarationKind::Record(_)
-                )
-            })
+            .filter(|(_, declaration)| declaration.initializer().is_some())
             .map(|(index, _)| DeclarationId(index))
             .collect();
 
         for id in ids {
             let env = Environment::new();
-            let value = match &self.program.declaration(id).kind {
-                DeclarationKind::Text(expression) | DeclarationKind::Record(expression) => {
-                    self.eval(expression, &env)?
-                }
-                _ => continue,
+            let Some(expression) = self.program.declaration(id).initializer() else {
+                continue;
             };
+            let value = self.eval(expression, &env)?;
             debug_assert_eq!(
                 self.program.declaration(id).derived.kind,
                 Some(Kind::of(&value)),
                 "a module value keeps the kind the checker gave it"
             );
-            self.program
-                .values
-                .write()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .insert(id, value);
+            self.program.values.write_unpoisoned().insert(id, value);
         }
         Ok(())
     }
@@ -195,7 +188,7 @@ impl Runtime {
         Runtime {
             program: Arc::clone(&self.program),
             state: Arc::clone(&self.state),
-            muted: true,
+            output_muted: true,
         }
     }
 
@@ -212,7 +205,7 @@ impl Runtime {
     pub(super) fn text_value(&self, value: Value) -> Result<String, Panic> {
         match value {
             Value::Text(text) => Ok(text),
-            _ => Err(self.fail()),
+            Value::Record(_) | Value::Nothing => Err(self.fail()),
         }
     }
 
@@ -231,7 +224,7 @@ impl Runtime {
         let runtime = Self {
             program: Arc::new(program),
             state: Arc::new(RuntimeState::new()),
-            muted: false,
+            output_muted: false,
         };
         runtime
             .evaluate_module_values()

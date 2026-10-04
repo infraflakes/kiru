@@ -46,7 +46,7 @@ fn verify_function(
     function: &Function,
 ) -> Result<Kind, Diagnostic> {
     let declaration = program.declaration(id);
-    let name = declaration.name.clone();
+    let name = &declaration.name;
     let path = &program.file(file).path;
 
     let mut walk = Walk::new(program, file);

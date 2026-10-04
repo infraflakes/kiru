@@ -2,8 +2,8 @@
 
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::process::{Command as ProcessCommand, ExitStatus, Stdio};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
-use std::sync::{Arc, Mutex};
 use std::thread::{JoinHandle, ThreadId};
 use std::time::{Duration, Instant};
 
@@ -17,10 +17,14 @@ use nix::unistd::Pid;
 use nix::unistd::getppid;
 
 use super::Panic;
+use crate::compiler::MutexExt;
 
 /// The most process groups one run can track at once. A run that exceeds it
 /// fails rather than silently leaking an untracked group.
 pub(crate) const MAX_GROUPS: usize = 1024;
+
+/// The prefix every runtime diagnostic carries.
+pub(super) const DIAGNOSTIC_PREFIX: &str = "kiru";
 
 /// How long a stopping group is given before SIGKILL.
 const STOP_GRACE: Duration = Duration::from_secs(2);
@@ -49,7 +53,7 @@ pub(crate) struct RuntimeState {
 /// caller's own children.
 struct ChildThread {
     parent: ThreadId,
-    join: JoinHandle<()>,
+    join_handle: JoinHandle<()>,
 }
 
 impl RuntimeState {
@@ -70,11 +74,11 @@ impl RuntimeState {
     /// run.
     pub(crate) fn spawn_thread(&self, body: impl FnOnce() + Send + 'static) {
         let parent = std::thread::current().id();
-        let join = std::thread::spawn(body);
-        self.threads
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push(ChildThread { parent, join });
+        let join_handle = std::thread::spawn(body);
+        self.threads.lock_unpoisoned().push(ChildThread {
+            parent,
+            join_handle,
+        });
     }
 
     /// Join every thread `parent` spawned and leave every other entry in the
@@ -83,15 +87,12 @@ impl RuntimeState {
     /// sibling.
     pub(crate) fn join_children(&self, parent: ThreadId) {
         let children: Vec<JoinHandle<()>> = {
-            let mut threads = self
-                .threads
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut threads = self.threads.lock_unpoisoned();
             let mut children = Vec::new();
             let mut kept = Vec::with_capacity(threads.len());
             for child in std::mem::take(&mut *threads) {
                 if child.parent == parent {
-                    children.push(child.join);
+                    children.push(child.join_handle);
                 } else {
                     kept.push(child);
                 }
@@ -110,20 +111,17 @@ impl RuntimeState {
     pub(crate) fn join_all_threads(&self) {
         loop {
             let joins: Vec<JoinHandle<()>> = {
-                let mut threads = self
-                    .threads
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                let mut threads = self.threads.lock_unpoisoned();
                 std::mem::take(&mut *threads)
                     .into_iter()
-                    .map(|child| child.join)
+                    .map(|child| child.join_handle)
                     .collect()
             };
             if joins.is_empty() {
                 return;
             }
-            for join in joins {
-                let _ = join.join();
+            for join_handle in joins {
+                let _ = join_handle.join();
             }
         }
     }
@@ -178,8 +176,10 @@ impl RuntimeState {
         self.signal_all(Signal::SIGTERM);
     }
 
-    /// Publish a group. The id is stored before the slot is marked in use, so
-    /// a signal handler can never read a stale id from a recycled slot.
+    /// Publish a group. The slot is claimed before the id is stored, and the
+    /// id is zeroed before the slot is released, so a signal handler that sees
+    /// a claimed slot reads either the current id or zero, never a recycled
+    /// one.
     fn register(&self, pgid: i32) -> bool {
         for slot in 0..MAX_GROUPS {
             if self.slots_in_use[slot]
@@ -221,8 +221,11 @@ static SIGNAL_HANDLER_TARGET: AtomicPtr<RuntimeState> = AtomicPtr::new(std::ptr:
 
 /// Install handlers for the interactive signals. The state must outlive the
 /// process because the handler keeps a raw pointer to it.
-pub(crate) fn install_signal_handlers(state: &Arc<RuntimeState>) -> std::io::Result<()> {
-    SIGNAL_HANDLER_TARGET.store(Arc::as_ptr(state).cast_mut(), Ordering::SeqCst);
+pub(crate) fn install_signal_handlers(state: &RuntimeState) -> std::io::Result<()> {
+    SIGNAL_HANDLER_TARGET.store(
+        state as *const RuntimeState as *mut RuntimeState,
+        Ordering::SeqCst,
+    );
     let action = SigAction::new(
         SigHandler::Handler(handle_signal),
         SaFlags::empty(),
@@ -241,6 +244,10 @@ pub(crate) fn install_signal_handlers(state: &Arc<RuntimeState>) -> std::io::Res
 extern "C" fn handle_signal(signal: i32) {
     let pointer = SIGNAL_HANDLER_TARGET.load(Ordering::SeqCst);
     if !pointer.is_null() {
+        // SAFETY: `install_signal_handlers` sets the pointer once to a leaked
+        // `RuntimeState` that lives for the process lifetime and never clears
+        // it. `on_signal` only performs atomic stores and `killpg`, so the
+        // handler stays async-signal-safe.
         unsafe {
             (*pointer).on_signal(signal);
         }
@@ -248,16 +255,16 @@ extern "C" fn handle_signal(signal: i32) {
 }
 
 /// Run one command line through the POSIX shell and return its exit code. The
-/// shell is fixed so that `std::quote`'s POSIX escaping always holds. `muted`
-/// is true on a thread that does not own the terminal: stdout and stderr are
-/// then discarded. Nothing is captured.
-pub(crate) fn run(state: &RuntimeState, line: &str, muted: bool) -> Result<i32, Panic> {
+/// shell is fixed so that `std::quote`'s POSIX escaping always holds.
+/// `output_muted` is true on a thread that does not own the terminal: stdout
+/// and stderr are then discarded. Nothing is captured.
+pub(crate) fn run(state: &RuntimeState, line: &str, output_muted: bool) -> Result<i32, Panic> {
     execute(
         state,
         CommandSpec {
             program: "/bin/sh",
             arguments: vec!["-c".to_owned(), line.to_owned()],
-            muted,
+            output_muted,
             line,
         },
     )
@@ -267,7 +274,7 @@ pub(crate) fn run(state: &RuntimeState, line: &str, muted: bool) -> Result<i32, 
 struct CommandSpec<'a> {
     program: &'a str,
     arguments: Vec<String>,
-    muted: bool,
+    output_muted: bool,
     /// The text shown when the command cannot run.
     line: &'a str,
 }
@@ -277,7 +284,7 @@ fn execute(state: &RuntimeState, spec: CommandSpec<'_>) -> Result<i32, Panic> {
     let mut command = command_for(&spec);
     let mut child = command
         .spawn()
-        .map_err(|error| failure(state, spec.line, &error.to_string(), spec.muted))?;
+        .map_err(|error| failure(state, spec.line, &error.to_string(), spec.output_muted))?;
     let pgid = child.id() as i32;
     if !state.register(pgid) {
         signal_group(pgid, Signal::SIGKILL);
@@ -286,11 +293,11 @@ fn execute(state: &RuntimeState, spec: CommandSpec<'_>) -> Result<i32, Panic> {
             state,
             spec.line,
             "too many concurrent commands",
-            spec.muted,
+            spec.output_muted,
         ));
     }
 
-    let waited = wait_for_stop(state, &mut child, pgid, spec.line, spec.muted);
+    let waited = wait_for_stop(state, &mut child, pgid, spec.line, spec.output_muted);
     state.unregister(pgid);
     let status = waited?;
 
@@ -308,7 +315,7 @@ fn wait_for_stop(
     child: &mut std::process::Child,
     pgid: i32,
     line_for_errors: &str,
-    muted: bool,
+    output_muted: bool,
 ) -> Result<ExitStatus, Panic> {
     let mut terminating: Option<Instant> = None;
     loop {
@@ -316,7 +323,12 @@ fn wait_for_stop(
             Ok(Some(status)) => return Ok(status),
             Ok(None) => {}
             Err(error) => {
-                return Err(failure(state, line_for_errors, &error.to_string(), muted));
+                return Err(failure(
+                    state,
+                    line_for_errors,
+                    &error.to_string(),
+                    output_muted,
+                ));
             }
         }
 
@@ -349,7 +361,7 @@ fn command_for(spec: &CommandSpec<'_>) -> ProcessCommand {
     let mut command = ProcessCommand::new(spec.program);
     command.args(&spec.arguments);
     command.stdin(Stdio::inherit());
-    if spec.muted {
+    if spec.output_muted {
         command.stdout(Stdio::null());
         command.stderr(Stdio::null());
     } else {
@@ -382,12 +394,12 @@ fn signal_group(pgid: i32, signal: Signal) {
 }
 
 /// Report a runtime failure and record it. The failure unwinds only the body
-/// that hit it; the run still exits nonzero after every thread joins. A muted
-/// thread does not own the terminal, so it prints nothing.
-fn failure(state: &RuntimeState, line: &str, reason: &str, muted: bool) -> Panic {
+/// that hit it; the run still exits nonzero after every thread joins. An
+/// output-muted thread does not own the terminal, so it prints nothing.
+fn failure(state: &RuntimeState, line: &str, reason: &str, output_muted: bool) -> Panic {
     state.record_failure();
-    if !muted {
-        eprintln!("kiru: {line}: {reason}");
+    if !output_muted {
+        eprintln!("{DIAGNOSTIC_PREFIX}: {line}: {reason}");
     }
     Panic
 }

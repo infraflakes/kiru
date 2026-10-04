@@ -57,8 +57,8 @@ escape      := "\n" | "\t" | "\r" | "\\" | "\""
 comment     := "#" to end of line
 ```
 
-Strings may span lines. Any escape other than the five listed is a compile
-error. There are no numeric literals.
+[Text](/language/02-common-concepts/01-text/) covers strings, escapes, and the
+absence of numeric literals.
 
 ## Notes on the Grammar
 

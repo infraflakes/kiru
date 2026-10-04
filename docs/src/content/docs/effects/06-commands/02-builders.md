@@ -12,7 +12,7 @@ uppercase, and an absent or empty entry is the default.
 | `Dir` | runs after `cd <Dir> &&`, with `Dir` quoted by `std::quote` |
 | `Env` | prepended as `export <Env>;`, used as written |
 | `Direnv` | wraps the line with `direnv exec <Dir> sh -c` only when it is exactly `"true"`, quoting `Dir` and the line |
-| `Stream` | wraps the line so stdout and/or stderr are hidden: empty renders both, `"stderr"` hides stdout, `"null"` hides both |
+| `Stream` | hides stdout and/or stderr; [stream levels](/effects/06-commands/03-terminals/) |
 
 ```kiru
 txt code = std::command({ Dir = "docs" }, "bun run build");

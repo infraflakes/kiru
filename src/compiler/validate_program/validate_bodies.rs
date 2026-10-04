@@ -9,7 +9,8 @@ use std::collections::HashMap;
 
 use crate::compiler::{
     BindingKind, DeclarationId, DeclarationKind, Diagnostic, Expression, Field, FileId, Kind,
-    Position, Program, Statement, fits,
+    Position, Program, Statement, Usage, expected_instead, fits, function_used_as_value,
+    value_called,
 };
 use crate::syntax::Span;
 
@@ -137,7 +138,7 @@ impl<'a> Walk<'a> {
     ) -> Result<(), Diagnostic> {
         match &self.program.declaration(declaration).kind {
             DeclarationKind::Binding(BindingKind::Parameter) => {
-                let name = self.program.declaration(declaration).name.clone();
+                let name = &self.program.declaration(declaration).name;
                 Err(self.error(
                     name_span,
                     format!("`{name}` is a parameter and is read-only"),
@@ -145,18 +146,10 @@ impl<'a> Walk<'a> {
             }
             DeclarationKind::Binding(BindingKind::Text | BindingKind::Record) => {
                 let binding_kind = self.kind_of(declaration);
-                let actual = self.expression(value)?;
-                if actual == binding_kind {
-                    Ok(())
-                } else {
-                    Err(self.error(
-                        value.span(),
-                        format!("expected {}, found {}", binding_kind.name(), actual.name()),
-                    ))
-                }
+                self.require_kind(value, binding_kind)
             }
             _ => {
-                let name = self.program.declaration(declaration).name.clone();
+                let name = &self.program.declaration(declaration).name;
                 Err(self.error(
                     name_span,
                     format!("`{name}` is a module-level constant and cannot be assigned"),
@@ -172,7 +165,7 @@ impl<'a> Walk<'a> {
         match self.return_kind {
             Some(existing) if existing != actual => Err(self.error(
                 value.span(),
-                format!("expected {}, found {}", existing.name(), actual.name()),
+                expected_instead(existing.name(), actual.name()),
             )),
             _ => {
                 self.return_kind = Some(actual);
@@ -222,10 +215,7 @@ impl<'a> Walk<'a> {
             DeclarationKind::Record(_) => Ok(Kind::Record),
             DeclarationKind::Function(_) | DeclarationKind::Native(_) => Err(self.error(
                 span,
-                format!(
-                    "`{}` is a function; call it",
-                    self.program.display(declaration)
-                ),
+                function_used_as_value(&self.program.display(declaration)),
             )),
         }
     }
@@ -236,21 +226,23 @@ impl<'a> Walk<'a> {
         callee_span: Span,
         arguments: &[Expression],
     ) -> Result<Kind, Diagnostic> {
-        let declaration = self.program.declaration(callee);
         if !matches!(
-            declaration.kind,
+            self.program.declaration(callee).kind,
             DeclarationKind::Function(_) | DeclarationKind::Native(_)
         ) {
-            return Err(self.error(
-                callee_span,
-                format!("`{}` is not a function", self.program.display(callee)),
-            ));
+            return Err(self.error(callee_span, value_called(&self.program.display(callee))));
         }
-        let parameters = declaration.parameters.clone();
-        let returns = declaration.derived.kind.unwrap_or(Kind::Nothing);
-        self.arity(callee, callee_span, arguments, parameters.len())?;
-        for (argument, parameter) in arguments.iter().zip(&parameters) {
-            let required = self.kind_of(*parameter);
+        let parameter_count = self.program.declaration(callee).parameters.len();
+        let returns = self
+            .program
+            .declaration(callee)
+            .derived
+            .kind
+            .unwrap_or(Kind::Nothing);
+        self.arity(callee, callee_span, arguments, parameter_count)?;
+        for (index, argument) in arguments.iter().enumerate() {
+            let parameter = self.program.declaration(callee).parameters[index];
+            let required = self.kind_of(parameter);
             self.require_kind(argument, required)?;
         }
         Ok(returns)
@@ -260,14 +252,8 @@ impl<'a> Walk<'a> {
     /// for every callable, so a native and a user function are checked the same
     /// way.
     fn require_kind(&mut self, argument: &Expression, required: Kind) -> Result<(), Diagnostic> {
-        let actual = self.expression(argument)?;
-        if fits(actual.usage(), required.usage()) {
-            return Ok(());
-        }
-        Err(self.error(
-            argument.span(),
-            format!("expected {}, found {}", required.name(), actual.name()),
-        ))
+        self.require_usage(argument, required.usage())?;
+        Ok(())
     }
 
     fn arity(
@@ -297,14 +283,24 @@ impl<'a> Walk<'a> {
         expression: &Expression,
         position: Position,
     ) -> Result<Kind, Diagnostic> {
+        self.require_usage(expression, position.required_usage())
+    }
+
+    /// Require an expression whose kind fits a usage, returning its kind. This
+    /// is the one compatibility check; every caller names its requirement as a
+    /// kind or a position and lands here.
+    fn require_usage(
+        &mut self,
+        expression: &Expression,
+        required: Usage,
+    ) -> Result<Kind, Diagnostic> {
         let actual = self.expression(expression)?;
-        let required = position.required_usage();
         if fits(actual.usage(), required) {
             return Ok(actual);
         }
         Err(self.error(
             expression.span(),
-            format!("expected {}, found {}", required.name(), actual.name()),
+            expected_instead(required.name(), actual.name()),
         ))
     }
 }

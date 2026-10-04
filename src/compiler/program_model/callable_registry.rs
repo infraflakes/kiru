@@ -6,6 +6,12 @@
 //! a user function through one path. The runtime dispatches on the `Native`
 //! id; its handler match is exhaustive, so an id without a handler does not
 //! compile.
+//!
+//! To add a native, add one entry to `native_registry!` and one arm to
+//! `Runtime::call_native`. There is no other way: the macro generates the
+//! variant and its row together, the checker reads the row, the runtime's
+//! handler match is exhaustive, and the runtime checks the handler consumes
+//! exactly the declared arity.
 
 use super::value_kinds::Kind;
 
@@ -15,59 +21,66 @@ pub(crate) const ENTRY_FUNCTION: &str = "main";
 /// The namespace the runtime's builtins live in.
 pub(crate) const BUILTIN_NAMESPACE: &[&str] = &["std"];
 
-/// A native provided by the runtime.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(crate) enum Native {
-    Run,
-    Quote,
-}
-
-impl Native {
-    /// Every native, for registry completeness checks.
-    #[cfg(test)]
-    pub(crate) fn all() -> &'static [Native] {
-        &[Native::Run, Native::Quote]
-    }
-}
-
 /// One native row: its path, name, parameter kinds, and result kind.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Row {
+pub(crate) struct NativeRow {
     pub(crate) path: &'static [&'static str],
     pub(crate) name: &'static str,
     pub(crate) parameters: &'static [Kind],
     pub(crate) returns: Kind,
 }
 
-/// Every native the runtime provides, with its row.
-pub(crate) const NATIVE_ROWS: &[(Native, Row)] = &[
-    (
-        Native::Run,
-        Row {
-            path: BUILTIN_NAMESPACE,
-            name: "run",
-            parameters: &[Kind::Text],
-            returns: Kind::Text,
-        },
-    ),
-    (
-        Native::Quote,
-        Row {
-            path: BUILTIN_NAMESPACE,
-            name: "quote",
-            parameters: &[Kind::Text],
-            returns: Kind::Text,
-        },
-    ),
-];
+/// Declare every native once: the enum variant, its row, and the complete
+/// list. Because the runtime's handler match is exhaustive over the variants,
+/// a native cannot exist without a row and a handler.
+macro_rules! native_registry {
+    ($( $variant:ident { $name:literal, [$($parameter:expr),* $(,)?] -> $returns:expr } ),* $(,)?) => {
+        /// A native provided by the runtime.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+        pub(crate) enum Native {
+            $( $variant ),*
+        }
+
+        impl Native {
+            /// Every native, in declaration order.
+            #[cfg(test)]
+            pub(crate) const ALL: &'static [Native] = &[ $( Native::$variant ),* ];
+        }
+
+        /// Every native the runtime provides, with its row.
+        pub(crate) const NATIVE_ROWS: &[(Native, NativeRow)] = &[
+            $( (
+                Native::$variant,
+                NativeRow {
+                    path: BUILTIN_NAMESPACE,
+                    name: $name,
+                    parameters: &[$($parameter),*],
+                    returns: $returns,
+                },
+            ) ),*
+        ];
+    };
+}
+
+native_registry! {
+    Run { "run", [Kind::Text] -> Kind::Text },
+    Quote { "quote", [Kind::Text] -> Kind::Text },
+}
 
 /// The row of a native.
-pub(crate) fn native_row(native: Native) -> &'static Row {
+pub(crate) fn native_row(native: Native) -> &'static NativeRow {
     NATIVE_ROWS
         .iter()
         .find(|(id, _)| *id == native)
         .map(|(_, row)| row)
         .expect("every native has exactly one row")
+}
+
+/// The number of parameters a native declares. The runtime checks that a
+/// handler consumes exactly this many arguments, so a handler cannot drift
+/// from its row.
+pub(crate) fn native_arity(native: Native) -> usize {
+    native_row(native).parameters.len()
 }
 
 #[cfg(test)]
@@ -76,11 +89,11 @@ mod tests {
 
     #[test]
     fn every_native_id_has_exactly_one_row() {
-        for native in Native::all() {
+        for native in Native::ALL {
             let rows = NATIVE_ROWS.iter().filter(|(id, _)| id == native).count();
             assert_eq!(rows, 1, "{native:?} must have exactly one row");
         }
-        assert_eq!(NATIVE_ROWS.len(), Native::all().len());
+        assert_eq!(NATIVE_ROWS.len(), Native::ALL.len());
     }
 
     #[test]

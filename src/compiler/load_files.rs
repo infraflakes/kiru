@@ -11,5 +11,5 @@ mod resolve_import_paths;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use loaded_program::{LoadedProgram, Origin};
+pub(crate) use loaded_program::LoadedProgram;
 pub(crate) use read_entry_and_imports::load_files;

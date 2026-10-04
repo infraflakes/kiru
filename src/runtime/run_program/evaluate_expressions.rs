@@ -1,6 +1,8 @@
 //! Expression evaluation: text, records, references, calls, and fields.
 
-use crate::compiler::{DeclarationId, DeclarationKind, Expression, Field, Native, Record, Value};
+use crate::compiler::{
+    DeclarationId, DeclarationKind, Expression, Field, Native, Record, RwLockExt, Value,
+};
 use crate::runtime::Panic;
 use crate::runtime::manage_processes as process;
 
@@ -18,8 +20,7 @@ impl Runtime {
                 }
                 self.program
                     .values
-                    .read()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .read_unpoisoned()
                     .get(declaration)
                     .cloned()
                     .ok_or_else(|| self.fail())
@@ -89,27 +90,45 @@ impl Runtime {
     pub(super) fn invoke_call(
         &self,
         callee: DeclarationId,
-        mut values: Vec<Value>,
+        values: Vec<Value>,
     ) -> Result<Value, Panic> {
         match &self.program.declaration(callee).kind {
             DeclarationKind::Function(_) => self.call_declaration(callee, values),
-            DeclarationKind::Native(Native::Run) => {
-                let Some(value) = values.pop() else {
-                    return Err(self.fail());
-                };
-                let line = self.text_value(value)?;
-                let code = process::run(&self.state, &line, self.muted)?;
+            DeclarationKind::Native(native) => self.call_native(*native, values),
+            DeclarationKind::Text(_) | DeclarationKind::Record(_) | DeclarationKind::Binding(_) => {
+                Err(self.fail())
+            }
+        }
+    }
+
+    /// Run one native with already evaluated arguments. The match is
+    /// exhaustive over `Native`, so a native without a handler does not
+    /// compile.
+    fn call_native(&self, native: Native, mut values: Vec<Value>) -> Result<Value, Panic> {
+        debug_assert_eq!(
+            values.len(),
+            crate::compiler::native_arity(native),
+            "a native handler consumes exactly its declared parameters"
+        );
+        match native {
+            Native::Run => {
+                let line = self.pop_text(&mut values)?;
+                let code = process::run(&self.state, &line, self.output_muted)?;
                 Ok(Value::Text(code.to_string()))
             }
-            DeclarationKind::Native(Native::Quote) => {
-                let Some(value) = values.pop() else {
-                    return Err(self.fail());
-                };
-                let text = self.text_value(value)?;
+            Native::Quote => {
+                let text = self.pop_text(&mut values)?;
                 Ok(Value::Text(process::quote_shell_word(&text)))
             }
-            _ => Err(self.fail()),
         }
+    }
+
+    /// Pop the last evaluated argument and require it to be text.
+    fn pop_text(&self, values: &mut Vec<Value>) -> Result<String, Panic> {
+        let Some(value) = values.pop() else {
+            return Err(self.fail());
+        };
+        self.text_value(value)
     }
 
     pub(super) fn eval_fields(&self, fields: &[Field], env: &Environment) -> Result<Record, Panic> {

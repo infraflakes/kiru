@@ -8,6 +8,14 @@ use super::{ParseError, Parser};
 impl Parser {
     /// Parse a sum of postfix expressions.
     pub(super) fn parse_expression(&mut self) -> Result<Expression, ParseError> {
+        self.enter_nesting()?;
+        let expression = self.parse_sum()?;
+        self.leave_nesting();
+        Ok(expression)
+    }
+
+    /// Parse a sum of postfix expressions.
+    fn parse_sum(&mut self) -> Result<Expression, ParseError> {
         let mut left = self.parse_postfix()?;
         while self.check(&TokenKind::Plus) {
             self.advance();

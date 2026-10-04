@@ -30,10 +30,11 @@ pub(crate) fn read_trailer(path: &Path) -> Option<Vec<u8>> {
         return None;
     }
 
-    let size = u64::from_le_bytes(trailer[0..8].try_into().ok()?) as usize;
-    if size as u64 > length - TRAILER as u64 {
+    let size = u64::from_le_bytes(trailer[0..8].try_into().ok()?);
+    if size > length - TRAILER as u64 {
         return None;
     }
+    let size = usize::try_from(size).ok()?;
     file.seek(SeekFrom::End(-((TRAILER + size) as i64))).ok()?;
     let mut payload = vec![0u8; size];
     file.read_exact(&mut payload).ok()?;

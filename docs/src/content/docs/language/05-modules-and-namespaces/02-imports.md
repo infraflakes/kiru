@@ -11,10 +11,9 @@ description: Loading other files, path rules, load-once, and cycles.
 import "tasks.kiru";
 ```
 
-The path is relative to the importing file, or absolute. A relative path
-such as `tasks.kiru` means the file next to the importer. The path is a
+The path is relative to the importing file, or absolute. The path is a
 fixed string literal; it is never expanded, so an import cannot use a
-run-time value such as `$HOME` and cannot come from a command.
+run-time value such as `$HOME`.
 
 An import makes the loaded file's namespace reachable with `::`; it does
 not introduce unqualified names into the importing file. After
@@ -40,8 +39,8 @@ the `tasks` namespace:
 ```console
 $ kc main.kiru
 main.kiru:4:3: error: namespace `tasks` is not imported
-  tasks::run_in("x", "y");
-  ^^^^^^^^^^^^^
+  tasks::clean();
+  ^^^^^^^^^^^^
 ```
 
 ## Load Once

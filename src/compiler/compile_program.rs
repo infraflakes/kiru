@@ -13,9 +13,14 @@ use crate::compiler::{
     serialize_program, validate_program,
 };
 
-/// Compile `entry` to `output`, or to the entry path without its extension.
-/// On failure, returns the message to print, already rendered.
-pub(crate) fn compile(entry: &Path, output: Option<&Path>) -> Result<(), String> {
+/// Compile `entry` to `output`, or to the entry path without its extension,
+/// by copying `executable` (the running `kc`) and attaching the program. On
+/// failure, returns the message to print, already rendered.
+pub(crate) fn compile(
+    entry: &Path,
+    output: Option<&Path>,
+    executable: &Path,
+) -> Result<(), String> {
     let mut loaded = load_files(entry).map_err(|error| error.render())?;
     let mut program =
         resolve_names(&mut loaded).map_err(|diagnostic| render(&loaded, &diagnostic))?;
@@ -30,9 +35,7 @@ pub(crate) fn compile(entry: &Path, output: Option<&Path>) -> Result<(), String>
     if same_file(&loaded.files[loaded.entry].path, &output_path) {
         return Err("kc: the output path would overwrite the entry file\n".to_owned());
     }
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("kc: cannot find the kc binary: {error}\n"))?;
-    std::fs::copy(&executable, &output_path)
+    std::fs::copy(executable, &output_path)
         .map_err(|error| format!("kc: cannot write {}: {error}\n", output_path.display()))?;
     attach_trailer(&output_path, &bytes)
         .map_err(|error| format!("kc: cannot write {}: {error}\n", output_path.display()))?;

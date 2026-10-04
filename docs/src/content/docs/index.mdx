@@ -18,11 +18,8 @@ Compile strict, simple, concurrent programs to self-contained binaries.
 
 ## Features
 
-- **Commands as the primitive.** `std::run` runs one command line and
-  returns its exit code, and `std::command` is the record-driven abstraction
-  over it: a spec whose uppercase entries enable the working directory, the
-  environment, direnv, and output streaming. `std::quote` escapes text as one
-  shell word. See [Running a
+- **Commands as the primitive.** `std::run` and `std::command` run command
+  lines. See [Running a
   command](/effects/06-commands/01-building-a-command/).
 - **Statically typed.** Names, arity, and kinds are fixed and checked before a binary is built, so a wrong value cannot reach runtime. See [Types](/language/04-types/01-types/).
 - **Failure and cleanup.** `defer` registers cleanup, a panic records
@@ -35,12 +32,3 @@ Compile strict, simple, concurrent programs to self-contained binaries.
 - **Self-contained binaries.** A compiled program is one file that holds
   the compiler and the program. See
   [Compiling](/getting-started/02-compiling-and-running/01-compiling/).
-
-## Contents
-
-- Chapters 1-5 cover installation, compiling, and the core language.
-- Chapters 6-8 cover commands, threads, and failure and cleanup.
-- Chapters 9-10 cover the command line and the standard library.
-- Appendices A-C list the standard library, reserved words, and grammar.
-
-Chapter numbers appear only in the sidebar.

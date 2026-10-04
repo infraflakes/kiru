@@ -6,33 +6,37 @@
 
 use crate::syntax::Span;
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// One parsed source file: its module path, imports, and declarations.
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct File {
     pub(crate) module: Option<ModulePath>,
     pub(crate) imports: Vec<Import>,
     pub(crate) declarations: Vec<Declaration>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// The `module a::b;` path of a file.
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ModulePath {
     pub(crate) segments: Vec<String>,
     pub(crate) span: Span,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// One `import "path";` declaration.
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Import {
     pub(crate) path: String,
     pub(crate) span: Span,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// A top-level declaration.
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum Declaration {
     Function(Function),
-    Text(TextBinding),
-    Rec(RecBinding),
+    Binding(Binding),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// A `fn name(parameters) { body };` declaration.
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Function {
     pub(crate) name: String,
     pub(crate) name_span: Span,
@@ -41,43 +45,37 @@ pub(crate) struct Function {
     pub(crate) span: Span,
 }
 
-/// The kind a parameter declares. A parameter is the only place a kind is
-/// written down.
+/// The kind a `txt` or `rec` keyword declares, on a parameter or a binding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(crate) enum ParameterKind {
+pub(crate) enum ValueKind {
     /// The `txt` keyword: text data.
     Text,
     /// The `rec` keyword: a record of text.
     Record,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// One `txt`/`rec` parameter of a function.
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Parameter {
-    pub(crate) kind: ParameterKind,
+    pub(crate) kind: ValueKind,
     pub(crate) name: String,
     pub(crate) span: Span,
 }
 
-/// A `txt name = expression;` declaration or statement.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(crate) struct TextBinding {
-    pub(crate) name: String,
-    pub(crate) name_span: Span,
-    pub(crate) value: Expression,
-    pub(crate) span: Span,
-}
-
-/// A `rec name = expression;` declaration or statement. The expression is a
-/// record literal, a record variable, or a call returning a record.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(crate) struct RecBinding {
+/// A `txt name = expression;` or `rec name = expression;` declaration or
+/// statement. The initializer is a record literal, a record variable, or a
+/// call returning a value of the declared kind.
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct Binding {
+    pub(crate) kind: ValueKind,
     pub(crate) name: String,
     pub(crate) name_span: Span,
     pub(crate) value: Expression,
     pub(crate) span: Span,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// One `key = expression` entry of a record literal.
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Field {
     pub(crate) name: String,
     pub(crate) name_span: Span,
@@ -85,10 +83,10 @@ pub(crate) struct Field {
     pub(crate) span: Span,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// A parsed statement.
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum Statement {
-    Text(TextBinding),
-    Rec(RecBinding),
+    Binding(Binding),
     Assignment {
         name: String,
         name_span: Span,
@@ -129,14 +127,16 @@ pub(crate) enum Statement {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// One `case(pattern) { body };` arm of a switch.
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Case {
     pub(crate) pattern: Expression,
     pub(crate) body: Vec<Statement>,
     pub(crate) span: Span,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// A parsed expression.
+#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum Expression {
     Text {
         value: String,

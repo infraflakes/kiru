@@ -26,16 +26,16 @@ fn main() {
 };
 ```
 
-The line is passed to a shell, so quoting, pipes, and redirection are the
-shell's business. The record-driven `std::command` is the usual way to run a
-command; [the command spec](/effects/06-commands/02-builders/) describes it
-and its `Stream` entry, which hides stdout and/or stderr.
+Quoting, pipes, and redirection are the shell's business. The record-driven
+`std::command` is the usual way to run a command;
+[the command spec](/effects/06-commands/02-builders/) describes it and its
+`Stream` entry. [Running a
+command](/effects/06-commands/01-building-a-command/) covers `std::run`.
 
 ## std::quote
 
-`std::quote` takes text and returns it escaped as one POSIX shell word. The
-result is wrapped in single quotes, and every embedded quote becomes the
-`'\''` sequence, so the shell reads exactly the text:
+`std::quote` wraps text in single quotes and escapes every embedded quote as
+`'\''`, so the shell reads exactly the text:
 
 ```kiru
 fn main() {
@@ -44,5 +44,5 @@ fn main() {
 };
 ```
 
-Use `std::quote` for any text that must reach a command as data rather than
-as shell syntax.
+Use `std::quote` for text that must reach a command as data rather than as
+shell syntax.
