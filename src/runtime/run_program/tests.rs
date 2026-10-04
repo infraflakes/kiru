@@ -61,37 +61,37 @@ fn evaluates_expressions() {
     expect_text_results(&[
         (
             "returns a text value",
-            "fn answer() { return(\"42\"); };\nfn main() {};",
+            "fn answer() -> txt { return(\"42\"); };\nfn main() {};",
             "answer",
             "42",
         ),
         (
             "missing field reads empty",
-            "fn f() { rec r = { a = \"1\" }; return(r.b + \"!\"); };\nfn main() {};",
+            "fn f() -> txt { rec r = { a = \"1\" }; return(r.b + \"!\"); };\nfn main() {};",
             "f",
             "!",
         ),
         (
             "duplicate key last wins",
-            "fn f() { rec r = { a = \"1\", a = \"2\" }; return(r.a); };\nfn main() {};",
+            "fn f() -> txt { rec r = { a = \"1\", a = \"2\" }; return(r.a); };\nfn main() {};",
             "f",
             "2",
         ),
         (
             "defer does not change the returned value",
-            "fn f() { txt x = \"a\"; defer { x = \"b\"; }; return(x); };\nfn main() {};",
+            "fn f() -> txt { txt x = \"a\"; defer { x = \"b\"; }; return(x); };\nfn main() {};",
             "f",
             "a",
         ),
         (
             "defer body uses its own local",
-            "fn f() { txt x = \"a\"; defer { txt y = \"b\"; x = y; }; return(x); };\nfn main() {};",
+            "fn f() -> txt { txt x = \"a\"; defer { txt y = \"b\"; x = y; }; return(x); };\nfn main() {};",
             "f",
             "a",
         ),
         (
             "module values are evaluated once at startup",
-            "txt base = \"a\";\ntxt derived = base + \"b\";\nfn f() { return(derived + base); };\nfn main() {};",
+            "txt base = \"a\";\ntxt derived = base + \"b\";\nfn f() -> txt { return(derived + base); };\nfn main() {};",
             "f",
             "aba",
         ),
@@ -111,7 +111,7 @@ fn a_void_call_produces_nothing() {
 fn switch_takes_the_first_match_then_default() {
     let runtime = runtime(
         "txt a = \"a\";\n\
-         fn f(txt s) {\n\
+         fn f(txt s) -> txt {\n\
            txt found = \"\";\n\
            switch(s) {\n\
              case(\"a\") { found = \"one\"; };\n\
@@ -134,13 +134,13 @@ fn switch_takes_the_first_match_then_default() {
 
 #[test]
 fn run_returns_the_exit_code() {
-    let runtime = runtime("fn f() { return(std::run(\"exit 3\")); };\nfn main() {};");
+    let runtime = runtime("fn f() -> txt { return(std::run(\"exit 3\")); };\nfn main() {};");
     assert_eq!(call_text(&runtime, "f"), "3");
 }
 
 #[test]
 fn run_returns_zero_on_success() {
-    let runtime = runtime("fn f() { return(std::run(\"true\")); };\nfn main() {};");
+    let runtime = runtime("fn f() -> txt { return(std::run(\"true\")); };\nfn main() {};");
     assert_eq!(call_text(&runtime, "f"), "0");
 }
 
@@ -149,7 +149,7 @@ fn a_bare_run_statement_runs() {
     let directory = tempfile::tempdir().expect("temp dir");
     let marker = directory.path().join("ran");
     let source = format!(
-        "fn f() {{ std::run(\"touch {}\"); return(\"ok\"); }};\nfn main() {{}};",
+        "fn f() -> txt {{ std::run(\"touch {}\"); return(\"ok\"); }};\nfn main() {{}};",
         marker.display()
     );
     assert_eq!(call_text(&runtime(&source), "f"), "ok");
@@ -182,8 +182,8 @@ fn panic_runs_pending_defers() {
 #[test]
 fn async_does_not_wait_for_the_call() {
     let runtime = runtime(
-        "fn worker() { return(\"w\"); };\n\
-         fn f() { async worker(); return(\"done\"); };\n\
+        "fn worker() -> txt { return(\"w\"); };\n\
+         fn f() -> txt { async worker(); return(\"done\"); };\n\
          fn main() {};",
     );
     assert_eq!(call_text(&runtime, "f"), "done");
@@ -195,7 +195,7 @@ fn wait_blocks_until_the_thread_finishes() {
     let marker = directory.path().join("finished");
     let source = format!(
         "fn worker() {{ std::run(\"sleep 0.2; touch {}\"); }};\n\
-         fn f() {{ async worker(); wait; return(\"done\"); }};\n\
+         fn f() -> txt {{ async worker(); wait; return(\"done\"); }};\n\
          fn main() {{}};",
         marker.display()
     );
@@ -211,7 +211,7 @@ fn wait_joins_every_outstanding_thread() {
     let third = directory.path().join("third");
     let source = format!(
         "fn work(txt marker) {{ std::run(\"sleep 0.2; touch \" + marker); }};\n\
-         fn f() {{\n\
+         fn f() -> txt {{\n\
            async work(\"{first}\");\n\
            async work(\"{second}\");\n\
            async work(\"{third}\");\n\
@@ -232,7 +232,7 @@ fn wait_joins_every_outstanding_thread() {
 fn a_second_wait_returns_immediately() {
     let runtime = runtime(
         "fn worker() {};\n\
-         fn f() {\n\
+         fn f() -> txt {\n\
            async worker();\n\
            wait;\n\
            wait;\n\
@@ -247,7 +247,7 @@ fn a_second_wait_returns_immediately() {
 fn wait_inside_a_spawned_thread_returns_without_joining_its_spawner() {
     let runtime = runtime(
         "fn worker() { wait; };\n\
-         fn f() { async worker(); wait; return(\"done\"); };\n\
+         fn f() -> txt { async worker(); wait; return(\"done\"); };\n\
          fn main() {};",
     );
     assert_eq!(call_text(&runtime, "f"), "done");
@@ -260,7 +260,7 @@ fn wait_inside_a_spawned_thread_joins_its_own_children() {
     let source = format!(
         "fn child() {{ std::run(\"sleep 0.2; touch {}\"); }};\n\
          fn worker() {{ async child(); wait; }};\n\
-         fn f() {{ async worker(); wait; return(\"done\"); }};\n\
+         fn f() -> txt {{ async worker(); wait; return(\"done\"); }};\n\
          fn main() {{}};",
         marker.display()
     );
@@ -275,7 +275,7 @@ fn wait_inside_a_spawned_thread_joins_its_own_children() {
 fn panic_in_an_async_thread_sets_the_panicked_flag() {
     let runtime = runtime(
         "fn worker() { panic; };\n\
-         fn f() { async worker(); return(\"done\"); };\n\
+         fn f() -> txt { async worker(); return(\"done\"); };\n\
          fn main() {};",
     );
     // The detached panic can reach the caller before or after `f` returns.
@@ -294,7 +294,7 @@ fn panic_in_an_async_thread_sets_the_panicked_flag() {
 fn panic_in_a_waited_thread_is_remembered_without_stopping_the_caller() {
     let runtime = runtime(
         "fn worker() { panic; };\n\
-         fn f() {\n\
+         fn f() -> txt {\n\
            async worker();\n\
            wait;\n\
            return(\"done\");\n\
@@ -316,7 +316,7 @@ fn async_over_a_run_call_runs_on_the_thread() {
     let directory = tempfile::tempdir().expect("temp dir");
     let marker = directory.path().join("ran");
     let source = format!(
-        "fn f() {{\n\
+        "fn f() -> txt {{\n\
            async std::run(\"touch {}\");\n\
            wait;\n\
            return(\"done\");\n\
@@ -333,7 +333,7 @@ fn async_of_a_command_call_runs_in_its_directory() {
     let directory = tempfile::tempdir().expect("temp dir");
     let marker = directory.path().join("ran");
     let source = format!(
-        "fn f() {{\n\
+        "fn f() -> txt {{\n\
            async std::command({{ Dir = \"{}\" }}, \"touch ran\");\n\
            wait;\n\
            return(\"done\");\n\
@@ -355,7 +355,7 @@ fn a_panic_in_one_thread_does_not_cancel_another_threads_command() {
     let source = format!(
         "fn worker() {{ panic; }};\n\
          fn other() {{ std::run(\"sleep 0.2; touch {}\"); }};\n\
-         fn f() {{\n\
+         fn f() -> txt {{\n\
            async worker();\n\
            async other();\n\
            wait;\n\
@@ -379,7 +379,7 @@ fn a_panic_in_a_defer_does_not_stop_the_other_defers() {
     let first = directory.path().join("first");
     let last = directory.path().join("last");
     let runtime = runtime(&format!(
-        "fn f() {{\n\
+        "fn f() -> txt {{\n\
            defer {{ std::run(\"touch {first}\"); }};\n\
            defer {{ panic; }};\n\
            defer {{ std::run(\"touch {last}\"); }};\n\
@@ -397,7 +397,7 @@ fn a_panic_in_a_defer_does_not_stop_the_other_defers() {
 #[test]
 fn a_retained_program_still_runs() {
     let mut program = checked_program(
-        "fn answer() { return(\"42\"); };\n\
+        "fn answer() -> txt { return(\"42\"); };\n\
          fn main() { answer(); };",
     );
     prune_unreachable(&mut program);
@@ -412,7 +412,7 @@ fn a_retained_program_still_runs() {
 fn retained_module_values_still_evaluate() {
     let mut program = checked_program(
         "txt base = \"a\";\n\
-         fn f() { return(base + \"b\"); };\n\
+         fn f() -> txt { return(base + \"b\"); };\n\
          fn main() { f(); };",
     );
     prune_unreachable(&mut program);

@@ -34,7 +34,7 @@ A file `tasks.kiru` that declares the parent namespace:
 ```kiru
 module tasks;
 
-fn root_name() {
+fn root_name() -> txt {
   return("tasks");
 };
 ```
@@ -48,7 +48,7 @@ name unqualified:
 module tasks::build;
 import "tasks.kiru";
 
-fn label() {
+fn label() -> txt {
   return(root_name());
 };
 ```

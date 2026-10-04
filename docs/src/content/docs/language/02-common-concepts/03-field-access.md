@@ -10,7 +10,7 @@ description: Reading record fields, and the missing-key rule.
 ```kiru
 rec backend = { name = "backend", dir = "projects/backend" };
 
-fn describe() {
+fn describe() -> txt {
   return(backend.name + " at " + backend.dir);
 };
 

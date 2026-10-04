@@ -41,7 +41,7 @@ Because `name` and `name(...)` disambiguate, a function and a value can share on
 
 ```kiru
 txt thing = "value thing";
-fn thing() { return("function thing"); };
+fn thing() -> txt { return("function thing"); };
 fn main() {
   std::print(thing);
   std::print(thing());

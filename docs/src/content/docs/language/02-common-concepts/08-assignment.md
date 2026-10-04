@@ -29,7 +29,7 @@ If a body needs a mutable value derived from a parameter, it declares a new `txt
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
-fn normalize(txt name) {
+fn normalize(txt name) -> txt {
   txt cleaned = name;
   cleaned = cleaned + "!";
   return(cleaned);

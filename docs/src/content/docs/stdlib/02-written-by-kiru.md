@@ -18,7 +18,7 @@ All five live in the `std` namespace, so the unqualified `run` and `quote`
 inside them are `std::run` and `std::quote`.
 
 ```kiru
-fn command(rec spec, txt line) {
+fn command(rec spec, txt line) -> txt {
   txt command_line = line;
 
   switch(spec.Dir) {
@@ -68,8 +68,9 @@ fn emit(txt color, txt prefix, txt file_descriptor, txt message) {
 
 `emit` colors a prefix only when the target stream is a terminal, so a
 redirected log stays clean. `color` is an ANSI SGR code (`33` yellow, `31`
-red) and `file_descriptor` is `1` for stdout or `2` for stderr. The
-`std::command` spec is documented in
+red) and `file_descriptor` is `1` for stdout or `2` for stderr. `std::eprint`
+ends in `panic;`, so a call to it stops the run and can end a value function's
+path. The `std::command` spec is documented in
 [the command spec](/effects/06-commands/02-builders/).
 
 ## Embedding

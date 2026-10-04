@@ -94,8 +94,6 @@ pub(crate) enum Position {
     RecordBinding,
     /// A record field value.
     RecordField,
-    /// A returned expression.
-    Return,
     /// A bare statement in a body.
     Statement,
     /// A `case` pattern or a `switch` subject.
@@ -109,7 +107,6 @@ impl Position {
             Position::TextBinding => Usage::TEXT,
             Position::RecordBinding => Usage::RECORD,
             Position::RecordField => Usage::TEXT,
-            Position::Return => Usage::DATA,
             Position::Statement => Usage::DISCARDABLE,
             Position::CasePattern => Usage::TEXT,
         }
@@ -126,7 +123,6 @@ mod tests {
         Position::TextBinding,
         Position::RecordBinding,
         Position::RecordField,
-        Position::Return,
         Position::Statement,
         Position::CasePattern,
     ];

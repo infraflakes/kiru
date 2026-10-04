@@ -118,7 +118,7 @@ impl Builder {
     /// Create one node and store it in the model: its skeleton and its
     /// declaration slot. A slot stays open (`kind` is `None`) when the linking
     /// pass will fill the body later. `derived_kind` seeds a kind that is known
-    /// at link time, such as a parameter's written kind. Name registration is
+    /// at link time, such as a parameter's or a function's written kind. Name registration is
     /// the caller's task, because file declarations and local bindings register
     /// differently.
     pub(super) fn create_node(
@@ -144,7 +144,10 @@ impl Builder {
             owner,
             parameters: Vec::new(),
             kind,
-            derived: Derived { kind: derived_kind },
+            derived: Derived {
+                kind: derived_kind,
+                halts: false,
+            },
         }));
         id
     }

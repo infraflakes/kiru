@@ -15,7 +15,7 @@ fn run(rec project, txt line) {
 };
 
 # Orchestrated step: hide stdout, keep stderr for debugging, return the code.
-fn status(rec project, txt line) {
+fn status(rec project, txt line) -> txt {
   return(std::command({
     Dir = project.Dir,
     Env = project.Env,

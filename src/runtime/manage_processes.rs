@@ -23,9 +23,6 @@ use crate::compiler::MutexExt;
 /// fails rather than silently leaking an untracked group.
 pub(crate) const MAX_GROUPS: usize = 1024;
 
-/// The prefix every runtime diagnostic carries.
-pub(super) const DIAGNOSTIC_PREFIX: &str = "kiru";
-
 /// How long a stopping group is given before SIGKILL.
 const STOP_GRACE: Duration = Duration::from_secs(2);
 
@@ -399,7 +396,7 @@ fn signal_group(pgid: i32, signal: Signal) {
 fn failure(state: &RuntimeState, line: &str, reason: &str, output_muted: bool) -> Panic {
     state.record_failure();
     if !output_muted {
-        eprintln!("{DIAGNOSTIC_PREFIX}: {line}: {reason}");
+        eprintln!("{}: {line}: {reason}", super::program_name());
     }
     Panic
 }

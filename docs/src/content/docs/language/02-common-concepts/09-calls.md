@@ -8,7 +8,7 @@ A statement can be a call:
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
-fn work() {
+fn work() -> txt {
   return("");
 };
 

@@ -11,12 +11,12 @@ pub(crate) fn run(bytes: &[u8], words: &[String]) -> i32 {
     let program: Program = match deserialize_program(bytes) {
         Ok(program) => program,
         Err(error) => {
-            eprintln!("kc: corrupt program: {error}");
+            eprintln!("{}: corrupt program: {error}", runtime::program_name());
             return 1;
         }
     };
     if let Err(violation) = crate::compiler::validate_program_structure(&program) {
-        eprintln!("kc: corrupt program: {violation}");
+        eprintln!("{}: corrupt program: {violation}", runtime::program_name());
         return 1;
     }
     runtime::run(Arc::new(program), words)

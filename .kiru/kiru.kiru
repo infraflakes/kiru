@@ -11,7 +11,7 @@ fn check_kiru(rec project) {
 };
 
 fn format_kiru(rec project) {
-  run(project, "cargo clippy --fix --allow-dirty");
+  run(project, "cargo clippy --fix --allow-dirty --all-targets");
   run(project, "cargo fmt");
 };
 

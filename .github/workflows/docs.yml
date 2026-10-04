@@ -44,7 +44,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
@@ -73,7 +73,7 @@ jobs:
 
       - name: Build the docs through kiru
         run: |
-          nix develop --command bash -c 'cargo build && ./target/debug/kc main.kiru && ./main docs && ./main docs check'
+          nix develop --command bash -c 'cargo build && ./target/debug/kc main.kiru && ./main docs build && ./main docs check'
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

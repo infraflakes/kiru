@@ -23,7 +23,7 @@ impl Parser {
         Ok(Import { path, span })
     }
 
-    /// Parse a `fn name(parameters) { ... };` declaration.
+    /// Parse a `fn name(parameters) -> kind? { ... };` declaration.
     pub(super) fn parse_function(&mut self) -> Result<Function, ParseError> {
         let start = self.advance().start;
         let (name, name_span) = self.expect_identifier("in a function declaration")?;
@@ -34,38 +34,53 @@ impl Parser {
             "after the parameter list",
             Self::parse_parameter,
         )?;
+        let return_kind = self.parse_return_kind()?;
         let body = self.parse_block()?;
         let span = self.span_through_semicolon(start, "after the function body")?;
         Ok(Function {
             name,
             name_span,
             parameters,
+            return_kind,
             body,
             span,
         })
     }
 
     /// Parse one function parameter: a kind keyword, `txt` or `rec`, then the
-    /// name. A parameter is the only place a kind is written.
+    /// name.
     fn parse_parameter(&mut self) -> Result<Parameter, ParseError> {
-        let kind = match self.current().kind {
+        let kind = self.parse_value_kind("in the parameter list")?;
+        let (name, span) = self.expect_identifier("in the parameter list")?;
+        Ok(Parameter { kind, name, span })
+    }
+
+    /// Parse an optional `-> txt` or `-> rec` return kind after the parameter
+    /// list. An absent arrow means the function returns no value.
+    fn parse_return_kind(&mut self) -> Result<Option<ValueKind>, ParseError> {
+        if !self.eat(&TokenKind::Arrow) {
+            return Ok(None);
+        }
+        Ok(Some(self.parse_value_kind("after `->`")?))
+    }
+
+    /// Parse the one kind keyword, `txt` or `rec`. A parameter and a return
+    /// type are the two places a kind is written.
+    fn parse_value_kind(&mut self, context: &str) -> Result<ValueKind, ParseError> {
+        match self.current().kind {
             TokenKind::Txt => {
                 self.advance();
-                ValueKind::Text
+                Ok(ValueKind::Text)
             }
             TokenKind::Rec => {
                 self.advance();
-                ValueKind::Record
+                Ok(ValueKind::Record)
             }
-            _ => {
-                return Err(self.error_here(format!(
-                    "expected `txt` or `rec` in the parameter list, found {}",
-                    self.current().kind.describe()
-                )));
-            }
-        };
-        let (name, span) = self.expect_identifier("in the parameter list")?;
-        Ok(Parameter { kind, name, span })
+            _ => Err(self.error_here(format!(
+                "expected `txt` or `rec` {context}, found {}",
+                self.current().kind.describe()
+            ))),
+        }
     }
 
     /// Parse a `txt name = expression;` or `rec name = expression;`

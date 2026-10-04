@@ -4,6 +4,8 @@
 //! does, the words name the program's arguments. Otherwise the words select
 //! help, version, or a compilation.
 
+use crate::compiler::DIAGNOSTIC_PREFIX;
+
 use super::parse_arguments::{self, Request};
 use super::{compile_request, print_help, run_embedded};
 
@@ -30,12 +32,12 @@ pub(crate) fn run() -> i32 {
         Ok(Request::Compile { entry, output }) => match &executable {
             Some(executable) => compile_request::compile(&entry, output.as_deref(), executable),
             None => {
-                eprintln!("kc: cannot find the kc binary");
+                eprintln!("{DIAGNOSTIC_PREFIX}: cannot find the {DIAGNOSTIC_PREFIX} binary");
                 1
             }
         },
         Err(error) => {
-            eprintln!("kc: {error}");
+            eprintln!("{DIAGNOSTIC_PREFIX}: {error}");
             1
         }
     }

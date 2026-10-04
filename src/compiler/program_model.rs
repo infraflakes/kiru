@@ -20,7 +20,7 @@ pub(crate) use lock::{MutexExt, RwLockExt};
 pub(crate) use nodes::{
     BindingKind, Case, Declaration, DeclarationId, DeclarationKind, Derived, Expression, Field,
     File, FileId, Function, NameTable, Namespace, NamespaceId, Origin, Program, Record, Registry,
-    Statement, Value, namespace_at, namespace_path,
+    Statement, Value, join_path, namespace_at, namespace_path,
 };
 pub(crate) use traverse_program::{
     Visitor, VisitorMut, walk_expression, walk_expression_mut, walk_statements, walk_statements_mut,

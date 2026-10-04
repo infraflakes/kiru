@@ -2,9 +2,11 @@
 //!
 //! `validate_program_structure` checks every id and edge against the tables it
 //! points into and reports the first violation; it runs on a program decoded
-//! from an executable, where the bytes are untrusted. `verify_program` runs
-//! the same check as an internal assertion plus the span checks, so a compiler
-//! that produces an invalid graph fails loudly during development.
+//! from an executable, where the bytes are untrusted. It also enforces the
+//! top-down rule on every edge, so a decoded call chain strictly decreases in
+//! order and cannot recurse without end. `verify_program` runs the same check
+//! as an internal assertion plus the span checks, so a compiler that produces
+//! an invalid graph fails loudly during development.
 
 use super::callable_registry::native_row;
 use super::lock::RwLockExt;
@@ -80,10 +82,13 @@ pub(crate) fn validate_program_structure(program: &Program) -> Result<(), String
         }
         match &declaration.kind {
             DeclarationKind::Function(function) => {
-                check_statements(&function.body, declaration_count)?;
+                check_statements(program, &function.body, declaration.order)?;
+                if declaration.derived.kind != Some(function.return_kind) {
+                    return Err("a function's kind does not match its declaration".to_owned());
+                }
             }
             DeclarationKind::Text(expression) | DeclarationKind::Record(expression) => {
-                check_expression(expression, declaration_count)?;
+                check_expression(program, expression, declaration.order)?;
             }
             DeclarationKind::Binding(_) => {}
             DeclarationKind::Native(native) => {
@@ -124,18 +129,28 @@ fn verify_spans(program: &Program) {
 }
 
 /// Walk a body and check every reference and call edge against the model.
-fn check_statements(statements: &[Statement], declaration_count: usize) -> Result<(), String> {
+fn check_statements(
+    program: &Program,
+    statements: &[Statement],
+    holder_order: usize,
+) -> Result<(), String> {
     let mut check = EdgeCheck {
-        declaration_count,
+        program,
+        holder_order,
         error: None,
     };
     walk_statements(&mut check, statements);
     check.error.map_or(Ok(()), Err)
 }
 
-fn check_expression(expression: &Expression, declaration_count: usize) -> Result<(), String> {
+fn check_expression(
+    program: &Program,
+    expression: &Expression,
+    holder_order: usize,
+) -> Result<(), String> {
     let mut check = EdgeCheck {
-        declaration_count,
+        program,
+        holder_order,
         error: None,
     };
     walk_expression(&mut check, expression);
@@ -161,50 +176,74 @@ impl Visitor for SpanCheck {
     }
 
     fn statement(&mut self, statement: &Statement) {
-        match statement {
-            Statement::Bind { span, .. } => assert!(span.start <= span.end),
-            Statement::Assign {
-                name_span, span, ..
-            } => {
-                assert!(name_span.start <= name_span.end);
-                assert!(span.start <= span.end);
-            }
-            Statement::Expression(_) => {}
-            Statement::Return { span, .. }
-            | Statement::Panic { span }
-            | Statement::Async { span, .. }
-            | Statement::Wait { span }
-            | Statement::Defer { span, .. } => assert!(span.start <= span.end),
-            Statement::Switch { span, cases, .. } => {
-                assert!(span.start <= span.end);
-                for case in cases {
-                    assert!(case.span.start <= case.span.end);
-                }
+        let span = statement.span();
+        assert!(span.start <= span.end);
+        if let Statement::Assign { name_span, .. } = statement {
+            assert!(name_span.start <= name_span.end);
+        }
+        if let Statement::Switch { cases, .. } = statement {
+            for case in cases {
+                assert!(case.span.start <= case.span.end);
             }
         }
     }
 }
 
-/// Checks every reference and call edge points at a declaration. Every node
-/// kind is listed, so a new edge-bearing kind fails to compile.
-struct EdgeCheck {
-    declaration_count: usize,
+/// Checks every reference and call edge points at a declaration, and that the
+/// top-down rule holds: a call names a declaration made strictly earlier, and
+/// a reference names one made no later. A local binding and a parameter share
+/// their function's order, so a reference to one is no later by definition.
+/// This is what makes a decoded graph terminate: every call chain strictly
+/// decreases in order. Every node kind is listed, so a new edge-bearing kind
+/// fails to compile.
+struct EdgeCheck<'a> {
+    program: &'a Program,
+    holder_order: usize,
     error: Option<String>,
 }
 
-impl EdgeCheck {
+impl EdgeCheck<'_> {
     fn check(&mut self, declaration: DeclarationId, what: &str) {
-        if self.error.is_none() && declaration.0 >= self.declaration_count {
+        if self.error.is_none() && declaration.0 >= self.program.declarations.len() {
             self.error = Some(format!("{what} points past the declarations"));
+        }
+    }
+
+    /// Check a call edge: the callee must be strictly earlier.
+    fn check_call(&mut self, callee: DeclarationId) {
+        self.check(callee, "a call");
+        self.check_order(callee, "a call", false);
+    }
+
+    /// Check a reference edge: the target must be no later.
+    fn check_reference(&mut self, target: DeclarationId) {
+        self.check(target, "a reference");
+        self.check_order(target, "a reference", true);
+    }
+
+    fn check_order(&mut self, target: DeclarationId, what: &str, allow_equal: bool) {
+        if self.error.is_some() {
+            return;
+        }
+        let target_order = self.program.declaration(target).order;
+        let ordered = if allow_equal {
+            target_order <= self.holder_order
+        } else {
+            target_order < self.holder_order
+        };
+        if !ordered {
+            self.error = Some(format!(
+                "{what} points at a declaration that is not earlier"
+            ));
         }
     }
 }
 
-impl Visitor for EdgeCheck {
+impl Visitor for EdgeCheck<'_> {
     fn expression(&mut self, expression: &Expression) {
         match expression {
-            Expression::Reference { declaration, .. } => self.check(*declaration, "a reference"),
-            Expression::Call { callee, .. } => self.check(*callee, "a call"),
+            Expression::Reference { declaration, .. } => self.check_reference(*declaration),
+            Expression::Call { callee, .. } => self.check_call(*callee),
             Expression::Text { .. }
             | Expression::Record { .. }
             | Expression::Field { .. }
@@ -233,5 +272,30 @@ fn assert_field_spans(fields: &[Field]) {
     for field in fields {
         assert!(field.name_span.start <= field.name_span.end);
         assert!(field.span.start <= field.span.end);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compiler::checked_program;
+
+    #[test]
+    fn rejects_a_call_that_is_not_earlier() {
+        let mut program = checked_program("fn a() {};\nfn b() { a(); };\nfn main() {};");
+        let b = program
+            .namespace_at(&[])
+            .and_then(|root| program.namespace(root).function("b"));
+        let b = b.expect("b is declared");
+        let function = program
+            .declaration_mut(b)
+            .function_mut()
+            .expect("b is a function");
+        let Statement::Expression(Expression::Call { callee, .. }) = &mut function.body[0] else {
+            panic!("b calls a");
+        };
+        *callee = b;
+        let violation = validate_program_structure(&program).expect_err("a self-call is rejected");
+        assert!(violation.contains("not earlier"), "{violation}");
     }
 }

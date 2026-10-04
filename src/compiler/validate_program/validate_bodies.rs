@@ -2,8 +2,9 @@
 //!
 //! Names are already edges, so the walker only reads and writes node kinds.
 //! Kinds are derived bottom-up: the walk returns the kind of each expression
-//! it visits and records the local binding kinds and the function's return
-//! kind. The usage matrix decides where each kind may stand.
+//! it visits and records the local binding kinds. A function's return kind is
+//! declared, so a return is checked against it rather than accumulated. The
+//! usage matrix decides where each kind may stand.
 
 use std::collections::HashMap;
 
@@ -14,22 +15,88 @@ use crate::compiler::{
 };
 use crate::syntax::Span;
 
+/// The ways one body or statement can end. Every path either returns a value
+/// or falls through; a path that does neither stops the run, so "stops" is
+/// the absence of both. The two outcomes are not exclusive: a switch may have
+/// one arm return and another fall through.
+#[derive(Clone, Copy)]
+pub(super) struct Flow {
+    pub(super) returns: bool,
+    pub(super) falls: bool,
+}
+
+impl Flow {
+    /// A path that reaches the end of the body.
+    pub(super) const FALLS: Flow = Flow {
+        returns: false,
+        falls: true,
+    };
+    /// A path that returns a value.
+    const RETURNS: Flow = Flow {
+        returns: true,
+        falls: false,
+    };
+    /// A path that ends the body without returning or falling through: it
+    /// stops the run. This is also the union identity, since a set of no
+    /// paths has neither outcome.
+    const STOPS: Flow = Flow {
+        returns: false,
+        falls: false,
+    };
+
+    /// The union of two flows: an outcome present in either is present. This
+    /// is how the arms of a `switch` combine.
+    fn union(self, other: Flow) -> Flow {
+        Flow {
+            returns: self.returns || other.returns,
+            falls: self.falls || other.falls,
+        }
+    }
+}
+
 /// The walker over one body. Names are already edges, so it only reads and
 /// writes node kinds.
 pub(super) struct Walk<'a> {
     program: &'a Program,
     file: FileId,
     pub(super) locals: HashMap<DeclarationId, Kind>,
-    pub(super) return_kind: Option<Kind>,
+    /// The name of the function being walked. A module value walk has none,
+    /// and a `return` cannot occur in one.
+    function_name: Option<&'a str>,
+    /// The function's declared return kind.
+    declared_kind: Kind,
+    /// Whether the walk is inside a `defer` body, where `return` is banned.
+    in_defer: bool,
 }
 
 impl<'a> Walk<'a> {
+    /// A walk over a module value initializer. It never visits a statement.
     pub(super) fn new(program: &'a Program, file: FileId) -> Self {
         Self {
             program,
             file,
             locals: HashMap::new(),
-            return_kind: None,
+            function_name: None,
+            declared_kind: Kind::Nothing,
+            in_defer: false,
+        }
+    }
+
+    /// A walk over a function body. A return is checked against the declared
+    /// kind.
+    pub(super) fn for_function(
+        program: &'a Program,
+        file: FileId,
+        function_name: &'a str,
+        declared_kind: Kind,
+    ) -> Self {
+        Self {
+            program,
+            file,
+            locals: HashMap::new(),
+            function_name: Some(function_name),
+            declared_kind,
+            in_defer: false,
         }
     }
 
@@ -46,76 +113,117 @@ impl<'a> Walk<'a> {
             .expect("every visited binding and callable carries a kind")
     }
 
-    pub(super) fn statements(&mut self, statements: &[Statement]) -> Result<(), Diagnostic> {
+    /// Validate a sequence of statements and return its flow. Every statement
+    /// is validated, including the ones after a terminator; only the ones
+    /// reachable from the start contribute to the flow.
+    pub(super) fn statements(&mut self, statements: &[Statement]) -> Result<Flow, Diagnostic> {
+        let mut flow = Flow::FALLS;
         for statement in statements {
-            match statement {
-                Statement::Bind {
-                    declaration, value, ..
-                } => self.bind(*declaration, value)?,
-                Statement::Assign {
-                    declaration,
-                    name_span,
-                    value,
-                    ..
-                } => self.assign(*declaration, *name_span, value)?,
-                Statement::Expression(expression) => {
-                    // A bare statement must do something: call a function or
-                    // native. A value on its own is dead text, so the shape is
-                    // rejected before the kind.
-                    if !matches!(expression, Expression::Call { .. }) {
-                        return Err(self.error(expression.span(), "a statement must be a call"));
-                    }
-                    self.require(expression, Position::Statement)?;
-                }
-                Statement::Return { value, .. } => {
-                    if let Some(value) = value {
-                        self.return_value(value)?;
-                    }
-                }
-                Statement::Panic { .. } => {}
-                Statement::Async { call, .. } => {
-                    if !matches!(call, Expression::Call { .. }) {
-                        return Err(self.error(call.span(), "`async` takes a call"));
-                    }
-                    self.expression(call)?;
-                }
-                Statement::Wait { .. } => {}
-                Statement::Switch {
-                    subject,
-                    cases,
-                    default,
-                    ..
-                } => {
-                    self.require(subject, Position::CasePattern)?;
-                    let mut seen: Vec<&Expression> = Vec::new();
-                    for case in cases {
-                        // Two patterns are duplicates when they are the same
-                        // shape: equal literal text, the same declaration, or
-                        // the same callee with equal arguments. Report the
-                        // second occurrence.
-                        if seen
-                            .iter()
-                            .any(|other| structurally_equal(other, &case.pattern))
-                        {
-                            return Err(self.error(
-                                case.pattern.span(),
-                                duplicate_pattern_message(&case.pattern),
-                            ));
-                        }
-                        seen.push(&case.pattern);
-                        self.require(&case.pattern, Position::CasePattern)?;
-                        self.statements(&case.body)?;
-                    }
-                    if let Some(default) = default {
-                        self.statements(default)?;
-                    }
-                }
-                Statement::Defer { body, .. } => {
-                    self.statements(body)?;
-                }
+            let next = self.statement(statement)?;
+            if flow.falls {
+                flow = Flow {
+                    returns: flow.returns || next.returns,
+                    falls: next.falls,
+                };
             }
         }
-        Ok(())
+        Ok(flow)
+    }
+
+    /// Validate one statement and return its flow.
+    fn statement(&mut self, statement: &Statement) -> Result<Flow, Diagnostic> {
+        match statement {
+            Statement::Bind {
+                declaration, value, ..
+            } => {
+                self.bind(*declaration, value)?;
+                Ok(Flow::FALLS)
+            }
+            Statement::Assign {
+                declaration,
+                name_span,
+                value,
+                ..
+            } => {
+                self.assign(*declaration, *name_span, value)?;
+                Ok(Flow::FALLS)
+            }
+            Statement::Expression(expression) => {
+                // A bare statement must do something: call a function or
+                // native. A value on its own is dead text, so the shape is
+                // rejected before the kind.
+                if !matches!(expression, Expression::Call { .. }) {
+                    return Err(self.error(expression.span(), "a statement must be a call"));
+                }
+                self.require(expression, Position::Statement)?;
+                Ok(self.call_flow(expression))
+            }
+            Statement::Return { value, span } => {
+                self.return_statement(value.as_ref(), *span)?;
+                Ok(Flow::RETURNS)
+            }
+            Statement::Panic { .. } => Ok(Flow::STOPS),
+            Statement::Async { call, .. } => {
+                if !matches!(call, Expression::Call { .. }) {
+                    return Err(self.error(call.span(), "`async` takes a call"));
+                }
+                self.expression(call)?;
+                Ok(Flow::FALLS)
+            }
+            Statement::Wait { .. } => Ok(Flow::FALLS),
+            Statement::Switch {
+                subject,
+                cases,
+                default,
+                ..
+            } => {
+                self.require(subject, Position::CasePattern)?;
+                let mut seen: Vec<&Expression> = Vec::new();
+                let mut flow = Flow::STOPS;
+                for case in cases {
+                    // Two patterns are duplicates when they are the same
+                    // shape: equal literal text, the same declaration, or the
+                    // same callee with equal arguments. Report the second
+                    // occurrence.
+                    if seen
+                        .iter()
+                        .any(|other| structurally_equal(other, &case.pattern))
+                    {
+                        return Err(self.error(
+                            case.pattern.span(),
+                            duplicate_pattern_message(&case.pattern),
+                        ));
+                    }
+                    seen.push(&case.pattern);
+                    self.require(&case.pattern, Position::CasePattern)?;
+                    flow = flow.union(self.statements(&case.body)?);
+                }
+                match default {
+                    Some(default) => flow = flow.union(self.statements(default)?),
+                    None => flow = flow.union(Flow::FALLS),
+                }
+                Ok(flow)
+            }
+            Statement::Defer { body, .. } => {
+                let was_in_defer = self.in_defer;
+                self.in_defer = true;
+                let result = self.statements(body);
+                self.in_defer = was_in_defer;
+                result?;
+                Ok(Flow::FALLS)
+            }
+        }
+    }
+
+    /// The flow of a bare call statement: it stops the run when its callee
+    /// does.
+    fn call_flow(&self, expression: &Expression) -> Flow {
+        if let Expression::Call { callee, .. } = expression
+            && self.program.declaration(*callee).derived.halts
+        {
+            return Flow::STOPS;
+        }
+        Flow::FALLS
     }
 
     /// Bind a local `txt` or `rec` and record its kind.
@@ -123,7 +231,9 @@ impl<'a> Walk<'a> {
         let position = match &self.program.declaration(declaration).kind {
             DeclarationKind::Binding(BindingKind::Text) => Position::TextBinding,
             DeclarationKind::Binding(BindingKind::Record) => Position::RecordBinding,
-            _ => return Ok(()),
+            other => {
+                unreachable!("a bind statement targets a text or record binding, found {other:?}")
+            }
         };
         let actual = self.require(value, position)?;
         self.locals.insert(declaration, actual);
@@ -148,29 +258,48 @@ impl<'a> Walk<'a> {
                 let binding_kind = self.kind_of(declaration);
                 self.require_kind(value, binding_kind)
             }
-            _ => {
+            DeclarationKind::Text(_) | DeclarationKind::Record(_) => {
                 let name = &self.program.declaration(declaration).name;
                 Err(self.error(
                     name_span,
                     format!("`{name}` is a module-level constant and cannot be assigned"),
                 ))
             }
+            other => {
+                unreachable!("an assignment target is a binding or a module value, found {other:?}")
+            }
         }
     }
 
-    /// Validate a returned expression and record the function's return kind.
-    /// Every value return in one function must carry the same kind.
-    fn return_value(&mut self, value: &Expression) -> Result<(), Diagnostic> {
-        let actual = self.require(value, Position::Return)?;
-        match self.return_kind {
-            Some(existing) if existing != actual => Err(self.error(
+    /// Enforce the return rules of the enclosing function. `return` is banned
+    /// inside `defer`. A value return is only for a function declared `-> txt`
+    /// or `-> rec`, and its value must fit that kind; a bare return is only for
+    /// a function declared with no return kind.
+    fn return_statement(
+        &mut self,
+        value: Option<&Expression>,
+        span: Span,
+    ) -> Result<(), Diagnostic> {
+        if self.in_defer {
+            return Err(self.error(span, "`return` is not allowed inside `defer`"));
+        }
+        let Some(name) = self.function_name else {
+            return Err(self.error(span, "`return` is not allowed here"));
+        };
+        match value {
+            Some(value) if self.declared_kind == Kind::Nothing => Err(self.error(
                 value.span(),
-                expected_instead(existing.name(), actual.name()),
+                format!("`{name}` is declared to return nothing, so `return` cannot carry a value"),
             )),
-            _ => {
-                self.return_kind = Some(actual);
-                Ok(())
-            }
+            Some(value) => self.require_kind(value, self.declared_kind),
+            None if self.declared_kind != Kind::Nothing => Err(self.error(
+                span,
+                format!(
+                    "`{name}` is declared to return {}, so `return` must carry a value",
+                    self.declared_kind.name()
+                ),
+            )),
+            None => Ok(()),
         }
     }
 
@@ -211,8 +340,9 @@ impl<'a> Walk<'a> {
 
     fn reference(&mut self, declaration: DeclarationId, span: Span) -> Result<Kind, Diagnostic> {
         match &self.program.declaration(declaration).kind {
-            DeclarationKind::Binding(_) | DeclarationKind::Text(_) => Ok(self.kind_of(declaration)),
-            DeclarationKind::Record(_) => Ok(Kind::Record),
+            DeclarationKind::Binding(_) | DeclarationKind::Text(_) | DeclarationKind::Record(_) => {
+                Ok(self.kind_of(declaration))
+            }
             DeclarationKind::Function(_) | DeclarationKind::Native(_) => Err(self.error(
                 span,
                 function_used_as_value(&self.program.display(declaration)),
@@ -238,7 +368,7 @@ impl<'a> Walk<'a> {
             .declaration(callee)
             .derived
             .kind
-            .unwrap_or(Kind::Nothing);
+            .expect("every callable carries the kind its declaration fixed");
         self.arity(callee, callee_span, arguments, parameter_count)?;
         for (index, argument) in arguments.iter().enumerate() {
             let parameter = self.program.declaration(callee).parameters[index];

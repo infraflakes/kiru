@@ -37,6 +37,10 @@
       "match": "\\b([A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()"
     },
     {
+      "name": "keyword.operator.kiru",
+      "match": "->"
+    },
+    {
       "name": "punctuation.separator.namespace.kiru",
       "match": "::"
     },

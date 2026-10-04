@@ -21,7 +21,7 @@ A function body sees, in order of closeness, its own parameters, the bindings th
 ```kiru
 txt app = "kiru";          # visible below
 
-fn show() {
+fn show() -> txt {
   txt local = "x";         # visible only inside show
   std::print(app + local);
   return("");

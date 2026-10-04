@@ -19,13 +19,13 @@ plus the `std` namespace.
 | `module` | declare a file's namespace |
 | `import` | load another file |
 | `fn` | declare a function |
-| `txt` | bind text; declare a text parameter |
-| `rec` | bind a record; declare a record parameter |
+| `txt` | bind text; declare a `txt` parameter or return type |
+| `rec` | bind a record; declare a `rec` parameter or return type |
 | `switch` | compare text |
 | `case` | a switch pattern |
 | `default` | the fallback arm |
 | `defer` | register cleanup |
-| `return` | end a function early, with `return();` or `return(expr);` |
+| `return` | end a function early; `return();` for no return kind, `return(expr);` for `-> txt`/`-> rec` |
 | `panic` | end the run |
 | `async` | start a call on its own thread |
 | `wait` | join the calling thread's asyncs |

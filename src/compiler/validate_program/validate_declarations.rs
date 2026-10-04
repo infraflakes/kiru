@@ -1,87 +1,73 @@
-//! Verification: derive every kind bottom-up and enforce the body rules.
+//! Verification: prove every function body against its declared kind, derive
+//! the remaining kinds bottom-up, and learn which functions stop the run.
 
 use crate::compiler::{
     DeclarationId, DeclarationKind, Diagnostic, FileId, Function, Kind, Position, Program,
-    Statement,
 };
 
 use super::validate_bodies::Walk;
 
-/// Derive every node's kind in declaration order and validate its body. A
-/// callee is always declared earlier, so its kind is already settled. Only a
-/// file declaration has a body to derive, so a native or a local binding is
-/// skipped.
+/// Validate every declaration in declaration order. A callee is always
+/// declared earlier, so its kind and whether it stops the run are already
+/// settled. A function's kind comes from its declaration; only a module value
+/// has a kind to derive, so a native or a local binding is skipped.
 pub(crate) fn validate_program(program: &mut Program) -> Result<(), Diagnostic> {
     for index in 0..program.declarations.len() {
         let id = DeclarationId(index);
         let declaration = program.declaration(id);
-        let kind = if let Some(function) = declaration.function() {
-            verify_function(program, id, program.file_of(id), function)?
+        if let Some(function) = declaration.function() {
+            let declared_kind = function.return_kind;
+            let halts = verify_function(program, id, program.file_of(id), function, declared_kind)?;
+            program.declaration_mut(id).derived.halts = halts;
         } else if let Some(expression) = declaration.initializer() {
             let position = match &declaration.kind {
+                DeclarationKind::Text(_) => Position::TextBinding,
                 DeclarationKind::Record(_) => Position::RecordBinding,
-                _ => Position::TextBinding,
+                other => {
+                    unreachable!("only a text or record value has an initializer, found {other:?}")
+                }
             };
             let mut walk = Walk::new(program, program.file_of(id));
-            walk.require(expression, position)?
-        } else {
-            continue;
-        };
-        program.declaration_mut(id).derived.kind = Some(kind);
+            let kind = walk.require(expression, position)?;
+            program.declaration_mut(id).derived.kind = Some(kind);
+        }
     }
     Ok(())
 }
 
-/// Enforce the flow rule of one function and derive its kind.
+/// Prove one function body against its declared kind and report whether every
+/// path stops the run.
 ///
-/// A function ends when its body ends. `return` is an early exit: `return()`
-/// carries nothing, `return(expr)` carries text or record. Every return in one
-/// function is the same kind, and a function whose kind is not `nothing` must
-/// not fall through, so the call always produces the kind it is marked with.
-/// `main` is an ordinary function; the runtime discards its value.
+/// A function declared `-> txt` or `-> rec` must not fall through: every path
+/// ends in `return(expr);`, `panic;`, or a call to a function that stops the
+/// run. A function declared with no return kind may fall through. `main` is an
+/// ordinary function; the runtime discards its value.
 fn verify_function(
     program: &Program,
     id: DeclarationId,
     file: FileId,
     function: &Function,
-) -> Result<Kind, Diagnostic> {
+    declared_kind: Kind,
+) -> Result<bool, Diagnostic> {
     let declaration = program.declaration(id);
     let name = &declaration.name;
     let path = &program.file(file).path;
 
-    let mut walk = Walk::new(program, file);
-    walk.statements(&function.body)?;
+    let mut walk = Walk::for_function(program, file, name, declared_kind);
+    let flow = walk.statements(&function.body)?;
 
-    let kind = walk.return_kind.unwrap_or(Kind::Nothing);
-    if kind != Kind::Nothing && !terminates(&function.body) {
+    if declared_kind != Kind::Nothing && flow.falls {
         return Err(Diagnostic::new(
             path,
-            declaration.name_span,
+            function
+                .body
+                .last()
+                .map_or(declaration.name_span, |statement| statement.span()),
             format!(
-                "`{name}` returns {} but can fall through; every path must end in `return` or `panic`",
-                kind.name()
+                "`{name}` is declared to return {}, so every path must end with `return(...)`, `panic;`, or a call that stops the run",
+                declared_kind.name()
             ),
         ));
     }
-    Ok(kind)
-}
-
-/// Whether a body's flow always ends in a terminator. A block terminates when
-/// any statement terminates, because the statements after it are unreachable;
-/// a `switch` terminates when it has a `default` and every arm terminates;
-/// `defer` schedules cleanup and never terminates.
-fn terminates(body: &[Statement]) -> bool {
-    body.iter().any(statement_terminates)
-}
-
-fn statement_terminates(statement: &Statement) -> bool {
-    match statement {
-        Statement::Return { .. } | Statement::Panic { .. } => true,
-        Statement::Switch {
-            cases,
-            default: Some(default),
-            ..
-        } => cases.iter().all(|case| terminates(&case.body)) && terminates(default),
-        _ => false,
-    }
+    Ok(!flow.falls && !flow.returns)
 }

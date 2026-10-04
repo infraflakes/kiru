@@ -83,29 +83,18 @@ main.kiru:6:14: error: unknown name `temp`
              ^^^^
 ```
 
-## Return Inside a Defer
+## No Return Inside a Defer
 
-`return` is allowed inside a defer. It ends that defer body, and its value is
-discarded; the enclosing body still returns normally. Later defers still run:
-
-<span class="filename">Filename: src/main.kiru</span>
-
-```kiru
-fn main() {
-  defer {
-    std::print("cleanup");
-    return();
-    std::print("unreachable");
-  };
-  std::print("body");
-};
-```
+`return` belongs to a function, not to cleanup, so a defer body cannot return:
 
 ```console
-$ ./app
-body
-cleanup
+$ kc main.kiru
+main.kiru:3:5: error: `return` is not allowed inside `defer`
+    return();
+    ^^^^^^^^^
 ```
+
+A defer body may still `panic;`, and the enclosing body returns normally.
 
 ## Defers and Threads
 

@@ -9,6 +9,10 @@
 //! serializes the result behind the binary trailer. This module re-exports the
 //! model and the stage entry points the rest of the crate drives.
 
+/// The name the compiler reports under. The runtime reports under the
+/// program's own name instead.
+pub(crate) const DIAGNOSTIC_PREFIX: &str = "kc";
+
 mod compile_program;
 mod diagnostics;
 mod load_files;
@@ -32,8 +36,8 @@ pub(crate) use package_binary::{
 pub(in crate::compiler) use program_model::{
     BUILTIN_NAMESPACE, BindingKind, Case, Declaration, Derived, ENTRY_FUNCTION, File, FileId,
     Function, NATIVE_ROWS, NameTable, Namespace, NamespaceId, NativeRow, Origin, Position,
-    Registry, Usage, Visitor, VisitorMut, fits, namespace_at, namespace_path, verify_program,
-    walk_expression, walk_expression_mut, walk_statements, walk_statements_mut,
+    Registry, Usage, Visitor, VisitorMut, fits, join_path, namespace_at, namespace_path,
+    verify_program, walk_expression, walk_expression_mut, walk_statements, walk_statements_mut,
 };
 pub(crate) use program_model::{
     DeclarationId, DeclarationKind, Expression, Field, Kind, MutexExt, Native, Program, Record,

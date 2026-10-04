@@ -166,7 +166,6 @@ impl Parser {
         let mut module = None;
         let mut imports = Vec::new();
         let mut declarations = Vec::new();
-        let mut seen_declaration = false;
 
         while !self.check(&TokenKind::Eof) {
             match &self.current().kind {
@@ -177,22 +176,17 @@ impl Parser {
                     module = Some(self.parse_module()?);
                 }
                 TokenKind::Import => {
-                    if seen_declaration {
+                    if !declarations.is_empty() {
                         return Err(self.error_here("imports must come before declarations"));
                     }
                     imports.push(self.parse_import()?);
                 }
                 TokenKind::Fn => {
-                    seen_declaration = true;
                     declarations.push(Declaration::Function(self.parse_function()?));
                 }
-                TokenKind::Txt => {
-                    seen_declaration = true;
-                    declarations.push(Declaration::Binding(self.parse_binding(ValueKind::Text)?));
-                }
-                TokenKind::Rec => {
-                    seen_declaration = true;
-                    declarations.push(Declaration::Binding(self.parse_binding(ValueKind::Record)?));
+                TokenKind::Txt | TokenKind::Rec => {
+                    let kind = self.value_kind_of().expect("txt or rec");
+                    declarations.push(Declaration::Binding(self.parse_binding(kind)?));
                 }
                 other => {
                     return Err(self.error_here(format!(
@@ -280,6 +274,16 @@ impl Parser {
             "to close the argument list",
             Self::parse_expression,
         )
+    }
+
+    /// The value kind a `txt` or `rec` token names, for declaration and
+    /// statement dispatch. Every other token names no kind.
+    fn value_kind_of(&self) -> Option<ValueKind> {
+        match &self.current().kind {
+            TokenKind::Txt => Some(ValueKind::Text),
+            TokenKind::Rec => Some(ValueKind::Record),
+            _ => None,
+        }
     }
 
     /// Parse a comma separated list between `open` and `close`, returning the

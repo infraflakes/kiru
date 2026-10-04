@@ -8,7 +8,7 @@ A function is declared with `fn`:
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
-fn banner(txt name) {
+fn banner(txt name) -> txt {
   return("=== " + name + " ===");
 };
 ```
@@ -22,7 +22,7 @@ Parameters are comma separated, and each declares its kind before its name: `txt
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
-fn banner(txt name) {
+fn banner(txt name) -> txt {
   return("=== " + name + " ===");
 };
 
@@ -42,6 +42,6 @@ main.kiru:6:14: error: `banner` takes 1 arguments, found 0
 
 Arguments are evaluated left to right before the call. A function cannot be used as a value; a bare function name in an expression is an error.
 
-A function may end with `return(expr);`, and then it is text or record. A function with no `return` returns nothing, and its call may only stand as a statement; [return and nothing](/language/02-common-concepts/07-return-and-recursion/) covers the rule.
+A function declares its return kind after the parameter list: `-> txt` returns text, `-> rec` returns a record, and no arrow returns nothing. A function that returns nothing has a call that may only stand as a statement; [return and nothing](/language/02-common-concepts/07-return-and-recursion/) covers the rule.
 
 A function must be declared before its callers; [declaration order](/language/03-names-and-scope/01-declaration-order/) covers visibility and recursion.

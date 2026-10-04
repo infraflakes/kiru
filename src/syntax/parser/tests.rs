@@ -64,7 +64,7 @@ fn parses_function_with_switch_and_calls() {
 
 #[test]
 fn parses_typed_parameters() {
-    let file = parse("fn f(txt a, rec b) { return(a); };");
+    let file = parse("fn f(txt a, rec b) -> txt { return(a); };");
     let Declaration::Function(function) = &file.declarations[0] else {
         panic!("expected a function");
     };
@@ -72,12 +72,40 @@ fn parses_typed_parameters() {
     assert_eq!(function.parameters[0].kind, ValueKind::Text);
     assert_eq!(function.parameters[1].name, "b");
     assert_eq!(function.parameters[1].kind, ValueKind::Record);
+    assert_eq!(function.return_kind, Some(ValueKind::Text));
+}
+
+#[test]
+fn parses_return_kinds() {
+    let file = parse(
+        "fn text_value() -> txt { return(\"\"); };\n\
+         fn record_value() -> rec { return({}); };\n\
+         fn no_value() { return(); };",
+    );
+    let Declaration::Function(text_value) = &file.declarations[0] else {
+        panic!("expected a function");
+    };
+    assert_eq!(text_value.return_kind, Some(ValueKind::Text));
+    let Declaration::Function(record_value) = &file.declarations[1] else {
+        panic!("expected a function");
+    };
+    assert_eq!(record_value.return_kind, Some(ValueKind::Record));
+    let Declaration::Function(no_value) = &file.declarations[2] else {
+        panic!("expected a function");
+    };
+    assert_eq!(no_value.return_kind, None);
 }
 
 #[test]
 fn rejects_a_parameter_without_a_kind() {
     let message = parse_error("fn f(a) { return(a); };");
     assert!(message.contains("expected `txt` or `rec`"), "{message}");
+}
+
+#[test]
+fn rejects_a_return_arrow_without_a_kind() {
+    let message = parse_error("fn f() -> { return(); };");
+    assert_eq!(message, "expected `txt` or `rec` after `->`, found `{`");
 }
 
 #[test]
@@ -123,7 +151,8 @@ fn parses_a_rooted_path() {
 
 #[test]
 fn parses_value_void_and_panic_returns() {
-    let file = parse("fn f(txt a) { return(a); };\nfn g() { return(); };\nfn h() { panic; };");
+    let file =
+        parse("fn f(txt a) -> txt { return(a); };\nfn g() { return(); };\nfn h() { panic; };");
     let Declaration::Function(value) = &file.declarations[0] else {
         panic!("expected a function");
     };

@@ -1,7 +1,7 @@
 //! Statement level grammar: blocks, statements, switches, and the statement
 //! forms that close with a semicolon.
 
-use crate::syntax::ast::{Case, Statement, ValueKind};
+use crate::syntax::ast::{Case, Statement};
 use crate::syntax::token::TokenKind;
 
 use super::{ParseError, Parser};
@@ -28,8 +28,10 @@ impl Parser {
     /// Dispatch on the cursor token to parse one statement.
     fn parse_statement(&mut self) -> Result<Statement, ParseError> {
         match &self.current().kind {
-            TokenKind::Txt => Ok(Statement::Binding(self.parse_binding(ValueKind::Text)?)),
-            TokenKind::Rec => Ok(Statement::Binding(self.parse_binding(ValueKind::Record)?)),
+            TokenKind::Txt | TokenKind::Rec => {
+                let kind = self.value_kind_of().expect("txt or rec");
+                Ok(Statement::Binding(self.parse_binding(kind)?))
+            }
             TokenKind::Return => self.parse_return(),
             TokenKind::Panic => self.parse_panic(),
             TokenKind::Async => self.parse_async(),

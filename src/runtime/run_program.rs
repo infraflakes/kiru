@@ -35,7 +35,7 @@ pub(crate) fn run(program: Arc<Program>, words: &[String]) -> i32 {
     let arguments = match build_arguments_record(words) {
         Ok(record) => record,
         Err(message) => {
-            eprintln!("{}: {message}", process::DIAGNOSTIC_PREFIX);
+            eprintln!("{}: {message}", super::program_name());
             return 1;
         }
     };
@@ -46,7 +46,7 @@ pub(crate) fn run(program: Arc<Program>, words: &[String]) -> i32 {
     if let Err(error) = process::install_signal_handlers(&state) {
         eprintln!(
             "{}: cannot install signal handlers: {error}",
-            process::DIAGNOSTIC_PREFIX
+            super::program_name()
         );
         return 1;
     }
@@ -77,10 +77,10 @@ pub(super) fn build_arguments_record(words: &[String]) -> Result<Record, &'stati
     if words.len() > 2 {
         return Err("expected one command and one flag");
     }
-    let mut record = Record::new();
-    record.set("cmd".to_owned(), words.first().cloned().unwrap_or_default());
-    record.set("flag".to_owned(), words.get(1).cloned().unwrap_or_default());
-    Ok(record)
+    Ok(Record::from_pairs([
+        ("cmd".to_owned(), words.first().cloned().unwrap_or_default()),
+        ("flag".to_owned(), words.get(1).cloned().unwrap_or_default()),
+    ]))
 }
 
 /// The interpreter over one program. Detached threads borrow the shared
@@ -102,10 +102,15 @@ impl Runtime {
         let DeclarationKind::Function(_) = &declaration.kind else {
             return Err(self.fail());
         };
-        let arguments = if declaration.parameters.is_empty() {
-            Vec::new()
-        } else {
-            vec![Value::Record(arguments)]
+        let arguments = match declaration.parameters.as_slice() {
+            [] => Vec::new(),
+            [parameter] => {
+                if self.program.declaration(*parameter).derived.kind != Some(Kind::Record) {
+                    return Err(self.fail());
+                }
+                vec![Value::Record(arguments)]
+            }
+            _ => return Err(self.fail()),
         };
         self.call_declaration(entry, arguments)
     }
@@ -133,27 +138,19 @@ impl Runtime {
     /// Evaluate every top-level initializer once, in declaration order, on
     /// this machine, and store the result in the program's value table.
     pub(super) fn evaluate_module_values(&self) -> Result<(), Panic> {
-        let ids: Vec<DeclarationId> = self
-            .program
-            .declarations
-            .iter()
-            .enumerate()
-            .filter(|(_, declaration)| declaration.initializer().is_some())
-            .map(|(index, _)| DeclarationId(index))
-            .collect();
-
-        for id in ids {
-            let env = Environment::new();
-            let Some(expression) = self.program.declaration(id).initializer() else {
+        for (index, declaration) in self.program.declarations.iter().enumerate() {
+            let Some(expression) = declaration.initializer() else {
                 continue;
             };
+            let env = Environment::new();
             let value = self.eval(expression, &env)?;
-            debug_assert_eq!(
-                self.program.declaration(id).derived.kind,
-                Some(Kind::of(&value)),
-                "a module value keeps the kind the checker gave it"
-            );
-            self.program.values.write_unpoisoned().insert(id, value);
+            if declaration.derived.kind != Some(Kind::of(&value)) {
+                return Err(self.fail());
+            }
+            self.program
+                .values
+                .write_unpoisoned()
+                .insert(DeclarationId(index), value);
         }
         Ok(())
     }
@@ -167,7 +164,6 @@ impl Runtime {
 
         let mut defer_result: Result<(), Panic> = Ok(());
         if !defers.is_empty() {
-            self.state.begin_cleanup();
             while let Some(body) = defers.pop() {
                 self.state.begin_cleanup();
                 if let Err(failure) = self.exec_body(body, env) {

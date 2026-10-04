@@ -20,8 +20,10 @@ fn main() {
 - `main` takes zero or one parameter.
 - The one-parameter form receives the args record; [Command Line
   Arguments](/language/09-entry-and-the-cli/02-the-args-record/) describes it.
-- `main` is an ordinary function: its kind is derived like any other, and the
-  runtime discards whatever it returns. It may `return();` or `return(expr);`.
+- `main` is an ordinary function: it declares its return kind like any other,
+  and the runtime discards whatever it returns. A `main` with no arrow may
+  `return();`; a `main` declared `-> txt` or `-> rec` must `return(expr);` on
+  every path.
 - A `main` declared inside a module is an ordinary function.
 
 An entry file with no `main`, or a `main` with two parameters, is a compile

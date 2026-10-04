@@ -79,7 +79,12 @@ impl Runtime {
         let callee = *callee;
         let runtime = self.detached();
         self.state.spawn_thread(move || {
-            let _ = runtime.invoke_call(callee, values);
+            // A panic records itself before it unwinds, but an invariant
+            // failure returns without recording. Record it here so a failure
+            // in a detached thread still fails the run.
+            if runtime.invoke_call(callee, values).is_err() {
+                runtime.state.record_failure();
+            }
         });
         Ok(())
     }
@@ -105,11 +110,9 @@ impl Runtime {
     /// exhaustive over `Native`, so a native without a handler does not
     /// compile.
     fn call_native(&self, native: Native, mut values: Vec<Value>) -> Result<Value, Panic> {
-        debug_assert_eq!(
-            values.len(),
-            crate::compiler::native_arity(native),
-            "a native handler consumes exactly its declared parameters"
-        );
+        if values.len() != crate::compiler::native_arity(native) {
+            return Err(self.fail());
+        }
         match native {
             Native::Run => {
                 let line = self.pop_text(&mut values)?;
@@ -132,11 +135,10 @@ impl Runtime {
     }
 
     pub(super) fn eval_fields(&self, fields: &[Field], env: &Environment) -> Result<Record, Panic> {
-        let mut record = Record::new();
+        let mut pairs = Vec::with_capacity(fields.len());
         for field in fields {
-            let text = self.eval_text(&field.value, env)?;
-            record.set(field.name.clone(), text);
+            pairs.push((field.name.clone(), self.eval_text(&field.value, env)?));
         }
-        Ok(record)
+        Ok(Record::from_pairs(pairs))
     }
 }

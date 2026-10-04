@@ -16,8 +16,8 @@ std::quote(text) -> text       escape text as one shell word
 
 ```text
 panic;          end the run, run defers, exit nonzero
-return();       end a nothing function early
-return(expr);   end a function with text or record
+return();       end a function with no return kind early
+return(expr);   end a `-> txt`/`-> rec` function early
 async <call>;   run a call on a new thread
 wait;           join the calling thread's asyncs
 ```
@@ -31,7 +31,7 @@ std::log(text) -> nothing           write an "INFO:" line to stdout
 std::eprint(text) -> nothing        write an "ERROR:" line to stderr, then panic
 ```
 
-[Written by Kiru](/stdlib/02-written-by-kiru/) shows the source and the spec.
+`std::eprint` ends in `panic;`, so a call to it stops the run and can end a value function's path. [Written by Kiru](/stdlib/02-written-by-kiru/) shows the source and the spec.
 
 ## The Command Spec
 

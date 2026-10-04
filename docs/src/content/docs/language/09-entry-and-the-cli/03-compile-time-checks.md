@@ -14,7 +14,7 @@ A program that compiles has been checked for:
 | Parameters | a parameter without `txt` or `rec`, `main` with a `txt` parameter |
 | Statements | a lone value or expression as a statement |
 | Kinds | text where a record is required, a nothing call bound or passed |
-| Returns | a value function that can fall through, a return of a nothing call |
+| Returns | a value function that can fall through, a value return in a nothing function, a bare return in a value function, a return inside `defer` |
 | Cases | duplicate case data |
 | Threads | an `async` nested inside another `async` |
 

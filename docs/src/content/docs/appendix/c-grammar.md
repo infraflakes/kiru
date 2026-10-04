@@ -12,7 +12,7 @@ module      := "module" path ";"
 import      := "import" string ";"
 
 declaration := function | text | record
-function    := "fn" ident "(" params? ")" block ";"
+function    := "fn" ident "(" params? ")" ("->" kind)? block ";"
 text        := "txt" ident "=" expression ";"
 record      := "rec" ident "=" expression ";"
 
@@ -69,16 +69,18 @@ absence of numeric literals.
   `fn ... { ... };`, `switch(...) { ... };`, `defer { ... };`.
 - A `path` may open with `::` to name the root namespace: `::value` and
   `::func()`.
-- A `return` is parenthesized: `return();` ends a `nothing` function, and
-  `return(expr);` returns text or record. It may appear anywhere, including
-  inside `defer`, where it ends that defer body and its value is discarded.
+- A `return` is parenthesized: `return();` ends a function with no return
+  kind, and `return(expr);` ends a `-> txt` or `-> rec` function. It may
+  appear anywhere in its function except inside a `defer` body.
 - `panic;` is a keyword statement that ends the run.
 - `async <call>;` spawns a call on its own thread and binds nothing; `wait;`
   joins the asyncs the calling thread spawned.
 - A `rec` binding takes an expression that is a record literal, a record
   variable, or a call returning a record.
 - Each parameter declares its kind before its name: `txt` is text and `rec`
-  is a record. `main` takes at most one parameter, and it must be `rec`.
+  is a record. A function's return kind is written `-> txt` or `-> rec` after
+  the parameter list; no arrow means it returns no value. `main` takes at most
+  one parameter, and it must be `rec`.
 - A bare statement must be a call; a lone value is a compile error.
 - A term with no arguments after `.` is a field access.
 - The reserved words are `module`, `import`, `fn`, `txt`, `rec`, `switch`,

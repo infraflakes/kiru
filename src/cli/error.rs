@@ -1,4 +1,5 @@
-//! A command-line usage error. Its text is printed after the `kc: ` prefix.
+//! A command-line usage error. Its text is printed after the compiler's
+//! diagnostic prefix.
 
 /// A command-line usage error.
 pub(crate) struct CliError(pub(crate) String);

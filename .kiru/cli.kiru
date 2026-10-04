@@ -30,6 +30,24 @@ flags:
 
 txt usage = usage_kiru + "\n\n" + usage_docs + "\n\n" + usage_all;
 
+fn container_cmd() -> txt {
+  switch(std::command({ Stream = "null" }, "command -v docker")) {
+    case("0") {
+      return("docker");
+    };
+    default {
+      switch(std::command({ Stream = "null" }, "command -v podman")) {
+        case("0") {
+          return("podman");
+        };
+        default {
+          std::eprint("No container binary found.");
+        };
+      };
+    };
+  };
+};
+
 fn kiru_command(rec project, txt flag) {
   switch(flag) {
     case("check") { check_kiru(project); };
@@ -38,17 +56,7 @@ fn kiru_command(rec project, txt flag) {
       run(project, "nix build .#default");
     };
     case("container") {
-      txt runtime = "";
-      switch(std::command({ Stream = "null" }, "command -v docker")) {
-        case("0") { runtime = "docker"; };
-        default {
-          switch(std::command({ Stream = "null" }, "command -v podman")) {
-            case("0") { runtime = "podman"; };
-            default { std::eprint("no container runtime found"); };
-          };
-        };
-      };
-      run(project, runtime + " build --output type=local,dest=bin .");
+      run(project, container_cmd() + " build --output type=local,dest=bin .");
     };
     case("format") { format_kiru(project); };
     case("update") { update_kiru(project); };

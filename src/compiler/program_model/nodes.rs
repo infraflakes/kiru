@@ -85,7 +85,7 @@ impl Program {
         }
         let mut path = self.namespace_path(declaration.namespace);
         path.push(declaration.name.clone());
-        path.join("::")
+        join_path(&path, false)
     }
 }
 
@@ -226,6 +226,14 @@ pub(crate) fn namespace_path(namespaces: &[Namespace], id: NamespaceId) -> Vec<S
     segments
 }
 
+/// Join namespace segments with `::`, with an optional leading `::` for a
+/// rooted path. The program model and the linker both render names through
+/// this function.
+pub(crate) fn join_path(segments: &[String], root: bool) -> String {
+    let joined = segments.join("::");
+    if root { format!("::{joined}") } else { joined }
+}
+
 /// The namespace at a path, walked over a namespace table. The program model
 /// and the linker both look namespaces up through this function.
 pub(crate) fn namespace_at(namespaces: &[Namespace], path: &[String]) -> Option<NamespaceId> {
@@ -306,8 +314,14 @@ impl Declaration {
 /// What a phase has learned about a node.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Derived {
-    /// The value's kind, a binding's kind, or a function's return kind.
+    /// The value's kind, a binding's kind, or a function's return kind. A
+    /// function seeds this from its declaration at link time, so a call reads
+    /// the kind the declaration fixed without looking at the body.
     pub(crate) kind: Option<Kind>,
+    /// Whether every path of a function ends in `panic;` or a call to a
+    /// function that stops the run. A call to such a function ends its
+    /// caller's path exactly like `panic;` does.
+    pub(crate) halts: bool,
 }
 
 /// What a declaration node is.
@@ -337,10 +351,12 @@ pub(crate) enum BindingKind {
     Record,
 }
 
-/// A function body; its parameters are separate nodes.
+/// A function body; its parameters are separate nodes. `return_kind` is the
+/// kind the declaration fixes: `Nothing` when no arrow is written.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Function {
     pub(crate) body: Vec<Statement>,
+    pub(crate) return_kind: Kind,
 }
 
 /// A linked expression. Every name is already an edge to a node.
@@ -417,8 +433,8 @@ pub(crate) enum Statement {
         span: Span,
     },
     Expression(Expression),
-    /// An early exit. A value return carries text or record; a valueless
-    /// return ends a function that returns nothing.
+    /// An early exit. A value return carries the function's declared kind; a
+    /// valueless return ends a function that declares no return kind.
     Return {
         value: Option<Expression>,
         span: Span,
@@ -446,6 +462,24 @@ pub(crate) enum Statement {
         body: Vec<Statement>,
         span: Span,
     },
+}
+
+impl Statement {
+    /// The span one statement covers. A bare expression statement has no span
+    /// of its own, so it covers the expression it discards.
+    pub(crate) fn span(&self) -> Span {
+        match self {
+            Statement::Expression(expression) => expression.span(),
+            Statement::Bind { span, .. }
+            | Statement::Assign { span, .. }
+            | Statement::Return { span, .. }
+            | Statement::Panic { span }
+            | Statement::Async { span, .. }
+            | Statement::Wait { span }
+            | Statement::Switch { span, .. }
+            | Statement::Defer { span, .. } => *span,
+        }
+    }
 }
 
 /// One `case(pattern) { ... };` arm of a switch.
@@ -484,8 +518,17 @@ pub(crate) struct Record {
 }
 
 impl Record {
-    pub(crate) fn new() -> Self {
-        Self::default()
+    /// Build a record from key/value pairs in order. A later duplicate key
+    /// replaces an earlier one, exactly as `set` does.
+    pub(crate) fn from_pairs<I>(pairs: I) -> Self
+    where
+        I: IntoIterator<Item = (String, String)>,
+    {
+        let mut record = Self::default();
+        for (key, value) in pairs {
+            record.set(key, value);
+        }
+        record
     }
 
     /// Replace any value already stored for `key`.
@@ -514,7 +557,7 @@ mod tests {
     fn value_of(kind: Kind) -> Value {
         match kind {
             Kind::Text => Value::Text(String::new()),
-            Kind::Record => Value::Record(Record::new()),
+            Kind::Record => Value::Record(Record::default()),
             Kind::Nothing => Value::Nothing,
         }
     }

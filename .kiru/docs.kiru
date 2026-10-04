@@ -6,14 +6,12 @@ fn build_docs(rec docs) {
 };
 
 fn check_docs(rec docs) {
-  run(docs, "biome check .");
-  run(docs, "biome lint .");
+  run(docs, "bun run check");
   run(docs, "bun run types");
 };
 
 fn format_docs(rec docs) {
-  run(docs, "biome format --write .");
-  run(docs, "biome check --write .");
+  run(docs, "bun run fix");
 };
 
 fn update_docs(rec docs) {

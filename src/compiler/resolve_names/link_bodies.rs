@@ -10,7 +10,8 @@ use crate::compiler::load_files::LoadedProgram;
 use crate::compiler::{
     BUILTIN_NAMESPACE, BindingKind, Case, Declaration, DeclarationId, DeclarationKind, Derived,
     Diagnostic, Expression, Field, FileId, Function, Kind, NamespaceId, Origin, Program, Registry,
-    Statement, duplicate_name, function_used_as_value, namespace_at, namespace_path, value_called,
+    Statement, duplicate_name, function_used_as_value, join_path, namespace_at, namespace_path,
+    value_called,
 };
 use crate::syntax::Span;
 use crate::syntax::{
@@ -60,7 +61,7 @@ impl Builder {
             let order = pending.order;
             let declaration = &parsed[file.0][pending.syntax_index];
 
-            let (kind, parameters) = match declaration {
+            let (kind, parameters, seeded_kind) = match declaration {
                 ParsedDeclaration::Function(function) => {
                     let mut scopes = Scopes::default();
                     scopes.push();
@@ -90,7 +91,15 @@ impl Builder {
                         parameters.push(id);
                     }
                     let body = self.link_statements(&function.body, &mut context)?;
-                    (DeclarationKind::Function(Function { body }), parameters)
+                    let return_kind = function
+                        .return_kind
+                        .map(declared_kind)
+                        .unwrap_or(Kind::Nothing);
+                    (
+                        DeclarationKind::Function(Function { body, return_kind }),
+                        parameters,
+                        Some(return_kind),
+                    )
                 }
                 ParsedDeclaration::Binding(binding) => {
                     let mut scopes = Scopes::default();
@@ -107,7 +116,7 @@ impl Builder {
                         ValueKind::Text => DeclarationKind::Text(expression),
                         ValueKind::Record => DeclarationKind::Record(expression),
                     };
-                    (kind, Vec::new())
+                    (kind, Vec::new(), None)
                 }
             };
             self.declarations[pending.declaration.0] = Some(Declaration {
@@ -119,7 +128,10 @@ impl Builder {
                 owner: None,
                 parameters,
                 kind,
-                derived: Derived::default(),
+                derived: Derived {
+                    kind: seeded_kind,
+                    halts: false,
+                },
             });
         }
         Ok(())
@@ -390,7 +402,7 @@ impl Builder {
             return Ok(found);
         }
 
-        let display = display_path(path, root);
+        let display = join_path(path, root);
         let Some(found) = self.search(context, path, root, span, registry)? else {
             return Err(self.unknown_name(context, path, root, span, registry));
         };
@@ -448,7 +460,7 @@ impl Builder {
                             span,
                             format!(
                                 "namespace `{}` is not imported",
-                                namespace_segments.join("::")
+                                join_path(namespace_segments, false)
                             ),
                         ));
                     }
@@ -471,19 +483,14 @@ impl Builder {
         registry: Registry,
     ) -> Diagnostic {
         let other_registry = registry.other();
-        let display = display_path(path, root);
-        let message = if self
-            .search(context, path, root, span, other_registry)
-            .ok()
-            .flatten()
-            .is_some()
-        {
-            match registry {
+        let display = join_path(path, root);
+        let message = match self.search(context, path, root, span, other_registry) {
+            Ok(Some(_)) => match registry {
                 Registry::Value => function_used_as_value(&display),
                 Registry::Function => value_called(&display),
-            }
-        } else {
-            format!("unknown name `{display}`")
+            },
+            Ok(None) => format!("unknown name `{display}`"),
+            Err(diagnostic) => return diagnostic,
         };
         Diagnostic::new(&self.files[context.file.0].path, span, message)
     }
@@ -525,13 +532,6 @@ impl Builder {
     }
 }
 
-/// A name path as the diagnostics show it: a rooted path keeps its leading
-/// `::`.
-fn display_path(path: &[String], root: bool) -> String {
-    let joined = path.join("::");
-    if root { format!("::{joined}") } else { joined }
-}
-
 /// What a local binding needs: where it was written, what it is called, which
 /// function owns it, and the kind it declares when the source writes one.
 struct LocalDeclaration<'a> {
@@ -545,8 +545,8 @@ struct LocalDeclaration<'a> {
     declared_kind: Option<Kind>,
 }
 
-/// The kind a written parameter keyword names. This is the only mapping from a
-/// parameter's declaration to the kind system.
+/// The kind a written keyword names, on a parameter or a return type. This is
+/// the only mapping from a written kind to the kind system.
 fn declared_kind(kind: ValueKind) -> Kind {
     match kind {
         ValueKind::Text => Kind::Text,

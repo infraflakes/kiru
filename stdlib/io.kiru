@@ -13,7 +13,7 @@ module std;
 # command runs: absent renders both stdout and stderr live, "stderr" hides
 # stdout and renders stderr, and "null" hides both. Nothing is captured;
 # `quote` makes the text safe for the shell.
-fn command(rec spec, txt line) {
+fn command(rec spec, txt line) -> txt {
   txt command_line = line;
 
   switch(spec.Dir) {

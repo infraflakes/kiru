@@ -103,6 +103,22 @@ impl<'a> Lexer<'a> {
                 continue;
             }
 
+            if current == '-' {
+                if let Some((_, '>')) = self.peek(1) {
+                    self.advance();
+                    self.advance();
+                    tokens.push(Token {
+                        kind: TokenKind::Arrow,
+                        span: Span::new(start, self.offset()),
+                    });
+                    continue;
+                }
+                return Err(self.error(
+                    Span::new(start, start + current.len_utf8()),
+                    "expected `->`",
+                ));
+            }
+
             if current == ':' {
                 if let Some((_, ':')) = self.peek(1) {
                     self.advance();
@@ -274,6 +290,30 @@ mod tests {
     }
 
     #[test]
+    fn lexes_a_return_arrow() {
+        assert_eq!(
+            kinds("fn f() -> txt { return(\"x\"); };"),
+            vec![
+                TokenKind::Fn,
+                TokenKind::Ident("f".to_owned()),
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::Arrow,
+                TokenKind::Txt,
+                TokenKind::LBrace,
+                TokenKind::Return,
+                TokenKind::LParen,
+                TokenKind::Text("x".to_owned()),
+                TokenKind::RParen,
+                TokenKind::Semi,
+                TokenKind::RBrace,
+                TokenKind::Semi,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
     fn lexes_paths_and_comments() {
         assert_eq!(
             kinds("std::run(); # done"),
@@ -354,6 +394,7 @@ mod tests {
             ),
             ("unterminated string", "\"open", "unterminated string"),
             ("lone colon", "a : b", "expected `::` in a path"),
+            ("lone dash", "a - b", "expected `->`"),
             ("unknown character", "a @ b", "unexpected character `@`"),
         ]);
     }

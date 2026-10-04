@@ -8,7 +8,7 @@ description: Concatenation, and why it is the only operator.
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
-fn label(txt name, txt code) {
+fn label(txt name, txt code) -> txt {
   return("  " + name + ": " + code + "\n");
 };
 

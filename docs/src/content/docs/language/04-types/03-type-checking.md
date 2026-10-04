@@ -10,7 +10,7 @@ A parameter is `txt` or `rec`, and every call is checked against that declared k
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
-fn announce(txt message) {
+fn announce(txt message) -> txt {
   std::print(message);
   return("");
 };
@@ -38,6 +38,6 @@ Every expression has a kind without inference:
 - a call takes the kind of its callee: text or record when the function returns, or `nothing` when it returns no value;
 - a native call takes the kind declared for it; [the runtime builtins](/stdlib/01-runtime-builtins/) lists them.
 
-A function whose returns share one kind has that kind; a function with no return, or whose returns have no common kind, is `nothing`. [Return and nothing](/language/02-common-concepts/07-return-and-recursion/) covers `nothing`.
+A function declares its return kind with `-> txt` or `-> rec`, or declares no return kind by writing no arrow. [Return and nothing](/language/02-common-concepts/07-return-and-recursion/) covers `nothing`.
 
 A compiled program cannot fail because a value had the wrong kind: every `+`, field access, and call was checked before the binary existed.

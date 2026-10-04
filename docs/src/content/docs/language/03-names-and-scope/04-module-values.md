@@ -23,7 +23,7 @@ Any expression that produces text or a record may initialize a module value, and
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
-fn default_dir() {
+fn default_dir() -> txt {
   return("/tmp/backend");
 };
 

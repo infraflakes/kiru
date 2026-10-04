@@ -73,44 +73,72 @@ fn entry_and_return_rules() {
         ),
         (
             "function with a return",
-            "fn f() { return(\"a\"); };\nfn main() {};",
+            "fn f() -> txt { return(\"a\"); };\nfn main() {};",
         ),
         (
             "an early return in a case arm with a final return",
-            "fn f(txt s) { switch(s) { case(\"a\") { return(\"a\"); }; }; return(\"\"); };\nfn main() {};",
+            "fn f(txt s) -> txt { switch(s) { case(\"a\") { return(\"a\"); }; }; return(\"\"); };\nfn main() {};",
         ),
         (
             "unreachable code after a return",
-            "fn f() { return(\"a\"); return(\"b\"); };\nfn main() {};",
+            "fn f() -> txt { return(\"a\"); return(\"b\"); };\nfn main() {};",
         ),
+        ("a bare return in main", "fn main() { return(); };"),
         (
-            "return in main is discarded",
-            "fn main() { return(\"\"); };",
+            "a value-returning main",
+            "fn main() -> txt { return(\"\"); };",
         ),
         (
             "a value function that panics on every other path",
-            "fn f(txt s) { switch(s) { case(\"a\") { return(\"a\"); }; default { panic; }; }; };\nfn main() {};",
+            "fn f(txt s) -> txt { switch(s) { case(\"a\") { return(\"a\"); }; default { panic; }; }; };\nfn main() {};",
         ),
         (
-            "return inside a defer body is allowed",
-            "fn f() { defer { return(\"a\"); }; return(\"\"); };\nfn main() {};",
+            "a value function that panics on every path",
+            "fn f() -> txt { panic; };\nfn main() {};",
+        ),
+        (
+            "a value function that ends in a halting call",
+            "fn f() -> txt { std::eprint(\"x\"); };\nfn main() {};",
+        ),
+        (
+            "a value function that ends in a halting user function",
+            "fn stop() { panic; };\nfn f() -> txt { stop(); };\nfn main() {};",
+        ),
+        (
+            "halting is transitive",
+            "fn inner() { panic; };\nfn outer() { inner(); };\nfn f() -> txt { outer(); };\nfn main() {};",
         ),
     ]);
     expect_rejections(&[
         (
             "a value function that can fall through",
-            "fn f(txt s) { switch(s) { case(\"a\") { return(\"a\"); }; }; };\nfn main() {};",
-            "`f` returns text but can fall through; every path must end in `return` or `panic`",
+            "fn f(txt s) -> txt { switch(s) { case(\"a\") { return(\"a\"); }; }; };\nfn main() {};",
+            "`f` is declared to return text, so every path must end with `return(...)`, `panic;`, or a call that stops the run",
         ),
         (
-            "returns of different kinds",
-            "fn f(txt s) { switch(s) { case(\"a\") { return(\"a\"); }; default { return({ k = \"v\" }); }; }; };\nfn main() {};",
+            "a returned value of the wrong kind",
+            "fn f(txt s) -> txt { switch(s) { case(\"a\") { return(\"a\"); }; default { return({ k = \"v\" }); }; }; };\nfn main() {};",
             "expected text, found record",
         ),
         (
             "returning a nothing call",
-            "fn work() {};\nfn f() { return(work()); };\nfn main() {};",
-            "expected text or record, found nothing",
+            "fn work() {};\nfn f() -> txt { return(work()); };\nfn main() {};",
+            "expected text, found nothing",
+        ),
+        (
+            "a value return in a nothing function",
+            "fn f() { return(\"a\"); };\nfn main() {};",
+            "`f` is declared to return nothing, so `return` cannot carry a value",
+        ),
+        (
+            "a bare return in a value function",
+            "fn f() -> txt { return(); };\nfn main() {};",
+            "`f` is declared to return text, so `return` must carry a value",
+        ),
+        (
+            "a return inside a defer body",
+            "fn f() -> txt { defer { return(\"a\"); }; return(\"b\"); };\nfn main() {};",
+            "`return` is not allowed inside `defer`",
         ),
     ]);
 }
@@ -142,7 +170,7 @@ fn run_and_field_rules() {
     expect_accepts(&[
         (
             "run code returned through a function",
-            "fn code(txt line) { return(std::run(line)); };\nfn main() { txt code = code(\"echo hi\"); };",
+            "fn code(txt line) -> txt { return(std::run(line)); };\nfn main() { txt code = code(\"echo hi\"); };",
         ),
         (
             "run at a module value",
@@ -196,19 +224,19 @@ fn text_and_record_rules() {
     expect_accepts(&[
         (
             "record argument",
-            "fn read(rec repo) { return(repo.dir); };\nfn main() { read({ dir = \"/x\" }); };",
+            "fn read(rec repo) -> txt { return(repo.dir); };\nfn main() { read({ dir = \"/x\" }); };",
         ),
         (
             "record parameter through a call",
-            "rec backend = { dir = \"/b\" };\nfn read_it(rec repo) { return(repo.dir); };\nfn main() { read_it(backend); };",
+            "rec backend = { dir = \"/b\" };\nfn read_it(rec repo) -> txt { return(repo.dir); };\nfn main() { read_it(backend); };",
         ),
         (
             "text parameter through a call",
-            "fn identity(txt value) { return(value); };\nfn main() { std::print(identity(\"x\")); };",
+            "fn identity(txt value) -> txt { return(value); };\nfn main() { std::print(identity(\"x\")); };",
         ),
         (
             "record parameter through a call with a literal",
-            "fn identity(rec repo) { return(repo.dir); };\nfn main() { std::print(identity({ dir = \"/x\" })); };",
+            "fn identity(rec repo) -> txt { return(repo.dir); };\nfn main() { std::print(identity({ dir = \"/x\" })); };",
         ),
     ]);
     expect_rejections(&[
@@ -224,7 +252,7 @@ fn text_and_record_rules() {
         ),
         (
             "text where a record is required",
-            "fn read(rec repo) { return(repo.dir); };\nfn main() { read(\"x\"); };",
+            "fn read(rec repo) -> txt { return(repo.dir); };\nfn main() { read(\"x\"); };",
             "expected record, found text",
         ),
     ]);
@@ -247,7 +275,11 @@ fn async_wait_and_defer_rules() {
         ),
         (
             "async of a call returning text",
-            "fn pick() { return(\"x\"); };\nfn main() { async pick(); wait; };",
+            "fn pick() -> txt { return(\"x\"); };\nfn main() { async pick(); wait; };",
+        ),
+        (
+            "async of a halting call does not stop the caller",
+            "fn stop() { panic; };\nfn main() { async stop(); };",
         ),
         (
             "bare async statement",
@@ -277,15 +309,15 @@ fn bindings_and_scope_rules() {
     expect_accepts(&[
         (
             "defer body declares into its enclosing body",
-            "fn f() {\ntxt x = \"a\";\ndefer { txt y = \"b\"; x = y; };\nreturn(x);\n};\nfn main() {};",
+            "fn f() -> txt {\ntxt x = \"a\";\ndefer { txt y = \"b\"; x = y; };\nreturn(x);\n};\nfn main() {};",
         ),
         (
             "case patterns of any text expression",
-            "fn pick() { return(\"a\"); };\nfn main() { switch(\"a\") { case(pick()) {}; }; };",
+            "fn pick() -> txt { return(\"a\"); };\nfn main() { switch(\"a\") { case(pick()) {}; }; };",
         ),
         (
             "case patterns that differ structurally",
-            "fn pick() { return(\"a\"); };\nfn other() { return(\"a\"); };\nfn main() {\nswitch(\"a\") { case(pick()) {}; case(other()) {}; };\n};",
+            "fn pick() -> txt { return(\"a\"); };\nfn other() -> txt { return(\"a\"); };\nfn main() {\nswitch(\"a\") { case(pick()) {}; case(other()) {}; };\n};",
         ),
     ]);
     expect_rejections(&[
@@ -321,12 +353,12 @@ fn bindings_and_scope_rules() {
         ),
         (
             "defer declared name is not visible after the defer",
-            "fn f() {\ndefer { txt hidden = \"b\"; };\nreturn(hidden);\n};\nfn main() {};",
+            "fn f() -> txt {\ndefer { txt hidden = \"b\"; };\nreturn(hidden);\n};\nfn main() {};",
             "unknown name `hidden`",
         ),
         (
             "structurally duplicate call case patterns",
-            "fn pick() { return(\"a\"); };\nfn main() {\nswitch(\"a\") { case(pick()) {}; case(pick()) {}; };\n};",
+            "fn pick() -> txt { return(\"a\"); };\nfn main() {\nswitch(\"a\") { case(pick()) {}; case(pick()) {}; };\n};",
             "duplicate case pattern",
         ),
         (
@@ -346,7 +378,7 @@ fn name_and_call_rules() {
         ),
         (
             "a value and a function share a name",
-            "fn build() { return(\"built\"); };\ntxt build = \"text\";\nfn main() { std::print(build); std::print(build()); };",
+            "fn build() -> txt { return(\"built\"); };\ntxt build = \"text\";\nfn main() { std::print(build); std::print(build()); };",
         ),
     ]);
     expect_rejections(&[
@@ -422,7 +454,7 @@ fn statement_form_rules() {
 fn checks_the_shipped_library_kinds() {
     let program = checked_program(
         "rec backend = { dir = \"/kiru\" };\n\
-         fn read(rec repo) { return(repo.dir); };\n\
+         fn read(rec repo) -> txt { return(repo.dir); };\n\
          fn main() {\n\
            std::print(\"x\");\n\
            read(backend);\n\
@@ -446,6 +478,10 @@ fn checks_the_shipped_library_kinds() {
     assert_eq!(
         program.declaration(eprint).derived.kind,
         Some(Kind::Nothing)
+    );
+    assert!(
+        program.declaration(eprint).derived.halts,
+        "eprint ends in `panic;`, so it stops the run"
     );
 
     let read = declaration(&program, &[], "read");

@@ -36,7 +36,7 @@ Two arms may both match; only the first runs:
 ```kiru
 txt fast = "fast";
 
-fn classify(txt mode) {
+fn classify(txt mode) -> txt {
   txt result = "other";
   switch(mode) {
     case("fast") { result = "literal"; };
@@ -68,11 +68,11 @@ A pattern may be anything that produces text, including a parameter or a call:
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
-fn name() {
+fn name() -> txt {
   return("a");
 };
 
-fn pick(txt target) {
+fn pick(txt target) -> txt {
   txt result = "none";
   switch("a") {
     case(target) { result = "chosen"; };
@@ -115,7 +115,7 @@ There is no fallthrough and no `break`. An arm runs its body and the switch is d
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
-fn run(txt mode) {
+fn run(txt mode) -> txt {
   return("running " + mode);
 };
 

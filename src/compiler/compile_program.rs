@@ -9,8 +9,8 @@
 use std::path::Path;
 
 use crate::compiler::{
-    Diagnostic, LoadedProgram, attach_trailer, load_files, prune_unreachable, resolve_names,
-    serialize_program, validate_program,
+    DIAGNOSTIC_PREFIX, Diagnostic, LoadedProgram, attach_trailer, load_files, prune_unreachable,
+    resolve_names, serialize_program, validate_program,
 };
 
 /// Compile `entry` to `output`, or to the entry path without its extension,
@@ -28,17 +28,27 @@ pub(crate) fn compile(
     prune_unreachable(&mut program);
 
     let bytes = serialize_program(&program)
-        .map_err(|error| format!("kc: cannot serialize the program: {error}\n"))?;
+        .map_err(|error| format!("{DIAGNOSTIC_PREFIX}: cannot serialize the program: {error}\n"))?;
     let output_path = output
         .map(Path::to_path_buf)
         .unwrap_or_else(|| entry.with_extension(""));
     if same_file(&loaded.files[loaded.entry].path, &output_path) {
-        return Err("kc: the output path would overwrite the entry file\n".to_owned());
+        return Err(format!(
+            "{DIAGNOSTIC_PREFIX}: the output path would overwrite the entry file\n"
+        ));
     }
-    std::fs::copy(executable, &output_path)
-        .map_err(|error| format!("kc: cannot write {}: {error}\n", output_path.display()))?;
-    attach_trailer(&output_path, &bytes)
-        .map_err(|error| format!("kc: cannot write {}: {error}\n", output_path.display()))?;
+    std::fs::copy(executable, &output_path).map_err(|error| {
+        format!(
+            "{DIAGNOSTIC_PREFIX}: cannot write {}: {error}\n",
+            output_path.display()
+        )
+    })?;
+    attach_trailer(&output_path, &bytes).map_err(|error| {
+        format!(
+            "{DIAGNOSTIC_PREFIX}: cannot write {}: {error}\n",
+            output_path.display()
+        )
+    })?;
     Ok(())
 }
 

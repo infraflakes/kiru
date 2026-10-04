@@ -12,7 +12,7 @@ Every nested block of one function body is the same body for assignment. A `swit
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
-fn pick(txt mode) {
+fn pick(txt mode) -> txt {
   txt value = "none";
   switch(mode) {
     case("fast") { value = "fast"; };

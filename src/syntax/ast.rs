@@ -35,17 +35,20 @@ pub(crate) enum Declaration {
     Binding(Binding),
 }
 
-/// A `fn name(parameters) { body };` declaration.
+/// A `fn name(parameters) -> kind? { body };` declaration. An absent return
+/// kind means the function returns no value.
 #[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Function {
     pub(crate) name: String,
     pub(crate) name_span: Span,
     pub(crate) parameters: Vec<Parameter>,
+    pub(crate) return_kind: Option<ValueKind>,
     pub(crate) body: Vec<Statement>,
     pub(crate) span: Span,
 }
 
-/// The kind a `txt` or `rec` keyword declares, on a parameter or a binding.
+/// The kind a `txt` or `rec` keyword declares, on a parameter, a binding, or
+/// a function's return type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum ValueKind {
     /// The `txt` keyword: text data.
@@ -94,8 +97,8 @@ pub(crate) enum Statement {
         span: Span,
     },
     Expression(Expression),
-    /// An early exit. A value return carries text or record; a valueless
-    /// return ends a function that returns nothing.
+    /// An early exit. A value return carries the function's declared kind; a
+    /// valueless return ends a function that declares no return kind.
     Return {
         value: Option<Expression>,
         span: Span,

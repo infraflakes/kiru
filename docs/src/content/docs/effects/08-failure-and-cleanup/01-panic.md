@@ -13,8 +13,8 @@ fn give_up() {
 };
 ```
 
-`panic;` is a statement, not a value: it ends the run, so the function that
-runs it is `nothing` and needs no `return`.
+`panic;` is a statement, not a value: it ends the run. A function whose body
+ends in it does not fall through, whatever return kind it declares.
 
 `std::eprint(message)` writes an `ERROR:` line to stderr, red when stderr is a
 terminal, and then panics:
