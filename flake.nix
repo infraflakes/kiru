@@ -4,6 +4,11 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     flake-parts.url = "github:hercules-ci/flake-parts";
+    crane.url = "github:ipetkov/crane";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -11,6 +16,8 @@
       self,
       nixpkgs,
       flake-parts,
+      crane,
+      rust-overlay,
       ...
     }:
     flake-parts.lib.mkFlake { inherit inputs; } {
@@ -21,47 +28,87 @@
 
       perSystem =
         {
-          config,
           self',
-          inputs',
-          pkgs,
           system,
           ...
         }:
-        {
-          packages.default = pkgs.rustPlatform.buildRustPackage {
-            pname = "kiru";
-            version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
+        let
+          pkgs = import nixpkgs {
+            inherit system;
+            overlays = [ (import rust-overlay) ];
+          };
+          lib = pkgs.lib;
 
-            src = pkgs.lib.cleanSourceWith {
-              src = ./.;
-              filter =
-                path: type:
-                let
-                  baseName = builtins.baseNameOf path;
-                in
-                !(builtins.elem baseName [
-                  "target"
-                  ".git"
-                  ".direnv"
-                ]);
-            };
+          # The toolchain is pinned by `rust-toolchain.toml`, so the compiler
+          # and every check use the same rustc, cargo, clippy, and rustfmt.
+          rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+          craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
-            cargoLock = {
-              lockFile = ./Cargo.lock;
-              allowBuiltinFetchGit = true;
-            };
+          # The compiler embeds `stdlib/io.kiru` with `include_str!`, so the
+          # build source has to carry it even though cargo does not.
+          src = lib.fileset.toSource {
+            root = ./.;
+            fileset = lib.fileset.unions [
+              ./Cargo.toml
+              ./Cargo.lock
+              ./src
+              ./stdlib
+              (lib.fileset.maybeMissing ./.cargo)
+            ];
           };
 
-          devShells.default = pkgs.mkShell {
-            inputsFrom = [ config.packages.default ];
-            buildInputs = with pkgs; [
-              cargo
-              clippy
-              rustfmt
-              cargo-edit
+          # Dependencies only need the cargo files, so their artifacts are not
+          # rebuilt when `stdlib/` changes.
+          cargoArtifacts = craneLib.buildDepsOnly {
+            src = craneLib.cleanCargoSource ./.;
+            strictDeps = true;
+          };
+
+          commonArgs = {
+            inherit src;
+            strictDeps = true;
+          };
+
+          kiru = craneLib.buildPackage (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              # Tests run as their own check, so a plain build does not repeat
+              # them for downstream consumers.
+              doCheck = false;
+            }
+          );
+        in
+        {
+          packages.default = kiru;
+
+          checks = {
+            inherit kiru;
+
+            kiru-clippy = craneLib.cargoClippy (
+              commonArgs
+              // {
+                inherit cargoArtifacts;
+                cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+              }
+            );
+
+            kiru-fmt = craneLib.cargoFmt { inherit src; };
+
+            kiru-test = craneLib.cargoTest (
+              commonArgs
+              // {
+                inherit cargoArtifacts;
+              }
+            );
+          };
+
+          devShells.default = craneLib.devShell {
+            checks = self'.checks;
+            packages = with pkgs; [
               bun
               biome
+              cargo-edit
             ];
           };
         };

@@ -52,28 +52,15 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
-      - name: Cache bun packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: bun-${{ runner.os }}-${{ hashFiles('docs/bun.lock') }}
-          restore-keys: |
-            bun-${{ runner.os }}-
+      - name: Build the compiler
+        run: nix build .#default
 
-      - name: Cache the Rust build
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-
+      - name: Compile the pipeline
+        run: ./result/bin/kc main.kiru
 
-      - name: Build the docs through kiru
+      - name: Checking the codebase
         run: |
-          nix develop --command bash -c 'cargo build && ./target/debug/kc main.kiru && ./main docs build && ./main docs check'
+          ./main docs build && ./main docs check
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

@@ -43,6 +43,15 @@ pub(crate) fn compile(
             output_path.display()
         )
     })?;
+    // A copy keeps the source's mode, and an installed `kc` may be read-only
+    // (a package manager or a Nix store path), so make the output a writable
+    // executable before the trailer is appended to it.
+    make_writable_executable(&output_path).map_err(|error| {
+        format!(
+            "{DIAGNOSTIC_PREFIX}: cannot write {}: {error}\n",
+            output_path.display()
+        )
+    })?;
     attach_trailer(&output_path, &bytes).map_err(|error| {
         format!(
             "{DIAGNOSTIC_PREFIX}: cannot write {}: {error}\n",
@@ -50,6 +59,13 @@ pub(crate) fn compile(
         )
     })?;
     Ok(())
+}
+
+/// Give a file the mode of a normal executable, so the trailer can be
+/// appended to a copy of a read-only `kc`.
+fn make_writable_executable(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
 }
 
 /// Whether `output` names the same file as `entry`, following symlinks and

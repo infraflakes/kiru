@@ -17,3 +17,9 @@ unicode-width = "0.2.2"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

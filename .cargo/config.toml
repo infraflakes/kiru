@@ -1,0 +1,13 @@
+# Defaults for every cargo invocation in this repository.
+
+[alias]
+# Release build of the compiler.
+br = "build --release"
+# The two checks the pipeline runs, with the same flags.
+cl = "clippy --all-targets -- -D warnings"
+fc = "fmt --check"
+
+[net]
+# Fetch git dependencies with the system git. It is more robust than cargo's
+# built-in fetch in CI and in sandboxes.
+git-fetch-with-cli = true

@@ -1,4 +1,4 @@
-name: CI
+name: CI Nix
 
 on:
   push:
@@ -12,7 +12,9 @@ on:
       - 'main.kiru'
       - 'Cargo.toml'
       - 'Cargo.lock'
-      - '.github/workflows/ci.yml'
+      - '**.nix'
+      - 'flake.lock'
+      - '.github/workflows/ci-nix.yml'
   pull_request:
     branches:
       - main
@@ -24,48 +26,40 @@ on:
       - 'main.kiru'
       - 'Cargo.toml'
       - 'Cargo.lock'
-      - '.github/workflows/ci.yml'
+      - '**.nix'
+      - 'flake.lock'
+      - '.github/workflows/ci-nix.yml'
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-nix-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build:
+  check:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    container:
-      image: rust:alpine
+    timeout-minutes: 30
     steps:
-      - name: Install Build Dependencies
-        run: apk add --no-cache git
-
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Install Rust Tools
-        run: |
-          rustup component add clippy rustfmt
-
-      - name: Cache the Rust build
-        uses: Swatinem/rust-cache@v2
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
         with:
-          cache-on-failure: true
+          extra_nix_config: |
+            experimental-features = nix-command flakes
 
-      - name: Check formatting
-        run: cargo fmt --check
+      - name: Check the flake
+        run: nix flake check -L
 
-      - name: Lint
-        run: cargo clippy --all-targets -- -D warnings
-
-      - name: Test
-        run: cargo test
-
-      - name: Build
-        run: cargo build
+      - name: Build the compiler
+        run: nix build .#default
 
       - name: Compile the pipeline
-        run: ./target/debug/kc main.kiru
+        run: ./result/bin/kc main.kiru
+
+      - name: Checking the codebase
+        run: |
+          ./main kiru check
