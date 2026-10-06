@@ -28,15 +28,15 @@ impl Parser {
     /// Dispatch on the cursor token to parse one statement.
     fn parse_statement(&mut self) -> Result<Statement, ParseError> {
         match &self.current().kind {
-            TokenKind::Txt | TokenKind::Rec => {
+            TokenKind::Txt | TokenKind::Rec | TokenKind::List => {
                 let start = self.current().span.start;
-                let kind = self.value_kind_of().expect("txt or rec");
+                let kind = self.value_kind_of().expect("a value kind");
                 self.advance();
                 Ok(Statement::Binding(self.parse_binding(kind, false, start)?))
             }
             TokenKind::Mut => {
                 let start = self.advance().start;
-                let kind = self.value_kind_of().expect("txt or rec");
+                let kind = self.value_kind_of().expect("a value kind");
                 self.advance();
                 Ok(Statement::Binding(self.parse_binding(kind, true, start)?))
             }
@@ -44,8 +44,9 @@ impl Parser {
             TokenKind::Panic => self.parse_panic(),
             TokenKind::Async => self.parse_async(),
             TokenKind::Wait => self.parse_wait(),
-            TokenKind::Defer => self.parse_defer(),
             TokenKind::Switch => self.parse_switch(),
+            TokenKind::For => self.parse_for(),
+            TokenKind::Break => self.parse_break(),
             TokenKind::Ident(_) if matches!(self.peek(1).kind, TokenKind::Equals) => {
                 self.parse_assignment()
             }
@@ -97,12 +98,34 @@ impl Parser {
         Ok(Statement::Wait { span })
     }
 
-    /// Parse a `defer { ... };` statement.
-    fn parse_defer(&mut self) -> Result<Statement, ParseError> {
+    /// Parse a `for` statement: `for item in <list> { ... };` iterates a list,
+    /// and `for { ... };` repeats until a `break`.
+    fn parse_for(&mut self) -> Result<Statement, ParseError> {
         let start = self.advance().start;
+        if self.check(&TokenKind::LBrace) {
+            let body = self.parse_block()?;
+            let span = self.span_through_semicolon(start, "after the for body")?;
+            return Ok(Statement::Forever { body, span });
+        }
+        let (item, item_span) = self.expect_identifier("as the loop variable")?;
+        self.expect(&TokenKind::In, "after the loop variable")?;
+        let iterable = self.parse_expression()?;
         let body = self.parse_block()?;
-        let span = self.span_through_semicolon(start, "after the defer block")?;
-        Ok(Statement::Defer { body, span })
+        let span = self.span_through_semicolon(start, "after the for body")?;
+        Ok(Statement::ForEach {
+            item,
+            item_span,
+            iterable,
+            body,
+            span,
+        })
+    }
+
+    /// Parse a `break;` statement.
+    fn parse_break(&mut self) -> Result<Statement, ParseError> {
+        let start = self.advance().start;
+        let span = self.span_through_semicolon(start, "after `break`")?;
+        Ok(Statement::Break { span })
     }
 
     /// Parse a `name = expression;` assignment statement.

@@ -17,6 +17,6 @@ fn main(rec args) {
     case("kiru") { kiru::kiru_command(kiru, args.flag); };
     case("docs") { kiru::docs_command(docs, args.flag); };
     case("all") { kiru::all_command(kiru, docs, args.flag); };
-    default { std::eprint(kiru::usage); };
+    default { std::io::eprint(kiru::usage); };
   };
 };

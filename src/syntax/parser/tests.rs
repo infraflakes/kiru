@@ -45,11 +45,11 @@ fn parses_function_with_switch_and_calls() {
         "fn main(rec args) {\n\
            switch(args.cmd) {\n\
              case(\"ci\") { \n\
-               txt code = std::run(\"cargo test\");\n\
+               txt code = std::process::command({}, \"cargo test\");\n\
                txt done = \"done\" + code;\n\
-               std::print(done);\n\
+               std::io::print(done);\n\
              };\n\
-             default { std::print(\"\"); };\n\
+             default { std::io::print(\"\"); };\n\
            };\n\
          };",
     );
@@ -99,21 +99,26 @@ fn parses_return_kinds() {
 #[test]
 fn rejects_a_parameter_without_a_kind() {
     let message = parse_error("fn f(a) { return(a); };");
-    assert!(message.contains("expected `txt` or `rec`"), "{message}");
+    assert!(
+        message.contains("expected `txt`, `rec`, or `list`"),
+        "{message}"
+    );
 }
 
 #[test]
 fn rejects_a_return_arrow_without_a_kind() {
     let message = parse_error("fn f() -> { return(); };");
-    assert_eq!(message, "expected `txt` or `rec` after `->`, found `{`");
+    assert_eq!(
+        message,
+        "expected `txt`, `rec`, or `list` after `->`, found `{`"
+    );
 }
 
 #[test]
-fn parses_async_call_and_defer() {
+fn parses_async_call_and_wait() {
     let file = parse(
         "fn run() {\n\
            async other();\n\
-           defer { std::run(\"clean\"); };\n\
            wait;\n\
          };",
     );
@@ -121,8 +126,7 @@ fn parses_async_call_and_defer() {
         panic!("expected a function");
     };
     assert!(matches!(function.body[0], Statement::Async { .. }));
-    assert!(matches!(function.body[1], Statement::Defer { .. }));
-    assert!(matches!(function.body[2], Statement::Wait { .. }));
+    assert!(matches!(function.body[1], Statement::Wait { .. }));
 }
 
 #[test]
@@ -133,7 +137,7 @@ fn rejects_nested_async() {
 
 #[test]
 fn parses_a_rooted_path() {
-    let file = parse("fn main() { std::print(::value); };");
+    let file = parse("fn main() { std::io::print(::value); };");
     let Declaration::Function(function) = &file.declarations[0] else {
         panic!("expected a function");
     };

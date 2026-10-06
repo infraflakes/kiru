@@ -48,143 +48,64 @@ export default defineConfig({
       sidebar: [
         { label: 'Introduction', link: '/' },
         {
-          label: '1. Getting Started',
-          collapsed: true,
+          label: 'Getting Started',
+          collapsed: false,
           items: [
-            {
-              label: '1.1 From a Release',
-              slug: 'getting-started/01-installing-kiru/01-from-a-release',
-            },
-            { label: '1.2 From Source', slug: 'getting-started/01-installing-kiru/02-from-source' },
-            {
-              label: '1.3 Compiling',
-              slug: 'getting-started/02-compiling-and-running/01-compiling',
-            },
-            {
-              label: '1.4 A First Program',
-              slug: 'getting-started/02-compiling-and-running/02-first-program',
-            },
+            { label: 'Installation', slug: 'getting-started/installation' },
+            { label: 'Hello, World!', slug: 'getting-started/hello-world' },
+            { label: 'Compiling and Running', slug: 'getting-started/compiling-and-running' },
+          ],
+        },
+        { label: 'A First Program', slug: 'getting-started/a-first-program' },
+        {
+          label: 'Common Concepts',
+          collapsed: false,
+          items: [
+            { label: 'Text', slug: 'concepts/text' },
+            { label: 'Records', slug: 'concepts/records' },
+            { label: 'Types and Checking', slug: 'concepts/types-and-checking' },
+            { label: 'Functions', slug: 'concepts/functions' },
+            { label: 'Bindings and Mutability', slug: 'concepts/bindings-and-mutability' },
+            { label: 'Switch', slug: 'concepts/switch' },
+            { label: 'Lists and Loops', slug: 'concepts/lists-and-loops' },
+            { label: 'Names and Scope', slug: 'concepts/names-and-scope' },
+            { label: 'Namespaces and Imports', slug: 'concepts/namespaces' },
           ],
         },
         {
-          label: '2. Common Concepts',
-          collapsed: true,
+          label: 'Commands',
+          collapsed: false,
           items: [
-            { label: '2.1 Text', slug: 'language/02-common-concepts/01-text' },
-            { label: '2.2 Records', slug: 'language/02-common-concepts/02-records' },
-            { label: '2.3 Field Access', slug: 'language/02-common-concepts/03-field-access' },
-            {
-              label: '2.4 Text Concatenation',
-              slug: 'language/02-common-concepts/04-text-concatenation',
-            },
-            { label: '2.5 Functions', slug: 'language/02-common-concepts/05-functions' },
-            { label: '2.6 Parameters', slug: 'language/02-common-concepts/06-parameters' },
-            {
-              label: '2.7 Return and Nothing',
-              slug: 'language/02-common-concepts/07-return-and-recursion',
-            },
-            {
-              label: '2.8 Assignment and Mutability',
-              slug: 'language/02-common-concepts/08-assignment',
-            },
-            { label: '2.9 Calls', slug: 'language/02-common-concepts/09-calls' },
-            { label: '2.10 Switch', slug: 'language/02-common-concepts/10-switch' },
+            { label: 'Running a Command', slug: 'commands/running-a-command' },
+            { label: 'The Command Spec', slug: 'commands/the-command-spec' },
+            { label: 'Process Groups', slug: 'commands/process-groups' },
+          ],
+        },
+        { label: 'Threads', slug: 'concurrency/threads' },
+        {
+          label: 'Failure and Signals',
+          collapsed: false,
+          items: [
+            { label: 'Panic', slug: 'failure/panic' },
+            { label: 'Signals', slug: 'failure/signals' },
           ],
         },
         {
-          label: '3. Names and Scope',
-          collapsed: true,
+          label: 'The Standard Library',
+          collapsed: false,
           items: [
-            {
-              label: '3.1 Declaration Order',
-              slug: 'language/03-names-and-scope/01-declaration-order',
-            },
-            { label: '3.2 Unique Names', slug: 'language/03-names-and-scope/02-unique-names' },
-            {
-              label: '3.3 Bodies and Scopes',
-              slug: 'language/03-names-and-scope/03-bodies-and-scopes',
-            },
-            { label: '3.4 Module Values', slug: 'language/03-names-and-scope/04-module-values' },
+            { label: 'std::process', slug: 'stdlib/process' },
+            { label: 'std::io', slug: 'stdlib/io' },
+            { label: 'std::fs', slug: 'stdlib/fs' },
+            { label: 'std::text', slug: 'stdlib/text' },
+            { label: 'std::lists', slug: 'stdlib/lists' },
+            { label: 'std::env', slug: 'stdlib/env' },
+            { label: 'std::path', slug: 'stdlib/path' },
+            { label: 'std::time', slug: 'stdlib/time' },
           ],
         },
-        {
-          label: '4. Types and Checking',
-          collapsed: true,
-          items: [
-            { label: '4.1 Types', slug: 'language/04-types/01-types' },
-            { label: '4.2 Bindings', slug: 'language/04-types/02-bindings' },
-            { label: '4.3 Type Checking', slug: 'language/04-types/03-type-checking' },
-          ],
-        },
-        {
-          label: '5. Modules and Namespaces',
-          collapsed: true,
-          items: [
-            { label: '5.1 Modules', slug: 'language/05-modules-and-namespaces/01-modules' },
-            { label: '5.2 Imports', slug: 'language/05-modules-and-namespaces/02-imports' },
-            {
-              label: '5.3 The Entry File',
-              slug: 'language/05-modules-and-namespaces/03-the-entry-file',
-            },
-          ],
-        },
-        {
-          label: '6. Commands',
-          collapsed: true,
-          items: [
-            {
-              label: '6.1 Building a Command',
-              slug: 'effects/06-commands/01-building-a-command',
-            },
-            { label: '6.2 Builders', slug: 'effects/06-commands/02-builders' },
-            { label: '6.3 Streaming and Output', slug: 'effects/06-commands/03-terminals' },
-            {
-              label: '6.4 Exit Codes and Failure',
-              slug: 'effects/06-commands/04-exit-codes-and-failure',
-            },
-            { label: '6.5 Process Groups', slug: 'effects/06-commands/05-process-groups' },
-          ],
-        },
-        {
-          label: '7. Concurrency',
-          collapsed: true,
-          items: [{ label: '7.1 Threads', slug: 'effects/07-threads/01-threads' }],
-        },
-        {
-          label: '8. Failure and Cleanup',
-          collapsed: true,
-          items: [
-            { label: '8.1 Panic', slug: 'effects/08-failure-and-cleanup/01-panic' },
-            { label: '8.2 Signals', slug: 'effects/08-failure-and-cleanup/02-signals' },
-            { label: '8.3 Defer', slug: 'effects/08-failure-and-cleanup/03-defer' },
-          ],
-        },
-        {
-          label: '9. Entry and the CLI',
-          collapsed: true,
-          items: [
-            { label: '9.1 The Entry Function', slug: 'language/09-entry-and-the-cli/01-main' },
-            {
-              label: '9.2 The Args Record',
-              slug: 'language/09-entry-and-the-cli/02-the-args-record',
-            },
-            {
-              label: '9.3 Compile-Time Checks',
-              slug: 'language/09-entry-and-the-cli/03-compile-time-checks',
-            },
-          ],
-        },
-        {
-          label: '10. The Standard Library',
-          collapsed: true,
-          items: [
-            { label: '10.1 Runtime Builtins', slug: 'stdlib/01-runtime-builtins' },
-            { label: '10.2 Written by Kiru', slug: 'stdlib/02-written-by-kiru' },
-          ],
-        },
-        { label: 'Appendix A. Standard Library', slug: 'appendix/a-standard-library' },
-        { label: 'Appendix B. Reserved Words', slug: 'appendix/b-reserved-words' },
-        { label: 'Appendix C. Grammar', slug: 'appendix/c-grammar' },
+        { label: 'Reserved Words', slug: 'appendix/reserved-words' },
+        { label: 'Grammar', slug: 'appendix/grammar' },
       ],
       tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 3 },
       // The Kiru grammar supplied above teaches Shiki the `kiru` language.

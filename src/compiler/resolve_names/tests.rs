@@ -1,5 +1,5 @@
 use super::resolve_names;
-use crate::compiler::{DeclarationKind, Expression, Program, Statement};
+use crate::model::{DeclarationKind, Expression, Program, Statement};
 
 fn linked(files: &[(&str, &str)], entry: &str) -> Result<Program, String> {
     let directory = tempfile::tempdir().expect("temp dir");
@@ -170,7 +170,7 @@ fn name_and_binding_rules() {
             "shadowing a visible module value",
             &[(
                 "main.kiru",
-                "txt top = \"a\";\nfn main() { txt top = \"b\"; std::print(top); };",
+                "txt top = \"a\";\nfn main() { txt top = \"b\"; std::io::print(top); };",
             )],
             "main.kiru",
         ),
@@ -232,15 +232,6 @@ fn name_and_binding_rules() {
             "main.kiru",
             "`x` is declared more than once",
         ),
-        (
-            "defer body shadows an enclosing name",
-            &[(
-                "main.kiru",
-                "fn main() { txt x = \"a\"; defer { txt x = \"b\"; }; };",
-            )],
-            "main.kiru",
-            "`x` is declared more than once",
-        ),
     ]);
 }
 
@@ -249,7 +240,7 @@ fn a_value_and_a_function_may_share_a_name() {
     let program = accept(
         &[(
             "main.kiru",
-            "fn build() {};\ntxt build = \"b\";\nfn main() { std::print(build); build(); };",
+            "fn build() {};\ntxt build = \"b\";\nfn main() { std::io::print(build); build(); };",
         )],
         "main.kiru",
     );

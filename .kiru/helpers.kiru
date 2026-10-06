@@ -1,23 +1,24 @@
 module kiru;
 
+# Wrap a line in `nix develop` when the project asks for it.
+fn wrap(rec project, txt line) -> txt {
+  switch(project.Nix) {
+    case("true") { return("nix develop -c sh -c " + std::process::quote(line)); };
+    default { return(line); };
+  };
+};
+
 # Sequential step: stream the command's output; a non-zero exit stops the run.
 fn run(rec project, txt line) {
-  std::log("Running '" + line + "'");
-  txt code = std::command({
-    Dir = project.Dir,
-    Env = project.Env,
-    Nix = project.Nix,
-    Direnv = project.Direnv,
-  }, line);
+  std::io::log("Running '" + line + "'");
+  txt code = std::process::command({ Dir = project.Dir }, wrap(project, line));
   switch(code) {
-    case("0") { std::log("'" + line + "' ran successfully"); };
-    default { std::eprint("'" + line + "' failed"); };
+    case("0") { std::io::log("'" + line + "' ran successfully"); };
+    default { std::io::eprint("'" + line + "' failed"); };
   };
 };
 
 # Orchestrated step: hide stdout, keep stderr for debugging, return the code.
 fn status(rec project, txt line) -> txt {
-  mut rec spec = project;
-  spec.Stream = "stderr";
-  return(std::command(spec, line));
+  return(std::process::command({ Dir = project.Dir, Stdout = "null" }, wrap(project, line)));
 };

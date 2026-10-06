@@ -1,0 +1,27 @@
+# std/path.kiru
+#
+# Path helpers written on top of the native path kernel and the text kernel.
+
+module std::path;
+
+# Whether a path is absolute.
+fn is_absolute(txt path) -> txt {
+  return(std::text::starts_with(path, "/"));
+};
+
+# Join two path segments. An absolute `name` replaces `base`; an empty `base`
+# is replaced by `name`; and a `base` already ending in `/` is used as is.
+fn join(txt base, txt name) -> txt {
+  switch(is_absolute(name)) {
+    case("true") { return(name); };
+    default {};
+  };
+  switch(base) {
+    case("") { return(name); };
+    default {};
+  };
+  switch(std::text::ends_with(base, "/")) {
+    case("true") { return(base + name); };
+    default { return(base + "/" + name); };
+  };
+};

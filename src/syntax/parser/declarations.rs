@@ -70,8 +70,8 @@ impl Parser {
         Ok(Some(self.parse_value_kind("after `->`")?))
     }
 
-    /// Parse the one kind keyword, `txt` or `rec`. A parameter and a return
-    /// type are the two places a kind is written.
+    /// Parse one kind keyword, `txt`, `rec`, or `list`. A parameter and a
+    /// return type are the two places a kind is written.
     fn parse_value_kind(&mut self, context: &str) -> Result<ValueKind, ParseError> {
         match self.current().kind {
             TokenKind::Txt => {
@@ -82,8 +82,12 @@ impl Parser {
                 self.advance();
                 Ok(ValueKind::Record)
             }
+            TokenKind::List => {
+                self.advance();
+                Ok(ValueKind::List)
+            }
             _ => Err(self.error_here(format!(
-                "expected `txt` or `rec` {context}, found {}",
+                "expected `txt`, `rec`, or `list` {context}, found {}",
                 self.current().kind.describe()
             ))),
         }

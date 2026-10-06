@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::compiler::Origin;
+use crate::model::Origin;
 use crate::syntax;
 use crate::syntax::Span;
 
@@ -14,8 +14,20 @@ use super::resolve_import_paths::resolve_import;
 /// The standard library, compiled into every program and always visible.
 ///
 /// These files are seeded before the entry so their declarations come first.
-pub(crate) const EMBEDDED: &[(&str, &str)] =
-    &[("<std>/io.kiru", include_str!("../../../stdlib/io.kiru"))];
+pub(crate) const EMBEDDED: &[(&str, &str)] = &[
+    ("<std>/text.kiru", include_str!("../../../stdlib/text.kiru")),
+    (
+        "<std>/lists.kiru",
+        include_str!("../../../stdlib/lists.kiru"),
+    ),
+    ("<std>/env.kiru", include_str!("../../../stdlib/env.kiru")),
+    ("<std>/path.kiru", include_str!("../../../stdlib/path.kiru")),
+    ("<std>/io.kiru", include_str!("../../../stdlib/io.kiru")),
+    (
+        "<std>/process.kiru",
+        include_str!("../../../stdlib/process.kiru"),
+    ),
+];
 
 /// Load the entry file and everything it imports.
 pub(crate) fn load_files(entry: &Path) -> Result<LoadedProgram, LoadError> {

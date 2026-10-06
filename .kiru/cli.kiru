@@ -30,17 +30,17 @@ flags:
 txt usage = usage_kiru + "\n\n" + usage_docs + "\n\n" + usage_all;
 
 fn container_cmd() -> txt {
-  switch(std::command({ Stream = "null" }, "command -v docker")) {
+  switch(std::process::command({ Stdout = "null", Stderr = "null" }, "command -v docker")) {
     case("0") {
       return("docker");
     };
     default {
-      switch(std::command({ Stream = "null" }, "command -v podman")) {
+      switch(std::process::command({ Stdout = "null", Stderr = "null" }, "command -v podman")) {
         case("0") {
           return("podman");
         };
         default {
-          std::eprint("No container binary found.");
+          std::io::eprint("No container binary found.");
         };
       };
     };
@@ -56,7 +56,7 @@ fn kiru_command(rec project, txt flag) {
     };
     case("format") { format_kiru(project); };
     case("update") { update_kiru(project); };
-    default { std::eprint(usage_kiru); };
+    default { std::io::eprint(usage_kiru); };
   };
 };
 
@@ -69,59 +69,59 @@ fn docs_command(rec docs, txt flag) {
     case("serve") {
       run(docs, "bun run preview");
     };
-    default { std::eprint(usage_docs); };
+    default { std::io::eprint(usage_docs); };
   };
 };
 
 fn all_command(rec kiru, rec docs, txt flag) {
   switch(flag) {
     case("build") {
-      std::log("Building site");
+      std::io::log("Building site");
       async build_docs(docs);
-      std::log("Building backend");
+      std::io::log("Building backend");
       async build_kiru(kiru);
       wait;
-      std::log("Both site and backend built successfully");
+      std::io::log("Both site and backend built successfully");
     };
     case("update") {
       run(kiru, "nix flake update");
-      std::log("Updating backend");
+      std::io::log("Updating backend");
       async update_kiru(kiru);
-      std::log("Updating site");
+      std::io::log("Updating site");
       async update_docs(docs);
       wait;
-      std::log("Updated dependencies");
+      std::io::log("Updated dependencies");
     };
     case("format") {
-      std::log("Formatting site");
+      std::io::log("Formatting site");
       async format_docs(docs);
-      std::log("Formatting backend");
+      std::io::log("Formatting backend");
       async format_kiru(kiru);
       wait;
-      std::log("Backend and site formatted successfully!");
+      std::io::log("Backend and site formatted successfully!");
     };
     case("check") {
-      std::log("Starting backend checks");
+      std::io::log("Starting backend checks");
       async check_kiru(kiru);
-      std::log("Starting site checks");
+      std::io::log("Starting site checks");
       async check_docs(docs);
       wait;
-      std::log("Parallel checks finished");
+      std::io::log("Parallel checks finished");
     };
     case("ci") {
-      std::log("Starting backend checks");
+      std::io::log("Starting backend checks");
       async check_kiru(kiru);
-      std::log("Starting site checks");
+      std::io::log("Starting site checks");
       async check_docs(docs);
       wait;
-      std::log("Site and backend check completed");
-      std::log("Building backend");
+      std::io::log("Site and backend check completed");
+      std::io::log("Building backend");
       async build_kiru(kiru);
-      std::log("Building site");
+      std::io::log("Building site");
       async build_docs(docs);
       wait;
-      std::log("CI finished");
+      std::io::log("CI finished");
     };
-    default { std::eprint(usage_all); };
+    default { std::io::eprint(usage_all); };
   };
 };

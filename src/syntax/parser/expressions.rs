@@ -57,6 +57,10 @@ impl Parser {
                 let (fields, span) = self.parse_record_fields()?;
                 Ok(Expression::Record { fields, span })
             }
+            TokenKind::LBracket => {
+                let (elements, span) = self.parse_list_elements()?;
+                Ok(Expression::List { elements, span })
+            }
             TokenKind::Ident(_) | TokenKind::PathSep => {
                 let (root, path, callee_span) = self.parse_rooted_path("in an expression")?;
                 if self.check(&TokenKind::LParen) {

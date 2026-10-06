@@ -2,9 +2,9 @@
 
 use std::collections::HashSet;
 
-use crate::compiler::{
-    Declaration, DeclarationId, Expression, Program, RwLockExt, Statement, VisitorMut,
-    walk_expression_mut, walk_statements_mut,
+use crate::model::{
+    Declaration, DeclarationId, Expression, Program, Statement, VisitorMut, walk_expression_mut,
+    walk_statements_mut,
 };
 
 use super::mark_reachable::collect_reachable_declarations;
@@ -14,7 +14,7 @@ pub(crate) fn prune_unreachable(program: &mut Program) {
     let reachable = collect_reachable_declarations(program);
     let mapping = compact(program, &reachable);
     remap(program, &mapping);
-    crate::compiler::verify_program(program);
+    crate::model::verify_program(program);
 }
 
 /// Move the reachable declarations into a fresh vector, in their old order,
@@ -39,7 +39,6 @@ fn compact(
 /// names and file entries that point at dropped declarations.
 fn remap(program: &mut Program, mapping: &[Option<DeclarationId>]) {
     program.entry = mapped(mapping, program.entry);
-    remap_values(program, mapping);
     for declaration in &mut program.declarations {
         remap_declaration(declaration, mapping);
     }
@@ -52,22 +51,6 @@ fn remap(program: &mut Program, mapping: &[Option<DeclarationId>]) {
     for namespace in &mut program.namespaces {
         namespace.values.remap(mapping);
         namespace.functions.remap(mapping);
-    }
-}
-
-/// Re-key the module value table: the runtime stores evaluated values under
-/// the remapped declaration ids. The table is empty at compile time, so this
-/// matters when a program is retained after it has already run.
-fn remap_values(program: &mut Program, mapping: &[Option<DeclarationId>]) {
-    let values = program.values.get_mut_unpoisoned();
-    if values.is_empty() {
-        return;
-    }
-    let stored = std::mem::take(&mut *values);
-    for (id, value) in stored {
-        if let Some(id) = mapping[id.0] {
-            values.insert(id, value);
-        }
     }
 }
 
@@ -107,6 +90,7 @@ impl VisitorMut for EdgeRemapper<'_> {
             }
             Expression::Text { .. }
             | Expression::Record { .. }
+            | Expression::List { .. }
             | Expression::Field { .. }
             | Expression::Add { .. } => {}
         }
@@ -119,13 +103,17 @@ impl VisitorMut for EdgeRemapper<'_> {
             | Statement::FieldAssign { declaration, .. } => {
                 *declaration = mapped(self.mapping, *declaration);
             }
+            Statement::ForEach { item, .. } => {
+                *item = mapped(self.mapping, *item);
+            }
             Statement::Expression(_)
             | Statement::Return { .. }
             | Statement::Panic { .. }
             | Statement::Async { .. }
             | Statement::Wait { .. }
             | Statement::Switch { .. }
-            | Statement::Defer { .. } => {}
+            | Statement::Break { .. }
+            | Statement::Forever { .. } => {}
         }
     }
 }

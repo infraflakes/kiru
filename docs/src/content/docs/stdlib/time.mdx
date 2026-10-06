@@ -1,0 +1,22 @@
+---
+title: std::time
+description: Wait for a duration.
+---
+
+`std::time` waits.
+
+<details>
+<summary><code>sleep</code> — wait whole seconds</summary>
+
+```kiru
+std::time::sleep(txt seconds) -> nothing
+```
+
+- `seconds` — the number of whole seconds as digit text.
+- Returns early if the program is shutting down.
+
+```kiru
+std::time::sleep("1");
+```
+
+</details>

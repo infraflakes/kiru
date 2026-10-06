@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use crate::compiler::{
+use crate::model::{
     DeclarationId, Expression, Program, Statement, Visitor, walk_expression, walk_statements,
 };
 
@@ -45,6 +45,7 @@ impl Visitor for ReachableCollector {
             Expression::Call { callee, .. } => self.pending.push(*callee),
             Expression::Text { .. }
             | Expression::Record { .. }
+            | Expression::List { .. }
             | Expression::Field { .. }
             | Expression::Add { .. } => {}
         }
@@ -57,13 +58,15 @@ impl Visitor for ReachableCollector {
             | Statement::FieldAssign { declaration, .. } => {
                 self.pending.push(*declaration);
             }
+            Statement::ForEach { item, .. } => self.pending.push(*item),
             Statement::Expression(_)
             | Statement::Return { .. }
             | Statement::Panic { .. }
             | Statement::Async { .. }
             | Statement::Wait { .. }
             | Statement::Switch { .. }
-            | Statement::Defer { .. } => {}
+            | Statement::Break { .. }
+            | Statement::Forever { .. } => {}
         }
     }
 }

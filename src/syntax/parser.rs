@@ -184,9 +184,9 @@ impl Parser {
                 TokenKind::Fn => {
                     declarations.push(Declaration::Function(self.parse_function()?));
                 }
-                TokenKind::Txt | TokenKind::Rec => {
+                TokenKind::Txt | TokenKind::Rec | TokenKind::List => {
                     let start = self.current().span.start;
-                    let kind = self.value_kind_of().expect("txt or rec");
+                    let kind = self.value_kind_of().expect("a value kind");
                     self.advance();
                     declarations.push(Declaration::Binding(
                         self.parse_binding(kind, false, start)?,
@@ -272,6 +272,18 @@ impl Parser {
         })
     }
 
+    /// Parse a `[ ... ]` list literal, returning its elements and covering
+    /// span.
+    fn parse_list_elements(&mut self) -> Result<(Vec<Expression>, Span), ParseError> {
+        self.parse_delimited(
+            &TokenKind::LBracket,
+            &TokenKind::RBracket,
+            "to open a list",
+            "to close a list",
+            Self::parse_expression,
+        )
+    }
+
     /// Parse an argument list, returning the arguments and covering span.
     fn parse_arguments(&mut self) -> Result<(Vec<Expression>, Span), ParseError> {
         self.parse_delimited(
@@ -289,6 +301,7 @@ impl Parser {
         match &self.current().kind {
             TokenKind::Txt => Some(ValueKind::Text),
             TokenKind::Rec => Some(ValueKind::Record),
+            TokenKind::List => Some(ValueKind::List),
             _ => None,
         }
     }

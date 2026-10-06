@@ -1,10 +1,11 @@
 //! Running a compiled program: the run loop, threads, defers, and the process
 //! kernel.
 
-mod manage_processes;
-mod run_program;
+mod natives;
+mod processes;
+mod virtual_machine;
 
-pub(crate) use run_program::run;
+pub(crate) use virtual_machine::run;
 
 /// The name this program reports under: the invoked binary's file name, or
 /// `kiru` when the name cannot be read. The compiler reports under `kc`

@@ -1,4 +1,5 @@
-use crate::compiler::{DeclarationId, Kind, Program, checked_files, checked_program};
+use crate::compiler::{checked_files, checked_program};
+use crate::model::{DeclarationId, Kind, Program};
 
 fn check(files: &[(&str, &str)], entry: &str) -> Result<(), String> {
     checked_files(files, entry).map(|_| ())
@@ -98,7 +99,7 @@ fn entry_and_return_rules() {
         ),
         (
             "a value function that ends in a halting call",
-            "fn f() -> txt { std::eprint(\"x\"); };\nfn main() {};",
+            "fn f() -> txt { std::io::eprint(\"x\"); };\nfn main() {};",
         ),
         (
             "a value function that ends in a halting user function",
@@ -135,11 +136,6 @@ fn entry_and_return_rules() {
             "fn f() -> txt { return(); };\nfn main() {};",
             "`f` is declared to return text, so `return` must carry a value",
         ),
-        (
-            "a return inside a defer body",
-            "fn f() -> txt { defer { return(\"a\"); }; return(\"b\"); };\nfn main() {};",
-            "`return` is not allowed inside `defer`",
-        ),
     ]);
 }
 
@@ -149,67 +145,67 @@ fn panic_and_void_rules() {
     expect_rejections(&[
         (
             "eprint bound to text",
-            "fn main() { txt x = std::eprint(\"x\"); };",
+            "fn main() { txt x = std::io::eprint(\"x\"); };",
             "expected text, found nothing",
         ),
         (
             "eprint passed as a text argument",
-            "fn take(txt x) {};\nfn main() { take(std::eprint(\"x\")); };",
+            "fn take(txt x) {};\nfn main() { take(std::io::eprint(\"x\")); };",
             "expected text, found nothing",
         ),
         (
             "eprint in a record field",
-            "fn main() { rec r = { k = std::eprint(\"x\") }; };",
+            "fn main() { rec r = { k = std::io::eprint(\"x\") }; };",
             "expected text, found nothing",
         ),
     ]);
 }
 
 #[test]
-fn run_and_field_rules() {
+fn command_and_field_rules() {
     expect_accepts(&[
         (
-            "run code returned through a function",
-            "fn code(txt line) -> txt { return(std::run(line)); };\nfn main() { txt code = code(\"echo hi\"); };",
+            "command code returned through a function",
+            "fn code(txt line) -> txt { return(std::process::command({}, line)); };\nfn main() { txt code = code(\"echo hi\"); };",
         ),
         (
-            "run at a module value",
-            "txt x = std::run(\"echo hi\");\nfn main() {};",
+            "command at a module value",
+            "txt x = std::process::command({}, \"echo hi\");\nfn main() {};",
         ),
         (
-            "run inside a record",
-            "rec r = { code = std::run(\"echo hi\") };\nfn main() {};",
+            "command inside a record",
+            "rec r = { code = std::process::command({}, \"echo hi\") };\nfn main() {};",
         ),
         (
-            "run as a bare statement",
-            "fn main() { std::run(\"true\"); };",
+            "command as a bare statement",
+            "fn main() { std::process::command({}, \"true\"); };",
         ),
     ]);
     expect_rejections(&[
         (
-            "run bound to a record",
-            "fn main() { rec x = std::run(\"ls\"); };",
+            "command bound to a record",
+            "fn main() { rec x = std::process::command({}, \"ls\"); };",
             "expected record, found text",
         ),
         (
-            "run passed as a record argument",
-            "fn take(rec x) {};\nfn main() { take(std::run(\"ls\")); };",
+            "command passed as a record argument",
+            "fn take(rec x) {};\nfn main() { take(std::process::command({}, \"ls\")); };",
             "expected record, found text",
         ),
         (
-            "run without arguments",
-            "fn main() { std::run(); };",
-            "`std::run` takes 1 arguments, found 0",
+            "command without arguments",
+            "fn main() { std::process::command(); };",
+            "`std::process::command` takes 2 arguments, found 0",
         ),
         (
-            "run with two arguments",
-            "fn main() { std::run(\"ls\", \"\"); };",
-            "`std::run` takes 1 arguments, found 2",
+            "command with one argument",
+            "fn main() { std::process::command({}); };",
+            "`std::process::command` takes 2 arguments, found 1",
         ),
         (
-            "run with a record argument",
-            "fn main() { std::run({}); };",
-            "expected text, found record",
+            "command with a text spec",
+            "fn main() { std::process::command(\"ls\", \"\"); };",
+            "expected record, found text",
         ),
         (
             "field access on text",
@@ -232,11 +228,11 @@ fn text_and_record_rules() {
         ),
         (
             "text parameter through a call",
-            "fn identity(txt value) -> txt { return(value); };\nfn main() { std::print(identity(\"x\")); };",
+            "fn identity(txt value) -> txt { return(value); };\nfn main() { std::io::print(identity(\"x\")); };",
         ),
         (
             "record parameter through a call with a literal",
-            "fn identity(rec repo) -> txt { return(repo.dir); };\nfn main() { std::print(identity({ dir = \"/x\" })); };",
+            "fn identity(rec repo) -> txt { return(repo.dir); };\nfn main() { std::io::print(identity({ dir = \"/x\" })); };",
         ),
     ]);
     expect_rejections(&[
@@ -259,19 +255,15 @@ fn text_and_record_rules() {
 }
 
 #[test]
-fn async_wait_and_defer_rules() {
+fn async_wait_rules() {
     expect_accepts(&[
-        (
-            "async and defer",
-            "fn work() {};\nfn main() {\nasync work();\nwait;\ndefer { std::run(\"b\"); };\n};",
-        ),
         (
             "nothing function as a statement and an async spawn",
             "fn work() {};\nfn main() {\nwork();\nasync work();\nwait;\n};",
         ),
         (
-            "async of a call returning a record",
-            "fn main() { async std::run(\"true\"); };",
+            "async of a command call",
+            "fn main() { async std::process::command({}, \"true\"); };",
         ),
         (
             "async of a call returning text",
@@ -306,20 +298,10 @@ fn async_wait_and_defer_rules() {
 
 #[test]
 fn bindings_and_scope_rules() {
-    expect_accepts(&[
-        (
-            "defer body declares into its enclosing body",
-            "fn f() -> txt {\nmut txt x = \"a\";\ndefer { txt y = \"b\"; x = y; };\nreturn(x);\n};\nfn main() {};",
-        ),
-        (
-            "case patterns of any text expression",
-            "fn pick() -> txt { return(\"a\"); };\nfn main() { switch(\"a\") { case(pick()) {}; }; };",
-        ),
-        (
-            "case patterns that differ structurally",
-            "fn pick() -> txt { return(\"a\"); };\nfn other() -> txt { return(\"a\"); };\nfn main() {\nswitch(\"a\") { case(pick()) {}; case(other()) {}; };\n};",
-        ),
-    ]);
+    expect_accepts(&[(
+        "literal, name, and field-path case arms",
+        "rec spec = { cmd = \"a\" };\nfn main() {\ntxt a = \"a\";\nswitch(\"a\") { case(\"a\") {}; case(a) {}; case(spec.cmd) {}; };\n};",
+    )]);
     expect_rejections(&[
         (
             "parameter assignment",
@@ -344,7 +326,7 @@ fn bindings_and_scope_rules() {
         (
             "record case pattern",
             "fn main() { switch(\"a\") { case({}) {}; }; };",
-            "expected text, found record",
+            "a case arm is a literal, a name, or a field path",
         ),
         (
             "case arm does not leak locals",
@@ -352,17 +334,17 @@ fn bindings_and_scope_rules() {
             "unknown name `hidden`",
         ),
         (
-            "defer declared name is not visible after the defer",
-            "fn f() -> txt {\ndefer { txt hidden = \"b\"; };\nreturn(hidden);\n};\nfn main() {};",
-            "unknown name `hidden`",
+            "a call case arm",
+            "fn pick() -> txt { return(\"a\"); };\nfn main() {\nswitch(\"a\") { case(pick()) {}; };\n};",
+            "a case arm is a literal, a name, or a field path",
         ),
         (
-            "structurally duplicate call case patterns",
-            "fn pick() -> txt { return(\"a\"); };\nfn main() {\nswitch(\"a\") { case(pick()) {}; case(pick()) {}; };\n};",
-            "duplicate case pattern",
+            "a concatenation case arm",
+            "fn main() {\nswitch(\"ab\") { case(\"a\" + \"b\") {}; };\n};",
+            "a case arm is a literal, a name, or a field path",
         ),
         (
-            "structurally duplicate reference case patterns",
+            "duplicate reference case patterns",
             "fn main() {\ntxt a = \"a\";\nswitch(\"a\") { case(a) {}; case(a) {}; };\n};",
             "duplicate case pattern",
         ),
@@ -374,11 +356,11 @@ fn name_and_call_rules() {
     expect_accepts(&[
         (
             "root access when a local shadows the root",
-            "txt value = \"root\";\nfn main() {\ntxt value = \"local\";\nstd::print(value);\nstd::print(::value);\n};",
+            "txt value = \"root\";\nfn main() {\ntxt value = \"local\";\nstd::io::print(value);\nstd::io::print(::value);\n};",
         ),
         (
             "a value and a function share a name",
-            "fn build() -> txt { return(\"built\"); };\ntxt build = \"text\";\nfn main() { std::print(build); std::print(build()); };",
+            "fn build() -> txt { return(\"built\"); };\ntxt build = \"text\";\nfn main() { std::io::print(build); std::io::print(build()); };",
         ),
     ]);
     expect_rejections(&[
@@ -404,7 +386,7 @@ fn name_and_call_rules() {
         ),
         (
             "unknown rooted name",
-            "txt value = \"root\";\nfn main() { std::print(::missing); };",
+            "txt value = \"root\";\nfn main() { std::io::print(::missing); };",
             "unknown name `::missing`",
         ),
         (
@@ -424,7 +406,7 @@ fn name_and_call_rules() {
 fn statement_form_rules() {
     expect_accepts(&[(
         "bare call and panic statements",
-        "fn work() {};\nfn main() {\nwork();\nstd::run(\"true\");\npanic;\n};",
+        "fn work() {};\nfn main() {\nwork();\nstd::process::command({}, \"true\");\npanic;\n};",
     )]);
     expect_rejections(&[
         (
@@ -509,15 +491,15 @@ fn checks_the_shipped_library_kinds() {
         "rec backend = { dir = \"/kiru\" };\n\
          fn read(rec repo) -> txt { return(repo.dir); };\n\
          fn main() {\n\
-           std::print(\"x\");\n\
+           std::io::print(\"x\");\n\
            read(backend);\n\
          };",
     );
 
-    let command = declaration(&program, &["std"], "command");
+    let command = declaration(&program, &["std", "process"], "command");
     assert_eq!(program.declaration(command).derived.kind, Some(Kind::Text));
 
-    let print = declaration(&program, &["std"], "print");
+    let print = declaration(&program, &["std", "io"], "print");
     assert_eq!(
         program
             .declaration(first_parameter(&program, print))
@@ -527,7 +509,7 @@ fn checks_the_shipped_library_kinds() {
     );
     assert_eq!(program.declaration(print).derived.kind, Some(Kind::Nothing));
 
-    let eprint = declaration(&program, &["std"], "eprint");
+    let eprint = declaration(&program, &["std", "io"], "eprint");
     assert_eq!(
         program.declaration(eprint).derived.kind,
         Some(Kind::Nothing)
@@ -545,4 +527,88 @@ fn checks_the_shipped_library_kinds() {
             .kind,
         Some(Kind::Record)
     );
+}
+
+#[test]
+fn list_and_loop_rules() {
+    expect_accepts(&[
+        (
+            "a list literal binding and a for loop",
+            "fn main() { list xs = [\"a\", \"b\"]; for x in xs { std::io::print(x); }; };",
+        ),
+        (
+            "a function that takes and returns a list",
+            "fn id(list xs) -> list { return(xs); }; fn main() { id([\"a\"]); };",
+        ),
+        (
+            "a module-level list value",
+            "list xs = [\"a\"]; fn main() { for x in xs { std::io::print(x); }; };",
+        ),
+        (
+            "break inside a for",
+            "fn main() { for x in [\"a\"] { break; }; };",
+        ),
+        (
+            "a for that skips an element with a switch default",
+            "fn main() { for x in [\"a\"] { switch(x) { case(\"a\") {}; default { std::io::print(x); }; }; }; };",
+        ),
+        (
+            "an unbounded for that breaks",
+            "fn main() { for { break; }; };",
+        ),
+        (
+            "an unbounded for as the only path of a value function",
+            "fn f() -> txt { for { std::io::print(\"a\"); }; }; fn main() {};",
+        ),
+    ]);
+    expect_rejections(&[
+        (
+            "for over text",
+            "fn main() { for x in \"a\" { std::io::print(x); }; };",
+            "expected list, found text",
+        ),
+        (
+            "break outside a loop",
+            "fn main() { break; };",
+            "`break` is only allowed inside a loop",
+        ),
+        (
+            "a list element that is not text",
+            "fn main() { list xs = [{ k = \"v\" }]; };",
+            "expected text, found record",
+        ),
+        (
+            "a list binding whose value is not a list",
+            "fn main() { list xs = \"a\"; };",
+            "expected list, found text",
+        ),
+        (
+            "a value function whose only path is a loop",
+            "fn f() -> txt { for x in [\"a\"] { return(x); }; }; fn main() {};",
+            "`f` is declared to return text, so every path must end with `return(...)`, `panic;`, or a call that stops the run",
+        ),
+    ]);
+}
+
+#[test]
+fn main_returns_text_or_nothing() {
+    expect_accepts(&[
+        (
+            "main returning text",
+            "fn main() -> txt { return(\"0\"); };",
+        ),
+        ("main returning nothing", "fn main() {};"),
+    ]);
+    expect_rejections(&[
+        (
+            "main returning a record",
+            "fn main() -> rec { return({}); };",
+            "`main` returns text or nothing",
+        ),
+        (
+            "main returning a list",
+            "fn main() -> list { return([]); };",
+            "`main` returns text or nothing",
+        ),
+    ]);
 }

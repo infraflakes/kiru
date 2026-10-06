@@ -92,6 +92,8 @@ impl<'a> Lexer<'a> {
                 '}' => Some(TokenKind::RBrace),
                 '(' => Some(TokenKind::LParen),
                 ')' => Some(TokenKind::RParen),
+                '[' => Some(TokenKind::LBracket),
+                ']' => Some(TokenKind::RBracket),
                 _ => None,
             };
             if let Some(kind) = single_character_token {
@@ -176,15 +178,18 @@ impl<'a> Lexer<'a> {
             "fn" => TokenKind::Fn,
             "txt" => TokenKind::Txt,
             "rec" => TokenKind::Rec,
+            "list" => TokenKind::List,
             "mut" => TokenKind::Mut,
             "switch" => TokenKind::Switch,
             "case" => TokenKind::Case,
             "default" => TokenKind::Default,
-            "defer" => TokenKind::Defer,
             "return" => TokenKind::Return,
             "panic" => TokenKind::Panic,
             "async" => TokenKind::Async,
             "wait" => TokenKind::Wait,
+            "for" => TokenKind::For,
+            "in" => TokenKind::In,
+            "break" => TokenKind::Break,
             _ => TokenKind::Ident(text.to_owned()),
         };
         Token {
@@ -221,13 +226,14 @@ impl<'a> Lexer<'a> {
                         'n' => '\n',
                         't' => '\t',
                         'r' => '\r',
+                        'e' => '\u{1b}',
                         '\\' => '\\',
                         '"' => '"',
                         _ => {
                             return Err(self.error(
                                 Span::new(escape_start, self.offset() + escape.len_utf8()),
                                 format!(
-                                    "invalid escape `\\{escape}`; only \\n, \\t, \\r, \\\\, and \\\" are allowed"
+                                    "invalid escape `\\{escape}`; only \\n, \\t, \\r, \\e, \\\\, and \\\" are allowed"
                                 ),
                             ));
                         }
@@ -351,8 +357,11 @@ mod tests {
     #[test]
     fn decodes_string_escapes() {
         assert_eq!(
-            kinds(r#""a\n\t\r\\\"""#),
-            vec![TokenKind::Text("a\n\t\r\\\"".to_owned()), TokenKind::Eof]
+            kinds(r#""a\n\t\r\e\\\"""#),
+            vec![
+                TokenKind::Text("a\n\t\r\u{1b}\\\"".to_owned()),
+                TokenKind::Eof
+            ]
         );
     }
 
@@ -391,7 +400,7 @@ mod tests {
             (
                 "invalid escape",
                 r#""bad \q""#,
-                "invalid escape `\\q`; only \\n, \\t, \\r, \\\\, and \\\" are allowed",
+                "invalid escape `\\q`; only \\n, \\t, \\r, \\e, \\\\, and \\\" are allowed",
             ),
             ("unterminated string", "\"open", "unterminated string"),
             ("lone colon", "a : b", "expected `::` in a path"),

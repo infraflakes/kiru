@@ -1,0 +1,35 @@
+# std/lists.kiru
+#
+# List helpers written on top of the native list kernel.
+
+module std::lists;
+
+# The last element of `items`, or `""` when the list is empty.
+fn last(list items) -> txt {
+  mut txt result = "";
+  for item in items {
+    result = item;
+  };
+  return(result);
+};
+
+# A new list with every element of `second` after every element of `first`.
+fn concat(list first, list second) -> list {
+  mut list result = first;
+  for item in second {
+    result = append(result, item);
+  };
+  return(result);
+};
+
+# Whether `text` is an element of `list`. The loop stops at the first match.
+fn contains(list items, txt text) -> txt {
+  mut txt found = "false";
+  for item in items {
+    switch(item) {
+      case(text) { found = "true"; break; };
+      default {};
+    };
+  };
+  return(found);
+};

@@ -7,7 +7,7 @@
 use crate::syntax::Span;
 
 /// One parsed source file: its module path, imports, and declarations.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct File {
     pub(crate) module: Option<ModulePath>,
     pub(crate) imports: Vec<Import>,
@@ -15,21 +15,21 @@ pub(crate) struct File {
 }
 
 /// The `module a::b;` path of a file.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct ModulePath {
     pub(crate) segments: Vec<String>,
     pub(crate) span: Span,
 }
 
 /// One `import "path";` declaration.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Import {
     pub(crate) path: String,
     pub(crate) span: Span,
 }
 
 /// A top-level declaration.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Declaration {
     Function(Function),
     Binding(Binding),
@@ -37,7 +37,7 @@ pub(crate) enum Declaration {
 
 /// A `fn name(parameters) -> kind? { body };` declaration. An absent return
 /// kind means the function returns no value.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Function {
     pub(crate) name: String,
     pub(crate) name_span: Span,
@@ -49,17 +49,19 @@ pub(crate) struct Function {
 
 /// The kind a `txt` or `rec` keyword declares, on a parameter, a binding, or
 /// a function's return type.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ValueKind {
     /// The `txt` keyword: text data.
     Text,
     /// The `rec` keyword: a record of text.
     Record,
+    /// The `list` keyword: an ordered sequence of text.
+    List,
 }
 
 /// One `txt`/`rec` parameter of a function. A `mut` parameter may be
 /// reassigned and have its fields mutated; the caller's value is unaffected.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Parameter {
     pub(crate) kind: ValueKind,
     pub(crate) mutable: bool,
@@ -70,7 +72,7 @@ pub(crate) struct Parameter {
 /// A `[mut] txt name = expression;` or `[mut] rec name = expression;`
 /// declaration or statement. The initializer is a record literal, a record
 /// variable, or a call returning a value of the declared kind.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Binding {
     pub(crate) kind: ValueKind,
     pub(crate) mutable: bool,
@@ -81,7 +83,7 @@ pub(crate) struct Binding {
 }
 
 /// One `key = expression` entry of a record literal.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Field {
     pub(crate) name: String,
     pub(crate) name_span: Span,
@@ -90,7 +92,7 @@ pub(crate) struct Field {
 }
 
 /// A parsed statement.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Statement {
     Binding(Binding),
     Assignment {
@@ -136,14 +138,28 @@ pub(crate) enum Statement {
         default: Option<Vec<Statement>>,
         span: Span,
     },
-    Defer {
+    /// `for item in <list> { ... };` runs the body once per element, binding
+    /// `item` to each text element in turn.
+    ForEach {
+        item: String,
+        item_span: Span,
+        iterable: Expression,
         body: Vec<Statement>,
+        span: Span,
+    },
+    /// `for { ... };` runs the body over and over until a `break;`.
+    Forever {
+        body: Vec<Statement>,
+        span: Span,
+    },
+    /// `break;` ends the nearest enclosing loop early.
+    Break {
         span: Span,
     },
 }
 
 /// One `case(pattern) { body };` arm of a switch.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Case {
     pub(crate) pattern: Expression,
     pub(crate) body: Vec<Statement>,
@@ -151,7 +167,7 @@ pub(crate) struct Case {
 }
 
 /// A parsed expression.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Expression {
     Text {
         value: String,
@@ -159,6 +175,11 @@ pub(crate) enum Expression {
     },
     Record {
         fields: Vec<Field>,
+        span: Span,
+    },
+    /// A `[a, b, c]` list literal of text elements.
+    List {
+        elements: Vec<Expression>,
         span: Span,
     },
     Name {
@@ -195,6 +216,7 @@ impl Expression {
         match self {
             Expression::Text { span, .. }
             | Expression::Record { span, .. }
+            | Expression::List { span, .. }
             | Expression::Name { span, .. }
             | Expression::Call { span, .. }
             | Expression::Field { span, .. }

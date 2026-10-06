@@ -1,9 +1,8 @@
 //! Verification: prove every function body against its declared kind, derive
 //! the remaining kinds bottom-up, and learn which functions stop the run.
 
-use crate::compiler::{
-    DeclarationId, DeclarationKind, Diagnostic, FileId, Function, Kind, Position, Program,
-};
+use crate::compiler::Diagnostic;
+use crate::model::{DeclarationId, DeclarationKind, FileId, Function, Kind, Position, Program};
 
 use super::validate_bodies::Walk;
 
@@ -23,8 +22,11 @@ pub(crate) fn validate_program(program: &mut Program) -> Result<(), Diagnostic> 
             let position = match &declaration.kind {
                 DeclarationKind::Text(_) => Position::TextBinding,
                 DeclarationKind::Record(_) => Position::RecordBinding,
+                DeclarationKind::List(_) => Position::ListBinding,
                 other => {
-                    unreachable!("only a text or record value has an initializer, found {other:?}")
+                    unreachable!(
+                        "only a text, record, or list value has an initializer, found {other:?}"
+                    )
                 }
             };
             let mut walk = Walk::new(program, program.file_of(id));

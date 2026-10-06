@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use crate::compiler::Origin;
+use crate::model::Origin;
 use crate::syntax::File;
 
 /// A parsed file together with the resolved indexes of its imports.

@@ -1,0 +1,139 @@
+---
+title: std::lists
+description: Inspect and transform lists.
+---
+
+`std::lists` measures, indexes, and transforms lists. Lists are immutable, so
+the transforming functions return a new list; combine them with a `mut list`
+binding to accumulate.
+
+<details>
+<summary><code>len</code> — the number of elements</summary>
+
+```kiru
+std::lists::len(list items) -> txt
+```
+
+- `items` — the list to measure.
+- Returns the element count as digit text.
+
+```kiru
+std::io::print(std::lists::len(["a", "b", "c"]));   # 3
+```
+
+</details>
+
+<details>
+<summary><code>get</code> — the element at an index</summary>
+
+```kiru
+std::lists::get(list items, txt index) -> txt
+```
+
+- `items` — the list to read.
+- `index` — a zero-based index as digit text.
+- Returns the element, or `""` when the index is malformed or outside the list.
+
+```kiru
+std::io::print(std::lists::get(["a", "b", "c"], "1"));   # b
+```
+
+</details>
+
+<details>
+<summary><code>append</code> — a new list with one element added</summary>
+
+```kiru
+std::lists::append(list items, txt text) -> list
+```
+
+- `items` — the source list.
+- `text` — the element to add at the end.
+- Returns a new list.
+
+```kiru
+list xs = std::lists::append(["a", "b"], "c");
+```
+
+</details>
+
+<details>
+<summary><code>reverse</code> — a new list in reverse order</summary>
+
+```kiru
+std::lists::reverse(list items) -> list
+```
+
+- `items` — the source list.
+- Returns a new list in reverse order.
+
+```kiru
+list xs = std::lists::reverse(["a", "b", "c"]);
+```
+
+</details>
+
+<details>
+<summary><code>sort</code> — a new list in lexicographic order</summary>
+
+```kiru
+std::lists::sort(list items) -> list
+```
+
+- `items` — the source list.
+- Returns a new list sorted in lexicographic order.
+
+```kiru
+list xs = std::lists::sort(["c", "a", "b"]);
+```
+
+</details>
+
+<details>
+<summary><code>last</code> — the last element</summary>
+
+```kiru
+std::lists::last(list items) -> txt
+```
+
+- `items` — the list to read.
+- Returns the last element, or `""` when the list is empty.
+
+```kiru
+std::io::print(std::lists::last(["a", "b", "c"]));   # c
+```
+
+</details>
+
+<details>
+<summary><code>concat</code> — join two lists</summary>
+
+```kiru
+std::lists::concat(list first, list second) -> list
+```
+
+- `first`, `second` — the lists to join.
+- Returns a new list with every element of `second` after `first`.
+
+```kiru
+list xs = std::lists::concat(["a", "b"], ["c", "d"]);
+```
+
+</details>
+
+<details>
+<summary><code>contains</code> — whether text is an element</summary>
+
+```kiru
+std::lists::contains(list items, txt text) -> txt
+```
+
+- `items` — the list to search.
+- `text` — the element to find.
+- Returns `"true"` or `"false"`.
+
+```kiru
+std::io::print(std::lists::contains(["a", "b"], "b"));   # true
+```
+
+</details>

@@ -1,7 +1,7 @@
 //! Byte spans into source text.
 
 /// A half-open byte range `[start, end)` into one source file.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Span {
     pub(crate) start: usize,
     pub(crate) end: usize,

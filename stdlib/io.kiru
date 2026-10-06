@@ -1,69 +1,26 @@
 # std/io.kiru
 #
-# The command abstraction and the three line writers live at the std root.
+# The line writers, built on the native I/O kernel.
 
-module std;
-
-# Run a command line and return its exit code as text.
-#
-# The spec is the official API; every entry is uppercase, and an absent or
-# empty entry is the default. `Dir` changes the working directory, `Env` is
-# prepended as exported assignments, `Nix` runs the line inside `nix develop`
-# when it is exactly "true", `Direnv` wraps the line with direnv when it is
-# exactly "true", and `Timeout` bounds the run with `timeout` when it is not
-# empty. `Stream` selects what is rendered while the command runs: absent
-# renders both stdout and stderr live, "stderr" hides stdout and renders
-# stderr, and "null" hides both. Nothing is captured; `quote` makes the text
-# safe for the shell.
-fn command(rec spec, txt line) -> txt {
-  mut txt command_line = line;
-
-  switch(spec.Dir) {
-    case("") {};
-    default { command_line = "cd " + quote(spec.Dir) + " && " + command_line; };
-  };
-
-  switch(spec.Env) {
-    case("") {};
-    default { command_line = "export " + spec.Env + "; " + command_line; };
-  };
-
-  switch(spec.Nix) {
-    case("true") { command_line = "nix develop -c sh -c " + quote(command_line); };
-    default {};
-  };
-
-  switch(spec.Direnv) {
-    case("true") { command_line = "direnv exec " + quote(spec.Dir) + " sh -c " + quote(command_line); };
-    default {};
-  };
-
-  switch(spec.Timeout) {
-    case("") {};
-    default { command_line = "timeout " + spec.Timeout + " sh -c " + quote(command_line); };
-  };
-
-  switch(spec.Stream) {
-    case("stderr") { command_line = "{ " + command_line + "; } > /dev/null"; };
-    case("null") { command_line = "{ " + command_line + "; } > /dev/null 2>&1"; };
-    default {};
-  };
-
-  return(run(command_line));
-};
+module std::io;
 
 # Write a line to stdout.
 fn print(txt message) {
-  run("printf '%s\\n' " + quote(message));
+  write("1", message + "\n");
 };
 
 # Write a prefix and a message, coloring the prefix on a terminal. `color` is
 # an ANSI SGR code and `file_descriptor` is "1" for stdout or "2" for stderr.
+
 fn emit(txt color, txt prefix, txt file_descriptor, txt message) {
-  txt quoted = quote(message);
-  txt colored = "'\\033[" + color + "m" + prefix + "\\033[0m %s\\n'";
-  txt plain = "'" + prefix + " %s\\n'";
-  run("if [ -t " + file_descriptor + " ]; then printf " + colored + " " + quoted + " >&" + file_descriptor + "; else printf " + plain + " " + quoted + " >&" + file_descriptor + "; fi");
+  switch(is_terminal(file_descriptor)) {
+    case("true") {
+      write(file_descriptor, "\e[" + color + "m" + prefix + "\e[0m " + message + "\n");
+    };
+    default {
+      write(file_descriptor, prefix + " " + message + "\n");
+    };
+  };
 };
 
 # Write an "INFO:" line to stdout, yellow on a terminal.

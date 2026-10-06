@@ -5,7 +5,7 @@ hero:
   tagline: A statically typed, compiled process orchestration language.
   actions:
     - text: Start reading
-      link: getting-started/01-installing-kiru/01-from-a-release/
+      link: getting-started/installation/
       icon: open-book
       variant: primary
     - text: GitHub
@@ -14,21 +14,42 @@ hero:
       variant: minimal
 ---
 
-Compile strict, simple, concurrent programs to self-contained binaries.
+Welcome to *The Kiru Programming Language*.
 
-## Features
+Kiru is a small, statically typed language for orchestrating processes: running
+commands, handling the data they produce, and tying steps together. A Kiru
+program compiles to one self-contained binary.
 
-- **Commands as the primitive.** `std::run` and `std::command` run command
-  lines. See [Running a
-  command](/effects/06-commands/01-building-a-command/).
-- **Statically typed.** Names, arity, and kinds are fixed and checked before a binary is built, so a wrong value cannot reach runtime. See [Types](/language/04-types/01-types/).
-- **Failure and cleanup.** `defer` registers cleanup, a panic records
-  failure, and signals stop every process group. See [Failure and
-  Cleanup](/effects/08-failure-and-cleanup/01-panic/).
-- **Concurrency.** `async <call>;` starts a call on its own thread and
-  `wait;` joins the asyncs the calling thread spawned; the runtime
-  joins every remaining thread before exit. See
-  [Threads](/effects/07-threads/01-threads/).
-- **Self-contained binaries.** A compiled program is one file that holds
-  the compiler and the program. See
-  [Compiling](/getting-started/02-compiling-and-running/01-compiling/).
+This book teaches Kiru from the ground up. You don't need any prior Kiru, but
+you should be comfortable with a command line and with another programming
+language.
+
+## How to Read This Book
+
+The book is meant to be read in order. [Getting
+Started](/getting-started/installation/) gets you installed and running,
+[A First Program](/getting-started/a-first-program/) builds a small working
+program, and the chapters after that explain each part in more depth. You can
+start writing useful Kiru in the second chapter.
+
+If you want to look something up, the [standard
+library](/stdlib/process/) reference and the appendices at the end cover the
+whole surface.
+
+## What Kiru Looks Like
+
+Here is a complete Kiru program:
+
+```kiru
+fn main(rec args) {
+  switch(args.cmd) {
+    case("test") { std::io::print(std::process::command({}, "cargo test")); };
+    default { std::io::eprint("usage: test"); };
+  };
+};
+```
+
+`main` reads the command line, `switch` chooses a branch, and
+`std::process::command` runs a command and returns its exit code.
+[A First Program](/getting-started/a-first-program/) walks through a program
+like this one.
