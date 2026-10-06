@@ -3,3 +3,28 @@
 @import '@astrojs/starlight-tailwind';
 @import 'tailwindcss/theme.css' layer(theme);
 @import 'tailwindcss/utilities.css' layer(utilities);
+
+/* The standard library page groups its functions into one dropdown per area.
+   The rules give each dropdown a card-like frame so a long reference stays
+   scannable, and keep the disclosure marker on the summary. */
+.sl-markdown-content details {
+  margin: 1rem 0;
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.5rem;
+  padding: 0 1rem;
+}
+
+.sl-markdown-content details > summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 0.75rem 0;
+}
+
+.sl-markdown-content details[open] > summary {
+  border-bottom: 1px solid var(--sl-color-gray-5);
+  margin-bottom: 0.75rem;
+}
+
+.sl-markdown-content details > :last-child {
+  padding-bottom: 0.75rem;
+}

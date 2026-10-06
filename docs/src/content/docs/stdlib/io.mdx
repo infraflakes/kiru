@@ -1,0 +1,66 @@
+---
+title: std::io
+description: Write output and read input.
+---
+
+`std::io` writes to the standard streams, asks whether one is a terminal, and
+reads standard input.
+
+<details>
+<summary><code>write</code> — write to stdout or stderr</summary>
+
+```kiru
+std::io::write(file_descriptor<txt>, text<txt>)
+```
+
+Writes text to one standard stream exactly, with no added newline.
+
+- `file_descriptor` — `"1"` for stdout or `"2"` for stderr.
+- `text` — the bytes to write.
+
+```kiru
+std::io::write("1", "no newline");
+```
+
+</details>
+
+<details>
+<summary><code>is_terminal</code> — whether a stream is a terminal</summary>
+
+```kiru
+std::io::is_terminal(file_descriptor<txt>) -> txt
+```
+
+Tells whether a standard stream is connected to a terminal.
+
+- `file_descriptor` — `"1"` for stdout or `"2"` for stderr.
+- Returns `"true"` or `"false"`.
+
+```kiru
+match std::io::is_terminal("1") {
+  "true" => { std::print("interactive"); };
+  _ => { std::print("redirected"); };
+};
+```
+
+Related: [The Command Spec and Streams](/commands/the-command-spec/).
+
+</details>
+
+<details>
+<summary><code>read_stdin</code> — read all of standard input</summary>
+
+```kiru
+std::io::read_stdin() -> txt
+```
+
+Reads standard input to the end, so a program can be a filter.
+
+- Returns everything read as text.
+
+```kiru
+let lines<list> = std::text::lines(std::io::read_stdin());
+std::print(std::lists::len(lines));
+```
+
+</details>

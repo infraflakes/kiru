@@ -1,13 +1,25 @@
 use std::path::{Path, PathBuf};
 
 use super::read_entry_and_imports::{EMBEDDED, load_files};
-use crate::syntax;
+use crate::syntax::{self, Declaration};
 
 fn write(directory: &Path, name: &str, contents: &str) -> PathBuf {
     let path = directory.join(name);
     std::fs::create_dir_all(path.parent().expect("has a parent")).expect("create directory");
     std::fs::write(&path, contents).expect("write file");
     path
+}
+
+/// The declaration names in the joined item stream, in order.
+fn names(program: &super::LoadedProgram) -> Vec<&str> {
+    program
+        .items
+        .iter()
+        .map(|item| match &item.declaration {
+            Declaration::Function(function) => function.name.as_str(),
+            Declaration::Binding(binding) => binding.name.as_str(),
+        })
+        .collect()
 }
 
 #[test]
@@ -19,33 +31,24 @@ fn embedded_standard_library_parses() {
 }
 
 #[test]
-fn loads_imports_once_and_depth_first() {
+fn joins_imports_in_position_order() {
     let directory = tempfile::tempdir().expect("temp dir");
     let entry = write(
         directory.path(),
         "entry.kiru",
-        "import \"b.kiru\";\nimport \"a.kiru\";\n",
+        "import \"a.kiru\";\nimport \"b.kiru\";\n",
     );
-    write(directory.path(), "a.kiru", "import \"shared.kiru\";\n");
-    write(directory.path(), "b.kiru", "import \"shared.kiru\";\n");
-    write(directory.path(), "shared.kiru", "txt s = \"s\";\n");
+    write(
+        directory.path(),
+        "a.kiru",
+        "import \"c.kiru\";\nmod m { fn a_fn() {}; };\n",
+    );
+    write(directory.path(), "c.kiru", "mod m { fn c_fn() {}; };\n");
+    write(directory.path(), "b.kiru", "mod m { fn b_fn() {}; };\n");
 
     let program = load_files(&entry).expect("loads");
-    assert_eq!(program.files.len(), EMBEDDED.len() + 4);
-    let order = program.ordered_files();
-    assert_eq!(order.len(), 4);
-    let last = program.files[*order.last().expect("non-empty")]
-        .path
-        .clone();
-    assert!(last.ends_with("entry.kiru"));
-    assert_eq!(
-        order[0],
-        program
-            .files
-            .iter()
-            .position(|file| file.path.ends_with("shared.kiru"))
-            .expect("shared")
-    );
+    let names = names(&program);
+    assert_eq!(&names[names.len() - 3..], &["c_fn", "a_fn", "b_fn"]);
 }
 
 #[test]
@@ -72,6 +75,25 @@ fn reports_import_cycle() {
     write(directory.path(), "a.kiru", "import \"entry.kiru\";\n");
     let error = load_files(&entry).expect_err("cycle fails");
     assert!(error.message.contains("import cycle"), "{}", error.message);
+}
+
+#[test]
+fn reports_a_duplicate_import() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let entry = write(
+        directory.path(),
+        "entry.kiru",
+        "import \"a.kiru\";\nimport \"b.kiru\";\n",
+    );
+    write(directory.path(), "a.kiru", "import \"d.kiru\";\n");
+    write(directory.path(), "b.kiru", "import \"d.kiru\";\n");
+    write(directory.path(), "d.kiru", "mod m { fn d_fn() {}; };\n");
+    let error = load_files(&entry).expect_err("a diamond fails");
+    assert!(
+        error.message.contains("imported more than once"),
+        "{}",
+        error.message
+    );
 }
 
 #[test]

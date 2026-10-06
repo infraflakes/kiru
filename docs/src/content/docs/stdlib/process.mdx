@@ -1,0 +1,68 @@
+---
+title: std::process
+description: Run and manage processes.
+---
+
+`std::process` starts processes, waits for them, and signals them.
+
+<details>
+<summary><code>spawn</code> — run an argv and return its pid</summary>
+
+```kiru
+std::process::spawn(spec<rec>, argv<list>) -> txt
+```
+
+Runs `argv` without a shell, in its own process group, and returns the pid.
+
+- `spec` — options for the child: `Dir` (working directory) and
+  `Stdin`/`Stdout`/`Stderr` (`"null"` discards a stream; anything else
+  inherits it).
+- `argv` — the program and its arguments, each an element of the list.
+- Returns the pid as text.
+
+```kiru
+let pid<txt> = std::process::spawn({}, ["make", "-j4"]);
+```
+
+Related: [Process Groups](/commands/process-groups/).
+
+</details>
+
+<details>
+<summary><code>wait_for</code> — reap a process and return its exit code</summary>
+
+```kiru
+std::process::wait_for(pid<txt>) -> txt
+```
+
+Waits for the process named by `pid` and reaps it.
+
+- `pid` — a pid returned by `spawn`.
+- Returns the exit code as text, or `128 + signal` when the process was
+  signalled.
+
+```kiru
+let pid<txt> = std::process::spawn({}, ["true"]);
+let code<txt> = std::process::wait_for(pid);
+```
+
+</details>
+
+<details>
+<summary><code>signal</code> — send a signal to a process group</summary>
+
+```kiru
+std::process::signal(pid<txt>, name<txt>)
+```
+
+Sends a named signal to the process group led by `pid`.
+
+- `pid` — a pid returned by `spawn`.
+- `name` — `TERM`, `KILL`, `INT`, `HUP`, `QUIT`, `USR1`, `USR2`, `STOP`, or
+  `CONT`.
+
+```kiru
+std::process::signal(pid, "TERM");
+```
+
+</details>

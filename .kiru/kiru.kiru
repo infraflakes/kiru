@@ -1,21 +1,22 @@
-module kiru;
+mod kiru {
 
-fn build_kiru(rec project) {
-  run(project, "nix build .#default");
-};
+  fn build_kiru(project<rec>) {
+    run(project, "nix build .#default");
+  };
 
-fn check_kiru(rec project) {
-  run(project, "cargo test");
-  run(project, "cargo clippy --all-targets -- -D warnings");
-  run(project, "cargo fmt --check");
-};
+  fn check_kiru(project<rec>) {
+    run(project, "cargo test");
+    run(project, "cargo clippy --all-targets -- -D warnings");
+    run(project, "cargo fmt --check");
+  };
 
-fn format_kiru(rec project) {
-  run(project, "cargo clippy --fix --allow-dirty --all-targets");
-  run(project, "cargo fmt");
-};
+  fn format_kiru(project<rec>) {
+    run(project, "cargo clippy --fix --allow-dirty --all-targets");
+    run(project, "cargo fmt");
+  };
 
-fn update_kiru(rec kiru) {
-  run(kiru, "cargo update --verbose");
-  run(kiru, "cargo upgrade --verbose --verbose");
+  fn update_kiru(kiru<rec>) {
+    run(kiru, "cargo update --verbose");
+    run(kiru, "cargo upgrade --verbose --verbose");
+  };
 };

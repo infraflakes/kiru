@@ -91,6 +91,11 @@ pub(crate) fn duplicate_name(name: &str) -> String {
     format!("`{name}` is declared more than once")
 }
 
+/// The message for a record literal that repeats a field name.
+pub(crate) fn duplicate_field(name: &str) -> String {
+    format!("duplicate field `{name}`")
+}
+
 /// The message for a name declared more than once in one namespace.
 pub(crate) fn duplicate_in_namespace(name: &str) -> String {
     format!("`{name}` is declared more than once in this namespace")
@@ -165,10 +170,10 @@ mod tests {
             ),
             (
                 "multiline span",
-                Span::new(8, 17),
+                Span::new(13, 22),
                 "bad string",
-                "txt s = \"one\ntwo\";\n",
-                "main.kiru:1:9: error: bad string\ntxt s = \"one\n        ^^^^\ntwo\";\n^^^^\n",
+                "let s<txt> = \"one\ntwo\";\n",
+                "main.kiru:1:14: error: bad string\nlet s<txt> = \"one\n             ^^^^\ntwo\";\n^^^^\n",
             ),
             (
                 "carets aligned after tabs",

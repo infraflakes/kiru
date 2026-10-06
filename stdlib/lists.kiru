@@ -1,0 +1,37 @@
+# std/lists.kiru
+#
+# List helpers written on top of the native list kernel.
+
+mod std::lists {
+
+  # A new list with every element of `second` after every element of `first`.
+  fn concat(first<list>, second<list>) -> list {
+    let mut result<list> = first;
+    for item in second {
+      result = append(result, item);
+    };
+    return result;
+  };
+
+  # A new list with the elements reversed.
+  fn reverse(items<list>) -> list {
+    let mut result<list> = [];
+    for item in items {
+      result = prepend(result, item);
+    };
+    return result;
+  };
+
+  # Whether `text` is an element of `list`. The loop stops at the first match.
+  fn contains(items<list>, text<txt>) -> txt {
+    let mut found<txt> = "false";
+    for item in items {
+      match item {
+        text => { found = "true"; break; };
+        _ => {};
+      };
+    };
+    return found;
+  };
+
+};

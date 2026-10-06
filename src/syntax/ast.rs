@@ -1,78 +1,78 @@
 //! The syntax tree produced by the parser.
 //!
-//! A `File` is one loaded source file: an optional module path, its imports,
-//! and its declarations. Statements exist only inside function, `defer`, and
-//! `case` bodies.
+//! A `File` is one loaded source file: its top-level items in order. An `item`
+//! is a declaration, an inline `mod` block, or an `import`. Statements exist
+//! only inside function and `match` bodies.
 
 use crate::syntax::Span;
+use crate::types::Type;
 
-/// One parsed source file: its module path, imports, and declarations.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// One parsed source file: its top-level items in order.
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct File {
-    pub(crate) module: Option<ModulePath>,
-    pub(crate) imports: Vec<Import>,
-    pub(crate) declarations: Vec<Declaration>,
+    pub(crate) items: Vec<Item>,
 }
 
-/// The `module a::b;` path of a file.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(crate) struct ModulePath {
-    pub(crate) segments: Vec<String>,
+/// A top-level item: a declaration, an inline `mod` block, or an `import`.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Item {
+    Declaration(Declaration),
+    Module(Module),
+    Import(Import),
+}
+
+/// A `mod a::b { declarations }` block: an inline namespace. A file may hold
+/// several, and reopening a path merges into the same namespace.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Module {
+    pub(crate) path: Vec<String>,
+    pub(crate) declarations: Vec<Declaration>,
     pub(crate) span: Span,
 }
 
-/// One `import "path";` declaration.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// One `import "path";` item. An import is global-level only and is never
+/// written inside a `mod` block.
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Import {
     pub(crate) path: String,
     pub(crate) span: Span,
 }
 
 /// A top-level declaration.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Declaration {
     Function(Function),
     Binding(Binding),
 }
 
-/// A `fn name(parameters) -> kind? { body };` declaration. An absent return
-/// kind means the function returns no value.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// A `fn name(parameters) -> type? { body };` declaration. An absent return
+/// type means the function returns no value.
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Function {
     pub(crate) name: String,
     pub(crate) name_span: Span,
     pub(crate) parameters: Vec<Parameter>,
-    pub(crate) return_kind: Option<ValueKind>,
+    pub(crate) return_type: Option<Type>,
     pub(crate) body: Vec<Statement>,
     pub(crate) span: Span,
 }
 
-/// The kind a `txt` or `rec` keyword declares, on a parameter, a binding, or
-/// a function's return type.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(crate) enum ValueKind {
-    /// The `txt` keyword: text data.
-    Text,
-    /// The `rec` keyword: a record of text.
-    Record,
-}
-
-/// One `txt`/`rec` parameter of a function. A `mut` parameter may be
+/// One `[mut] name<type>` parameter of a function. A `mut` parameter may be
 /// reassigned and have its fields mutated; the caller's value is unaffected.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Parameter {
-    pub(crate) kind: ValueKind,
+    pub(crate) ty: Type,
     pub(crate) mutable: bool,
     pub(crate) name: String,
     pub(crate) span: Span,
 }
 
-/// A `[mut] txt name = expression;` or `[mut] rec name = expression;`
-/// declaration or statement. The initializer is a record literal, a record
-/// variable, or a call returning a value of the declared kind.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// A `let [mut] name<type> = expression;` declaration or statement. The
+/// initializer is a literal, a name, a field path, or a call returning a value
+/// of the declared type.
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Binding {
-    pub(crate) kind: ValueKind,
+    pub(crate) ty: Type,
     pub(crate) mutable: bool,
     pub(crate) name: String,
     pub(crate) name_span: Span,
@@ -81,7 +81,7 @@ pub(crate) struct Binding {
 }
 
 /// One `key = expression` entry of a record literal.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Field {
     pub(crate) name: String,
     pub(crate) name_span: Span,
@@ -90,7 +90,7 @@ pub(crate) struct Field {
 }
 
 /// A parsed statement.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Statement {
     Binding(Binding),
     Assignment {
@@ -109,8 +109,8 @@ pub(crate) enum Statement {
         span: Span,
     },
     Expression(Expression),
-    /// An early exit. A value return carries the function's declared kind; a
-    /// valueless return ends a function that declares no return kind.
+    /// An early exit. A value return carries the function's declared type; a
+    /// valueless return ends a function that declares no return type.
     Return {
         value: Option<Expression>,
         span: Span,
@@ -130,28 +130,44 @@ pub(crate) enum Statement {
     Wait {
         span: Span,
     },
-    Switch {
-        subject: Expression,
-        cases: Vec<Case>,
-        default: Option<Vec<Statement>>,
-        span: Span,
-    },
-    Defer {
+    /// `for item in <list> { ... };` runs the body once per element, binding
+    /// `item` to each text element in turn.
+    ForEach {
+        item: String,
+        item_span: Span,
+        iterable: Expression,
         body: Vec<Statement>,
         span: Span,
     },
+    /// `for { ... };` runs the body over and over until a `break;`.
+    Forever {
+        body: Vec<Statement>,
+        span: Span,
+    },
+    /// `break;` ends the nearest enclosing loop early.
+    Break {
+        span: Span,
+    },
 }
 
-/// One `case(pattern) { body };` arm of a switch.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(crate) struct Case {
+/// One `pattern => body;` arm of a match. A `_` arm is the default.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct MatchArm {
     pub(crate) pattern: Expression,
-    pub(crate) body: Vec<Statement>,
+    pub(crate) body: MatchBody,
     pub(crate) span: Span,
 }
 
+/// The body of a match arm: an expression in expression position, or a block
+/// of statements in statement position.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum MatchBody {
+    Expression(Box<Expression>),
+    Block(Vec<Statement>),
+}
+
 /// A parsed expression.
-#[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Expression {
     Text {
         value: String,
@@ -159,6 +175,17 @@ pub(crate) enum Expression {
     },
     Record {
         fields: Vec<Field>,
+        span: Span,
+    },
+    /// A `[a, b, c]` list literal of text elements.
+    List {
+        elements: Vec<Expression>,
+        span: Span,
+    },
+    /// A string with `@(…)` interpolation, split into literal and expression
+    /// parts. A string with no interpolation is a plain `Text`.
+    Interpolated {
+        parts: Vec<StringPart>,
         span: Span,
     },
     Name {
@@ -188,6 +215,14 @@ pub(crate) enum Expression {
         right: Box<Expression>,
         span: Span,
     },
+    /// `match subject { pattern => body; … };` — a term whose value is the
+    /// taken arm's expression, or void when its arms are blocks.
+    Match {
+        subject: Box<Expression>,
+        cases: Vec<MatchArm>,
+        default: Option<MatchBody>,
+        span: Span,
+    },
 }
 
 impl Expression {
@@ -195,10 +230,22 @@ impl Expression {
         match self {
             Expression::Text { span, .. }
             | Expression::Record { span, .. }
+            | Expression::List { span, .. }
+            | Expression::Interpolated { span, .. }
             | Expression::Name { span, .. }
             | Expression::Call { span, .. }
             | Expression::Field { span, .. }
-            | Expression::Add { span, .. } => *span,
+            | Expression::Add { span, .. }
+            | Expression::Match { span, .. } => *span,
         }
     }
+}
+
+/// One part of an interpolated string.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum StringPart {
+    /// Literal text.
+    Literal(String),
+    /// An `@(…)` expression whose text is inserted.
+    Expression(Expression),
 }
