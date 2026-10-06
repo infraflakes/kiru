@@ -83,7 +83,10 @@ export default defineConfig({
               label: '2.7 Return and Nothing',
               slug: 'language/02-common-concepts/07-return-and-recursion',
             },
-            { label: '2.8 Assignment', slug: 'language/02-common-concepts/08-assignment' },
+            {
+              label: '2.8 Assignment and Mutability',
+              slug: 'language/02-common-concepts/08-assignment',
+            },
             { label: '2.9 Calls', slug: 'language/02-common-concepts/09-calls' },
             { label: '2.10 Switch', slug: 'language/02-common-concepts/10-switch' },
           ],

@@ -13,10 +13,11 @@ import      := "import" string ";"
 
 declaration := function | text | record
 function    := "fn" ident "(" params? ")" ("->" kind)? block ";"
-text        := "txt" ident "=" expression ";"
-record      := "rec" ident "=" expression ";"
+text        := "mut"? "txt" ident "=" expression ";"
+record      := "mut"? "rec" ident "=" expression ";"
 
-params      := kind ident ("," kind ident)* ","?
+params      := param ("," param)* ","?
+param       := "mut"? kind ident
 kind        := "txt" | "rec"
 fields      := "{" (field ("," field)* ","?)? "}"
 field       := ident "=" expression
@@ -26,6 +27,7 @@ block       := "{" statement* "}"
 statement   := text
              | record
              | assignment
+             | field_assignment
              | expression ";"
              | "return" "(" expression? ")" ";"
              | "panic" ";"
@@ -34,6 +36,7 @@ statement   := text
              | "switch" "(" expression ")" switch ";"
              | "defer" block ";"
 assignment  := ident "=" expression ";"
+field_assignment := ident "." ident "=" expression ";"
 
 switch      := "{" (case | default)* "}"
 case        := "case" "(" expression ")" block ";"
@@ -77,11 +80,14 @@ absence of numeric literals.
   joins the asyncs the calling thread spawned.
 - A `rec` binding takes an expression that is a record literal, a record
   variable, or a call returning a record.
-- Each parameter declares its kind before its name: `txt` is text and `rec`
-  is a record. A function's return kind is written `-> txt` or `-> rec` after
-  the parameter list; no arrow means it returns no value. `main` takes at most
-  one parameter, and it must be `rec`.
+- A binding is immutable unless written `mut`. A `mut` binding may be
+  reassigned and, for a record, have its fields assigned; `name.field = expr;`
+  replaces one field. A top-level module value can never be `mut`.
+- Each parameter declares its kind before its name, optionally preceded by
+  `mut`: `txt` is text and `rec` is a record. A function's return kind is
+  written `-> txt` or `-> rec` after the parameter list; no arrow means it
+  returns no value. `main` takes at most one parameter, and it must be `rec`.
 - A bare statement must be a call; a lone value is a compile error.
 - A term with no arguments after `.` is a field access.
-- The reserved words are `module`, `import`, `fn`, `txt`, `rec`, `switch`,
-  `case`, `default`, `defer`, `return`, `panic`, `async`, and `wait`.
+- The reserved words are `module`, `import`, `fn`, `txt`, `rec`, `mut`,
+  `switch`, `case`, `default`, `defer`, `return`, `panic`, `async`, and `wait`.

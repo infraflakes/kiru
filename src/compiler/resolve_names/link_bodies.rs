@@ -83,7 +83,9 @@ impl Builder {
                                 name: &parameter.name,
                                 name_span: parameter.span,
                                 owner: pending.declaration,
-                                binding: BindingKind::Parameter,
+                                binding: BindingKind::Parameter {
+                                    mutable: parameter.mutable,
+                                },
                                 declared_kind: Some(declared_kind(parameter.kind)),
                             },
                         )?;
@@ -186,8 +188,12 @@ impl Builder {
                 ParsedStatement::Binding(binding) => {
                     let value = self.link_expression(&binding.value, context)?;
                     let binding_kind = match binding.kind {
-                        ValueKind::Text => BindingKind::Text,
-                        ValueKind::Record => BindingKind::Record,
+                        ValueKind::Text => BindingKind::Text {
+                            mutable: binding.mutable,
+                        },
+                        ValueKind::Record => BindingKind::Record {
+                            mutable: binding.mutable,
+                        },
                     };
                     let declaration = self.declare_local(
                         context.scopes,
@@ -225,6 +231,30 @@ impl Builder {
                     linked.push(Statement::Assign {
                         declaration,
                         name_span: *name_span,
+                        value,
+                        span: *span,
+                    });
+                }
+                ParsedStatement::FieldAssignment {
+                    name,
+                    name_span,
+                    field,
+                    value,
+                    span,
+                    ..
+                } => {
+                    let declaration = self.resolve(
+                        context,
+                        std::slice::from_ref(name),
+                        false,
+                        *name_span,
+                        Registry::Value,
+                    )?;
+                    let value = self.link_expression(value, context)?;
+                    linked.push(Statement::FieldAssign {
+                        declaration,
+                        name_span: *name_span,
+                        field: field.clone(),
                         value,
                         span: *span,
                     });

@@ -79,13 +79,13 @@ fn evaluates_expressions() {
         ),
         (
             "defer does not change the returned value",
-            "fn f() -> txt { txt x = \"a\"; defer { x = \"b\"; }; return(x); };\nfn main() {};",
+            "fn f() -> txt { mut txt x = \"a\"; defer { x = \"b\"; }; return(x); };\nfn main() {};",
             "f",
             "a",
         ),
         (
             "defer body uses its own local",
-            "fn f() -> txt { txt x = \"a\"; defer { txt y = \"b\"; x = y; }; return(x); };\nfn main() {};",
+            "fn f() -> txt { mut txt x = \"a\"; defer { txt y = \"b\"; x = y; }; return(x); };\nfn main() {};",
             "f",
             "a",
         ),
@@ -112,7 +112,7 @@ fn switch_takes_the_first_match_then_default() {
     let runtime = runtime(
         "txt a = \"a\";\n\
          fn f(txt s) -> txt {\n\
-           txt found = \"\";\n\
+           mut txt found = \"\";\n\
            switch(s) {\n\
              case(\"a\") { found = \"one\"; };\n\
              case(a) { found = \"two\"; };\n\

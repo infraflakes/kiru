@@ -42,5 +42,7 @@ std::eprint(text) -> nothing        write an "ERROR:" line to stderr, then panic
 | --- | --- |
 | `Dir` | run after `cd <Dir> &&`, with `Dir` quoted by `std::quote` |
 | `Env` | prepend `export <Env>;`, used as written |
+| `Nix` | run inside `nix develop -c sh -c` only when it is exactly `"true"`, quoting the line |
 | `Direnv` | wrap with `direnv exec <Dir> sh -c` only when it is exactly `"true"`, quoting `Dir` and the line |
+| `Timeout` | bound with `timeout <Timeout> sh -c` when `Timeout` is not empty, using it as written and quoting the line |
 | `Stream` | wrap the line so stdout and/or stderr are hidden: empty renders both, `"stderr"` hides stdout, `"null"` hides both |

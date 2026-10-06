@@ -38,7 +38,8 @@ $ ./app
 flag: []
 ```
 
-The record is built by the runtime and is read-only, so a program cannot
-corrupt its own arguments after parsing; [assignment and read-only
-parameters](/language/02-common-concepts/08-assignment/) covers the binding
+The record is built by the runtime and passed to `main` as an immutable
+binding. A `main(mut rec args)` may reassign it or its fields, but that is a
+mutable copy, so the runtime's own record is never changed; [assignment and
+mutability](/language/02-common-concepts/08-assignment/) covers the binding
 rule.

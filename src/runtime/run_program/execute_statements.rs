@@ -29,6 +29,18 @@ impl Runtime {
                     let value = self.eval(value, env)?;
                     env.insert(*declaration, value);
                 }
+                Statement::FieldAssign {
+                    declaration,
+                    field,
+                    value,
+                    ..
+                } => {
+                    let text = self.eval_text(value, env)?;
+                    match env.get_mut(declaration) {
+                        Some(Value::Record(record)) => record.set(field.clone(), text),
+                        _ => return Err(self.fail()),
+                    }
+                }
                 Statement::Expression(expression) => {
                     // A bare call runs and its result is discarded.
                     let _ = self.eval(expression, env)?;

@@ -309,7 +309,7 @@ fn bindings_and_scope_rules() {
     expect_accepts(&[
         (
             "defer body declares into its enclosing body",
-            "fn f() -> txt {\ntxt x = \"a\";\ndefer { txt y = \"b\"; x = y; };\nreturn(x);\n};\nfn main() {};",
+            "fn f() -> txt {\nmut txt x = \"a\";\ndefer { txt y = \"b\"; x = y; };\nreturn(x);\n};\nfn main() {};",
         ),
         (
             "case patterns of any text expression",
@@ -324,7 +324,7 @@ fn bindings_and_scope_rules() {
         (
             "parameter assignment",
             "fn f(txt x) { x = \"a\"; };\nfn main() {};",
-            "`x` is a parameter and is read-only",
+            "`x` is not mutable; declare it `mut`",
         ),
         (
             "module assignment",
@@ -333,7 +333,7 @@ fn bindings_and_scope_rules() {
         ),
         (
             "assigning a record to a text local",
-            "fn main() { txt x = \"a\"; x = {}; };",
+            "fn main() { mut txt x = \"a\"; x = {}; };",
             "expected text, found record",
         ),
         (
@@ -446,6 +446,59 @@ fn statement_form_rules() {
             "bare add statement",
             "fn main() { \"a\" + \"b\"; };",
             "a statement must be a call",
+        ),
+    ]);
+}
+
+#[test]
+fn mutability_rules() {
+    expect_accepts(&[
+        (
+            "rebind a mut text",
+            "fn f() { mut txt x = \"a\"; x = \"b\"; };\nfn main() {};",
+        ),
+        (
+            "field assign a mut record",
+            "fn f() { mut rec r = { a = \"1\" }; r.a = \"2\"; };\nfn main() {};",
+        ),
+        (
+            "field assign adds a field",
+            "fn f() { mut rec r = { a = \"1\" }; r.b = \"2\"; };\nfn main() {};",
+        ),
+        (
+            "rebind a mut parameter",
+            "fn f(mut txt x) { x = \"b\"; };\nfn main() {};",
+        ),
+        (
+            "field assign a mut parameter",
+            "fn f(mut rec r) { r.a = \"b\"; };\nfn main() {};",
+        ),
+    ]);
+    expect_rejections(&[
+        (
+            "rebind an immutable local",
+            "fn f() { txt x = \"a\"; x = \"b\"; };\nfn main() {};",
+            "`x` is not mutable; declare it `mut`",
+        ),
+        (
+            "field assign an immutable record",
+            "fn f() { rec r = { a = \"1\" }; r.a = \"2\"; };\nfn main() {};",
+            "`r` is not mutable; declare it `mut`",
+        ),
+        (
+            "field assign an immutable parameter",
+            "fn f(txt x) { x.a = \"b\"; };\nfn main() {};",
+            "`x` is not mutable; declare it `mut`",
+        ),
+        (
+            "field assign a text binding",
+            "fn f() { mut txt x = \"a\"; x.b = \"c\"; };\nfn main() {};",
+            "`x` is not a record and has no fields",
+        ),
+        (
+            "field assign a module value",
+            "rec r = { a = \"1\" };\nfn main() { r.a = \"2\"; };",
+            "`r` is a module-level constant and cannot be assigned",
         ),
     ]);
 }

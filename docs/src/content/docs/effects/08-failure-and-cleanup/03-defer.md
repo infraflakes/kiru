@@ -51,7 +51,7 @@ runs:
 
 ```kiru
 fn main() {
-  txt name = "before";
+  mut txt name = "before";
   defer { std::print("defer sees " + name); };
   name = "after";
 };

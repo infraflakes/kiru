@@ -13,7 +13,7 @@ Every nested block of one function body is the same body for assignment. A `swit
 
 ```kiru
 fn pick(txt mode) -> txt {
-  txt value = "none";
+  mut txt value = "none";
   switch(mode) {
     case("fast") { value = "fast"; };
     default { value = "safe"; };

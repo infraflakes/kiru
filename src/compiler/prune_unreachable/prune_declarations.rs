@@ -114,7 +114,9 @@ impl VisitorMut for EdgeRemapper<'_> {
 
     fn statement(&mut self, statement: &mut Statement) {
         match statement {
-            Statement::Bind { declaration, .. } | Statement::Assign { declaration, .. } => {
+            Statement::Bind { declaration, .. }
+            | Statement::Assign { declaration, .. }
+            | Statement::FieldAssign { declaration, .. } => {
                 *declaration = mapped(self.mapping, *declaration);
             }
             Statement::Expression(_)

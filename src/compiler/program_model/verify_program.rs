@@ -178,7 +178,9 @@ impl Visitor for SpanCheck {
     fn statement(&mut self, statement: &Statement) {
         let span = statement.span();
         assert!(span.start <= span.end);
-        if let Statement::Assign { name_span, .. } = statement {
+        if let Statement::Assign { name_span, .. } | Statement::FieldAssign { name_span, .. } =
+            statement
+        {
             assert!(name_span.start <= name_span.end);
         }
         if let Statement::Switch { cases, .. } = statement {
@@ -253,7 +255,9 @@ impl Visitor for EdgeCheck<'_> {
 
     fn statement(&mut self, statement: &Statement) {
         match statement {
-            Statement::Bind { declaration, .. } | Statement::Assign { declaration, .. } => {
+            Statement::Bind { declaration, .. }
+            | Statement::Assign { declaration, .. }
+            | Statement::FieldAssign { declaration, .. } => {
                 self.check(*declaration, "a statement binding");
             }
             Statement::Expression(_)

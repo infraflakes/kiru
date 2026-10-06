@@ -37,7 +37,7 @@ Two arms may both match; only the first runs:
 txt fast = "fast";
 
 fn classify(txt mode) -> txt {
-  txt result = "other";
+  mut txt result = "other";
   switch(mode) {
     case("fast") { result = "literal"; };
     case(fast) { result = "value"; };
@@ -73,7 +73,7 @@ fn name() -> txt {
 };
 
 fn pick(txt target) -> txt {
-  txt result = "none";
+  mut txt result = "none";
   switch("a") {
     case(target) { result = "chosen"; };
     case(name()) { result = "named"; };

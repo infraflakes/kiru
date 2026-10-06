@@ -3,9 +3,8 @@ module kiru;
 txt usage_kiru = "usage: kiru <flag>
 
 flags:
-  check      run the rust checks
-  build      build the release binary
-  nix        nix build .#default
+  check      run the checks
+  build      build the binary
   container  docker or podman build into bin
   format     apply clippy and rustfmt fixes
   update     cargo update and cargo upgrade";
@@ -52,9 +51,6 @@ fn kiru_command(rec project, txt flag) {
   switch(flag) {
     case("check") { check_kiru(project); };
     case("build") { build_kiru(project); };
-    case("nix") {
-      run(project, "nix build .#default");
-    };
     case("container") {
       run(project, container_cmd() + " build --output type=local,dest=bin .");
     };

@@ -27,6 +27,10 @@
       "match": "\\b(?:txt|rec)\\b"
     },
     {
+      "name": "storage.modifier.kiru",
+      "match": "\\bmut\\b"
+    },
+    {
       "match": "\\b(fn)(\\s+)([A-Za-z_][A-Za-z0-9_]*)",
       "captures": {
         "3": { "name": "entity.name.function.kiru" }

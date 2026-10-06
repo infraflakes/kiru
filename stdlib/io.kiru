@@ -8,13 +8,15 @@ module std;
 #
 # The spec is the official API; every entry is uppercase, and an absent or
 # empty entry is the default. `Dir` changes the working directory, `Env` is
-# prepended as exported assignments, and `Direnv` wraps the line with direnv
-# when it is exactly "true". `Stream` selects what is rendered while the
-# command runs: absent renders both stdout and stderr live, "stderr" hides
-# stdout and renders stderr, and "null" hides both. Nothing is captured;
-# `quote` makes the text safe for the shell.
+# prepended as exported assignments, `Nix` runs the line inside `nix develop`
+# when it is exactly "true", `Direnv` wraps the line with direnv when it is
+# exactly "true", and `Timeout` bounds the run with `timeout` when it is not
+# empty. `Stream` selects what is rendered while the command runs: absent
+# renders both stdout and stderr live, "stderr" hides stdout and renders
+# stderr, and "null" hides both. Nothing is captured; `quote` makes the text
+# safe for the shell.
 fn command(rec spec, txt line) -> txt {
-  txt command_line = line;
+  mut txt command_line = line;
 
   switch(spec.Dir) {
     case("") {};
@@ -26,9 +28,19 @@ fn command(rec spec, txt line) -> txt {
     default { command_line = "export " + spec.Env + "; " + command_line; };
   };
 
+  switch(spec.Nix) {
+    case("true") { command_line = "nix develop -c sh -c " + quote(command_line); };
+    default {};
+  };
+
   switch(spec.Direnv) {
     case("true") { command_line = "direnv exec " + quote(spec.Dir) + " sh -c " + quote(command_line); };
     default {};
+  };
+
+  switch(spec.Timeout) {
+    case("") {};
+    default { command_line = "timeout " + spec.Timeout + " sh -c " + quote(command_line); };
   };
 
   switch(spec.Stream) {

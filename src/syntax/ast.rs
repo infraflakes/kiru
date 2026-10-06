@@ -57,20 +57,23 @@ pub(crate) enum ValueKind {
     Record,
 }
 
-/// One `txt`/`rec` parameter of a function.
+/// One `txt`/`rec` parameter of a function. A `mut` parameter may be
+/// reassigned and have its fields mutated; the caller's value is unaffected.
 #[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Parameter {
     pub(crate) kind: ValueKind,
+    pub(crate) mutable: bool,
     pub(crate) name: String,
     pub(crate) span: Span,
 }
 
-/// A `txt name = expression;` or `rec name = expression;` declaration or
-/// statement. The initializer is a record literal, a record variable, or a
-/// call returning a value of the declared kind.
+/// A `[mut] txt name = expression;` or `[mut] rec name = expression;`
+/// declaration or statement. The initializer is a record literal, a record
+/// variable, or a call returning a value of the declared kind.
 #[derive(Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Binding {
     pub(crate) kind: ValueKind,
+    pub(crate) mutable: bool,
     pub(crate) name: String,
     pub(crate) name_span: Span,
     pub(crate) value: Expression,
@@ -93,6 +96,15 @@ pub(crate) enum Statement {
     Assignment {
         name: String,
         name_span: Span,
+        value: Expression,
+        span: Span,
+    },
+    /// `name.field = expression;` replaces one field of a mutable record.
+    FieldAssignment {
+        name: String,
+        name_span: Span,
+        field: String,
+        field_span: Span,
         value: Expression,
         span: Span,
     },

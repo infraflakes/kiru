@@ -20,7 +20,7 @@ Change a value with assignment, not by declaring again:
 
 ```kiru
 fn main() {
-  txt log = "";
+  mut txt log = "";
   log = log + "first\n";
   log = log + "second\n";
   std::print(log);
@@ -33,7 +33,7 @@ first
 second
 ```
 
-Assignment keeps the declaration and replaces the value; [assignment and read-only parameters](/language/02-common-concepts/08-assignment/) covers it.
+Assignment keeps the declaration and replaces the value; [assignment and mutability](/language/02-common-concepts/08-assignment/) covers it.
 
 Because `name` and `name(...)` disambiguate, a function and a value can share one name:
 

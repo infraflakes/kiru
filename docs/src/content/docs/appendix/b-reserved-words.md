@@ -6,8 +6,8 @@ description: The names the language owns.
 These words are reserved and may not be used as names:
 
 ```text
-module  import  fn  txt  rec  switch  case  default  defer  return  panic
-async  wait
+module  import  fn  txt  rec  mut  switch  case  default  defer  return
+panic  async  wait
 ```
 
 plus the `std` namespace.
@@ -21,6 +21,7 @@ plus the `std` namespace.
 | `fn` | declare a function |
 | `txt` | bind text; declare a `txt` parameter or return type |
 | `rec` | bind a record; declare a `rec` parameter or return type |
+| `mut` | make a binding reassignable and its record fields assignable |
 | `switch` | compare text |
 | `case` | a switch pattern |
 | `default` | the fallback arm |

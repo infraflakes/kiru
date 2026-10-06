@@ -340,15 +340,28 @@ pub(crate) enum DeclarationKind {
     Native(Native),
 }
 
-/// The role of a binding node.
+/// The role of a binding node. `mutable` marks a `mut` binding: it may be
+/// reassigned and, for a record, have its fields assigned. Module values are
+/// never bindings and are always immutable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) enum BindingKind {
     /// A function parameter.
-    Parameter,
+    Parameter { mutable: bool },
     /// A `txt` binding; it holds text.
-    Text,
+    Text { mutable: bool },
     /// A `rec` binding.
-    Record,
+    Record { mutable: bool },
+}
+
+impl BindingKind {
+    /// Whether this binding may be reassigned or have its fields assigned.
+    pub(crate) fn mutable(self) -> bool {
+        match self {
+            BindingKind::Parameter { mutable }
+            | BindingKind::Text { mutable }
+            | BindingKind::Record { mutable } => mutable,
+        }
+    }
 }
 
 /// A function body; its parameters are separate nodes. `return_kind` is the
@@ -432,6 +445,14 @@ pub(crate) enum Statement {
         value: Expression,
         span: Span,
     },
+    /// `name.field = expression;` replaces one field of a mutable record.
+    FieldAssign {
+        declaration: DeclarationId,
+        name_span: Span,
+        field: String,
+        value: Expression,
+        span: Span,
+    },
     Expression(Expression),
     /// An early exit. A value return carries the function's declared kind; a
     /// valueless return ends a function that declares no return kind.
@@ -472,6 +493,7 @@ impl Statement {
             Statement::Expression(expression) => expression.span(),
             Statement::Bind { span, .. }
             | Statement::Assign { span, .. }
+            | Statement::FieldAssign { span, .. }
             | Statement::Return { span, .. }
             | Statement::Panic { span }
             | Statement::Async { span, .. }

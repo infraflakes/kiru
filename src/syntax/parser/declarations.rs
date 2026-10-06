@@ -47,12 +47,18 @@ impl Parser {
         })
     }
 
-    /// Parse one function parameter: a kind keyword, `txt` or `rec`, then the
-    /// name.
+    /// Parse one function parameter: an optional `mut`, a kind keyword, `txt`
+    /// or `rec`, then the name.
     fn parse_parameter(&mut self) -> Result<Parameter, ParseError> {
+        let mutable = self.eat(&TokenKind::Mut);
         let kind = self.parse_value_kind("in the parameter list")?;
         let (name, span) = self.expect_identifier("in the parameter list")?;
-        Ok(Parameter { kind, name, span })
+        Ok(Parameter {
+            kind,
+            mutable,
+            name,
+            span,
+        })
     }
 
     /// Parse an optional `-> txt` or `-> rec` return kind after the parameter
@@ -83,17 +89,24 @@ impl Parser {
         }
     }
 
-    /// Parse a `txt name = expression;` or `rec name = expression;`
-    /// declaration or statement. The expression is a record literal, a record
-    /// variable, or a call returning a value of the declared kind.
-    pub(super) fn parse_binding(&mut self, kind: ValueKind) -> Result<Binding, ParseError> {
-        let start = self.advance().start;
+    /// Parse a `[mut] txt name = expression;` or `[mut] rec name =
+    /// expression;` declaration or statement. The kind token is already
+    /// consumed by the caller, and `start` is where the binding began (the
+    /// `mut` or the kind keyword). The expression is a record literal, a
+    /// record variable, or a call returning a value of the declared kind.
+    pub(super) fn parse_binding(
+        &mut self,
+        kind: ValueKind,
+        mutable: bool,
+        start: usize,
+    ) -> Result<Binding, ParseError> {
         let (name, name_span) = self.expect_identifier("in a binding")?;
         self.expect(&TokenKind::Equals, "after the binding name")?;
         let value = self.parse_expression()?;
         let span = self.span_through_semicolon(start, "after the initializer")?;
         Ok(Binding {
             kind,
+            mutable,
             name,
             name_span,
             value,

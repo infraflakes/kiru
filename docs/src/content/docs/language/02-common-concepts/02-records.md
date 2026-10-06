@@ -1,6 +1,6 @@
 ---
 title: Records
-description: Construction, duplicate keys, immutability, and text fields.
+description: Construction, duplicate keys, text fields, and field assignment.
 ---
 
 A record is a map of names to text:
@@ -31,13 +31,16 @@ rec nested = { inner = { a = "1" } };
 
 Because every field is text, `rec.key` is always text, and a missing key reads as `""`; [field access](/language/02-common-concepts/03-field-access/) covers that read.
 
-There is no field assignment. `rec.key = expr` is not a statement:
+A record is immutable unless its binding is `mut`. A field assignment `rec.key = expr` replaces one field of a mutable record, and adds the field when it is absent:
 
-```console
-$ kc main.kiru
-main.kiru:3:11: error: expected `;` after the expression, found `=`
-  env.FOO = "bar";
-          ^
+<span class="filename">Filename: src/main.kiru</span>
+
+```kiru
+fn main() {
+  mut rec env = { RUST_BACKTRACE = "1" };
+  env.RUST_BACKTRACE = "0";
+  env.CARGO_TERM_COLOR = "never";
+};
 ```
 
-To change a record, build a new one at the point of use; [assignment](/language/02-common-concepts/08-assignment/) covers re-binding a whole value.
+Assigning a field of a binding that is not `mut` is a compile error; [assignment and mutability](/language/02-common-concepts/08-assignment/) covers the rules.

@@ -52,7 +52,9 @@ impl Visitor for ReachableCollector {
 
     fn statement(&mut self, statement: &Statement) {
         match statement {
-            Statement::Bind { declaration, .. } | Statement::Assign { declaration, .. } => {
+            Statement::Bind { declaration, .. }
+            | Statement::Assign { declaration, .. }
+            | Statement::FieldAssign { declaration, .. } => {
                 self.pending.push(*declaration);
             }
             Statement::Expression(_)

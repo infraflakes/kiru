@@ -176,6 +176,7 @@ impl<'a> Lexer<'a> {
             "fn" => TokenKind::Fn,
             "txt" => TokenKind::Txt,
             "rec" => TokenKind::Rec,
+            "mut" => TokenKind::Mut,
             "switch" => TokenKind::Switch,
             "case" => TokenKind::Case,
             "default" => TokenKind::Default,

@@ -6,6 +6,7 @@ fn run(rec project, txt line) {
   txt code = std::command({
     Dir = project.Dir,
     Env = project.Env,
+    Nix = project.Nix,
     Direnv = project.Direnv,
   }, line);
   switch(code) {
@@ -16,10 +17,7 @@ fn run(rec project, txt line) {
 
 # Orchestrated step: hide stdout, keep stderr for debugging, return the code.
 fn status(rec project, txt line) -> txt {
-  return(std::command({
-    Dir = project.Dir,
-    Env = project.Env,
-    Direnv = project.Direnv,
-    Stream = "stderr",
-  }, line));
+  mut rec spec = project;
+  spec.Stream = "stderr";
+  return(std::command(spec, line));
 };

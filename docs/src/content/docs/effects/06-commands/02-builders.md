@@ -11,7 +11,9 @@ uppercase, and an absent or empty entry is the default.
 | --- | --- |
 | `Dir` | runs after `cd <Dir> &&`, with `Dir` quoted by `std::quote` |
 | `Env` | prepended as `export <Env>;`, used as written |
+| `Nix` | runs the line inside `nix develop -c sh -c` only when it is exactly `"true"`, quoting the line |
 | `Direnv` | wraps the line with `direnv exec <Dir> sh -c` only when it is exactly `"true"`, quoting `Dir` and the line |
+| `Timeout` | bounds the line with `timeout <Timeout> sh -c` when `Timeout` is not empty, using it as written and quoting the line |
 | `Stream` | hides stdout and/or stderr; [stream levels](/effects/06-commands/03-terminals/) |
 
 ```kiru

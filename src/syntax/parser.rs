@@ -185,8 +185,15 @@ impl Parser {
                     declarations.push(Declaration::Function(self.parse_function()?));
                 }
                 TokenKind::Txt | TokenKind::Rec => {
+                    let start = self.current().span.start;
                     let kind = self.value_kind_of().expect("txt or rec");
-                    declarations.push(Declaration::Binding(self.parse_binding(kind)?));
+                    self.advance();
+                    declarations.push(Declaration::Binding(
+                        self.parse_binding(kind, false, start)?,
+                    ));
+                }
+                TokenKind::Mut => {
+                    return Err(self.error_here("a module value cannot be `mut`"));
                 }
                 other => {
                     return Err(self.error_here(format!(

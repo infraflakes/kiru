@@ -1,4 +1,6 @@
-# Defaults for every cargo invocation in this repository.
+# Cargo behavior that is the same in every environment. The build target and
+# its static-link flag belong to the flake (`flake.nix`), so a plain `cargo`
+# outside the flake builds for the host.
 
 [alias]
 # Release build of the compiler.

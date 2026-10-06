@@ -180,9 +180,34 @@ fn rejects_missing_semicolon() {
 }
 
 #[test]
-fn rejects_field_assignment() {
-    let message = parse_error("fn f() { args.cmd = \"x\"; };");
-    assert!(message.contains("expected"), "{message}");
+fn parses_field_assignment() {
+    let file = parse("fn f(rec args) { args.cmd = \"x\"; };");
+    let Declaration::Function(function) = &file.declarations[0] else {
+        panic!("expected a function");
+    };
+    assert!(matches!(
+        &function.body[0],
+        Statement::FieldAssignment { field, .. } if field == "cmd"
+    ));
+}
+
+#[test]
+fn parses_mut_bindings_and_parameters() {
+    let file = parse("fn f(mut txt x) { mut rec r = { a = \"1\" }; r.a = \"2\"; };");
+    let Declaration::Function(function) = &file.declarations[0] else {
+        panic!("expected a function");
+    };
+    assert!(function.parameters[0].mutable);
+    let Statement::Binding(binding) = &function.body[0] else {
+        panic!("expected a binding");
+    };
+    assert!(binding.mutable);
+}
+
+#[test]
+fn rejects_mut_module_value() {
+    let message = parse_error("mut txt x = \"a\";");
+    assert_eq!(message, "a module value cannot be `mut`");
 }
 
 #[test]

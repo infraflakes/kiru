@@ -44,6 +44,21 @@
           rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
           craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
+          # The distribution target is a static musl binary. The flake picks
+          # the target per system and sets the two cargo variables from crane's
+          # musl example, so the package, the checks, and the dev shell all
+          # build it the same way. `rust-toolchain.toml` installs the std.
+          staticTarget =
+            {
+              x86_64-linux = "x86_64-unknown-linux-musl";
+              aarch64-linux = "aarch64-unknown-linux-musl";
+            }
+            .${system};
+          targetEnv = {
+            CARGO_BUILD_TARGET = staticTarget;
+            CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static";
+          };
+
           # The compiler embeds `stdlib/io.kiru` with `include_str!`, so the
           # build source has to carry it even though cargo does not.
           src = lib.fileset.toSource {
@@ -57,17 +72,15 @@
             ];
           };
 
-          # Dependencies only need the cargo files, so their artifacts are not
-          # rebuilt when `stdlib/` changes.
-          cargoArtifacts = craneLib.buildDepsOnly {
-            src = craneLib.cleanCargoSource ./.;
-            strictDeps = true;
-          };
-
           commonArgs = {
             inherit src;
             strictDeps = true;
-          };
+          }
+          // targetEnv;
+
+          # Dependencies only need the cargo files, so their artifacts are not
+          # rebuilt when `stdlib/` changes.
+          cargoArtifacts = craneLib.buildDepsOnly (commonArgs // { src = craneLib.cleanCargoSource ./.; });
 
           kiru = craneLib.buildPackage (
             commonArgs
@@ -103,14 +116,17 @@
             );
           };
 
-          devShells.default = craneLib.devShell {
-            checks = self'.checks;
-            packages = with pkgs; [
-              bun
-              biome
-              cargo-edit
-            ];
-          };
+          devShells.default = craneLib.devShell (
+            {
+              checks = self'.checks;
+              packages = with pkgs; [
+                bun
+                biome
+                cargo-edit
+              ];
+            }
+            // targetEnv
+          );
         };
     };
 }

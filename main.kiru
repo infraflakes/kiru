@@ -3,13 +3,13 @@ import "entry.kiru";
 rec kiru = {
   name = "kiru",
   Dir = ".",
-  Direnv = "true"
+  Nix = "true",
 };
 
 rec docs = {
   name = "docs",
   Dir = "docs",
-  Direnv = "true"
+  Nix = "true"
 };
 
 fn main(rec args) {

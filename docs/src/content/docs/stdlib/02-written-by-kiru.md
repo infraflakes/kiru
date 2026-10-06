@@ -31,9 +31,19 @@ fn command(rec spec, txt line) -> txt {
     default { command_line = "export " + spec.Env + "; " + command_line; };
   };
 
+  switch(spec.Nix) {
+    case("true") { command_line = "nix develop -c sh -c " + quote(command_line); };
+    default {};
+  };
+
   switch(spec.Direnv) {
     case("true") { command_line = "direnv exec " + quote(spec.Dir) + " sh -c " + quote(command_line); };
     default {};
+  };
+
+  switch(spec.Timeout) {
+    case("") {};
+    default { command_line = "timeout " + spec.Timeout + " sh -c " + quote(command_line); };
   };
 
   switch(spec.Stream) {

@@ -148,6 +148,15 @@ impl<'a> Walk<'a> {
                 self.assign(*declaration, *name_span, value)?;
                 Ok(Flow::FALLS)
             }
+            Statement::FieldAssign {
+                declaration,
+                name_span,
+                value,
+                ..
+            } => {
+                self.field_assign(*declaration, *name_span, value)?;
+                Ok(Flow::FALLS)
+            }
             Statement::Expression(expression) => {
                 // A bare statement must do something: call a function or
                 // native. A value on its own is dead text, so the shape is
@@ -229,8 +238,8 @@ impl<'a> Walk<'a> {
     /// Bind a local `txt` or `rec` and record its kind.
     fn bind(&mut self, declaration: DeclarationId, value: &Expression) -> Result<(), Diagnostic> {
         let position = match &self.program.declaration(declaration).kind {
-            DeclarationKind::Binding(BindingKind::Text) => Position::TextBinding,
-            DeclarationKind::Binding(BindingKind::Record) => Position::RecordBinding,
+            DeclarationKind::Binding(BindingKind::Text { .. }) => Position::TextBinding,
+            DeclarationKind::Binding(BindingKind::Record { .. }) => Position::RecordBinding,
             other => {
                 unreachable!("a bind statement targets a text or record binding, found {other:?}")
             }
@@ -247,14 +256,14 @@ impl<'a> Walk<'a> {
         value: &Expression,
     ) -> Result<(), Diagnostic> {
         match &self.program.declaration(declaration).kind {
-            DeclarationKind::Binding(BindingKind::Parameter) => {
+            DeclarationKind::Binding(binding) if !binding.mutable() => {
                 let name = &self.program.declaration(declaration).name;
                 Err(self.error(
                     name_span,
-                    format!("`{name}` is a parameter and is read-only"),
+                    format!("`{name}` is not mutable; declare it `mut`"),
                 ))
             }
-            DeclarationKind::Binding(BindingKind::Text | BindingKind::Record) => {
+            DeclarationKind::Binding(_) => {
                 let binding_kind = self.kind_of(declaration);
                 self.require_kind(value, binding_kind)
             }
@@ -269,6 +278,46 @@ impl<'a> Walk<'a> {
                 unreachable!("an assignment target is a binding or a module value, found {other:?}")
             }
         }
+    }
+
+    /// Assign one field of a mutable record binding. The target must be a
+    /// mutable binding whose kind is a record; the value must be text.
+    fn field_assign(
+        &mut self,
+        declaration: DeclarationId,
+        name_span: Span,
+        value: &Expression,
+    ) -> Result<(), Diagnostic> {
+        let node = self.program.declaration(declaration);
+        let name = node.name.clone();
+        match &node.kind {
+            DeclarationKind::Binding(binding) if !binding.mutable() => {
+                return Err(self.error(
+                    name_span,
+                    format!("`{name}` is not mutable; declare it `mut`"),
+                ));
+            }
+            DeclarationKind::Binding(_) => {}
+            DeclarationKind::Text(_) | DeclarationKind::Record(_) => {
+                return Err(self.error(
+                    name_span,
+                    format!("`{name}` is a module-level constant and cannot be assigned"),
+                ));
+            }
+            other => {
+                unreachable!(
+                    "a field assignment target is a binding or a module value, found {other:?}"
+                )
+            }
+        }
+        if self.kind_of(declaration) != Kind::Record {
+            return Err(self.error(
+                name_span,
+                format!("`{name}` is not a record and has no fields"),
+            ));
+        }
+        self.require(value, Position::RecordField)?;
+        Ok(())
     }
 
     /// Enforce the return rules of the enclosing function. `return` is banned

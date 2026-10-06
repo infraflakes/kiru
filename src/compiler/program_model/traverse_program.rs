@@ -59,6 +59,7 @@ fn walk_statement(visitor: &mut impl Visitor, statement: &Statement) {
     match statement {
         Statement::Bind { value, .. }
         | Statement::Assign { value, .. }
+        | Statement::FieldAssign { value, .. }
         | Statement::Expression(value) => walk_expression(visitor, value),
         Statement::Return { value, .. } => {
             if let Some(value) = value {
@@ -92,6 +93,7 @@ fn walk_statement_mut(visitor: &mut impl VisitorMut, statement: &mut Statement) 
     match statement {
         Statement::Bind { value, .. }
         | Statement::Assign { value, .. }
+        | Statement::FieldAssign { value, .. }
         | Statement::Expression(value) => walk_expression_mut(visitor, value),
         Statement::Return { value, .. } => {
             if let Some(value) = value {

@@ -33,4 +33,4 @@ rec tool = {
 };
 ```
 
-Declaration order is evaluation order, so a module value may reference functions and values declared above it, but not below it: names are read top-down everywhere, module values included. [Assignment and read-only parameters](/language/02-common-concepts/08-assignment/) covers why a module value cannot be assigned.
+Declaration order is evaluation order, so a module value may reference functions and values declared above it, but not below it: names are read top-down everywhere, module values included. [Assignment and mutability](/language/02-common-concepts/08-assignment/) covers why a module value cannot be assigned.

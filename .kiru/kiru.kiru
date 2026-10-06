@@ -1,7 +1,7 @@
 module kiru;
 
 fn build_kiru(rec project) {
-  run(project, "cargo build --release");
+  run(project, "nix build .#default");
 };
 
 fn check_kiru(rec project) {

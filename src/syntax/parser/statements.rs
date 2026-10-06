@@ -29,8 +29,16 @@ impl Parser {
     fn parse_statement(&mut self) -> Result<Statement, ParseError> {
         match &self.current().kind {
             TokenKind::Txt | TokenKind::Rec => {
+                let start = self.current().span.start;
                 let kind = self.value_kind_of().expect("txt or rec");
-                Ok(Statement::Binding(self.parse_binding(kind)?))
+                self.advance();
+                Ok(Statement::Binding(self.parse_binding(kind, false, start)?))
+            }
+            TokenKind::Mut => {
+                let start = self.advance().start;
+                let kind = self.value_kind_of().expect("txt or rec");
+                self.advance();
+                Ok(Statement::Binding(self.parse_binding(kind, true, start)?))
             }
             TokenKind::Return => self.parse_return(),
             TokenKind::Panic => self.parse_panic(),
@@ -40,6 +48,9 @@ impl Parser {
             TokenKind::Switch => self.parse_switch(),
             TokenKind::Ident(_) if matches!(self.peek(1).kind, TokenKind::Equals) => {
                 self.parse_assignment()
+            }
+            TokenKind::Ident(_) if matches!(self.peek(1).kind, TokenKind::Dot) => {
+                self.parse_field_assignment()
             }
             _ => {
                 let expression = self.parse_expression()?;
@@ -104,6 +115,25 @@ impl Parser {
         Ok(Statement::Assignment {
             name,
             name_span,
+            value,
+            span,
+        })
+    }
+
+    /// Parse a `name.field = expression;` field assignment statement.
+    fn parse_field_assignment(&mut self) -> Result<Statement, ParseError> {
+        let (name, name_span) = self.expect_identifier("in a field assignment")?;
+        let start = name_span.start;
+        self.expect(&TokenKind::Dot, "after the assigned name")?;
+        let (field, field_span) = self.expect_identifier("in a field assignment")?;
+        self.expect(&TokenKind::Equals, "after the assigned field")?;
+        let value = self.parse_expression()?;
+        let span = self.span_through_semicolon(start, "after the field assignment")?;
+        Ok(Statement::FieldAssignment {
+            name,
+            name_span,
+            field,
+            field_span,
             value,
             span,
         })

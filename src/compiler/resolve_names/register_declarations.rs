@@ -234,7 +234,9 @@ impl Builder {
                     syntax_index: None,
                 },
                 Some(id),
-                Some(DeclarationKind::Binding(BindingKind::Parameter)),
+                Some(DeclarationKind::Binding(BindingKind::Parameter {
+                    mutable: false,
+                })),
                 Some(*kind),
             );
             parameters.push(parameter);
