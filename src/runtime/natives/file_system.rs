@@ -1,12 +1,9 @@
-//! The file natives: reading, writing, appending, removing, asking whether a
-//! path exists, creating a temporary file, and matching a glob.
+//! The file natives: reading, writing, removing, asking whether a path exists,
+//! creating a temporary file, and matching a glob.
 //!
 //! Every operation except `exists` answers an OS failure as a reason text,
 //! which the virtual machine turns into a run failure; `exists` answers with
 //! text.
-
-use std::fs::OpenOptions;
-use std::io::Write;
 
 use crate::model::Value;
 
@@ -23,17 +20,6 @@ pub(crate) fn read(path: &str) -> Result<Value, String> {
 /// Replace a file with `text`, creating it when it is absent.
 pub(crate) fn write(path: &str, text: &str) -> Result<Value, String> {
     std::fs::write(path, text)
-        .map(|()| Value::Nothing)
-        .map_err(|error| describe(path, &error))
-}
-
-/// Append `text` to a file, creating it when it is absent.
-pub(crate) fn append(path: &str, text: &str) -> Result<Value, String> {
-    OpenOptions::new()
-        .append(true)
-        .create(true)
-        .open(path)
-        .and_then(|mut file| file.write_all(text.as_bytes()))
         .map(|()| Value::Nothing)
         .map_err(|error| describe(path, &error))
 }

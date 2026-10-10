@@ -1,7 +1,8 @@
-//! Statement level grammar: blocks, statements, switches, and the statement
+//! Statement level grammar: blocks, statements, matches, and the statement
 //! forms that close with a semicolon.
 
-use crate::syntax::ast::{Case, Statement};
+use crate::syntax::Span;
+use crate::syntax::ast::{Expression, MatchArm, MatchBody, Statement};
 use crate::syntax::token::TokenKind;
 
 use super::{ParseError, Parser};
@@ -28,23 +29,17 @@ impl Parser {
     /// Dispatch on the cursor token to parse one statement.
     fn parse_statement(&mut self) -> Result<Statement, ParseError> {
         match &self.current().kind {
-            TokenKind::Txt | TokenKind::Rec | TokenKind::List => {
-                let start = self.current().span.start;
-                let kind = self.value_kind_of().expect("a value kind");
-                self.advance();
-                Ok(Statement::Binding(self.parse_binding(kind, false, start)?))
-            }
-            TokenKind::Mut => {
-                let start = self.advance().start;
-                let kind = self.value_kind_of().expect("a value kind");
-                self.advance();
-                Ok(Statement::Binding(self.parse_binding(kind, true, start)?))
-            }
+            TokenKind::Let => Ok(Statement::Binding(self.parse_let_binding()?)),
+            TokenKind::Mut => Err(self.error_here("`mut` must follow `let`")),
             TokenKind::Return => self.parse_return(),
             TokenKind::Panic => self.parse_panic(),
             TokenKind::Async => self.parse_async(),
             TokenKind::Wait => self.parse_wait(),
-            TokenKind::Switch => self.parse_switch(),
+            TokenKind::Match => {
+                let expression = self.parse_match(false)?;
+                self.expect(&TokenKind::Semi, "after the match")?;
+                Ok(Statement::Expression(expression))
+            }
             TokenKind::For => self.parse_for(),
             TokenKind::Break => self.parse_break(),
             TokenKind::Ident(_) if matches!(self.peek(1).kind, TokenKind::Equals) => {
@@ -61,16 +56,14 @@ impl Parser {
         }
     }
 
-    /// Parse a `return();` or `return(expression);` statement.
+    /// Parse a `return;` or `return expression;` statement.
     fn parse_return(&mut self) -> Result<Statement, ParseError> {
         let start = self.advance().start;
-        self.expect(&TokenKind::LParen, "after `return`")?;
-        let value = if self.check(&TokenKind::RParen) {
+        let value = if self.check(&TokenKind::Semi) {
             None
         } else {
             Some(self.parse_expression()?)
         };
-        self.expect(&TokenKind::RParen, "after the returned value")?;
         let span = self.span_through_semicolon(start, "after the return")?;
         Ok(Statement::Return { value, span })
     }
@@ -162,51 +155,64 @@ impl Parser {
         })
     }
 
-    /// Parse a `switch (subject) { ... };` statement.
-    fn parse_switch(&mut self) -> Result<Statement, ParseError> {
+    /// Parse a `match subject { pattern => body; … };` term. In statement
+    /// position (`value` is false) the arm bodies are blocks; in expression
+    /// position they are expressions. The `_` arm is the default.
+    pub(super) fn parse_match(&mut self, value: bool) -> Result<Expression, ParseError> {
         let start = self.advance().start;
-        self.expect(&TokenKind::LParen, "after `switch`")?;
         let subject = self.parse_expression()?;
-        self.expect(&TokenKind::RParen, "after the switch subject")?;
-        self.expect(&TokenKind::LBrace, "to open the switch")?;
+        self.expect(&TokenKind::LBrace, "to open the match")?;
 
         let mut cases = Vec::new();
         let mut default = None;
         while !self.check(&TokenKind::RBrace) {
-            if self.check(&TokenKind::Case) {
-                let case_start = self.advance().start;
-                self.expect(&TokenKind::LParen, "after `case`")?;
-                let pattern = self.parse_expression()?;
-                self.expect(&TokenKind::RParen, "after the case pattern")?;
-                let body = self.parse_block()?;
-                let span = self.span_through_semicolon(case_start, "after the case body")?;
-                cases.push(Case {
+            if self.check(&TokenKind::Eof) {
+                return Err(
+                    self.error_here("expected `}` to close the match, found the end of the file")
+                );
+            }
+            let arm_start = self.current().span.start;
+            let is_default = self.check_wildcard_arm();
+            let pattern = if is_default {
+                self.advance();
+                None
+            } else {
+                Some(self.parse_expression()?)
+            };
+            self.expect(&TokenKind::FatArrow, "after the pattern")?;
+            let body = if value {
+                MatchBody::Expression(Box::new(self.parse_expression()?))
+            } else {
+                MatchBody::Block(self.parse_block()?)
+            };
+            let span = self.span_through_semicolon(arm_start, "after the match arm")?;
+            match pattern {
+                Some(pattern) => cases.push(MatchArm {
                     pattern,
                     body,
                     span,
-                });
-            } else if self.check(&TokenKind::Default) {
-                if default.is_some() {
-                    return Err(self.error_here("a switch allows at most one `default`"));
+                }),
+                None => {
+                    if default.is_some() {
+                        return Err(self.error_here("a match allows at most one `_` arm"));
+                    }
+                    default = Some(body);
                 }
-                self.advance();
-                let body = self.parse_block()?;
-                self.expect(&TokenKind::Semi, "after the default body")?;
-                default = Some(body);
-            } else {
-                return Err(self.error_here(format!(
-                    "expected `case` or `default`, found {}",
-                    self.current().kind.describe()
-                )));
             }
         }
-        self.expect(&TokenKind::RBrace, "to close the switch")?;
-        let span = self.span_through_semicolon(start, "after the switch")?;
-        Ok(Statement::Switch {
-            subject,
+        let close = self.expect(&TokenKind::RBrace, "to close the match")?;
+        let span = Span::new(start, close.end);
+        Ok(Expression::Match {
+            subject: Box::new(subject),
             cases,
             default,
             span,
         })
+    }
+
+    /// Whether the cursor opens the `_ =>` default arm of a match.
+    fn check_wildcard_arm(&self) -> bool {
+        matches!(&self.current().kind, TokenKind::Ident(name) if name == "_")
+            && matches!(self.peek(1).kind, TokenKind::FatArrow)
     }
 }

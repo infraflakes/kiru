@@ -10,3 +10,6 @@ vendor/
 docs/node_modules/
 docs/dist/
 docs/.astro/
+test
+test.kiru
+AGENTS.md

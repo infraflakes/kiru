@@ -3,14 +3,13 @@ title: std::process
 description: Run and manage processes.
 ---
 
-`std::process` starts commands, waits for them, signals them, and escapes text
-for the shell.
+`std::process` starts processes, waits for them, and signals them.
 
 <details>
 <summary><code>spawn</code> — run an argv and return its pid</summary>
 
 ```kiru
-std::process::spawn(rec spec, list argv) -> txt
+std::process::spawn(spec<rec>, argv<list>) -> txt
 ```
 
 Runs `argv` without a shell, in its own process group, and returns the pid.
@@ -22,7 +21,7 @@ Runs `argv` without a shell, in its own process group, and returns the pid.
 - Returns the pid as text.
 
 ```kiru
-txt pid = std::process::spawn({}, ["make", "-j4"]);
+let pid<txt> = std::process::spawn({}, ["make", "-j4"]);
 ```
 
 Related: [Process Groups](/commands/process-groups/).
@@ -33,7 +32,7 @@ Related: [Process Groups](/commands/process-groups/).
 <summary><code>wait_for</code> — reap a process and return its exit code</summary>
 
 ```kiru
-std::process::wait_for(txt pid) -> txt
+std::process::wait_for(pid<txt>) -> txt
 ```
 
 Waits for the process named by `pid` and reaps it.
@@ -43,8 +42,8 @@ Waits for the process named by `pid` and reaps it.
   signalled.
 
 ```kiru
-txt pid = std::process::spawn({}, ["true"]);
-txt code = std::process::wait_for(pid);
+let pid<txt> = std::process::spawn({}, ["true"]);
+let code<txt> = std::process::wait_for(pid);
 ```
 
 </details>
@@ -53,7 +52,7 @@ txt code = std::process::wait_for(pid);
 <summary><code>signal</code> — send a signal to a process group</summary>
 
 ```kiru
-std::process::signal(txt pid, txt name) -> nothing
+std::process::signal(pid<txt>, name<txt>)
 ```
 
 Sends a named signal to the process group led by `pid`.
@@ -65,74 +64,5 @@ Sends a named signal to the process group led by `pid`.
 ```kiru
 std::process::signal(pid, "TERM");
 ```
-
-</details>
-
-<details>
-<summary><code>command</code> — run one shell line</summary>
-
-```kiru
-std::process::command(rec spec, txt line) -> txt
-```
-
-Runs one command line through `/bin/sh -c` and returns the exit code.
-
-- `spec` — options for the command: `Dir`, `Env`, `Timeout`, and
-  `Stdin`/`Stdout`/`Stderr`. Each key is uppercase, and an absent or empty
-  entry is the default.
-- `line` — shell syntax. Values that must not become shell syntax belong in
-  `Env` or are escaped with `quote`.
-- Returns the exit code as text.
-
-```kiru
-txt code = std::process::command({ Dir = "docs" }, "bun run build");
-```
-
-Related: [Running Commands](/commands/running-a-command/), [The Command Spec and
-Streams](/commands/the-command-spec/).
-
-</details>
-
-<details>
-<summary><code>capture</code> — run one line and collect its output</summary>
-
-```kiru
-std::process::capture(txt line) -> rec
-```
-
-Runs one command line and returns its exit code and both streams.
-
-- `line` — shell syntax, run through `command`.
-- Returns the record `{ code, out, err }`. stdout and stderr are redirected to
-  temporary files, read once the command exits, and removed, so a large output
-  never blocks on a pipe.
-
-```kiru
-rec result = std::process::capture("git rev-parse HEAD");
-std::io::print(result.out);
-```
-
-Related: [The Command Spec and Streams](/commands/the-command-spec/).
-
-</details>
-
-<details>
-<summary><code>quote</code> — escape text as one shell word</summary>
-
-```kiru
-std::process::quote(txt text) -> txt
-```
-
-Wraps text in single quotes and escapes every embedded quote as `'\''`, so the
-shell reads exactly the text.
-
-- `text` — the data to pass to a command.
-- Returns one POSIX shell word.
-
-```kiru
-txt line = "echo " + std::process::quote("a b");
-```
-
-Related: [Text](/concepts/text/).
 
 </details>

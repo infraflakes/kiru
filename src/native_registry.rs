@@ -1,7 +1,7 @@
 //! The native call registry: every builtin the language ships.
 //!
-//! A row carries its namespace path, its name, the kind of each parameter, and
-//! its result kind. The resolution stage registers natives from these rows as
+//! A row carries its namespace path, its name, the type of each parameter, and
+//! its result type. The resolution stage registers natives from these rows as
 //! ordinary callables with parameter nodes, so the checker treats a native and
 //! a user function through one path. The runtime dispatches on the `Native`
 //! id; its handler match is exhaustive, so an id without a handler does not
@@ -13,18 +13,19 @@
 //! handler match is exhaustive, and the runtime checks the handler consumes
 //! exactly the declared arity.
 
-use crate::model::Kind;
+use crate::types::Type;
 
 /// The namespace the runtime's builtins live in.
 pub(crate) const BUILTIN_NAMESPACE: &[&str] = &["std"];
 
-/// One native row: its path, name, parameter kinds, and result kind.
+/// One native row: its path, name, parameter types, and result type. A native
+/// that returns no value has result type `Void`.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct NativeRow {
     pub(crate) path: &'static [&'static str],
     pub(crate) name: &'static str,
-    pub(crate) parameters: &'static [Kind],
-    pub(crate) returns: Kind,
+    pub(crate) parameters: &'static [Type],
+    pub(crate) returns: Type,
 }
 
 /// Declare every native once: the enum variant, its row, and the complete
@@ -60,36 +61,31 @@ macro_rules! native_registry {
 }
 
 native_registry! {
-    Spawn { ["std", "process"], "spawn", [Kind::Record, Kind::List] -> Kind::Text },
-    WaitFor { ["std", "process"], "wait_for", [Kind::Text] -> Kind::Text },
-    Signal { ["std", "process"], "signal", [Kind::Text, Kind::Text] -> Kind::Nothing },
-    Write { ["std", "io"], "write", [Kind::Text, Kind::Text] -> Kind::Nothing },
-    IsTerminal { ["std", "io"], "is_terminal", [Kind::Text] -> Kind::Text },
-    ReadStdin { ["std", "io"], "read_stdin", [] -> Kind::Text },
-    Read { ["std", "fs"], "read", [Kind::Text] -> Kind::Text },
-    WriteFile { ["std", "fs"], "write", [Kind::Text, Kind::Text] -> Kind::Nothing },
-    Append { ["std", "fs"], "append", [Kind::Text, Kind::Text] -> Kind::Nothing },
-    Remove { ["std", "fs"], "remove", [Kind::Text] -> Kind::Nothing },
-    Exists { ["std", "fs"], "exists", [Kind::Text] -> Kind::Text },
-    TempPath { ["std", "fs"], "temp_file", [] -> Kind::Text },
-    Glob { ["std", "fs"], "glob", [Kind::Text] -> Kind::List },
-    Length { ["std", "text"], "len", [Kind::Text] -> Kind::Text },
-    Slice { ["std", "text"], "slice", [Kind::Text, Kind::Text, Kind::Text] -> Kind::Text },
-    Find { ["std", "text"], "find", [Kind::Text, Kind::Text] -> Kind::Text },
-    Trim { ["std", "text"], "trim", [Kind::Text] -> Kind::Text },
-    Split { ["std", "text"], "split", [Kind::Text, Kind::Text] -> Kind::List },
-    Lines { ["std", "text"], "lines", [Kind::Text] -> Kind::List },
-    Sleep { ["std", "time"], "sleep", [Kind::Text] -> Kind::Nothing },
-    ListLength { ["std", "lists"], "len", [Kind::List] -> Kind::Text },
-    ListGet { ["std", "lists"], "get", [Kind::List, Kind::Text] -> Kind::Text },
-    ListAppend { ["std", "lists"], "append", [Kind::List, Kind::Text] -> Kind::List },
-    ListReverse { ["std", "lists"], "reverse", [Kind::List] -> Kind::List },
-    ListSort { ["std", "lists"], "sort", [Kind::List] -> Kind::List },
-    EnvVar { ["std", "env"], "var", [Kind::Text] -> Kind::Text },
-    CurrentDir { ["std", "env"], "current_dir", [] -> Kind::Text },
-    PathBase { ["std", "path"], "base", [Kind::Text] -> Kind::Text },
-    PathDir { ["std", "path"], "dir", [Kind::Text] -> Kind::Text },
-    PathExt { ["std", "path"], "ext", [Kind::Text] -> Kind::Text },
+    Spawn { ["std", "process"], "spawn", [Type::Record, Type::List] -> Type::Text },
+    WaitFor { ["std", "process"], "wait_for", [Type::Text] -> Type::Text },
+    Signal { ["std", "process"], "signal", [Type::Text, Type::Text] -> Type::Void },
+    Write { ["std", "io"], "write", [Type::Text, Type::Text] -> Type::Void },
+    IsTerminal { ["std", "io"], "is_terminal", [Type::Text] -> Type::Text },
+    ReadStdin { ["std", "io"], "read_stdin", [] -> Type::Text },
+    Read { ["std", "fs"], "read", [Type::Text] -> Type::Text },
+    WriteFile { ["std", "fs"], "write", [Type::Text, Type::Text] -> Type::Void },
+    Remove { ["std", "fs"], "remove", [Type::Text] -> Type::Void },
+    Exists { ["std", "fs"], "exists", [Type::Text] -> Type::Text },
+    TempPath { ["std", "fs"], "temp_file", [] -> Type::Text },
+    Glob { ["std", "fs"], "glob", [Type::Text] -> Type::List },
+    Length { ["std", "text"], "len", [Type::Text] -> Type::Text },
+    Slice { ["std", "text"], "slice", [Type::Text, Type::Text, Type::Text] -> Type::Text },
+    Find { ["std", "text"], "find", [Type::Text, Type::Text] -> Type::Text },
+    Trim { ["std", "text"], "trim", [Type::Text] -> Type::Text },
+    Split { ["std"], "split", [Type::Text, Type::Text] -> Type::List },
+    Sleep { ["std", "time"], "sleep", [Type::Text] -> Type::Void },
+    ListLength { ["std", "lists"], "len", [Type::List] -> Type::Text },
+    ListGet { ["std"], "get", [Type::List, Type::Text] -> Type::Text },
+    ListAppend { ["std"], "append", [Type::List, Type::Text] -> Type::List },
+    ListPrepend { ["std", "lists"], "prepend", [Type::List, Type::Text] -> Type::List },
+    ListSort { ["std", "lists"], "sort", [Type::List] -> Type::List },
+    EnvVar { ["std", "env"], "var", [Type::Text] -> Type::Text },
+    CurrentDir { ["std", "env"], "current_dir", [] -> Type::Text },
 }
 
 /// The row of a native.

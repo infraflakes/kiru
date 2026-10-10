@@ -10,14 +10,14 @@ count bytes, not characters, so they line up with files and shell streams.
 <summary><code>len</code> — the number of bytes</summary>
 
 ```kiru
-std::text::len(txt text) -> txt
+std::text::len(text<txt>) -> txt
 ```
 
 - `text` — the text to measure.
 - Returns the byte count as digit text.
 
 ```kiru
-std::io::print(std::text::len("abc"));   # 3
+std::print(std::text::len("abc"));   # 3
 ```
 
 </details>
@@ -26,7 +26,7 @@ std::io::print(std::text::len("abc"));   # 3
 <summary><code>slice</code> — a half-open byte range</summary>
 
 ```kiru
-std::text::slice(txt text, txt start, txt end) -> txt
+std::text::slice(text<txt>, start<txt>, end<txt>) -> txt
 ```
 
 Returns the bytes from `start` up to but not including `end`.
@@ -36,7 +36,7 @@ Returns the bytes from `start` up to but not including `end`.
   or falls inside a multi-byte character, the program exits with an error.
 
 ```kiru
-std::io::print(std::text::slice("abcdef", "1", "4"));   # bcd
+std::print(std::text::slice("abcdef", "1", "4"));   # bcd
 ```
 
 </details>
@@ -45,7 +45,7 @@ std::io::print(std::text::slice("abcdef", "1", "4"));   # bcd
 <summary><code>find</code> — the first byte index of a needle</summary>
 
 ```kiru
-std::text::find(txt text, txt needle) -> txt
+std::text::find(text<txt>, needle<txt>) -> txt
 ```
 
 - `text` — the text to search.
@@ -53,7 +53,7 @@ std::text::find(txt text, txt needle) -> txt
 - Returns the byte index of the first occurrence, or `""` when absent.
 
 ```kiru
-std::io::print(std::text::find("hello", "l"));   # 2
+std::print(std::text::find("hello", "l"));   # 2
 ```
 
 </details>
@@ -62,32 +62,14 @@ std::io::print(std::text::find("hello", "l"));   # 2
 <summary><code>trim</code> — drop surrounding whitespace</summary>
 
 ```kiru
-std::text::trim(txt text) -> txt
+std::text::trim(text<txt>) -> txt
 ```
 
 - `text` — the text to trim.
 - Returns the text without leading or trailing whitespace.
 
 ```kiru
-std::io::print(std::text::trim("  hi\n"));   # hi
-```
-
-</details>
-
-<details>
-<summary><code>split</code> — split text into a list</summary>
-
-```kiru
-std::text::split(txt text, txt separator) -> list
-```
-
-- `text` — the text to split.
-- `separator` — the text between parts. An empty separator splits between
-  characters.
-- Returns the parts as a list.
-
-```kiru
-list parts = std::text::split("a,b,c", ",");
+std::print(std::text::trim("  hi\n"));   # hi
 ```
 
 </details>
@@ -96,14 +78,14 @@ list parts = std::text::split("a,b,c", ",");
 <summary><code>lines</code> — split text into lines</summary>
 
 ```kiru
-std::text::lines(txt text) -> list
+std::text::lines(text<txt>) -> list
 ```
 
 - `text` — the text to split on newlines.
 - Returns the lines as a list. A trailing newline adds no empty line.
 
 ```kiru
-list lines = std::text::lines("a\nb\n");
+let lines<list> = std::text::lines("a\nb\n");
 ```
 
 </details>
@@ -112,7 +94,7 @@ list lines = std::text::lines("a\nb\n");
 <summary><code>contains</code> — whether text contains a needle</summary>
 
 ```kiru
-std::text::contains(txt text, txt needle) -> txt
+std::text::contains(text<txt>, needle<txt>) -> txt
 ```
 
 - `text` — the text to search.
@@ -120,7 +102,7 @@ std::text::contains(txt text, txt needle) -> txt
 - Returns `"true"` or `"false"`.
 
 ```kiru
-std::io::print(std::text::contains("hello", "ell"));   # true
+std::print(std::text::contains("hello", "ell"));   # true
 ```
 
 </details>
@@ -129,7 +111,7 @@ std::io::print(std::text::contains("hello", "ell"));   # true
 <summary><code>starts_with</code> — whether text starts with a prefix</summary>
 
 ```kiru
-std::text::starts_with(txt text, txt prefix) -> txt
+std::text::starts_with(text<txt>, prefix<txt>) -> txt
 ```
 
 - `text` — the text to test.
@@ -137,7 +119,7 @@ std::text::starts_with(txt text, txt prefix) -> txt
 - Returns `"true"` or `"false"`.
 
 ```kiru
-std::io::print(std::text::starts_with("hello", "he"));   # true
+std::print(std::text::starts_with("hello", "he"));   # true
 ```
 
 </details>
@@ -146,7 +128,7 @@ std::io::print(std::text::starts_with("hello", "he"));   # true
 <summary><code>ends_with</code> — whether text ends with a suffix</summary>
 
 ```kiru
-std::text::ends_with(txt text, txt suffix) -> txt
+std::text::ends_with(text<txt>, suffix<txt>) -> txt
 ```
 
 - `text` — the text to test.
@@ -154,7 +136,7 @@ std::text::ends_with(txt text, txt suffix) -> txt
 - Returns `"true"` or `"false"`.
 
 ```kiru
-std::io::print(std::text::ends_with("hello", "lo"));   # true
+std::print(std::text::ends_with("hello", "lo"));   # true
 ```
 
 </details>
@@ -163,7 +145,7 @@ std::io::print(std::text::ends_with("hello", "lo"));   # true
 <summary><code>replace</code> — replace every occurrence</summary>
 
 ```kiru
-std::text::replace(txt text, txt from, txt to) -> txt
+std::text::replace(text<txt>, from<txt>, to<txt>) -> txt
 ```
 
 - `text` — the source.
@@ -172,24 +154,7 @@ std::text::replace(txt text, txt from, txt to) -> txt
 - Returns a new text.
 
 ```kiru
-std::io::print(std::text::replace("a-b-c", "-", "+"));   # a+b+c
-```
-
-</details>
-
-<details>
-<summary><code>join</code> — join a list into one text</summary>
-
-```kiru
-std::text::join(list parts, txt separator) -> txt
-```
-
-- `parts` — the list to join.
-- `separator` — the text between each pair.
-- Returns the joined text.
-
-```kiru
-std::io::print(std::text::join(["a", "b"], "-"));   # a-b
+std::print(std::text::replace("a-b-c", "-", "+"));   # a+b+c
 ```
 
 </details>

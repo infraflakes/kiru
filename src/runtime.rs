@@ -22,6 +22,18 @@ pub(crate) fn program_name() -> String {
         .unwrap_or_else(|| "kiru".to_owned())
 }
 
+/// Report a runtime error the way `std::eprint` does: a red `ERROR:` prefix on
+/// a terminal, then the message on stderr. The caller then stops the run, so
+/// every failure a program can raise reads the same way.
+pub(crate) fn report_error(message: &str) {
+    use std::io::IsTerminal;
+    if std::io::stderr().is_terminal() {
+        eprintln!("\u{1b}[31mERROR:\u{1b}[0m {message}");
+    } else {
+        eprintln!("ERROR: {message}");
+    }
+}
+
 /// A failure that unwinds the body that raised it and runs its defers. It
 /// leaves every other body running; the run exits nonzero once the entry body
 /// ends and every thread has joined.

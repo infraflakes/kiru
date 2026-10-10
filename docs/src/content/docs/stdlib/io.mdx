@@ -10,7 +10,7 @@ reads standard input.
 <summary><code>write</code> — write to stdout or stderr</summary>
 
 ```kiru
-std::io::write(txt file_descriptor, txt text) -> nothing
+std::io::write(file_descriptor<txt>, text<txt>)
 ```
 
 Writes text to one standard stream exactly, with no added newline.
@@ -28,7 +28,7 @@ std::io::write("1", "no newline");
 <summary><code>is_terminal</code> — whether a stream is a terminal</summary>
 
 ```kiru
-std::io::is_terminal(txt file_descriptor) -> txt
+std::io::is_terminal(file_descriptor<txt>) -> txt
 ```
 
 Tells whether a standard stream is connected to a terminal.
@@ -37,9 +37,9 @@ Tells whether a standard stream is connected to a terminal.
 - Returns `"true"` or `"false"`.
 
 ```kiru
-switch(std::io::is_terminal("1")) {
-  case("true") { std::io::print("interactive"); };
-  default { std::io::print("redirected"); };
+match std::io::is_terminal("1") {
+  "true" => { std::print("interactive"); };
+  _ => { std::print("redirected"); };
 };
 ```
 
@@ -59,84 +59,8 @@ Reads standard input to the end, so a program can be a filter.
 - Returns everything read as text.
 
 ```kiru
-list lines = std::text::lines(std::io::read_stdin());
-std::io::print(std::lists::len(lines));
-```
-
-</details>
-
-<details>
-<summary><code>print</code> — write a line to stdout</summary>
-
-```kiru
-std::io::print(txt message) -> nothing
-```
-
-Writes `message` to stdout with a trailing newline.
-
-- `message` — the line to write.
-
-```kiru
-std::io::print("hello");
-```
-
-</details>
-
-<details>
-<summary><code>log</code> — write an INFO line</summary>
-
-```kiru
-std::io::log(txt message) -> nothing
-```
-
-Writes an `INFO:` line to stdout; the prefix is yellow when stdout is a
-terminal.
-
-- `message` — the line to write.
-
-```kiru
-std::io::log("starting");
-```
-
-</details>
-
-<details>
-<summary><code>eprint</code> — write an ERROR line and panic</summary>
-
-```kiru
-std::io::eprint(txt message) -> nothing
-```
-
-Writes an `ERROR:` line to stderr, red when stderr is a terminal, then panics.
-Because `eprint` always panics, calling it never returns.
-
-- `message` — the reason for the failure.
-
-```kiru
-std::io::eprint("missing token");
-```
-
-Related: [Panic and Failure](/failure/panic/).
-
-</details>
-
-<details>
-<summary><code>emit</code> — write a prefixed, colored line</summary>
-
-```kiru
-std::io::emit(txt color, txt prefix, txt file_descriptor, txt text) -> nothing
-```
-
-Writes a prefixed line to one stream, coloring the prefix only when the stream
-is a terminal.
-
-- `color` — an ANSI SGR code (`33` yellow, `31` red).
-- `prefix` — the word before the message, such as `INFO:`.
-- `file_descriptor` — `"1"` for stdout or `"2"` for stderr.
-- `text` — the message.
-
-```kiru
-std::io::emit("33", "INFO:", "1", "starting");
+let lines<list> = std::text::lines(std::io::read_stdin());
+std::print(std::lists::len(lines));
 ```
 
 </details>

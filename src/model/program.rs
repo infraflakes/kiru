@@ -80,12 +80,11 @@ pub(crate) enum Origin {
     File,
 }
 
-/// One loaded file and the nodes it owns.
+/// One loaded file and the declarations it holds. A file may span several
+/// namespaces through `mod` blocks, so it keeps no single namespace.
 #[derive(Debug)]
 pub(crate) struct File {
     pub(crate) path: PathBuf,
-    pub(crate) namespace: NamespaceId,
-    pub(crate) imports: Vec<FileId>,
     pub(crate) declarations: Vec<DeclarationId>,
 }
 

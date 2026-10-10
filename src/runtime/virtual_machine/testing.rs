@@ -45,10 +45,7 @@ fn root_symbols(program: &Program) -> HashMap<String, u32> {
     for declaration in &program.declarations {
         let has_code = matches!(
             declaration.kind,
-            DeclarationKind::Function(_)
-                | DeclarationKind::Text(_)
-                | DeclarationKind::Record(_)
-                | DeclarationKind::List(_)
+            DeclarationKind::Function(_) | DeclarationKind::Value { .. }
         );
         if !has_code {
             continue;

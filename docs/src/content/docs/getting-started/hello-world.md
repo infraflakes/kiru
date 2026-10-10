@@ -25,7 +25,7 @@ program:
 
 ```kiru
 fn main() {
-  std::io::print("hello, world");
+  std::print("hello, world");
 };
 ```
 
@@ -56,11 +56,11 @@ in `{}`, and the whole declaration ends with a `;`.
 Next, the line inside the body:
 
 ```kiru
-  std::io::print("hello, world");
+  std::print("hello, world");
 ```
 
-This calls `std::io::print`, which writes a line to stdout. `std::io` is part of
-the standard library, which every program has; `::` separates the namespace from
+This calls `std::print`, which writes a line to stdout. `std` is the standard
+library namespace, which every program has; `::` separates the namespace from
 the function. The argument is a string literal in double quotes.
 
 ## main's Signature

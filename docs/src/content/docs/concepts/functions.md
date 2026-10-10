@@ -11,22 +11,23 @@ A function is declared with `fn`:
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
-fn banner(txt name) -> txt {
-  return("=== " + name + " ===");
+fn banner(name<txt>) -> txt {
+  return "=== " + name + " ===";
 };
 ```
 
-Parameters are comma separated, and each writes its type before its name. A
-trailing comma is allowed, and duplicate parameter names are an error.
+Parameters are comma separated, and each writes its name then its type in
+angle brackets. A trailing comma is allowed, and duplicate parameter names are
+an error.
 
 The return type follows the parameter list: `-> txt`, `-> rec`, `-> list`, or
 nothing at all.
 
 ## Parameters
 
-Each parameter's type is written at its declaration, and every call is checked
-against it. A parameter is immutable unless declared `mut`; a `mut` parameter is
-a mutable copy. [Bindings and
+Each parameter's type is written in angle brackets at its declaration, and
+every call is checked against it. A parameter is immutable unless declared
+`mut`; a `mut` parameter is a mutable copy. [Bindings and
 Mutability](/concepts/bindings-and-mutability/) covers `mut`.
 
 ## Calling
@@ -38,7 +39,7 @@ parameters:
 ```console
 $ kc main.kiru
 main.kiru:6:14: error: `banner` takes 1 arguments, found 0
-  std::io::print(banner());
+  std::print(banner());
              ^^^^^^
 ```
 
@@ -47,19 +48,19 @@ an error.
 
 ## Returning
 
-`return(expr);` ends a function and gives its result. A function declared
+`return expr;` ends a function and gives its result. A function declared
 `-> txt`, `-> rec`, or `-> list` must return on every path:
 
 ```kiru
-fn pick(txt flag) -> txt {
-  switch(flag) {
-    case("a") { return("first"); };
-    default { return("other"); };
+fn pick(flag<txt>) -> txt {
+  match flag {
+    "a" => { return "first"; };
+    _ => { return "other"; };
   };
 };
 ```
 
-A function with no return type may `return();` early. `return` may appear
+A function with no return type may `return;` early. `return` may appear
 anywhere; statements after it are unreachable.
 
 ## Calls as statements
@@ -68,7 +69,7 @@ A statement can be a call, and its result is discarded:
 
 ```kiru
 fn main() {
-  std::io::print("hello");
+  std::print("hello");
   banner("kiru");
 };
 ```

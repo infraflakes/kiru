@@ -1,50 +1,36 @@
-//! The loaded program: its files, their origins, and their ordering.
+//! The loaded program: its files and the joined item stream.
+//!
+//! Loading expands every `import` in place, depth first, so the items of a
+//! program are one ordered sequence: each file's items in order, with an
+//! imported file's items spliced where the import sits. A file is loaded once;
+//! a second import of it, or an import cycle, is an error.
 
-use std::collections::HashSet;
 use std::path::PathBuf;
 
 use crate::model::Origin;
-use crate::syntax::File;
+use crate::syntax::Declaration;
 
-/// A parsed file together with the resolved indexes of its imports.
+/// One loaded source file, kept for diagnostics.
 #[derive(Debug)]
 pub(crate) struct LoadedFile {
     pub(crate) path: PathBuf,
     pub(crate) source: String,
-    pub(crate) file: File,
-    pub(crate) imports: Vec<usize>,
     pub(crate) origin: Origin,
 }
 
-/// The whole program: every loaded file plus the entry index.
+/// One declaration in the joined stream, with the file it came from and the
+/// namespace a `mod` block placed it in.
+#[derive(Debug)]
+pub(crate) struct ScopedDeclaration {
+    pub(crate) file: usize,
+    pub(crate) namespace: Vec<String>,
+    pub(crate) declaration: Declaration,
+}
+
+/// The whole program: every loaded file plus the joined item stream.
 #[derive(Debug)]
 pub(crate) struct LoadedProgram {
     pub(crate) entry: usize,
     pub(crate) files: Vec<LoadedFile>,
-}
-
-impl LoadedProgram {
-    /// File indexes in declaration order: imports first, depth first, then
-    /// the importing file.
-    pub(crate) fn ordered_files(&self) -> Vec<usize> {
-        fn visit(
-            files: &[LoadedFile],
-            index: usize,
-            visited: &mut HashSet<usize>,
-            order: &mut Vec<usize>,
-        ) {
-            if !visited.insert(index) {
-                return;
-            }
-            for &import in &files[index].imports {
-                visit(files, import, visited, order);
-            }
-            order.push(index);
-        }
-
-        let mut order = Vec::new();
-        let mut visited = HashSet::new();
-        visit(&self.files, self.entry, &mut visited, &mut order);
-        order
-    }
+    pub(crate) items: Vec<ScopedDeclaration>,
 }

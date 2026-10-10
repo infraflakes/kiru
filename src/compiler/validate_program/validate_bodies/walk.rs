@@ -1,34 +1,34 @@
 //! The validation walk over one declaration body.
 //!
-//! Names are already edges, so the walker only reads and writes node kinds.
-//! Kinds are derived bottom-up: the walk returns the kind of each expression
-//! it visits and records the local binding kinds. A function's return kind is
-//! declared, so a return is checked against it rather than accumulated. The
-//! usage matrix decides where each kind may stand.
-
-use std::collections::HashMap;
+//! Names are already edges, so the walker only reads and writes node types.
+//! Types are derived bottom-up: the walk returns the type of each expression
+//! it visits. A function's return type is declared, so a return is checked
+//! against it rather than accumulated. Every value position asks for one type
+//! through `require`, and a call that produces no value may only stand as a
+//! statement.
 
 use crate::compiler::{Diagnostic, expected_instead, function_used_as_value, value_called};
 use crate::model::{
-    BindingKind, DeclarationId, DeclarationKind, Expression, Field, FileId, Kind, Position,
-    Program, Statement, Usage, fits,
+    Binding, DeclarationId, DeclarationKind, Expression, Field, FileId, MatchArm, MatchBody,
+    Program, Statement, StringPart,
 };
+use crate::native_registry::native_row;
 use crate::syntax::Span;
+use crate::types::{Type, fits};
 
 use super::flow::Flow;
 use super::patterns::{atoms_equal, duplicate_pattern_message, is_atom};
 
 /// The walker over one body. Names are already edges, so it only reads and
-/// writes node kinds.
+/// writes node types.
 pub(in crate::compiler::validate_program) struct Walk<'a> {
     program: &'a Program,
     file: FileId,
-    pub(super) locals: HashMap<DeclarationId, Kind>,
     /// The name of the function being walked. A module value walk has none,
     /// and a `return` cannot occur in one.
     function_name: Option<&'a str>,
-    /// The function's declared return kind.
-    declared_kind: Kind,
+    /// The function's declared return type: `Void` when it returns no value.
+    return_type: Type,
     /// Whether the walk is inside a `for` body, where `break` is allowed.
     in_loop: bool,
 }
@@ -39,27 +39,25 @@ impl<'a> Walk<'a> {
         Self {
             program,
             file,
-            locals: HashMap::new(),
             function_name: None,
-            declared_kind: Kind::Nothing,
+            return_type: Type::Void,
             in_loop: false,
         }
     }
 
     /// A walk over a function body. A return is checked against the declared
-    /// kind.
+    /// return type.
     pub(in crate::compiler::validate_program) fn for_function(
         program: &'a Program,
         file: FileId,
         function_name: &'a str,
-        declared_kind: Kind,
+        return_type: Type,
     ) -> Self {
         Self {
             program,
             file,
-            locals: HashMap::new(),
             function_name: Some(function_name),
-            declared_kind,
+            return_type,
             in_loop: false,
         }
     }
@@ -68,13 +66,21 @@ impl<'a> Walk<'a> {
         Diagnostic::new(&self.program.file(self.file).path, span, message)
     }
 
-    /// The kind of a binding, a parameter, or a module value.
-    fn kind_of(&self, id: DeclarationId) -> Kind {
-        self.locals
-            .get(&id)
-            .copied()
-            .or(self.program.declaration(id).derived.kind)
-            .expect("every visited binding and callable carries a kind")
+    /// The type of a binding or a module value.
+    fn kind_of(&self, id: DeclarationId) -> Type {
+        match &self.program.declaration(id).kind {
+            DeclarationKind::Binding(binding) => binding.ty,
+            DeclarationKind::Value { ty, .. } => *ty,
+            other => unreachable!("a value node carries a type, found {other:?}"),
+        }
+    }
+
+    /// The binding node a bind statement targets.
+    fn binding_of(&self, id: DeclarationId) -> Binding {
+        match &self.program.declaration(id).kind {
+            DeclarationKind::Binding(binding) => *binding,
+            other => unreachable!("a bind statement targets a binding, found {other:?}"),
+        }
     }
 
     /// Validate a sequence of statements and return its flow. Every statement
@@ -104,7 +110,8 @@ impl<'a> Walk<'a> {
             Statement::Bind {
                 declaration, value, ..
             } => {
-                self.bind(*declaration, value)?;
+                let ty = self.binding_of(*declaration).ty;
+                self.require(value, ty)?;
                 Ok(Flow::FALLS)
             }
             Statement::Assign {
@@ -125,16 +132,23 @@ impl<'a> Walk<'a> {
                 self.field_assign(*declaration, *name_span, value)?;
                 Ok(Flow::FALLS)
             }
-            Statement::Expression(expression) => {
-                // A bare statement must do something: call a function or
-                // native. A value on its own is dead text, so the shape is
-                // rejected before the kind.
-                if !matches!(expression, Expression::Call { .. }) {
-                    return Err(self.error(expression.span(), "a statement must be a call"));
+            Statement::Expression(expression) => match expression {
+                // A bare call runs for its effect; a call that halts ends the
+                // path.
+                Expression::Call { .. } => {
+                    self.expression(expression)?;
+                    Ok(self.call_flow(expression))
                 }
-                self.require(expression, Position::Statement)?;
-                Ok(self.call_flow(expression))
-            }
+                // A bare match runs its taken arm; its flow is the arms' union.
+                Expression::Match {
+                    subject,
+                    cases,
+                    default,
+                    ..
+                } => self.match_statement(subject, cases, default),
+                // Any other bare value is dead, so the shape is rejected.
+                _ => Err(self.error(expression.span(), "a statement must be a call")),
+            },
             Statement::Return { value, span } => {
                 self.return_statement(value.as_ref(), *span)?;
                 Ok(Flow::RETURNS)
@@ -148,49 +162,8 @@ impl<'a> Walk<'a> {
                 Ok(Flow::FALLS)
             }
             Statement::Wait { .. } => Ok(Flow::FALLS),
-            Statement::Switch {
-                subject,
-                cases,
-                default,
-                ..
-            } => {
-                self.require(subject, Position::CasePattern)?;
-                let mut seen: Vec<&Expression> = Vec::new();
-                let mut flow = Flow::STOPS;
-                for case in cases {
-                    if !is_atom(&case.pattern) {
-                        return Err(self.error(
-                            case.pattern.span(),
-                            "a case arm is a literal, a name, or a field path",
-                        ));
-                    }
-                    // Two arms are duplicates when they are the same atom:
-                    // equal literal text, the same declaration, or the same
-                    // field path. Report the second occurrence.
-                    if seen.iter().any(|other| atoms_equal(other, &case.pattern)) {
-                        return Err(self.error(
-                            case.pattern.span(),
-                            duplicate_pattern_message(&case.pattern),
-                        ));
-                    }
-                    seen.push(&case.pattern);
-                    self.require(&case.pattern, Position::CasePattern)?;
-                    flow = flow.union(self.statements(&case.body)?);
-                }
-                match default {
-                    Some(default) => flow = flow.union(self.statements(default)?),
-                    None => flow = flow.union(Flow::FALLS),
-                }
-                Ok(flow)
-            }
-            Statement::ForEach {
-                item,
-                iterable,
-                body,
-                ..
-            } => {
-                self.require(iterable, Position::Iterable)?;
-                self.locals.insert(*item, Kind::Text);
+            Statement::ForEach { iterable, body, .. } => {
+                self.require(iterable, Type::List)?;
                 let was_in_loop = self.in_loop;
                 self.in_loop = true;
                 let body_flow = self.statements(body);
@@ -239,21 +212,6 @@ impl<'a> Walk<'a> {
         Flow::FALLS
     }
 
-    /// Bind a local `txt` or `rec` and record its kind.
-    fn bind(&mut self, declaration: DeclarationId, value: &Expression) -> Result<(), Diagnostic> {
-        let position = match &self.program.declaration(declaration).kind {
-            DeclarationKind::Binding(BindingKind::Text { .. }) => Position::TextBinding,
-            DeclarationKind::Binding(BindingKind::Record { .. }) => Position::RecordBinding,
-            DeclarationKind::Binding(BindingKind::List { .. }) => Position::ListBinding,
-            other => {
-                unreachable!("a bind statement targets a text or record binding, found {other:?}")
-            }
-        };
-        let actual = self.require(value, position)?;
-        self.locals.insert(declaration, actual);
-        Ok(())
-    }
-
     fn assign(
         &mut self,
         declaration: DeclarationId,
@@ -261,7 +219,7 @@ impl<'a> Walk<'a> {
         value: &Expression,
     ) -> Result<(), Diagnostic> {
         match &self.program.declaration(declaration).kind {
-            DeclarationKind::Binding(binding) if !binding.mutable() => {
+            DeclarationKind::Binding(binding) if !binding.mutable => {
                 let name = &self.program.declaration(declaration).name;
                 Err(self.error(
                     name_span,
@@ -269,10 +227,11 @@ impl<'a> Walk<'a> {
                 ))
             }
             DeclarationKind::Binding(_) => {
-                let binding_kind = self.kind_of(declaration);
-                self.require_kind(value, binding_kind)
+                let ty = self.kind_of(declaration);
+                self.require(value, ty)?;
+                Ok(())
             }
-            DeclarationKind::Text(_) | DeclarationKind::Record(_) | DeclarationKind::List(_) => {
+            DeclarationKind::Value { .. } => {
                 let name = &self.program.declaration(declaration).name;
                 Err(self.error(
                     name_span,
@@ -286,7 +245,7 @@ impl<'a> Walk<'a> {
     }
 
     /// Assign one field of a mutable record binding. The target must be a
-    /// mutable binding whose kind is a record; the value must be text.
+    /// mutable binding whose type is a record; the value must be text.
     fn field_assign(
         &mut self,
         declaration: DeclarationId,
@@ -296,14 +255,14 @@ impl<'a> Walk<'a> {
         let node = self.program.declaration(declaration);
         let name = node.name.clone();
         match &node.kind {
-            DeclarationKind::Binding(binding) if !binding.mutable() => {
+            DeclarationKind::Binding(binding) if !binding.mutable => {
                 return Err(self.error(
                     name_span,
                     format!("`{name}` is not mutable; declare it `mut`"),
                 ));
             }
             DeclarationKind::Binding(_) => {}
-            DeclarationKind::Text(_) | DeclarationKind::Record(_) | DeclarationKind::List(_) => {
+            DeclarationKind::Value { .. } => {
                 return Err(self.error(
                     name_span,
                     format!("`{name}` is a module-level constant and cannot be assigned"),
@@ -315,20 +274,20 @@ impl<'a> Walk<'a> {
                 )
             }
         }
-        if self.kind_of(declaration) != Kind::Record {
+        if self.kind_of(declaration) != Type::Record {
             return Err(self.error(
                 name_span,
                 format!("`{name}` is not a record and has no fields"),
             ));
         }
-        self.require(value, Position::RecordField)?;
+        self.require(value, Type::Text)?;
         Ok(())
     }
 
     /// Enforce the return rules of the enclosing function. A value return is
-    /// only for a function declared `-> txt` or `-> rec`, and its value must fit
-    /// that kind; a bare return is only for a function declared with no return
-    /// kind.
+    /// only for a function declared `-> txt` or `-> rec`, and its value must
+    /// fit that type; a bare return is only for a function declared with no
+    /// return type.
     fn return_statement(
         &mut self,
         value: Option<&Expression>,
@@ -337,43 +296,62 @@ impl<'a> Walk<'a> {
         let Some(name) = self.function_name else {
             return Err(self.error(span, "`return` is not allowed here"));
         };
-        match value {
-            Some(value) if self.declared_kind == Kind::Nothing => Err(self.error(
+        match (value, self.return_type) {
+            (Some(value), Type::Void) => Err(self.error(
                 value.span(),
                 format!("`{name}` is declared to return nothing, so `return` cannot carry a value"),
             )),
-            Some(value) => self.require_kind(value, self.declared_kind),
-            None if self.declared_kind != Kind::Nothing => Err(self.error(
+            (Some(value), return_type) => {
+                self.require(value, return_type)?;
+                Ok(())
+            }
+            (None, Type::Void) => Ok(()),
+            (None, return_type) => Err(self.error(
                 span,
                 format!(
                     "`{name}` is declared to return {}, so `return` must carry a value",
-                    self.declared_kind.name()
+                    return_type.name()
                 ),
             )),
-            None => Ok(()),
         }
     }
 
     pub(super) fn fields(&mut self, fields: &[Field]) -> Result<(), Diagnostic> {
         for field in fields {
-            self.require(&field.value, Position::RecordField)?;
+            self.require(&field.value, Type::Text)?;
         }
         Ok(())
     }
 
-    fn expression(&mut self, expression: &Expression) -> Result<Kind, Diagnostic> {
+    /// Derive the type of an expression. A call that returns no value has type
+    /// `Void`, so every expression has a type.
+    fn expression(&mut self, expression: &Expression) -> Result<Type, Diagnostic> {
         match expression {
-            Expression::Text { .. } => Ok(Kind::Text),
+            Expression::Text { .. } => Ok(Type::Text),
             Expression::Record { fields, .. } => {
                 self.fields(fields)?;
-                Ok(Kind::Record)
+                Ok(Type::Record)
             }
             Expression::List { elements, .. } => {
                 for element in elements {
-                    self.require(element, Position::ListElement)?;
+                    self.require(element, Type::Text)?;
                 }
-                Ok(Kind::List)
+                Ok(Type::List)
             }
+            Expression::Interpolated { parts, .. } => {
+                for part in parts {
+                    if let StringPart::Expression(expression) = part {
+                        self.require(expression, Type::Text)?;
+                    }
+                }
+                Ok(Type::Text)
+            }
+            Expression::Match {
+                subject,
+                cases,
+                default,
+                ..
+            } => self.match_expression(subject, cases, default),
             Expression::Reference {
                 declaration, span, ..
             } => self.reference(*declaration, *span),
@@ -384,23 +362,22 @@ impl<'a> Walk<'a> {
                 ..
             } => self.call(*callee, *callee_span, arguments),
             Expression::Field { target, .. } => {
-                self.require(target, Position::RecordBinding)?;
-                Ok(Kind::Text)
+                self.require(target, Type::Record)?;
+                Ok(Type::Text)
             }
             Expression::Add { left, right, .. } => {
-                self.require(left, Position::TextBinding)?;
-                self.require(right, Position::TextBinding)?;
-                Ok(Kind::Text)
+                self.require(left, Type::Text)?;
+                self.require(right, Type::Text)?;
+                Ok(Type::Text)
             }
         }
     }
 
-    fn reference(&mut self, declaration: DeclarationId, span: Span) -> Result<Kind, Diagnostic> {
+    fn reference(&mut self, declaration: DeclarationId, span: Span) -> Result<Type, Diagnostic> {
         match &self.program.declaration(declaration).kind {
-            DeclarationKind::Binding(_)
-            | DeclarationKind::Text(_)
-            | DeclarationKind::Record(_)
-            | DeclarationKind::List(_) => Ok(self.kind_of(declaration)),
+            DeclarationKind::Binding(_) | DeclarationKind::Value { .. } => {
+                Ok(self.kind_of(declaration))
+            }
             DeclarationKind::Function(_) | DeclarationKind::Native(_) => Err(self.error(
                 span,
                 function_used_as_value(&self.program.display(declaration)),
@@ -413,35 +390,22 @@ impl<'a> Walk<'a> {
         callee: DeclarationId,
         callee_span: Span,
         arguments: &[Expression],
-    ) -> Result<Kind, Diagnostic> {
-        if !matches!(
-            self.program.declaration(callee).kind,
-            DeclarationKind::Function(_) | DeclarationKind::Native(_)
-        ) {
-            return Err(self.error(callee_span, value_called(&self.program.display(callee))));
-        }
+    ) -> Result<Type, Diagnostic> {
+        let returns = match &self.program.declaration(callee).kind {
+            DeclarationKind::Function(function) => function.return_type,
+            DeclarationKind::Native(native) => native_row(*native).returns,
+            _ => {
+                return Err(self.error(callee_span, value_called(&self.program.display(callee))));
+            }
+        };
         let parameter_count = self.program.declaration(callee).parameters.len();
-        let returns = self
-            .program
-            .declaration(callee)
-            .derived
-            .kind
-            .expect("every callable carries the kind its declaration fixed");
         self.arity(callee, callee_span, arguments, parameter_count)?;
         for (index, argument) in arguments.iter().enumerate() {
             let parameter = self.program.declaration(callee).parameters[index];
             let required = self.kind_of(parameter);
-            self.require_kind(argument, required)?;
+            self.require(argument, required)?;
         }
         Ok(returns)
-    }
-
-    /// Require one argument to fit a parameter's kind. This is the one rule
-    /// for every callable, so a native and a user function are checked the same
-    /// way.
-    fn require_kind(&mut self, argument: &Expression, required: Kind) -> Result<(), Diagnostic> {
-        self.require_usage(argument, required.usage())?;
-        Ok(())
     }
 
     fn arity(
@@ -464,31 +428,123 @@ impl<'a> Walk<'a> {
         Ok(())
     }
 
-    /// Require a value whose kind fits a position, returning its kind. The
-    /// position names the usage; the message names that requirement.
+    /// Require a value of a type, returning that type. This is the one
+    /// compatibility check; every caller names its requirement as a type. A
+    /// value of the wrong type, including `Void`, is one generic mismatch.
     pub(in crate::compiler::validate_program) fn require(
         &mut self,
         expression: &Expression,
-        position: Position,
-    ) -> Result<Kind, Diagnostic> {
-        self.require_usage(expression, position.required_usage())
-    }
-
-    /// Require an expression whose kind fits a usage, returning its kind. This
-    /// is the one compatibility check; every caller names its requirement as a
-    /// kind or a position and lands here.
-    fn require_usage(
-        &mut self,
-        expression: &Expression,
-        required: Usage,
-    ) -> Result<Kind, Diagnostic> {
+        required: Type,
+    ) -> Result<Type, Diagnostic> {
         let actual = self.expression(expression)?;
-        if fits(actual.usage(), required) {
+        if fits(actual, required) {
             return Ok(actual);
         }
         Err(self.error(
             expression.span(),
             expected_instead(required.name(), actual.name()),
         ))
+    }
+
+    /// The type of a match in expression position: the common type of the arm
+    /// expressions, or `Void` when the arms are blocks.
+    fn match_expression(
+        &mut self,
+        subject: &Expression,
+        cases: &[MatchArm],
+        default: &Option<MatchBody>,
+    ) -> Result<Type, Diagnostic> {
+        self.require(subject, Type::Text)?;
+        let mut seen: Vec<&Expression> = Vec::new();
+        let mut result: Option<Type> = None;
+        for arm in cases {
+            self.match_pattern(&arm.pattern, &mut seen)?;
+            let ty = self.match_body_type(&arm.body)?;
+            if let Some(previous) = result
+                && previous != ty
+            {
+                return Err(self.error(arm.span, expected_instead(previous.name(), ty.name())));
+            }
+            result = Some(ty);
+        }
+        if let Some(default) = default {
+            let ty = self.match_body_type(default)?;
+            if let Some(previous) = result
+                && previous != ty
+            {
+                return Err(
+                    self.error(subject.span(), expected_instead(previous.name(), ty.name()))
+                );
+            }
+            result = Some(ty);
+        }
+        Ok(result.unwrap_or(Type::Void))
+    }
+
+    /// The flow of a match in statement position: the union of the taken arm's
+    /// flow, plus a fall-through when there is no `_` arm.
+    fn match_statement(
+        &mut self,
+        subject: &Expression,
+        cases: &[MatchArm],
+        default: &Option<MatchBody>,
+    ) -> Result<Flow, Diagnostic> {
+        self.require(subject, Type::Text)?;
+        let mut seen: Vec<&Expression> = Vec::new();
+        let mut flow = Flow::STOPS;
+        for arm in cases {
+            self.match_pattern(&arm.pattern, &mut seen)?;
+            flow = flow.union(self.match_body_flow(&arm.body)?);
+        }
+        match default {
+            Some(default) => flow = flow.union(self.match_body_flow(default)?),
+            None => flow = flow.union(Flow::FALLS),
+        }
+        Ok(flow)
+    }
+
+    /// Validate one match arm's pattern: a text atom, not a repeat.
+    fn match_pattern<'e>(
+        &mut self,
+        pattern: &'e Expression,
+        seen: &mut Vec<&'e Expression>,
+    ) -> Result<(), Diagnostic> {
+        if !is_atom(pattern) {
+            return Err(self.error(
+                pattern.span(),
+                "a match arm is a literal, a name, or a field path",
+            ));
+        }
+        // Two arms are duplicates when they are the same atom: equal literal
+        // text, the same declaration, or the same field path.
+        if seen.iter().any(|other| atoms_equal(other, pattern)) {
+            return Err(self.error(pattern.span(), duplicate_pattern_message(pattern)));
+        }
+        self.require(pattern, Type::Text)?;
+        seen.push(pattern);
+        Ok(())
+    }
+
+    /// The type of a match arm's body: an expression's type, or `Void` for a
+    /// block.
+    fn match_body_type(&mut self, body: &MatchBody) -> Result<Type, Diagnostic> {
+        match body {
+            MatchBody::Expression(expression) => self.expression(expression),
+            MatchBody::Block(statements) => {
+                self.statements(statements)?;
+                Ok(Type::Void)
+            }
+        }
+    }
+
+    /// The flow of a match arm's body.
+    fn match_body_flow(&mut self, body: &MatchBody) -> Result<Flow, Diagnostic> {
+        match body {
+            MatchBody::Expression(expression) => {
+                self.expression(expression)?;
+                Ok(Flow::FALLS)
+            }
+            MatchBody::Block(statements) => self.statements(statements),
+        }
     }
 }

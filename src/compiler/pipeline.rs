@@ -21,9 +21,8 @@ pub(crate) fn compile(
     output: Option<&Path>,
     executable: &Path,
 ) -> Result<(), String> {
-    let mut loaded = load_files(entry).map_err(|error| error.render())?;
-    let mut program =
-        resolve_names(&mut loaded).map_err(|diagnostic| render(&loaded, &diagnostic))?;
+    let loaded = load_files(entry).map_err(|error| error.render())?;
+    let mut program = resolve_names(&loaded).map_err(|diagnostic| render(&loaded, &diagnostic))?;
     validate_program(&mut program).map_err(|diagnostic| render(&loaded, &diagnostic))?;
     prune_unreachable(&mut program);
     let bytecode = lower_bytecode(&program);

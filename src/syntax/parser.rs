@@ -13,7 +13,7 @@ mod tests;
 
 use crate::syntax::Span;
 
-use super::ast::{Declaration, Expression, Field, File, ValueKind};
+use super::ast::{Expression, Field, File, Item};
 use super::lexer::lex;
 use super::token::{Token, TokenKind};
 
@@ -161,54 +161,22 @@ impl Parser {
         }
     }
 
-    /// Parse the token stream into a file: module, imports, and declarations.
+    /// Parse the token stream into a file: its top-level items in order.
     fn parse_file(mut self) -> Result<File, ParseError> {
-        let mut module = None;
-        let mut imports = Vec::new();
-        let mut declarations = Vec::new();
-
+        let mut items = Vec::new();
         while !self.check(&TokenKind::Eof) {
-            match &self.current().kind {
-                TokenKind::Module => {
-                    if module.is_some() || !imports.is_empty() || !declarations.is_empty() {
-                        return Err(self.error_here("`module` must be the first declaration"));
-                    }
-                    module = Some(self.parse_module()?);
-                }
-                TokenKind::Import => {
-                    if !declarations.is_empty() {
-                        return Err(self.error_here("imports must come before declarations"));
-                    }
-                    imports.push(self.parse_import()?);
-                }
-                TokenKind::Fn => {
-                    declarations.push(Declaration::Function(self.parse_function()?));
-                }
-                TokenKind::Txt | TokenKind::Rec | TokenKind::List => {
-                    let start = self.current().span.start;
-                    let kind = self.value_kind_of().expect("a value kind");
-                    self.advance();
-                    declarations.push(Declaration::Binding(
-                        self.parse_binding(kind, false, start)?,
-                    ));
-                }
-                TokenKind::Mut => {
-                    return Err(self.error_here("a module value cannot be `mut`"));
-                }
-                other => {
-                    return Err(self.error_here(format!(
-                        "expected a declaration, found {}",
-                        other.describe()
-                    )));
-                }
-            }
+            items.push(self.parse_item()?);
         }
+        Ok(File { items })
+    }
 
-        Ok(File {
-            module,
-            imports,
-            declarations,
-        })
+    /// Parse one top-level item: an `import`, a `mod` block, or a declaration.
+    fn parse_item(&mut self) -> Result<Item, ParseError> {
+        match &self.current().kind {
+            TokenKind::Import => Ok(Item::Import(self.parse_import()?)),
+            TokenKind::Mod => Ok(Item::Module(self.parse_mod()?)),
+            _ => Ok(Item::Declaration(self.parse_declaration()?)),
+        }
     }
 
     /// Consume the semicolon ending a construct, returning the span from
@@ -293,17 +261,6 @@ impl Parser {
             "to close the argument list",
             Self::parse_expression,
         )
-    }
-
-    /// The value kind a `txt` or `rec` token names, for declaration and
-    /// statement dispatch. Every other token names no kind.
-    fn value_kind_of(&self) -> Option<ValueKind> {
-        match &self.current().kind {
-            TokenKind::Txt => Some(ValueKind::Text),
-            TokenKind::Rec => Some(ValueKind::Record),
-            TokenKind::List => Some(ValueKind::List),
-            _ => None,
-        }
     }
 
     /// Parse a comma separated list between `open` and `close`, returning the

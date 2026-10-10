@@ -9,8 +9,8 @@ once for each element, and control the loop.
 A `list` is an ordered sequence of text. A literal uses square brackets:
 
 ```kiru
-list xs = ["a", "b", "c"];
-list empty = [];
+let xs<list> = ["a", "b", "c"];
+let empty<list> = [];
 ```
 
 A list is a type like text and record: a parameter, a return type, and a
@@ -22,13 +22,13 @@ binding can all be a list.
 order. The item is scoped to the body and immutable:
 
 ```kiru
-fn first(list xs) -> txt {
-  mut txt found = "";
+fn first(xs<list>) -> txt {
+  let mut found<txt> = "";
   for x in xs {
     found = x;
     break;
   };
-  return(found);
+  return found;
 };
 ```
 
@@ -41,10 +41,10 @@ The iterable must be a list. A list `for` may run zero times.
 ```kiru
 fn main() {
   for {
-    txt code = std::process::command({}, "test -f ready");
-    switch(code) {
-      case("0") { break; };
-      default {};
+    let code<txt> = std::command({}, "test -f ready");
+    match code {
+      "0" => { break; };
+      _ => {};
     };
     std::time::sleep("1");
   };
@@ -58,17 +58,17 @@ A plain `for` with no `break` never returns.
 `break;` ends the nearest loop. It is an error outside a loop. A loop body is
 its own scope.
 
-To skip an element, put the work in a `switch` arm and leave the other arm
+To skip an element, put the work in a `match` arm and leave the other arm
 empty:
 
 ```kiru
 for path in paths {
-  switch(std::path::ext(path)) {
-    case("tmp") {};
-    default { std::io::print(path); };
+  match std::path::ext(path) {
+    "tmp" => {};
+    _ => { std::print(path); };
   };
 };
 ```
 
 The standard library reads the OS into lists and joins them back:
-`std::text::split`, `std::text::lines`, and `std::text::join`.
+`std::split`, `std::text::lines`, and `std::join`.

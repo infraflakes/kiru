@@ -1,6 +1,6 @@
 //! Registering the runtime's natives into the builtin namespace.
 
-use crate::model::{BindingKind, DeclarationId, DeclarationKind, NamespaceId};
+use crate::model::{Binding, DeclarationId, DeclarationKind, NamespaceId};
 use crate::native_registry::{NATIVE_ROWS, Native, NativeRow};
 use crate::syntax::Span;
 
@@ -9,8 +9,8 @@ use super::builder::{Builder, Skeleton};
 impl Builder {
     /// Create a native callable node and its parameter nodes. A native has no
     /// file and no body, but it carries parameters exactly like a user
-    /// function, so the checker has one call path. Its result kind is known at
-    /// registration, so it is seeded directly.
+    /// function, so the checker has one call path. Its result type is read
+    /// from its row, so no type is seeded on the node.
     fn declare_native(
         &mut self,
         namespace: NamespaceId,
@@ -29,7 +29,6 @@ impl Builder {
             },
             None,
             Some(DeclarationKind::Native(native)),
-            Some(row.returns),
         );
         self.namespaces[namespace.0]
             .functions
@@ -38,7 +37,7 @@ impl Builder {
         self.order += 1;
 
         let mut parameters = Vec::new();
-        for kind in row.parameters {
+        for ty in row.parameters {
             let parameter = self.create_node(
                 Skeleton {
                     name: String::new(),
@@ -49,10 +48,10 @@ impl Builder {
                     syntax_index: None,
                 },
                 Some(id),
-                Some(DeclarationKind::Binding(BindingKind::Parameter {
+                Some(DeclarationKind::Binding(Binding {
+                    ty: *ty,
                     mutable: false,
                 })),
-                Some(*kind),
             );
             parameters.push(parameter);
             self.order += 1;

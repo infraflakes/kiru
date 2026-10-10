@@ -10,13 +10,13 @@ A binding is immutable unless it is declared `mut`:
 
 ```kiru
 fn main() {
-  mut txt state = "idle";
+  let mut state<txt> = "idle";
   state = "running";
 
-  mut rec env = { RUST_BACKTRACE = "0" };
+  let mut env<rec> = { RUST_BACKTRACE = "0" };
   env.RUST_BACKTRACE = "1";
 
-  std::io::print(state + env.RUST_BACKTRACE);
+  std::print(state + env.RUST_BACKTRACE);
 };
 ```
 
@@ -40,9 +40,9 @@ copy: the function can reassign it and assign its fields, and the caller's value
 is unchanged:
 
 ```kiru
-fn normalize(mut txt name) -> txt {
+fn normalize(mut name<txt>) -> txt {
   name = name + "!";
-  return(name);
+  return name;
 };
 ```
 

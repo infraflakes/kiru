@@ -19,9 +19,9 @@ mod tests {
     #[test]
     fn bytecode_round_trips_through_bytes() {
         let program = checked_program(
-            "rec p = { dir = \"~/x\" };\n\
-             txt title = \"kiru\";\n\
-             fn main() { std::io::print(title); };",
+            "let p<rec> = { dir = \"~/x\" };\n\
+             let title<txt> = \"kiru\";\n\
+             fn main() { std::print(title); };",
         );
         let bytecode = lower_bytecode(&program);
 

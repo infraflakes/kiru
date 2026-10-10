@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use crate::compiler::{Diagnostic, duplicate_in_namespace};
 use crate::model::{
-    Declaration, DeclarationId, DeclarationKind, Derived, File, FileId, Kind, NameTable, Namespace,
+    Declaration, DeclarationId, DeclarationKind, Derived, File, FileId, NameTable, Namespace,
     NamespaceId, Program, Registry,
 };
 use crate::syntax::Span;
@@ -112,16 +112,13 @@ impl Builder {
 
     /// Create one node and store it in the model: its skeleton and its
     /// declaration slot. A slot stays open (`kind` is `None`) when the linking
-    /// pass will fill the body later. `derived_kind` seeds a kind that is known
-    /// at link time, such as a parameter's or a function's written kind. Name
-    /// registration is the caller's task, because file declarations and local
-    /// bindings register differently.
+    /// pass will fill the body later. Name registration is the caller's task,
+    /// because file declarations and local bindings register differently.
     pub(in crate::compiler::resolve_names) fn create_node(
         &mut self,
         skeleton: Skeleton,
         owner: Option<DeclarationId>,
         kind: Option<DeclarationKind>,
-        derived_kind: Option<Kind>,
     ) -> DeclarationId {
         let id = DeclarationId(self.skeletons.len());
         let name = skeleton.name.clone();
@@ -139,10 +136,7 @@ impl Builder {
             owner,
             parameters: Vec::new(),
             kind,
-            derived: Derived {
-                kind: derived_kind,
-                halts: false,
-            },
+            derived: Derived { halts: false },
         }));
         id
     }
@@ -171,7 +165,6 @@ impl Builder {
                 order,
                 syntax_index,
             },
-            None,
             None,
             None,
         );

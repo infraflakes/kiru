@@ -9,8 +9,7 @@ use crate::model::{Record, Value};
 use crate::native_registry::{Native, native_row};
 use crate::runtime::Panic;
 use crate::runtime::natives::{
-    environment, file_system, list_operations, parse_whole_number, path_operations,
-    terminal_output, text_operations,
+    environment, file_system, list_operations, parse_whole_number, terminal_output, text_operations,
 };
 use crate::runtime::processes as process;
 
@@ -77,12 +76,6 @@ impl Runtime {
                 file_system::write(&path, &text)
                     .map_err(|reason| self.native_failure(native, reason))
             }
-            Native::Append => {
-                let text = self.pop_text(&mut values)?;
-                let path = self.pop_text(&mut values)?;
-                file_system::append(&path, &text)
-                    .map_err(|reason| self.native_failure(native, reason))
-            }
             Native::Remove => {
                 let path = self.pop_text(&mut values)?;
                 file_system::remove(&path).map_err(|reason| self.native_failure(native, reason))
@@ -123,10 +116,6 @@ impl Runtime {
                 let text = self.pop_text(&mut values)?;
                 Ok(text_operations::split(&text, &separator))
             }
-            Native::Lines => {
-                let text = self.pop_text(&mut values)?;
-                Ok(text_operations::lines(&text))
-            }
             Native::ListLength => {
                 let list = self.pop_list(&mut values)?;
                 Ok(list_operations::len(&list))
@@ -134,16 +123,18 @@ impl Runtime {
             Native::ListGet => {
                 let index = self.pop_text(&mut values)?;
                 let list = self.pop_list(&mut values)?;
-                Ok(list_operations::get(&list, &index))
+                list_operations::get(&list, &index)
+                    .map_err(|reason| self.native_failure(native, reason))
             }
             Native::ListAppend => {
                 let text = self.pop_text(&mut values)?;
                 let list = self.pop_list(&mut values)?;
                 Ok(list_operations::append(&list, &text))
             }
-            Native::ListReverse => {
+            Native::ListPrepend => {
+                let text = self.pop_text(&mut values)?;
                 let list = self.pop_list(&mut values)?;
-                Ok(list_operations::reverse(&list))
+                Ok(list_operations::prepend(&list, &text))
             }
             Native::ListSort => {
                 let list = self.pop_list(&mut values)?;
@@ -156,18 +147,6 @@ impl Runtime {
             Native::CurrentDir => {
                 environment::current_dir().map_err(|reason| self.native_failure(native, reason))
             }
-            Native::PathBase => {
-                let path = self.pop_text(&mut values)?;
-                Ok(path_operations::base(&path))
-            }
-            Native::PathDir => {
-                let path = self.pop_text(&mut values)?;
-                Ok(path_operations::dir(&path))
-            }
-            Native::PathExt => {
-                let path = self.pop_text(&mut values)?;
-                Ok(path_operations::ext(&path))
-            }
             Native::Sleep => {
                 let seconds = self.pop_text(&mut values)?;
                 let seconds = parse_whole_number(&seconds)
@@ -178,12 +157,12 @@ impl Runtime {
         }
     }
 
-    /// Report a native's failure under the native's own name and unwind the
-    /// body, exactly as a failed command does.
+    /// Report a native's failure under the native's own name, as a call, and
+    /// unwind the body, exactly as a failed command does.
     fn native_failure(&self, native: Native, reason: String) -> Panic {
         let row = native_row(native);
         let qualified = format!("{}::{}", row.path.join("::"), row.name);
-        process::failure(&self.state, &qualified, &reason)
+        process::failure(&self.state, &format!("{qualified}(...)"), &reason)
     }
 
     /// Pop the last evaluated argument and require it to be text.

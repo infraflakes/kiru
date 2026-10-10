@@ -32,7 +32,7 @@ pub(crate) fn run(bytecode: Arc<Bytecode>, words: &[String]) -> i32 {
     let arguments = match build_arguments_record(words) {
         Ok(record) => record,
         Err(message) => {
-            eprintln!("{}: {message}", super::program_name());
+            super::report_error(message);
             return 1;
         }
     };
@@ -41,10 +41,7 @@ pub(crate) fn run(bytecode: Arc<Bytecode>, words: &[String]) -> i32 {
     // outlive the run, including a partially installed handler set.
     std::mem::forget(Arc::clone(&state));
     if let Err(error) = process::install_signal_handlers(&state) {
-        eprintln!(
-            "{}: cannot install signal handlers: {error}",
-            super::program_name()
-        );
+        super::report_error(&format!("cannot install signal handlers: {error}"));
         return 1;
     }
     let global_count = bytecode.module_values.len();
@@ -82,7 +79,7 @@ fn status_code(status: &str) -> i32 {
     match status.parse::<u32>() {
         Ok(code) => code.min(255) as i32,
         Err(_) => {
-            eprintln!("{status}");
+            super::report_error(status);
             1
         }
     }

@@ -1,0 +1,219 @@
+---
+title: std
+description: The high-frequency builtins at the std root.
+---
+
+`std::` holds the functions used most often: output, running one shell line,
+splitting and joining text, and reading a list's ends. The category modules
+(`std::io`, `std::process`, `std::text`, `std::lists`) hold the rest.
+
+<details>
+<summary><code>print</code> — write a line to stdout</summary>
+
+```kiru
+std::print(message<txt>)
+```
+
+Writes `message` to stdout with a trailing newline.
+
+- `message` — the line to write.
+
+```kiru
+std::print("hello");
+```
+
+</details>
+
+<details>
+<summary><code>eprint</code> — write an ERROR line and panic</summary>
+
+```kiru
+std::eprint(message<txt>)
+```
+
+Writes an `ERROR:` line to stderr, red when stderr is a terminal, then panics.
+Because `eprint` always panics, calling it never returns.
+
+- `message` — the reason for the failure.
+
+```kiru
+std::eprint("missing token");
+```
+
+Related: [Panic and Failure](/failure/panic/).
+
+</details>
+
+<details>
+<summary><code>log</code> — write an INFO line</summary>
+
+```kiru
+std::log(message<txt>)
+```
+
+Writes an `INFO:` line to stdout; the prefix is yellow when stdout is a
+terminal.
+
+- `message` — the line to write.
+
+```kiru
+std::log("starting");
+```
+
+</details>
+
+<details>
+<summary><code>command</code> — run one shell line</summary>
+
+```kiru
+std::command(spec<rec>, line<txt>) -> txt
+```
+
+Runs one command line through `/bin/sh -c` and returns the exit code.
+
+- `spec` — options for the command: `Dir`, `Env`, `Timeout`, and
+  `Stdin`/`Stdout`/`Stderr`. Each key is uppercase, and an absent or empty
+  entry is the default.
+- `line` — shell syntax. Values that must not become shell syntax belong in
+  `Env` or are escaped with `quote`.
+- Returns the exit code as text.
+
+```kiru
+let code<txt> = std::command({ Dir = "docs" }, "bun run build");
+```
+
+Related: [Running Commands](/commands/running-a-command/), [The Command Spec and
+Streams](/commands/the-command-spec/).
+
+</details>
+
+<details>
+<summary><code>capture</code> — run one line and collect its output</summary>
+
+```kiru
+std::capture(line<txt>) -> rec
+```
+
+Runs one command line and returns its exit code and both streams.
+
+- `line` — shell syntax, run through `command`.
+- Returns the record `{ code, out, err }`. stdout and stderr are redirected to
+  temporary files, read once the command exits, and removed, so a large output
+  never blocks on a pipe.
+
+```kiru
+let result<rec> = std::capture("git rev-parse HEAD");
+std::print(result.out);
+```
+
+Related: [The Command Spec and Streams](/commands/the-command-spec/).
+
+</details>
+
+<details>
+<summary><code>quote</code> — escape text as one shell word</summary>
+
+```kiru
+std::quote(text<txt>) -> txt
+```
+
+Wraps text in single quotes and escapes every embedded quote as `'\''`, so the
+shell reads exactly the text.
+
+- `text` — the data to pass to a command.
+- Returns one POSIX shell word.
+
+```kiru
+let line<txt> = "echo " + std::quote("a b");
+```
+
+Related: [Text](/concepts/text/).
+
+</details>
+
+<details>
+<summary><code>split</code> — split text into a list</summary>
+
+```kiru
+std::split(text<txt>, separator<txt>) -> list
+```
+
+- `text` — the text to split.
+- `separator` — the text between parts. An empty separator splits between
+  characters.
+- Returns the parts as a list.
+
+```kiru
+let parts<list> = std::split("a,b,c", ",");
+```
+
+</details>
+
+<details>
+<summary><code>join</code> — join a list into one text</summary>
+
+```kiru
+std::join(parts<list>, separator<txt>) -> txt
+```
+
+- `parts` — the list to join.
+- `separator` — the text between each pair.
+- Returns the joined text.
+
+```kiru
+std::print(std::join(["a", "b"], "-"));   # a-b
+```
+
+</details>
+
+<details>
+<summary><code>get</code> — the element at an index</summary>
+
+```kiru
+std::get(items<list>, index<txt>) -> txt
+```
+
+- `items` — the list to read.
+- `index` — a zero-based index as digit text.
+- Returns the element. A malformed index, or one outside the list, stops the
+  run.
+
+```kiru
+std::print(std::get(["a", "b", "c"], "1"));   # b
+```
+
+</details>
+
+<details>
+<summary><code>append</code> — a new list with one element added</summary>
+
+```kiru
+std::append(items<list>, text<txt>) -> list
+```
+
+- `items` — the source list.
+- `text` — the element to add at the end.
+- Returns a new list.
+
+```kiru
+let xs<list> = std::append(["a", "b"], "c");
+```
+
+</details>
+
+<details>
+<summary><code>last</code> — the last element</summary>
+
+```kiru
+std::last(items<list>) -> txt
+```
+
+- `items` — the list to read.
+- Returns the last element. An empty list has no last index, so it stops the
+  run.
+
+```kiru
+std::print(std::last(["a", "b", "c"]));   # c
+```
+
+</details>

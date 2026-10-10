@@ -92,7 +92,9 @@ impl VisitorMut for EdgeRemapper<'_> {
             | Expression::Record { .. }
             | Expression::List { .. }
             | Expression::Field { .. }
-            | Expression::Add { .. } => {}
+            | Expression::Add { .. }
+            | Expression::Interpolated { .. }
+            | Expression::Match { .. } => {}
         }
     }
 
@@ -111,7 +113,6 @@ impl VisitorMut for EdgeRemapper<'_> {
             | Statement::Panic { .. }
             | Statement::Async { .. }
             | Statement::Wait { .. }
-            | Statement::Switch { .. }
             | Statement::Break { .. }
             | Statement::Forever { .. } => {}
         }

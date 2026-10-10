@@ -33,7 +33,7 @@ program, and the chapters after that explain each part in more depth. You can
 start writing useful Kiru in the second chapter.
 
 If you want to look something up, the [standard
-library](/stdlib/process/) reference and the appendices at the end cover the
+library](/stdlib/std/) reference and the appendices at the end cover the
 whole surface.
 
 ## What Kiru Looks Like
@@ -41,15 +41,15 @@ whole surface.
 Here is a complete Kiru program:
 
 ```kiru
-fn main(rec args) {
-  switch(args.cmd) {
-    case("test") { std::io::print(std::process::command({}, "cargo test")); };
-    default { std::io::eprint("usage: test"); };
+fn main(args<rec>) {
+  match args.cmd {
+    "test" => { std::print(std::command({}, "cargo test")); };
+    _ => { std::eprint("usage: test"); };
   };
 };
 ```
 
-`main` reads the command line, `switch` chooses a branch, and
-`std::process::command` runs a command and returns its exit code.
+`main` reads the command line, `match` chooses an arm, and
+`std::command` runs a command and returns its exit code.
 [A First Program](/getting-started/a-first-program/) walks through a program
 like this one.

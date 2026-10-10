@@ -7,49 +7,32 @@
 use crate::compiler::load_files::LoadedProgram;
 use crate::compiler::{Diagnostic, duplicate_name};
 use crate::model::{
-    BindingKind, Case, Declaration, DeclarationId, DeclarationKind, Derived, Expression, Field,
-    FileId, Function, Kind, NamespaceId, Origin, Program, Registry, Statement,
+    Binding, Declaration, DeclarationId, DeclarationKind, Derived, Expression, Field, FileId,
+    Function, MatchArm, MatchBody, NamespaceId, Program, Registry, Statement, StringPart,
 };
 use crate::syntax::Span;
 use crate::syntax::{
     Declaration as ParsedDeclaration, Expression as ParsedExpression, Statement as ParsedStatement,
-    ValueKind,
 };
+use crate::types::Type;
 
 use super::super::register_declarations::{Builder, Skeleton};
 use super::scopes::{Context, Scopes};
 
-/// Build the program model. On failure the parsed program is left untouched
-/// except for the declarations already consumed, so the caller can still
-/// render the diagnostic against its sources.
-pub(crate) fn resolve_names(loaded: &mut LoadedProgram) -> Result<Program, Diagnostic> {
-    let entry_file = FileId(loaded.entry);
-    let parsed: Vec<Vec<ParsedDeclaration>> = loaded
-        .files
-        .iter_mut()
-        .map(|file| std::mem::take(&mut file.file.declarations))
-        .collect();
-
+/// Build the program model from the joined item stream.
+pub(crate) fn resolve_names(loaded: &LoadedProgram) -> Result<Program, Diagnostic> {
     let mut builder = Builder::new();
     builder.register_builtins();
-    for (index, file) in loaded.files.iter().enumerate() {
-        if file.origin == Origin::Embedded {
-            builder.register_file(loaded, index, &parsed[index])?;
-        }
-    }
-    for index in loaded.ordered_files() {
-        builder.register_file(loaded, index, &parsed[index])?;
-    }
-
-    let entry = builder.resolve_entry(loaded, entry_file, &parsed)?;
-    builder.link_declarations(&parsed)?;
+    builder.register_items(loaded)?;
+    let entry = builder.resolve_entry(loaded)?;
+    builder.link_declarations(loaded)?;
     let program = builder.finish(entry);
     crate::model::verify_program(&program);
     Ok(program)
 }
 
 impl Builder {
-    fn link_declarations(&mut self, parsed: &[Vec<ParsedDeclaration>]) -> Result<(), Diagnostic> {
+    fn link_declarations(&mut self, loaded: &LoadedProgram) -> Result<(), Diagnostic> {
         for pending in std::mem::take(&mut self.pending) {
             let skeleton = &self.skeletons[pending.declaration.0];
             let name = skeleton.name.clone();
@@ -57,9 +40,9 @@ impl Builder {
             let file = pending.file;
             let namespace = pending.namespace;
             let order = pending.order;
-            let declaration = &parsed[file.0][pending.syntax_index];
+            let declaration = &loaded.items[pending.syntax_index].declaration;
 
-            let (kind, parameters, seeded_kind) = match declaration {
+            let (kind, parameters) = match declaration {
                 ParsedDeclaration::Function(function) => {
                     let mut scopes = Scopes::default();
                     scopes.push();
@@ -81,24 +64,20 @@ impl Builder {
                                 name: &parameter.name,
                                 name_span: parameter.span,
                                 owner: pending.declaration,
-                                binding: BindingKind::Parameter {
+                                binding: Binding {
+                                    ty: parameter.ty,
                                     mutable: parameter.mutable,
                                 },
-                                declared_kind: Some(declared_kind(parameter.kind)),
                             },
                         )?;
                         context.scopes.declare(&parameter.name, id);
                         parameters.push(id);
                     }
                     let body = self.link_statements(&function.body, &mut context)?;
-                    let return_kind = function
-                        .return_kind
-                        .map(declared_kind)
-                        .unwrap_or(Kind::Nothing);
+                    let return_type = function.return_type.unwrap_or(Type::Void);
                     (
-                        DeclarationKind::Function(Function { body, return_kind }),
+                        DeclarationKind::Function(Function { body, return_type }),
                         parameters,
-                        Some(return_kind),
                     )
                 }
                 ParsedDeclaration::Binding(binding) => {
@@ -112,12 +91,13 @@ impl Builder {
                         order,
                     };
                     let expression = self.link_expression(&binding.value, &mut context)?;
-                    let kind = match binding.kind {
-                        ValueKind::Text => DeclarationKind::Text(expression),
-                        ValueKind::Record => DeclarationKind::Record(expression),
-                        ValueKind::List => DeclarationKind::List(expression),
-                    };
-                    (kind, Vec::new(), None)
+                    (
+                        DeclarationKind::Value {
+                            ty: binding.ty,
+                            expression,
+                        },
+                        Vec::new(),
+                    )
                 }
             };
             self.declarations[pending.declaration.0] = Some(Declaration {
@@ -129,10 +109,7 @@ impl Builder {
                 owner: None,
                 parameters,
                 kind,
-                derived: Derived {
-                    kind: seeded_kind,
-                    halts: false,
-                },
+                derived: Derived { halts: false },
             });
         }
         Ok(())
@@ -153,7 +130,6 @@ impl Builder {
             name_span,
             owner,
             binding,
-            declared_kind,
         } = local;
         let reported = &self.files[file.0].path;
         if scopes.find(name).is_some() {
@@ -171,7 +147,6 @@ impl Builder {
             },
             Some(owner),
             Some(DeclarationKind::Binding(binding)),
-            declared_kind,
         );
         Ok(id)
     }
@@ -186,17 +161,6 @@ impl Builder {
             match statement {
                 ParsedStatement::Binding(binding) => {
                     let value = self.link_expression(&binding.value, context)?;
-                    let binding_kind = match binding.kind {
-                        ValueKind::Text => BindingKind::Text {
-                            mutable: binding.mutable,
-                        },
-                        ValueKind::Record => BindingKind::Record {
-                            mutable: binding.mutable,
-                        },
-                        ValueKind::List => BindingKind::List {
-                            mutable: binding.mutable,
-                        },
-                    };
                     let declaration = self.declare_local(
                         context.scopes,
                         LocalDeclaration {
@@ -205,8 +169,10 @@ impl Builder {
                             name: &binding.name,
                             name_span: binding.name_span,
                             owner: context.current,
-                            binding: binding_kind,
-                            declared_kind: None,
+                            binding: Binding {
+                                ty: binding.ty,
+                                mutable: binding.mutable,
+                            },
                         },
                     )?;
                     context.scopes.declare(&binding.name, declaration);
@@ -285,41 +251,6 @@ impl Builder {
                 ParsedStatement::Wait { span } => {
                     linked.push(Statement::Wait { span: *span });
                 }
-                ParsedStatement::Switch {
-                    subject,
-                    cases,
-                    default,
-                    span,
-                } => {
-                    let subject = self.link_expression(subject, context)?;
-                    let mut linked_cases = Vec::new();
-                    for case in cases {
-                        context.scopes.push();
-                        let pattern = self.link_expression(&case.pattern, context)?;
-                        let body = self.link_statements(&case.body, context)?;
-                        context.scopes.pop();
-                        linked_cases.push(Case {
-                            pattern,
-                            body,
-                            span: case.span,
-                        });
-                    }
-                    let default = match default {
-                        Some(body) => {
-                            context.scopes.push();
-                            let linked_body = self.link_statements(body, context)?;
-                            context.scopes.pop();
-                            Some(linked_body)
-                        }
-                        None => None,
-                    };
-                    linked.push(Statement::Switch {
-                        subject,
-                        cases: linked_cases,
-                        default,
-                        span: *span,
-                    });
-                }
                 ParsedStatement::ForEach {
                     item,
                     item_span,
@@ -337,8 +268,10 @@ impl Builder {
                             name: item,
                             name_span: *item_span,
                             owner: context.current,
-                            binding: BindingKind::Text { mutable: false },
-                            declared_kind: Some(Kind::Text),
+                            binding: Binding {
+                                ty: Type::Text,
+                                mutable: false,
+                            },
                         },
                     )?;
                     context.scopes.declare(item, declaration);
@@ -406,6 +339,58 @@ impl Builder {
                     span: *span,
                 }
             }
+            ParsedExpression::Interpolated { parts, span } => {
+                let mut linked_parts = Vec::new();
+                for part in parts {
+                    linked_parts.push(match part {
+                        crate::syntax::StringPart::Literal(value) => {
+                            StringPart::Literal(value.clone())
+                        }
+                        crate::syntax::StringPart::Expression(expression) => {
+                            StringPart::Expression(self.link_expression(expression, context)?)
+                        }
+                    });
+                }
+                Expression::Interpolated {
+                    parts: linked_parts,
+                    span: *span,
+                }
+            }
+            ParsedExpression::Match {
+                subject,
+                cases,
+                default,
+                span,
+            } => {
+                let subject = self.link_expression(subject, context)?;
+                let mut linked_cases = Vec::new();
+                for case in cases {
+                    context.scopes.push();
+                    let pattern = self.link_expression(&case.pattern, context)?;
+                    let body = self.link_match_body(&case.body, context)?;
+                    context.scopes.pop();
+                    linked_cases.push(MatchArm {
+                        pattern,
+                        body,
+                        span: case.span,
+                    });
+                }
+                let default = match default {
+                    Some(body) => {
+                        context.scopes.push();
+                        let linked_body = self.link_match_body(body, context)?;
+                        context.scopes.pop();
+                        Some(linked_body)
+                    }
+                    None => None,
+                };
+                Expression::Match {
+                    subject: Box::new(subject),
+                    cases: linked_cases,
+                    default,
+                    span: *span,
+                }
+            }
             ParsedExpression::Name { root, path, span } => Expression::Reference {
                 declaration: self.resolve(context, path, *root, *span, Registry::Value)?,
                 span: *span,
@@ -448,27 +433,30 @@ impl Builder {
             },
         })
     }
+
+    fn link_match_body(
+        &mut self,
+        body: &crate::syntax::MatchBody,
+        context: &mut Context,
+    ) -> Result<MatchBody, Diagnostic> {
+        Ok(match body {
+            crate::syntax::MatchBody::Expression(expression) => {
+                MatchBody::Expression(Box::new(self.link_expression(expression, context)?))
+            }
+            crate::syntax::MatchBody::Block(statements) => {
+                MatchBody::Block(self.link_statements(statements, context)?)
+            }
+        })
+    }
 }
 
 /// What a local binding needs: where it was written, what it is called, which
-/// function owns it, and the kind it declares when the source writes one.
+/// function owns it, and the type it holds.
 struct LocalDeclaration<'a> {
     file: FileId,
     namespace: NamespaceId,
     name: &'a str,
     name_span: Span,
     owner: DeclarationId,
-    binding: BindingKind,
-    /// The kind written in the source, only for a parameter.
-    declared_kind: Option<Kind>,
-}
-
-/// The kind a written keyword names, on a parameter or a return type. This is
-/// the only mapping from a written kind to the kind system.
-fn declared_kind(kind: ValueKind) -> Kind {
-    match kind {
-        ValueKind::Text => Kind::Text,
-        ValueKind::Record => Kind::Record,
-        ValueKind::List => Kind::List,
-    }
+    binding: Binding,
 }

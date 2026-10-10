@@ -1,0 +1,62 @@
+# std.kiru
+#
+# The high-frequency builtins live at the `std::` root: output, `join`, and
+# `last`. The category modules hold the rest. This file is loaded first, so its
+# functions are available to every category; the functions that need a category
+# (`quote`, `command`, `capture`) are added later in `process.kiru`.
+
+mod std {
+
+  # Write a prefix and a message, coloring the prefix on a terminal. `color` is
+  # an ANSI SGR code and `file_descriptor` is "1" for stdout or "2" for stderr.
+  fn emit(color<txt>, prefix<txt>, file_descriptor<txt>, message<txt>) {
+    std::io::write(file_descriptor, match std::io::is_terminal(file_descriptor) {
+      "true" => "\e[@(color)m@(prefix)\e[0m @(message)\n";
+      _ => "@(prefix) @(message)\n";
+    });
+  };
+
+  # Write a line to stdout.
+  fn print(message<txt>) {
+    std::io::write("1", "@(message)\n");
+  };
+
+  # Write an "INFO:" line to stdout, yellow on a terminal.
+  fn log(message<txt>) {
+    emit("33", "INFO:", "1", message);
+  };
+
+  # Write an "ERROR:" line to stderr, red on a terminal, then stop the run.
+  fn eprint(message<txt>) {
+    emit("31", "ERROR:", "2", message);
+    panic;
+  };
+
+  # Join a list of parts into one text with `separator` between each pair.
+  fn join(parts<list>, separator<txt>) -> txt {
+    let mut result<txt> = "";
+    let mut first<txt> = "true";
+    for part in parts {
+      match first {
+        "true" => { result = part; first = "false"; };
+        _ => { result = "@(result)@(separator)@(part)"; };
+      };
+    };
+    return result;
+  };
+
+  # The last element of `items`. An empty list has no last index, so it stops
+  # the run.
+  fn last(items<list>) -> txt {
+    match std::lists::len(items) {
+      "0" => { eprint("last: the list is empty"); };
+      _ => {};
+    };
+    let mut result<txt> = "";
+    for item in items {
+      result = item;
+    };
+    return result;
+  };
+
+};

@@ -43,7 +43,7 @@ A `panic;` anywhere exits `1`. [Panic](/failure/panic/) covers failure.
 
 ```kiru
 fn main() -> txt {
-  return("2");
+  return "2";
 };
 ```
 
@@ -52,16 +52,18 @@ fn main() -> txt {
 A program that compiles has been checked for:
 
 - syntax and lexical rules (an invalid escape, a missing `;`);
-- modules and imports (`module` not first, a missing file, an import cycle);
+- modules and imports (a malformed `mod` block, a missing file, an import cycle,
+  a file imported more than once);
 - names (an unknown name, a forward reference, a duplicate declaration, a
   function that references itself);
 - arity (the wrong number of arguments);
 - parameters (a parameter without a type, `main` with a `txt` parameter);
 - statements (a bare value used as a statement);
-- types (text where a record is required, a `nothing` call bound or passed);
+- types (text where a record is required, a call that returns no value bound or
+  passed);
 - returns (a function with a return type that can reach the end without
   returning a value);
-- cases (a case pattern that is not a literal, a name, or a field path; two
+- match arms (a pattern that is not a literal, a name, or a field path; two
   equal patterns);
 - loops (`break` outside a loop);
 - threads (an `async` nested inside another `async`).

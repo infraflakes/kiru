@@ -10,18 +10,16 @@
 mod declarations;
 mod expressions;
 mod ids;
-mod kinds;
 mod program;
 mod values;
 mod verify;
 mod visitors;
 
-pub(crate) use declarations::{BindingKind, Declaration, DeclarationKind, Derived, Function};
-pub(crate) use expressions::{Case, Expression, Field, Statement};
+pub(crate) use declarations::{Binding, Declaration, DeclarationKind, Derived, Function};
+pub(crate) use expressions::{Expression, Field, MatchArm, MatchBody, Statement, StringPart};
 pub(crate) use ids::{DeclarationId, FileId, NamespaceId};
-pub(crate) use kinds::{Kind, Position, Usage, fits};
 pub(crate) use program::{
-    File, NameTable, Namespace, Origin, Program, Registry, join_path, namespace_at, namespace_path,
+    File, NameTable, Namespace, Origin, Program, Registry, join_path, namespace_at,
 };
 pub(crate) use values::{Record, Value};
 pub(crate) use verify::verify_program;

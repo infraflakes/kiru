@@ -11,7 +11,7 @@ globs. If any operation except `exists` fails, the program exits with an error;
 <summary><code>read</code> — read a whole file</summary>
 
 ```kiru
-std::fs::read(txt path) -> txt
+std::fs::read(path<txt>) -> txt
 ```
 
 Reads a whole file as text.
@@ -21,7 +21,7 @@ Reads a whole file as text.
   error.
 
 ```kiru
-std::io::print(std::fs::read("notes.txt"));
+std::print(std::fs::read("notes.txt"));
 ```
 
 </details>
@@ -30,7 +30,7 @@ std::io::print(std::fs::read("notes.txt"));
 <summary><code>write</code> — replace a file with text</summary>
 
 ```kiru
-std::fs::write(txt path, txt text) -> nothing
+std::fs::write(path<txt>, text<txt>)
 ```
 
 Replaces a file with text, creating it when absent.
@@ -48,11 +48,11 @@ std::fs::write("notes.txt", "hello\n");
 <summary><code>append</code> — append text to a file</summary>
 
 ```kiru
-std::fs::append(txt path, txt text) -> nothing
+std::fs::append(path<txt>, text<txt>)
 ```
 
-Appends text to a file, creating it when absent. The write is atomic at the OS
-level, so concurrent appends do not lose data.
+Appends text to a file, creating it when absent. It reads the file, joins the
+text, and writes it back, so it is not atomic across concurrent writers.
 
 - `path` — the file to append to.
 - `text` — the text to add.
@@ -67,7 +67,7 @@ std::fs::append("notes.txt", "more\n");
 <summary><code>remove</code> — remove a file</summary>
 
 ```kiru
-std::fs::remove(txt path) -> nothing
+std::fs::remove(path<txt>)
 ```
 
 Removes a file.
@@ -85,7 +85,7 @@ std::fs::remove("notes.txt");
 <summary><code>exists</code> — whether a path exists</summary>
 
 ```kiru
-std::fs::exists(txt path) -> txt
+std::fs::exists(path<txt>) -> txt
 ```
 
 Tests whether a path exists. It returns `"false"` instead of failing when the
@@ -95,9 +95,9 @@ path is absent.
 - Returns `"true"` or `"false"`.
 
 ```kiru
-switch(std::fs::exists("notes.txt")) {
-  case("true") { std::io::print("found"); };
-  default { std::io::print("missing"); };
+match std::fs::exists("notes.txt") {
+  "true" => { std::print("found"); };
+  _ => { std::print("missing"); };
 };
 ```
 
@@ -116,7 +116,7 @@ Creates an exclusive, owner-only empty file under `$TMPDIR` (falling back to
 - Returns the path as text. The caller owns the file and must remove it.
 
 ```kiru
-txt path = std::fs::temp_file();
+let path<txt> = std::fs::temp_file();
 std::fs::write(path, "scratch");
 std::fs::remove(path);
 ```
@@ -127,7 +127,7 @@ std::fs::remove(path);
 <summary><code>glob</code> — expand a glob into a list</summary>
 
 ```kiru
-std::fs::glob(txt pattern) -> list
+std::fs::glob(pattern<txt>) -> list
 ```
 
 Expands a glob pattern into a list of matching paths.
@@ -136,7 +136,7 @@ Expands a glob pattern into a list of matching paths.
 - Returns the matches in sorted order.
 
 ```kiru
-list files = std::fs::glob("src/*.kiru");
+let files<list> = std::fs::glob("src/*.kiru");
 ```
 
 </details>

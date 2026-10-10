@@ -2,64 +2,68 @@
 #
 # Text helpers written on top of the native text kernel.
 
-module std::text;
+mod std::text {
 
-# Whether `text` contains `needle`. A needle that is present has a byte index
-# and an absent one reads empty, so `find` answers this directly.
-fn contains(txt text, txt needle) -> txt {
-  switch(find(text, needle)) {
-    case("") { return("false"); };
-    default { return("true"); };
-  };
-};
-
-# Whether `text` starts with `prefix`. A prefix that is present has a byte
-# index at zero, so `find` answers this directly.
-fn starts_with(txt text, txt prefix) -> txt {
-  switch(find(text, prefix)) {
-    case("0") { return("true"); };
-    default { return("false"); };
-  };
-};
-
-# Join a list of parts into one text with `separator` between each pair.
-fn join(list parts, txt separator) -> txt {
-  mut txt result = "";
-  mut txt first = "true";
-  for part in parts {
-    switch(first) {
-      case("true") { result = part; first = "false"; };
-      default { result = result + separator + part; };
+  # Whether `text` contains `needle`. A needle that is present has a byte index
+  # and an absent one reads empty, so `find` answers this directly.
+  fn contains(text<txt>, needle<txt>) -> txt {
+    return match find(text, needle) {
+      "" => "false";
+      _ => "true";
     };
   };
-  return(result);
-};
 
-# Whether `text` ends with `suffix`. Splitting on `suffix` leaves a final empty
-# piece exactly when the suffix matches at the end. An empty text is checked
-# first, because only the empty suffix ends it.
-fn ends_with(txt text, txt suffix) -> txt {
-  switch(text) {
-    case("") {
-      switch(suffix) {
-        case("") { return("true"); };
-        default { return("false"); };
+  # Whether `text` starts with `prefix`. A prefix that is present has a byte
+  # index at zero, so `find` answers this directly.
+  fn starts_with(text<txt>, prefix<txt>) -> txt {
+    return match find(text, prefix) {
+      "0" => "true";
+      _ => "false";
+    };
+  };
+
+  # Whether `text` ends with `suffix`. Splitting on `suffix` leaves a final empty
+  # piece exactly when the suffix matches at the end. An empty text is checked
+  # first, because only the empty suffix ends it.
+  fn ends_with(text<txt>, suffix<txt>) -> txt {
+    match text {
+      "" => { return match suffix { "" => "true"; _ => "false"; }; };
+      _ => {};
+    };
+    let mut last<txt> = "";
+    for part in split(text, suffix) {
+      last = part;
+    };
+    return match last {
+      "" => "true";
+      _ => "false";
+    };
+  };
+
+  # Replace every occurrence of `from` with `to`. Splitting on `from` and joining
+  # with `to` is exactly that, including an empty `from`.
+  fn replace(text<txt>, from<txt>, to<txt>) -> txt {
+    return std::join(split(text, from), to);
+  };
+
+  # Split `text` into a list of lines. A trailing newline does not produce a
+  # trailing empty element.
+  fn lines(text<txt>) -> list {
+    let mut result<list> = [];
+    let mut pending<txt> = "";
+    let mut first<txt> = "true";
+    for part in split(text, "\n") {
+      match first {
+        "true" => { first = "false"; };
+        _ => { result = std::append(result, pending); };
       };
+      pending = part;
     };
-    default {};
+    match pending {
+      "" => {};
+      _ => { result = std::append(result, pending); };
+    };
+    return result;
   };
-  mut txt last = "";
-  for part in split(text, suffix) {
-    last = part;
-  };
-  switch(last) {
-    case("") { return("true"); };
-    default { return("false"); };
-  };
-};
 
-# Replace every occurrence of `from` with `to`. Splitting on `from` and joining
-# with `to` is exactly that, including an empty `from`.
-fn replace(txt text, txt from, txt to) -> txt {
-  return(join(split(text, from), to));
 };

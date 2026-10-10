@@ -47,7 +47,9 @@ impl Visitor for ReachableCollector {
             | Expression::Record { .. }
             | Expression::List { .. }
             | Expression::Field { .. }
-            | Expression::Add { .. } => {}
+            | Expression::Add { .. }
+            | Expression::Interpolated { .. }
+            | Expression::Match { .. } => {}
         }
     }
 
@@ -64,7 +66,6 @@ impl Visitor for ReachableCollector {
             | Statement::Panic { .. }
             | Statement::Async { .. }
             | Statement::Wait { .. }
-            | Statement::Switch { .. }
             | Statement::Break { .. }
             | Statement::Forever { .. } => {}
         }

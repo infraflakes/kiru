@@ -11,7 +11,7 @@
 //! visits and lists every variant explicitly. A new node kind is then a
 //! compile error in every pass, not a silently missed node.
 
-use super::expressions::{Expression, Statement};
+use super::expressions::{Expression, MatchBody, Statement, StringPart};
 
 /// A read-only walk over a body.
 pub(crate) trait Visitor {
@@ -69,21 +69,6 @@ fn walk_statement(visitor: &mut impl Visitor, statement: &Statement) {
         Statement::Panic { .. } => {}
         Statement::Async { call, .. } => walk_expression(visitor, call),
         Statement::Wait { .. } => {}
-        Statement::Switch {
-            subject,
-            cases,
-            default,
-            ..
-        } => {
-            walk_expression(visitor, subject);
-            for case in cases {
-                walk_expression(visitor, &case.pattern);
-                walk_statements(visitor, &case.body);
-            }
-            if let Some(default) = default {
-                walk_statements(visitor, default);
-            }
-        }
         Statement::ForEach { iterable, body, .. } => {
             walk_expression(visitor, iterable);
             walk_statements(visitor, body);
@@ -108,21 +93,6 @@ fn walk_statement_mut(visitor: &mut impl VisitorMut, statement: &mut Statement) 
         Statement::Panic { .. } => {}
         Statement::Async { call, .. } => walk_expression_mut(visitor, call),
         Statement::Wait { .. } => {}
-        Statement::Switch {
-            subject,
-            cases,
-            default,
-            ..
-        } => {
-            walk_expression_mut(visitor, subject);
-            for case in cases {
-                walk_expression_mut(visitor, &mut case.pattern);
-                walk_statements_mut(visitor, &mut case.body);
-            }
-            if let Some(default) = default {
-                walk_statements_mut(visitor, default);
-            }
-        }
         Statement::ForEach { iterable, body, .. } => {
             walk_expression_mut(visitor, iterable);
             walk_statements_mut(visitor, body);
@@ -147,6 +117,13 @@ fn walk_expression_children(visitor: &mut impl Visitor, expression: &Expression)
                 walk_expression(visitor, element);
             }
         }
+        Expression::Interpolated { parts, .. } => {
+            for part in parts {
+                if let StringPart::Expression(expression) = part {
+                    walk_expression(visitor, expression);
+                }
+            }
+        }
         Expression::Call { arguments, .. } => {
             for argument in arguments {
                 walk_expression(visitor, argument);
@@ -156,6 +133,27 @@ fn walk_expression_children(visitor: &mut impl Visitor, expression: &Expression)
         Expression::Add { left, right, .. } => {
             walk_expression(visitor, left);
             walk_expression(visitor, right);
+        }
+        Expression::Match {
+            subject,
+            cases,
+            default,
+            ..
+        } => {
+            walk_expression(visitor, subject);
+            for arm in cases {
+                walk_expression(visitor, &arm.pattern);
+                match &arm.body {
+                    MatchBody::Expression(expression) => walk_expression(visitor, expression),
+                    MatchBody::Block(statements) => walk_statements(visitor, statements),
+                }
+            }
+            if let Some(default) = default {
+                match default {
+                    MatchBody::Expression(expression) => walk_expression(visitor, expression),
+                    MatchBody::Block(statements) => walk_statements(visitor, statements),
+                }
+            }
         }
     }
 }
@@ -174,6 +172,13 @@ fn walk_expression_children_mut(visitor: &mut impl VisitorMut, expression: &mut 
                 walk_expression_mut(visitor, element);
             }
         }
+        Expression::Interpolated { parts, .. } => {
+            for part in parts {
+                if let StringPart::Expression(expression) = part {
+                    walk_expression_mut(visitor, expression);
+                }
+            }
+        }
         Expression::Call { arguments, .. } => {
             for argument in arguments {
                 walk_expression_mut(visitor, argument);
@@ -183,6 +188,27 @@ fn walk_expression_children_mut(visitor: &mut impl VisitorMut, expression: &mut 
         Expression::Add { left, right, .. } => {
             walk_expression_mut(visitor, left);
             walk_expression_mut(visitor, right);
+        }
+        Expression::Match {
+            subject,
+            cases,
+            default,
+            ..
+        } => {
+            walk_expression_mut(visitor, subject);
+            for arm in cases {
+                walk_expression_mut(visitor, &mut arm.pattern);
+                match &mut arm.body {
+                    MatchBody::Expression(expression) => walk_expression_mut(visitor, expression),
+                    MatchBody::Block(statements) => walk_statements_mut(visitor, statements),
+                }
+            }
+            if let Some(default) = default {
+                match default {
+                    MatchBody::Expression(expression) => walk_expression_mut(visitor, expression),
+                    MatchBody::Block(statements) => walk_statements_mut(visitor, statements),
+                }
+            }
         }
     }
 }

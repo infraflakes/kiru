@@ -10,15 +10,15 @@ to write text, the escapes it understands, and the one operator that joins it.
 A literal is written with double quotes and may span lines:
 
 ```kiru
-txt name = "backend";
-txt message = "first line
+let name<txt> = "backend";
+let message<txt> = "first line
 second line";
-txt empty = "";
+let empty<txt> = "";
 ```
 
 ## Escapes
 
-Six escapes are recognized:
+Seven escapes are recognized:
 
 ```text
 \n    newline
@@ -27,15 +27,16 @@ Six escapes are recognized:
 \e    escape (the ANSI escape character)
 \\    backslash
 \"    double quote
+\@    a literal @(
 ```
 
 Any other escape is an error:
 
 ```console
 $ kc main.kiru
-main.kiru:1:14: error: invalid escape `\q`; only \n, \t, \r, \e, \\, and \" are allowed
-txt s = "bad \q";
-             ^^
+main.kiru:1:19: error: invalid escape `\q`; only \n, \t, \r, \e, \\, \", and \@ are allowed
+let s<txt> = "bad \q";
+                  ^^
 ```
 
 ## Comments and identifiers
@@ -43,7 +44,7 @@ txt s = "bad \q";
 A comment starts with `#` and runs to the end of the line:
 
 ```kiru
-txt retries = "3";   # numbers are text
+let retries<txt> = "3";   # numbers are text
 ```
 
 An identifier starts with a letter or `_`, then letters, digits, or `_`.
@@ -53,14 +54,30 @@ An identifier starts with a letter or `_`, then letters, digits, or `_`.
 `+` joins two texts and is the only operator:
 
 ```kiru
-fn label(txt name, txt code) -> txt {
-  return("  " + name + ": " + code + "\n");
+fn label(name<txt>, code<txt>) -> txt {
+  return "  " + name + ": " + code + "\n";
 };
 ```
 
 Both sides must be text; anything else is an error. There is no arithmetic and
-no comparison operator; compare text with [Switch](/concepts/switch/).
+no comparison operator; compare text with [Match](/concepts/match/).
 
 `+` never changes its operands, so a command line is built exactly as written.
 Text that must reach a command as data rather than as shell syntax is escaped
-with `std::process::quote`; [std::process](/stdlib/process/) covers it.
+with `std::quote`; [std](/stdlib/std/) covers it.
+
+## Interpolation
+
+A string may insert a text expression with `@(…)`:
+
+```kiru
+let name<txt> = "backend";
+let message<txt> = "building @(name)…";
+```
+
+The expression inside `@(…)` must be text, and may be any text expression: a
+name, a field, a call, or another string. `\@` writes a literal `@(`:
+
+```kiru
+let at<txt> = "user\@host";   # user@host
+```

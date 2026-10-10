@@ -15,13 +15,13 @@ building two projects at once.
 
 ```kiru
 fn work() {
-  std::process::command({}, "echo working");
+  std::command({}, "echo working");
 };
 
 fn main() {
   async work();
   wait;
-  std::process::command({}, "echo done");
+  std::command({}, "echo done");
 };
 ```
 
@@ -41,18 +41,18 @@ so a thread cannot be bound, passed, or returned:
 
 ```console
 $ kc main.kiru
-main.kiru:5:11: error: expected text, found nothing
-  txt x = work();
-          ^^^^^^
+main.kiru:5:16: error: expected text, found a call that returns no value
+  let x<txt> = work();
+               ^^^^^^
 ```
 
 `async` takes one call: a user function or a native call such as
-`std::process::command({}, "cargo build")`. It cannot contain another `async`,
+`std::command({}, "cargo build")`. It cannot contain another `async`,
 because `async` is a statement, not a call:
 
 ```kiru
 fn main() {
-  async std::process::command({}, "cargo build");
+  async std::command({}, "cargo build");
   wait;
 };
 ```
@@ -66,7 +66,7 @@ fn main() {
   async build("frontend");
   async build("backend");
   wait;
-  std::io::print("both builds finished");
+  std::print("both builds finished");
 };
 ```
 
@@ -87,13 +87,13 @@ stay in order. A thread that should stay quiet sets `Stdout = "null"` or
 
 ```kiru
 fn check() {
-  std::process::command({ Stdout = "null" }, "make");
+  std::command({ Stdout = "null" }, "make");
 };
 
 fn main() {
   async check();
   wait;
-  std::io::print("checks finished");
+  std::print("checks finished");
 };
 ```
 

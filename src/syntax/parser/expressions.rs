@@ -1,6 +1,7 @@
 //! Expression grammar: sums of postfix expressions and primary expressions.
 
-use crate::syntax::ast::Expression;
+use crate::syntax::Span;
+use crate::syntax::ast::{Expression, StringPart};
 use crate::syntax::token::TokenKind;
 
 use super::{ParseError, Parser};
@@ -49,10 +50,8 @@ impl Parser {
     /// Parse a literal, a record, a name, or a call.
     fn parse_primary(&mut self) -> Result<Expression, ParseError> {
         match &self.current().kind {
-            TokenKind::Text(_) => {
-                let (value, span) = self.expect_text("in an expression")?;
-                Ok(Expression::Text { value, span })
-            }
+            TokenKind::Text(_) | TokenKind::InterpolationStart => self.parse_interpolated(),
+            TokenKind::Match => self.parse_match(true),
             TokenKind::LBrace => {
                 let (fields, span) = self.parse_record_fields()?;
                 Ok(Expression::Record { fields, span })
@@ -84,6 +83,40 @@ impl Parser {
                 "expected an expression, found {}",
                 other.describe()
             ))),
+        }
+    }
+
+    /// Parse a string: a plain text literal, or an interpolated string whose
+    /// parts are literal text and `@(…)` expressions.
+    fn parse_interpolated(&mut self) -> Result<Expression, ParseError> {
+        let start = self.current().span.start;
+        let mut parts = Vec::new();
+        let mut end = start;
+        loop {
+            match &self.current().kind {
+                TokenKind::Text(value) => {
+                    let value = value.clone();
+                    end = self.advance().end;
+                    parts.push(StringPart::Literal(value));
+                }
+                TokenKind::InterpolationStart => {
+                    self.advance();
+                    let expression = self.parse_expression()?;
+                    end = self
+                        .expect(&TokenKind::InterpolationEnd, "to close the interpolation")?
+                        .end;
+                    parts.push(StringPart::Expression(expression));
+                }
+                _ => break,
+            }
+        }
+        let span = Span::new(start, end);
+        match parts.as_slice() {
+            [StringPart::Literal(value)] => Ok(Expression::Text {
+                value: value.clone(),
+                span,
+            }),
+            _ => Ok(Expression::Interpolated { parts, span }),
         }
     }
 }

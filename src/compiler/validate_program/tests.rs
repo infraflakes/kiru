@@ -1,5 +1,7 @@
 use crate::compiler::{checked_files, checked_program};
-use crate::model::{DeclarationId, Kind, Program};
+use crate::model::{DeclarationId, DeclarationKind, Program};
+use crate::native_registry::native_row;
+use crate::types::Type;
 
 fn check(files: &[(&str, &str)], entry: &str) -> Result<(), String> {
     checked_files(files, entry).map(|_| ())
@@ -23,6 +25,17 @@ fn declaration(program: &Program, namespace: &[&str], name: &str) -> Declaration
 /// The first parameter of a callable declaration.
 fn first_parameter(program: &Program, id: DeclarationId) -> DeclarationId {
     program.declaration(id).parameters[0]
+}
+
+/// The type a node declares: a function's return type, a value or binding's
+/// type, or a native's row result.
+fn value_type(program: &Program, id: DeclarationId) -> Type {
+    match &program.declaration(id).kind {
+        DeclarationKind::Function(function) => function.return_type,
+        DeclarationKind::Value { ty, .. } => *ty,
+        DeclarationKind::Binding(binding) => binding.ty,
+        DeclarationKind::Native(native) => native_row(*native).returns,
+    }
 }
 
 /// Run every acceptance case, reporting all failures at once so one run names
@@ -67,31 +80,31 @@ fn expect_rejections(cases: &[(&str, &str, &str)]) {
 fn entry_and_return_rules() {
     expect_accepts(&[
         ("main without a parameter", "fn main() {};"),
-        ("main with a record parameter", "fn main(rec args) {};"),
+        ("main with a record parameter", "fn main(args<rec>) {};"),
         (
             "function without a return",
-            "fn f() { txt x = \"a\"; };\nfn main() {};",
+            "fn f() { let x<txt> = \"a\"; };\nfn main() {};",
         ),
         (
             "function with a return",
-            "fn f() -> txt { return(\"a\"); };\nfn main() {};",
+            "fn f() -> txt { return \"a\"; };\nfn main() {};",
         ),
         (
-            "an early return in a case arm with a final return",
-            "fn f(txt s) -> txt { switch(s) { case(\"a\") { return(\"a\"); }; }; return(\"\"); };\nfn main() {};",
+            "an early return in a match arm with a final return",
+            "fn f(s<txt>) -> txt { match s { \"a\" => { return \"a\"; }; }; return \"\"; };\nfn main() {};",
         ),
         (
             "unreachable code after a return",
-            "fn f() -> txt { return(\"a\"); return(\"b\"); };\nfn main() {};",
+            "fn f() -> txt { return \"a\"; return \"b\"; };\nfn main() {};",
         ),
-        ("a bare return in main", "fn main() { return(); };"),
+        ("a bare return in main", "fn main() { return; };"),
         (
             "a value-returning main",
-            "fn main() -> txt { return(\"\"); };",
+            "fn main() -> txt { return \"\"; };",
         ),
         (
             "a value function that panics on every other path",
-            "fn f(txt s) -> txt { switch(s) { case(\"a\") { return(\"a\"); }; default { panic; }; }; };\nfn main() {};",
+            "fn f(s<txt>) -> txt { match s { \"a\" => { return \"a\"; }; _ => { panic; }; }; };\nfn main() {};",
         ),
         (
             "a value function that panics on every path",
@@ -99,7 +112,7 @@ fn entry_and_return_rules() {
         ),
         (
             "a value function that ends in a halting call",
-            "fn f() -> txt { std::io::eprint(\"x\"); };\nfn main() {};",
+            "fn f() -> txt { std::eprint(\"x\"); };\nfn main() {};",
         ),
         (
             "a value function that ends in a halting user function",
@@ -113,27 +126,27 @@ fn entry_and_return_rules() {
     expect_rejections(&[
         (
             "a value function that can fall through",
-            "fn f(txt s) -> txt { switch(s) { case(\"a\") { return(\"a\"); }; }; };\nfn main() {};",
-            "`f` is declared to return text, so every path must end with `return(...)`, `panic;`, or a call that stops the run",
+            "fn f(s<txt>) -> txt { match s { \"a\" => { return \"a\"; }; }; };\nfn main() {};",
+            "`f` is declared to return text, so every path must end with `return ...`, `panic;`, or a call that stops the run",
         ),
         (
-            "a returned value of the wrong kind",
-            "fn f(txt s) -> txt { switch(s) { case(\"a\") { return(\"a\"); }; default { return({ k = \"v\" }); }; }; };\nfn main() {};",
+            "a returned value of the wrong type",
+            "fn f(s<txt>) -> txt { match s { \"a\" => { return \"a\"; }; _ => { return { k = \"v\" }; }; }; };\nfn main() {};",
             "expected text, found record",
         ),
         (
             "returning a nothing call",
-            "fn work() {};\nfn f() -> txt { return(work()); };\nfn main() {};",
-            "expected text, found nothing",
+            "fn work() {};\nfn f() -> txt { return work(); };\nfn main() {};",
+            "expected text, found void",
         ),
         (
             "a value return in a nothing function",
-            "fn f() { return(\"a\"); };\nfn main() {};",
+            "fn f() { return \"a\"; };\nfn main() {};",
             "`f` is declared to return nothing, so `return` cannot carry a value",
         ),
         (
             "a bare return in a value function",
-            "fn f() -> txt { return(); };\nfn main() {};",
+            "fn f() -> txt { return; };\nfn main() {};",
             "`f` is declared to return text, so `return` must carry a value",
         ),
     ]);
@@ -145,18 +158,18 @@ fn panic_and_void_rules() {
     expect_rejections(&[
         (
             "eprint bound to text",
-            "fn main() { txt x = std::io::eprint(\"x\"); };",
-            "expected text, found nothing",
+            "fn main() { let x<txt> = std::eprint(\"x\"); };",
+            "expected text, found void",
         ),
         (
             "eprint passed as a text argument",
-            "fn take(txt x) {};\nfn main() { take(std::io::eprint(\"x\")); };",
-            "expected text, found nothing",
+            "fn take(x<txt>) {};\nfn main() { take(std::eprint(\"x\")); };",
+            "expected text, found void",
         ),
         (
             "eprint in a record field",
-            "fn main() { rec r = { k = std::io::eprint(\"x\") }; };",
-            "expected text, found nothing",
+            "fn main() { let r<rec> = { k = std::eprint(\"x\") }; };",
+            "expected text, found void",
         ),
     ]);
 }
@@ -166,50 +179,50 @@ fn command_and_field_rules() {
     expect_accepts(&[
         (
             "command code returned through a function",
-            "fn code(txt line) -> txt { return(std::process::command({}, line)); };\nfn main() { txt code = code(\"echo hi\"); };",
+            "fn code(line<txt>) -> txt { return std::command({}, line); };\nfn main() { let code<txt> = code(\"echo hi\"); };",
         ),
         (
             "command at a module value",
-            "txt x = std::process::command({}, \"echo hi\");\nfn main() {};",
+            "let x<txt> = std::command({}, \"echo hi\");\nfn main() {};",
         ),
         (
             "command inside a record",
-            "rec r = { code = std::process::command({}, \"echo hi\") };\nfn main() {};",
+            "let r<rec> = { code = std::command({}, \"echo hi\") };\nfn main() {};",
         ),
         (
             "command as a bare statement",
-            "fn main() { std::process::command({}, \"true\"); };",
+            "fn main() { std::command({}, \"true\"); };",
         ),
     ]);
     expect_rejections(&[
         (
             "command bound to a record",
-            "fn main() { rec x = std::process::command({}, \"ls\"); };",
+            "fn main() { let x<rec> = std::command({}, \"ls\"); };",
             "expected record, found text",
         ),
         (
             "command passed as a record argument",
-            "fn take(rec x) {};\nfn main() { take(std::process::command({}, \"ls\")); };",
+            "fn take(x<rec>) {};\nfn main() { take(std::command({}, \"ls\")); };",
             "expected record, found text",
         ),
         (
             "command without arguments",
-            "fn main() { std::process::command(); };",
-            "`std::process::command` takes 2 arguments, found 0",
+            "fn main() { std::command(); };",
+            "`std::command` takes 2 arguments, found 0",
         ),
         (
             "command with one argument",
-            "fn main() { std::process::command({}); };",
-            "`std::process::command` takes 2 arguments, found 1",
+            "fn main() { std::command({}); };",
+            "`std::command` takes 2 arguments, found 1",
         ),
         (
             "command with a text spec",
-            "fn main() { std::process::command(\"ls\", \"\"); };",
+            "fn main() { std::command(\"ls\", \"\"); };",
             "expected record, found text",
         ),
         (
             "field access on text",
-            "fn main() { txt x = \"a\".b; };",
+            "fn main() { let x<txt> = \"a\".b; };",
             "expected record, found text",
         ),
     ]);
@@ -220,35 +233,35 @@ fn text_and_record_rules() {
     expect_accepts(&[
         (
             "record argument",
-            "fn read(rec repo) -> txt { return(repo.dir); };\nfn main() { read({ dir = \"/x\" }); };",
+            "fn read(repo<rec>) -> txt { return repo.dir; };\nfn main() { read({ dir = \"/x\" }); };",
         ),
         (
             "record parameter through a call",
-            "rec backend = { dir = \"/b\" };\nfn read_it(rec repo) -> txt { return(repo.dir); };\nfn main() { read_it(backend); };",
+            "let backend<rec> = { dir = \"/b\" };\nfn read_it(repo<rec>) -> txt { return repo.dir; };\nfn main() { read_it(backend); };",
         ),
         (
             "text parameter through a call",
-            "fn identity(txt value) -> txt { return(value); };\nfn main() { std::io::print(identity(\"x\")); };",
+            "fn identity(value<txt>) -> txt { return value; };\nfn main() { std::print(identity(\"x\")); };",
         ),
         (
             "record parameter through a call with a literal",
-            "fn identity(rec repo) -> txt { return(repo.dir); };\nfn main() { std::io::print(identity({ dir = \"/x\" })); };",
+            "fn identity(repo<rec>) -> txt { return repo.dir; };\nfn main() { std::print(identity({ dir = \"/x\" })); };",
         ),
     ]);
     expect_rejections(&[
         (
             "plus on a record",
-            "fn main() { txt x = \"a\" + { b = \"c\" }; };",
+            "fn main() { let x<txt> = \"a\" + { b = \"c\" }; };",
             "expected text, found record",
         ),
         (
             "text parameter used as a record",
-            "fn f(txt x) { txt a = x; txt b = x.b; };\nfn main() { f(\"s\"); };",
+            "fn f(x<txt>) { let a<txt> = x; let b<txt> = x.b; };\nfn main() { f(\"s\"); };",
             "expected record, found text",
         ),
         (
             "text where a record is required",
-            "fn read(rec repo) -> txt { return(repo.dir); };\nfn main() { read(\"x\"); };",
+            "fn read(repo<rec>) -> txt { return repo.dir; };\nfn main() { read(\"x\"); };",
             "expected record, found text",
         ),
     ]);
@@ -263,11 +276,11 @@ fn async_wait_rules() {
         ),
         (
             "async of a command call",
-            "fn main() { async std::process::command({}, \"true\"); };",
+            "fn main() { async std::command({}, \"true\"); };",
         ),
         (
             "async of a call returning text",
-            "fn pick() -> txt { return(\"x\"); };\nfn main() { async pick(); wait; };",
+            "fn pick() -> txt { return \"x\"; };\nfn main() { async pick(); wait; };",
         ),
         (
             "async of a halting call does not stop the caller",
@@ -290,7 +303,7 @@ fn async_wait_rules() {
         ),
         (
             "async of a text variable",
-            "txt x = \"a\";\nfn main() { async x; };",
+            "let x<txt> = \"a\";\nfn main() { async x; };",
             "`async` takes a call",
         ),
     ]);
@@ -299,54 +312,80 @@ fn async_wait_rules() {
 #[test]
 fn bindings_and_scope_rules() {
     expect_accepts(&[(
-        "literal, name, and field-path case arms",
-        "rec spec = { cmd = \"a\" };\nfn main() {\ntxt a = \"a\";\nswitch(\"a\") { case(\"a\") {}; case(a) {}; case(spec.cmd) {}; };\n};",
+        "literal, name, and field-path match arms",
+        "let spec<rec> = { cmd = \"a\" };\nfn main() {\nlet a<txt> = \"a\";\nmatch \"a\" { \"a\" => {}; a => {}; spec.cmd => {}; };\n};",
     )]);
     expect_rejections(&[
         (
             "parameter assignment",
-            "fn f(txt x) { x = \"a\"; };\nfn main() {};",
+            "fn f(x<txt>) { x = \"a\"; };\nfn main() {};",
             "`x` is not mutable; declare it `mut`",
         ),
         (
             "module assignment",
-            "txt x = \"a\";\nfn main() { x = \"b\"; };",
+            "let x<txt> = \"a\";\nfn main() { x = \"b\"; };",
             "`x` is a module-level constant and cannot be assigned",
         ),
         (
             "assigning a record to a text local",
-            "fn main() { mut txt x = \"a\"; x = {}; };",
+            "fn main() { let mut x<txt> = \"a\"; x = {}; };",
             "expected text, found record",
         ),
         (
-            "duplicate literal case pattern",
-            "fn main() { switch(\"a\") { case(\"a\") {}; case(\"a\") {}; }; };",
-            "duplicate case pattern `a`",
+            "duplicate literal match pattern",
+            "fn main() { match \"a\" { \"a\" => {}; \"a\" => {}; }; };",
+            "duplicate match pattern `a`",
         ),
         (
-            "record case pattern",
-            "fn main() { switch(\"a\") { case({}) {}; }; };",
-            "a case arm is a literal, a name, or a field path",
+            "record match pattern",
+            "fn main() { match \"a\" { {} => {}; }; };",
+            "a match arm is a literal, a name, or a field path",
         ),
         (
-            "case arm does not leak locals",
-            "fn main() {\nswitch(\"a\") {\ncase(\"a\") { txt hidden = \"x\"; };\ncase(\"b\") { txt seen = hidden; };\n};\n};",
+            "match arm does not leak locals",
+            "fn main() {\nmatch \"a\" {\n\"a\" => { let hidden<txt> = \"x\"; };\n\"b\" => { let seen<txt> = hidden; };\n};\n};",
             "unknown name `hidden`",
         ),
         (
-            "a call case arm",
-            "fn pick() -> txt { return(\"a\"); };\nfn main() {\nswitch(\"a\") { case(pick()) {}; };\n};",
-            "a case arm is a literal, a name, or a field path",
+            "a call match arm",
+            "fn pick() -> txt { return \"a\"; };\nfn main() {\nmatch \"a\" { pick() => {}; };\n};",
+            "a match arm is a literal, a name, or a field path",
         ),
         (
-            "a concatenation case arm",
-            "fn main() {\nswitch(\"ab\") { case(\"a\" + \"b\") {}; };\n};",
-            "a case arm is a literal, a name, or a field path",
+            "a concatenation match arm",
+            "fn main() {\nmatch \"ab\" { \"a\" + \"b\" => {}; };\n};",
+            "a match arm is a literal, a name, or a field path",
         ),
         (
-            "duplicate reference case patterns",
-            "fn main() {\ntxt a = \"a\";\nswitch(\"a\") { case(a) {}; case(a) {}; };\n};",
-            "duplicate case pattern",
+            "duplicate reference match patterns",
+            "fn main() {\nlet a<txt> = \"a\";\nmatch \"a\" { a => {}; a => {}; };\n};",
+            "duplicate match pattern",
+        ),
+    ]);
+}
+
+#[test]
+fn match_expression_rules() {
+    expect_accepts(&[
+        (
+            "an expression match yields a value",
+            "fn f() -> txt { return match \"a\" { \"a\" => \"one\"; _ => \"other\"; }; };\nfn main() {};",
+        ),
+        (
+            "a record-valued match",
+            "fn f() -> txt { let r<rec> = match \"a\" { \"a\" => { k = \"v\" }; _ => { k = \"w\" }; }; return r.k; };\nfn main() {};",
+        ),
+    ]);
+    expect_rejections(&[
+        (
+            "match arms of different types",
+            "fn main() { let x<txt> = match \"a\" { \"a\" => \"one\"; _ => { k = \"v\" }; }; };",
+            "expected text, found record",
+        ),
+        (
+            "a text match assigned to a record",
+            "fn main() { let x<rec> = match \"a\" { \"a\" => \"one\"; _ => \"two\"; }; };",
+            "expected record, found text",
         ),
     ]);
 }
@@ -356,37 +395,37 @@ fn name_and_call_rules() {
     expect_accepts(&[
         (
             "root access when a local shadows the root",
-            "txt value = \"root\";\nfn main() {\ntxt value = \"local\";\nstd::io::print(value);\nstd::io::print(::value);\n};",
+            "let value<txt> = \"root\";\nfn main() {\nlet value<txt> = \"local\";\nstd::print(value);\nstd::print(::value);\n};",
         ),
         (
             "a value and a function share a name",
-            "fn build() -> txt { return(\"built\"); };\ntxt build = \"text\";\nfn main() { std::io::print(build); std::io::print(build()); };",
+            "fn build() -> txt { return \"built\"; };\nlet build<txt> = \"text\";\nfn main() { std::print(build); std::print(build()); };",
         ),
     ]);
     expect_rejections(&[
         (
             "function as a value",
-            "fn f() {};\nfn main() { txt x = f; };",
+            "fn f() {};\nfn main() { let x<txt> = f; };",
             "`f` is a function; call it",
         ),
         (
             "calling a module value",
-            "txt x = \"a\";\nfn main() { x(); };",
+            "let x<txt> = \"a\";\nfn main() { x(); };",
             "`x` is a value and cannot be called",
         ),
         (
             "calling a local",
-            "fn main() { txt x = \"a\"; x(); };",
+            "fn main() { let x<txt> = \"a\"; x(); };",
             "unknown name `x`",
         ),
         (
             "wrong arity",
-            "fn f(txt a) {};\nfn main() { f(); };",
+            "fn f(a<txt>) {};\nfn main() { f(); };",
             "`f` takes 1 arguments, found 0",
         ),
         (
             "unknown rooted name",
-            "txt value = \"root\";\nfn main() { std::io::print(::missing); };",
+            "let value<txt> = \"root\";\nfn main() { std::print(::missing); };",
             "unknown name `::missing`",
         ),
         (
@@ -396,7 +435,7 @@ fn name_and_call_rules() {
         ),
         (
             "value self reference",
-            "txt x = x;\nfn main() {};",
+            "let x<txt> = x;\nfn main() {};",
             "a value cannot reference itself",
         ),
     ]);
@@ -406,7 +445,7 @@ fn name_and_call_rules() {
 fn statement_form_rules() {
     expect_accepts(&[(
         "bare call and panic statements",
-        "fn work() {};\nfn main() {\nwork();\nstd::process::command({}, \"true\");\npanic;\n};",
+        "fn work() {};\nfn main() {\nwork();\nstd::command({}, \"true\");\npanic;\n};",
     )]);
     expect_rejections(&[
         (
@@ -416,7 +455,7 @@ fn statement_form_rules() {
         ),
         (
             "bare reference statement",
-            "fn main() { txt name = \"x\"; name; };",
+            "fn main() { let name<txt> = \"x\"; name; };",
             "a statement must be a call",
         ),
         (
@@ -437,83 +476,77 @@ fn mutability_rules() {
     expect_accepts(&[
         (
             "rebind a mut text",
-            "fn f() { mut txt x = \"a\"; x = \"b\"; };\nfn main() {};",
+            "fn f() { let mut x<txt> = \"a\"; x = \"b\"; };\nfn main() {};",
         ),
         (
             "field assign a mut record",
-            "fn f() { mut rec r = { a = \"1\" }; r.a = \"2\"; };\nfn main() {};",
+            "fn f() { let mut r<rec> = { a = \"1\" }; r.a = \"2\"; };\nfn main() {};",
         ),
         (
             "field assign adds a field",
-            "fn f() { mut rec r = { a = \"1\" }; r.b = \"2\"; };\nfn main() {};",
+            "fn f() { let mut r<rec> = { a = \"1\" }; r.b = \"2\"; };\nfn main() {};",
         ),
         (
             "rebind a mut parameter",
-            "fn f(mut txt x) { x = \"b\"; };\nfn main() {};",
+            "fn f(mut x<txt>) { x = \"b\"; };\nfn main() {};",
         ),
         (
             "field assign a mut parameter",
-            "fn f(mut rec r) { r.a = \"b\"; };\nfn main() {};",
+            "fn f(mut r<rec>) { r.a = \"b\"; };\nfn main() {};",
         ),
     ]);
     expect_rejections(&[
         (
             "rebind an immutable local",
-            "fn f() { txt x = \"a\"; x = \"b\"; };\nfn main() {};",
+            "fn f() { let x<txt> = \"a\"; x = \"b\"; };\nfn main() {};",
             "`x` is not mutable; declare it `mut`",
         ),
         (
             "field assign an immutable record",
-            "fn f() { rec r = { a = \"1\" }; r.a = \"2\"; };\nfn main() {};",
+            "fn f() { let r<rec> = { a = \"1\" }; r.a = \"2\"; };\nfn main() {};",
             "`r` is not mutable; declare it `mut`",
         ),
         (
             "field assign an immutable parameter",
-            "fn f(txt x) { x.a = \"b\"; };\nfn main() {};",
+            "fn f(x<txt>) { x.a = \"b\"; };\nfn main() {};",
             "`x` is not mutable; declare it `mut`",
         ),
         (
             "field assign a text binding",
-            "fn f() { mut txt x = \"a\"; x.b = \"c\"; };\nfn main() {};",
+            "fn f() { let mut x<txt> = \"a\"; x.b = \"c\"; };\nfn main() {};",
             "`x` is not a record and has no fields",
         ),
         (
             "field assign a module value",
-            "rec r = { a = \"1\" };\nfn main() { r.a = \"2\"; };",
+            "let r<rec> = { a = \"1\" };\nfn main() { r.a = \"2\"; };",
             "`r` is a module-level constant and cannot be assigned",
         ),
     ]);
 }
 
 #[test]
-fn checks_the_shipped_library_kinds() {
+fn checks_the_shipped_library_types() {
     let program = checked_program(
-        "rec backend = { dir = \"/kiru\" };\n\
-         fn read(rec repo) -> txt { return(repo.dir); };\n\
+        "let backend<rec> = { dir = \"/kiru\" };\n\
+         fn read(repo<rec>) -> txt { return repo.dir; };\n\
          fn main() {\n\
-           std::io::print(\"x\");\n\
+           std::print(\"x\");\n\
            read(backend);\n\
          };",
     );
 
-    let command = declaration(&program, &["std", "process"], "command");
-    assert_eq!(program.declaration(command).derived.kind, Some(Kind::Text));
+    let command = declaration(&program, &["std"], "command");
+    assert_eq!(value_type(&program, command), Type::Text);
 
-    let print = declaration(&program, &["std", "io"], "print");
+    let print = declaration(&program, &["std"], "print");
     assert_eq!(
-        program
-            .declaration(first_parameter(&program, print))
-            .derived
-            .kind,
-        Some(Kind::Text)
+        value_type(&program, first_parameter(&program, print)),
+        Type::Text
     );
-    assert_eq!(program.declaration(print).derived.kind, Some(Kind::Nothing));
+    assert_eq!(value_type(&program, print), Type::Void);
 
-    let eprint = declaration(&program, &["std", "io"], "eprint");
-    assert_eq!(
-        program.declaration(eprint).derived.kind,
-        Some(Kind::Nothing)
-    );
+    let eprint = declaration(&program, &["std"], "eprint");
+    assert_eq!(value_type(&program, eprint), Type::Void);
     assert!(
         program.declaration(eprint).derived.halts,
         "eprint ends in `panic;`, so it stops the run"
@@ -521,11 +554,8 @@ fn checks_the_shipped_library_kinds() {
 
     let read = declaration(&program, &[], "read");
     assert_eq!(
-        program
-            .declaration(first_parameter(&program, read))
-            .derived
-            .kind,
-        Some(Kind::Record)
+        value_type(&program, first_parameter(&program, read)),
+        Type::Record
     );
 }
 
@@ -534,23 +564,23 @@ fn list_and_loop_rules() {
     expect_accepts(&[
         (
             "a list literal binding and a for loop",
-            "fn main() { list xs = [\"a\", \"b\"]; for x in xs { std::io::print(x); }; };",
+            "fn main() { let xs<list> = [\"a\", \"b\"]; for x in xs { std::print(x); }; };",
         ),
         (
             "a function that takes and returns a list",
-            "fn id(list xs) -> list { return(xs); }; fn main() { id([\"a\"]); };",
+            "fn id(xs<list>) -> list { return xs; }; fn main() { id([\"a\"]); };",
         ),
         (
             "a module-level list value",
-            "list xs = [\"a\"]; fn main() { for x in xs { std::io::print(x); }; };",
+            "let xs<list> = [\"a\"]; fn main() { for x in xs { std::print(x); }; };",
         ),
         (
             "break inside a for",
             "fn main() { for x in [\"a\"] { break; }; };",
         ),
         (
-            "a for that skips an element with a switch default",
-            "fn main() { for x in [\"a\"] { switch(x) { case(\"a\") {}; default { std::io::print(x); }; }; }; };",
+            "a for that skips an element with a match default",
+            "fn main() { for x in [\"a\"] { match x { \"a\" => {}; _ => { std::print(x); }; }; }; };",
         ),
         (
             "an unbounded for that breaks",
@@ -558,13 +588,13 @@ fn list_and_loop_rules() {
         ),
         (
             "an unbounded for as the only path of a value function",
-            "fn f() -> txt { for { std::io::print(\"a\"); }; }; fn main() {};",
+            "fn f() -> txt { for { std::print(\"a\"); }; }; fn main() {};",
         ),
     ]);
     expect_rejections(&[
         (
             "for over text",
-            "fn main() { for x in \"a\" { std::io::print(x); }; };",
+            "fn main() { for x in \"a\" { std::print(x); }; };",
             "expected list, found text",
         ),
         (
@@ -574,18 +604,18 @@ fn list_and_loop_rules() {
         ),
         (
             "a list element that is not text",
-            "fn main() { list xs = [{ k = \"v\" }]; };",
+            "fn main() { let xs<list> = [{ k = \"v\" }]; };",
             "expected text, found record",
         ),
         (
             "a list binding whose value is not a list",
-            "fn main() { list xs = \"a\"; };",
+            "fn main() { let xs<list> = \"a\"; };",
             "expected list, found text",
         ),
         (
             "a value function whose only path is a loop",
-            "fn f() -> txt { for x in [\"a\"] { return(x); }; }; fn main() {};",
-            "`f` is declared to return text, so every path must end with `return(...)`, `panic;`, or a call that stops the run",
+            "fn f() -> txt { for x in [\"a\"] { return x; }; }; fn main() {};",
+            "`f` is declared to return text, so every path must end with `return ...`, `panic;`, or a call that stops the run",
         ),
     ]);
 }
@@ -593,21 +623,18 @@ fn list_and_loop_rules() {
 #[test]
 fn main_returns_text_or_nothing() {
     expect_accepts(&[
-        (
-            "main returning text",
-            "fn main() -> txt { return(\"0\"); };",
-        ),
+        ("main returning text", "fn main() -> txt { return \"0\"; };"),
         ("main returning nothing", "fn main() {};"),
     ]);
     expect_rejections(&[
         (
             "main returning a record",
-            "fn main() -> rec { return({}); };",
+            "fn main() -> rec { return {}; };",
             "`main` returns text or nothing",
         ),
         (
             "main returning a list",
-            "fn main() -> list { return([]); };",
+            "fn main() -> list { return []; };",
             "`main` returns text or nothing",
         ),
     ]);

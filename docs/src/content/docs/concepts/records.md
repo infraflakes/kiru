@@ -12,7 +12,7 @@ A record is a map of names to text:
 <span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
-rec env = {
+let env<rec> = {
   RUST_BACKTRACE = "1",
   CARGO_TERM_COLOR = "never",
 };
@@ -22,16 +22,16 @@ Keys are identifiers. A trailing comma is allowed, `{}` is the empty record,
 and a later duplicate key wins:
 
 ```kiru
-rec flags = { a = "1", a = "2" };    # a is "2"
+let flags<rec> = { a = "1", a = "2" };    # a is "2"
 ```
 
 Every field is a text expression, so records do not nest:
 
 ```console
 $ kc main.kiru
-main.kiru:1:24: error: expected text, found record
-rec nested = { inner = { a = "1" } };
-                       ^^^^^^^^^^^
+main.kiru:1:29: error: expected text, found record
+let nested<rec> = { inner = { a = "1" } };
+                            ^^^^^^^^^^^
 ```
 
 ## Field access
@@ -40,8 +40,8 @@ rec nested = { inner = { a = "1" } };
 guard:
 
 ```kiru
-rec env = { A = "1" };
-std::io::print("B is [" + env.B + "]");   # B is []
+let env<rec> = { A = "1" };
+std::print("B is [" + env.B + "]");   # B is []
 ```
 
 The receiver must be a record; a field access on text is an error. Because
@@ -54,7 +54,7 @@ when it is absent:
 
 ```kiru
 fn main() {
-  mut rec env = { RUST_BACKTRACE = "1" };
+  let mut env<rec> = { RUST_BACKTRACE = "1" };
   env.RUST_BACKTRACE = "0";
   env.CARGO_TERM_COLOR = "never";
 };

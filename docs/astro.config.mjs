@@ -66,7 +66,7 @@ export default defineConfig({
             { label: 'Types and Checking', slug: 'concepts/types-and-checking' },
             { label: 'Functions', slug: 'concepts/functions' },
             { label: 'Bindings and Mutability', slug: 'concepts/bindings-and-mutability' },
-            { label: 'Switch', slug: 'concepts/switch' },
+            { label: 'Match', slug: 'concepts/match' },
             { label: 'Lists and Loops', slug: 'concepts/lists-and-loops' },
             { label: 'Names and Scope', slug: 'concepts/names-and-scope' },
             { label: 'Namespaces and Imports', slug: 'concepts/namespaces' },
@@ -94,6 +94,7 @@ export default defineConfig({
           label: 'The Standard Library',
           collapsed: false,
           items: [
+            { label: 'std', slug: 'stdlib/std' },
             { label: 'std::process', slug: 'stdlib/process' },
             { label: 'std::io', slug: 'stdlib/io' },
             { label: 'std::fs', slug: 'stdlib/fs' },

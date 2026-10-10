@@ -2,34 +2,36 @@
 #
 # List helpers written on top of the native list kernel.
 
-module std::lists;
+mod std::lists {
 
-# The last element of `items`, or `""` when the list is empty.
-fn last(list items) -> txt {
-  mut txt result = "";
-  for item in items {
-    result = item;
-  };
-  return(result);
-};
-
-# A new list with every element of `second` after every element of `first`.
-fn concat(list first, list second) -> list {
-  mut list result = first;
-  for item in second {
-    result = append(result, item);
-  };
-  return(result);
-};
-
-# Whether `text` is an element of `list`. The loop stops at the first match.
-fn contains(list items, txt text) -> txt {
-  mut txt found = "false";
-  for item in items {
-    switch(item) {
-      case(text) { found = "true"; break; };
-      default {};
+  # A new list with every element of `second` after every element of `first`.
+  fn concat(first<list>, second<list>) -> list {
+    let mut result<list> = first;
+    for item in second {
+      result = append(result, item);
     };
+    return result;
   };
-  return(found);
+
+  # A new list with the elements reversed.
+  fn reverse(items<list>) -> list {
+    let mut result<list> = [];
+    for item in items {
+      result = prepend(result, item);
+    };
+    return result;
+  };
+
+  # Whether `text` is an element of `list`. The loop stops at the first match.
+  fn contains(items<list>, text<txt>) -> txt {
+    let mut found<txt> = "false";
+    for item in items {
+      match item {
+        text => { found = "true"; break; };
+        _ => {};
+      };
+    };
+    return found;
+  };
+
 };

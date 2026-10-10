@@ -6,10 +6,7 @@
 //! error, so a function can only call functions declared before it.
 
 use crate::compiler::{Diagnostic, function_used_as_value, value_called};
-use crate::model::{
-    DeclarationId, FileId, NamespaceId, Registry, join_path, namespace_at, namespace_path,
-};
-use crate::native_registry::BUILTIN_NAMESPACE;
+use crate::model::{DeclarationId, NamespaceId, Registry, join_path, namespace_at};
 use crate::syntax::Span;
 
 use super::super::register_declarations::Builder;
@@ -40,7 +37,7 @@ impl Builder {
         }
 
         let display = join_path(path, root);
-        let Some(found) = self.search(context, path, root, span, registry)? else {
+        let Some(found) = self.search(context, path, root, registry)? else {
             return Err(self.unknown_name(context, path, root, span, registry));
         };
         if found == context.current {
@@ -70,7 +67,6 @@ impl Builder {
         context: &Context,
         path: &[String],
         root: bool,
-        span: Span,
         registry: Registry,
     ) -> Result<Option<DeclarationId>, Diagnostic> {
         let (name, namespace_segments) = path
@@ -90,19 +86,7 @@ impl Builder {
             NamespaceId(0)
         } else {
             match self.namespace_at(namespace_segments) {
-                Some(namespace) => {
-                    if !self.namespace_reachable(context.file, namespace) {
-                        return Err(Diagnostic::new(
-                            &self.files[context.file.0].path,
-                            span,
-                            format!(
-                                "namespace `{}` is not imported",
-                                join_path(namespace_segments, false)
-                            ),
-                        ));
-                    }
-                    namespace
-                }
+                Some(namespace) => namespace,
                 None => return Ok(None),
             }
         };
@@ -121,7 +105,7 @@ impl Builder {
     ) -> Diagnostic {
         let other_registry = registry.other();
         let display = join_path(path, root);
-        let message = match self.search(context, path, root, span, other_registry) {
+        let message = match self.search(context, path, root, other_registry) {
             Ok(Some(_)) => match registry {
                 Registry::Value => function_used_as_value(&display),
                 Registry::Function => value_called(&display),
@@ -144,27 +128,5 @@ impl Builder {
 
     fn namespace_at(&self, path: &[String]) -> Option<NamespaceId> {
         namespace_at(&self.namespaces, path)
-    }
-
-    /// Whether a file may reach a namespace: its own, the implicit `std`
-    /// tree, or a namespace of a file it imports directly.
-    fn namespace_reachable(&self, file: FileId, namespace: NamespaceId) -> bool {
-        if namespace == NamespaceId(0) {
-            return true;
-        }
-        if namespace_path(&self.namespaces, namespace)
-            .first()
-            .map(String::as_str)
-            == BUILTIN_NAMESPACE.first().copied()
-        {
-            return true;
-        }
-        let file = &self.files[file.0];
-        if file.namespace == namespace {
-            return true;
-        }
-        file.imports
-            .iter()
-            .any(|import| self.files[import.0].namespace == namespace)
     }
 }

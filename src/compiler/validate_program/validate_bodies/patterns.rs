@@ -1,6 +1,6 @@
-//! Case arms: an arm is a text atom, and two equal arms are a duplicate.
+//! Match arms: an arm is a text atom, and two equal arms are a duplicate.
 //!
-//! A `case` arm references the text it compares; it does not compute one. So an
+//! A match arm references the text it compares; it does not compute one. So an
 //! arm is an atom — a text literal, a name, or a field path — never a call, a
 //! concatenation, or a record or list literal. That keeps matching free of
 //! side effects and makes duplicate detection a comparison of atoms.
@@ -41,10 +41,10 @@ pub(super) fn atoms_equal(left: &Expression, right: &Expression) -> bool {
     }
 }
 
-/// The diagnostic for a repeated case arm; a literal text is quoted.
+/// The diagnostic for a repeated match arm; a literal text is quoted.
 pub(super) fn duplicate_pattern_message(pattern: &Expression) -> String {
     match pattern {
-        Expression::Text { value, .. } => format!("duplicate case pattern `{value}`"),
-        _ => "duplicate case pattern".to_owned(),
+        Expression::Text { value, .. } => format!("duplicate match pattern `{value}`"),
+        _ => "duplicate match pattern".to_owned(),
     }
 }

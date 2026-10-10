@@ -7,9 +7,9 @@ fn linked(files: &[(&str, &str)], entry: &str) -> Result<Program, String> {
         let path = directory.path().join(name);
         std::fs::write(&path, source).expect("write file");
     }
-    let mut program =
+    let program =
         crate::compiler::load_files::load_files(&directory.path().join(entry)).expect("loads");
-    resolve_names(&mut program).map_err(|diagnostic| diagnostic.message)
+    resolve_names(&program).map_err(|diagnostic| diagnostic.message)
 }
 
 fn accept(files: &[(&str, &str)], entry: &str) -> Program {
@@ -66,7 +66,7 @@ fn entry_and_namespace_rules() {
         ("root main", &[("main.kiru", "fn main() {};")], "main.kiru"),
         (
             "root main with a record parameter",
-            &[("main.kiru", "fn main(rec args) {};")],
+            &[("main.kiru", "fn main(args<rec>) {};")],
             "main.kiru",
         ),
         (
@@ -76,7 +76,7 @@ fn entry_and_namespace_rules() {
                     "main.kiru",
                     "import \"tasks.kiru\";\nfn main() { tasks::go(); };",
                 ),
-                ("tasks.kiru", "module tasks;\nfn go() {};"),
+                ("tasks.kiru", "mod tasks { fn go() {}; };"),
             ],
             "main.kiru",
         ),
@@ -89,24 +89,10 @@ fn entry_and_namespace_rules() {
                 ),
                 (
                     "app.kiru",
-                    "module app;\nfn helper() {};\nfn go() { app::helper(); };",
+                    "mod app { fn helper() {}; fn go() { app::helper(); }; };",
                 ),
             ],
             "main.kiru",
-        ),
-    ]);
-    expect_rejections(&[
-        (
-            "main with a text parameter",
-            &[("main.kiru", "fn main(txt args) {};")],
-            "main.kiru",
-            "`main`'s parameter must be declared `rec`",
-        ),
-        (
-            "main inside a module",
-            &[("main.kiru", "module pipeline;\nfn main() {};")],
-            "main.kiru",
-            "`main` in the entry file must be declared in the root namespace",
         ),
         (
             "main declared by another file",
@@ -115,16 +101,41 @@ fn entry_and_namespace_rules() {
                 ("helper.kiru", "fn main() {};"),
             ],
             "main.kiru",
-            "the entry file has no `main` function",
         ),
         (
-            "main in another namespace",
+            "a transitively imported namespace is reachable",
             &[
-                ("main.kiru", "import \"tools.kiru\";"),
-                ("tools.kiru", "module tools;\nfn main() {};"),
+                (
+                    "main.kiru",
+                    "import \"middle.kiru\";\nfn main() { leaf::go(); };",
+                ),
+                ("middle.kiru", "import \"leaf.kiru\";"),
+                ("leaf.kiru", "mod leaf { fn go() {}; };"),
             ],
             "main.kiru",
-            "the entry file has no `main` function",
+        ),
+    ]);
+    expect_rejections(&[
+        (
+            "main with a text parameter",
+            &[("main.kiru", "fn main(args<txt>) {};")],
+            "main.kiru",
+            "`main`'s parameter must be declared `rec`",
+        ),
+        (
+            "main only inside a module",
+            &[("main.kiru", "mod pipeline { fn main() {}; };")],
+            "main.kiru",
+            "the program has no root `main` function",
+        ),
+        (
+            "main only in another namespace",
+            &[
+                ("main.kiru", "import \"tools.kiru\";"),
+                ("tools.kiru", "mod tools { fn main() {}; };"),
+            ],
+            "main.kiru",
+            "the program has no root `main` function",
         ),
         (
             "duplicate root main",
@@ -137,28 +148,15 @@ fn entry_and_namespace_rules() {
         ),
         (
             "main with two parameters",
-            &[("main.kiru", "fn main(rec a, rec b) {};")],
+            &[("main.kiru", "fn main(a<rec>, b<rec>) {};")],
             "main.kiru",
             "`main` takes at most one parameter",
         ),
         (
             "std namespace",
-            &[("main.kiru", "module std;\nfn main() {};")],
+            &[("main.kiru", "mod std { fn main() {}; };")],
             "main.kiru",
             "`std` is reserved and cannot be declared",
-        ),
-        (
-            "transitively imported namespace",
-            &[
-                (
-                    "main.kiru",
-                    "import \"middle.kiru\";\nfn main() { leaf::go(); };",
-                ),
-                ("middle.kiru", "module middle;\nimport \"leaf.kiru\";"),
-                ("leaf.kiru", "module leaf;\nfn go() {};"),
-            ],
-            "main.kiru",
-            "namespace `leaf` is not imported",
         ),
     ]);
 }
@@ -170,7 +168,7 @@ fn name_and_binding_rules() {
             "shadowing a visible module value",
             &[(
                 "main.kiru",
-                "txt top = \"a\";\nfn main() { txt top = \"b\"; std::io::print(top); };",
+                "let top<txt> = \"a\";\nfn main() { let top<txt> = \"b\"; std::print(top); };",
             )],
             "main.kiru",
         ),
@@ -178,7 +176,7 @@ fn name_and_binding_rules() {
             "case arms reuse a name",
             &[(
                 "main.kiru",
-                "fn main() {\nswitch(\"a\") {\ncase(\"a\") { txt x = \"1\"; };\ncase(\"b\") { txt x = \"2\"; };\ndefault { txt x = \"3\"; };\n};\n};",
+                "fn main() {\nmatch \"a\" {\n\"a\" => { let x<txt> = \"1\"; };\n\"b\" => { let x<txt> = \"2\"; };\n_ => { let x<txt> = \"3\"; };\n};\n};",
             )],
             "main.kiru",
         ),
@@ -192,7 +190,10 @@ fn name_and_binding_rules() {
         ),
         (
             "forward reference",
-            &[("main.kiru", "txt x = y;\ntxt y = \"a\";\nfn main() {};")],
+            &[(
+                "main.kiru",
+                "let x<txt> = y;\nlet y<txt> = \"a\";\nfn main() {};",
+            )],
             "main.kiru",
             "`y` is declared after this point",
         ),
@@ -213,13 +214,16 @@ fn name_and_binding_rules() {
         ),
         (
             "duplicate parameters",
-            &[("main.kiru", "fn f(txt a, txt a) {};\nfn main() {};")],
+            &[("main.kiru", "fn f(a<txt>, a<txt>) {};\nfn main() {};")],
             "main.kiru",
             "`a` is declared more than once",
         ),
         (
             "redeclaring a local",
-            &[("main.kiru", "fn main() { txt x = \"a\"; txt x = \"b\"; };")],
+            &[(
+                "main.kiru",
+                "fn main() { let x<txt> = \"a\"; let x<txt> = \"b\"; };",
+            )],
             "main.kiru",
             "`x` is declared more than once",
         ),
@@ -227,7 +231,7 @@ fn name_and_binding_rules() {
             "shadowing a parameter",
             &[(
                 "main.kiru",
-                "fn f(txt x) { txt x = \"a\"; };\nfn main() {};",
+                "fn f(x<txt>) { let x<txt> = \"a\"; };\nfn main() {};",
             )],
             "main.kiru",
             "`x` is declared more than once",
@@ -240,7 +244,7 @@ fn a_value_and_a_function_may_share_a_name() {
     let program = accept(
         &[(
             "main.kiru",
-            "fn build() {};\ntxt build = \"b\";\nfn main() { std::io::print(build); build(); };",
+            "fn build() {};\nlet build<txt> = \"b\";\nfn main() { std::print(build); build(); };",
         )],
         "main.kiru",
     );
@@ -262,7 +266,7 @@ fn calls_are_edges_to_the_callee() {
                 "main.kiru",
                 "import \"tasks.kiru\";\nfn main() { tasks::go(); };",
             ),
-            ("tasks.kiru", "module tasks;\nfn go() {};"),
+            ("tasks.kiru", "mod tasks { fn go() {}; };"),
         ],
         "main.kiru",
     );

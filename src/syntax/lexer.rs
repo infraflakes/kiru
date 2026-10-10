@@ -1,6 +1,7 @@
 //! Turning source text into tokens.
 
 use crate::syntax::Span;
+use crate::types::Type;
 
 use super::token::{Token, TokenKind};
 
@@ -63,85 +64,108 @@ impl<'a> Lexer<'a> {
     fn run(mut self) -> Result<Vec<Token>, LexError> {
         let mut tokens = Vec::new();
         loop {
-            self.skip_trivia();
-            let Some((start, current)) = self.current() else {
+            let next = self.next_tokens()?;
+            if next.is_empty() {
                 tokens.push(Token {
                     kind: TokenKind::Eof,
                     span: Span::new(self.source.len(), self.source.len()),
                 });
                 return Ok(tokens);
-            };
-
-            if current == '"' {
-                tokens.push(self.text()?);
-                continue;
             }
+            tokens.extend(next);
+        }
+    }
 
-            if is_identifier_start(current) {
-                tokens.push(self.identifier());
-                continue;
-            }
+    /// Lex the tokens at the cursor, skipping leading trivia. Usually one
+    /// token, but a string with interpolation is several. Empty at the end of
+    /// the source.
+    fn next_tokens(&mut self) -> Result<Vec<Token>, LexError> {
+        self.skip_trivia();
+        let Some((start, current)) = self.current() else {
+            return Ok(Vec::new());
+        };
 
-            let single_character_token = match current {
-                '.' => Some(TokenKind::Dot),
-                ',' => Some(TokenKind::Comma),
-                ';' => Some(TokenKind::Semi),
-                '=' => Some(TokenKind::Equals),
-                '+' => Some(TokenKind::Plus),
-                '{' => Some(TokenKind::LBrace),
-                '}' => Some(TokenKind::RBrace),
-                '(' => Some(TokenKind::LParen),
-                ')' => Some(TokenKind::RParen),
-                '[' => Some(TokenKind::LBracket),
-                ']' => Some(TokenKind::RBracket),
-                _ => None,
-            };
-            if let Some(kind) = single_character_token {
+        if current == '"' {
+            return self.text();
+        }
+
+        if is_identifier_start(current) {
+            return Ok(vec![self.identifier()]);
+        }
+
+        let single_character_token = match current {
+            '.' => Some(TokenKind::Dot),
+            ',' => Some(TokenKind::Comma),
+            ';' => Some(TokenKind::Semi),
+            '+' => Some(TokenKind::Plus),
+            '<' => Some(TokenKind::Less),
+            '>' => Some(TokenKind::Greater),
+            '{' => Some(TokenKind::LBrace),
+            '}' => Some(TokenKind::RBrace),
+            '(' => Some(TokenKind::LParen),
+            ')' => Some(TokenKind::RParen),
+            '[' => Some(TokenKind::LBracket),
+            ']' => Some(TokenKind::RBracket),
+            _ => None,
+        };
+        if let Some(kind) = single_character_token {
+            self.advance();
+            return Ok(vec![Token {
+                kind,
+                span: Span::new(start, self.offset()),
+            }]);
+        }
+
+        if current == '=' {
+            if let Some((_, '>')) = self.peek(1) {
                 self.advance();
-                tokens.push(Token {
-                    kind,
+                self.advance();
+                return Ok(vec![Token {
+                    kind: TokenKind::FatArrow,
                     span: Span::new(start, self.offset()),
-                });
-                continue;
+                }]);
             }
+            self.advance();
+            return Ok(vec![Token {
+                kind: TokenKind::Equals,
+                span: Span::new(start, self.offset()),
+            }]);
+        }
 
-            if current == '-' {
-                if let Some((_, '>')) = self.peek(1) {
-                    self.advance();
-                    self.advance();
-                    tokens.push(Token {
-                        kind: TokenKind::Arrow,
-                        span: Span::new(start, self.offset()),
-                    });
-                    continue;
-                }
-                return Err(self.error(
-                    Span::new(start, start + current.len_utf8()),
-                    "expected `->`",
-                ));
+        if current == '-' {
+            if let Some((_, '>')) = self.peek(1) {
+                self.advance();
+                self.advance();
+                return Ok(vec![Token {
+                    kind: TokenKind::Arrow,
+                    span: Span::new(start, self.offset()),
+                }]);
             }
-
-            if current == ':' {
-                if let Some((_, ':')) = self.peek(1) {
-                    self.advance();
-                    self.advance();
-                    tokens.push(Token {
-                        kind: TokenKind::PathSep,
-                        span: Span::new(start, self.offset()),
-                    });
-                    continue;
-                }
-                return Err(self.error(
-                    Span::new(start, start + current.len_utf8()),
-                    "expected `::` in a path",
-                ));
-            }
-
             return Err(self.error(
                 Span::new(start, start + current.len_utf8()),
-                format!("unexpected character `{current}`"),
+                "expected `->`",
             ));
         }
+
+        if current == ':' {
+            if let Some((_, ':')) = self.peek(1) {
+                self.advance();
+                self.advance();
+                return Ok(vec![Token {
+                    kind: TokenKind::PathSep,
+                    span: Span::new(start, self.offset()),
+                }]);
+            }
+            return Err(self.error(
+                Span::new(start, start + current.len_utf8()),
+                "expected `::` in a path",
+            ));
+        }
+
+        Err(self.error(
+            Span::new(start, start + current.len_utf8()),
+            format!("unexpected character `{current}`"),
+        ))
     }
 
     fn skip_trivia(&mut self) {
@@ -173,16 +197,12 @@ impl<'a> Lexer<'a> {
         }
         let text = &self.source[start..self.offset()];
         let kind = match text {
-            "module" => TokenKind::Module,
+            "mod" => TokenKind::Mod,
             "import" => TokenKind::Import,
             "fn" => TokenKind::Fn,
-            "txt" => TokenKind::Txt,
-            "rec" => TokenKind::Rec,
-            "list" => TokenKind::List,
+            "let" => TokenKind::Let,
             "mut" => TokenKind::Mut,
-            "switch" => TokenKind::Switch,
-            "case" => TokenKind::Case,
-            "default" => TokenKind::Default,
+            "match" => TokenKind::Match,
             "return" => TokenKind::Return,
             "panic" => TokenKind::Panic,
             "async" => TokenKind::Async,
@@ -190,7 +210,10 @@ impl<'a> Lexer<'a> {
             "for" => TokenKind::For,
             "in" => TokenKind::In,
             "break" => TokenKind::Break,
-            _ => TokenKind::Ident(text.to_owned()),
+            _ => match Type::from_keyword(text) {
+                Some(ty) => TokenKind::Type(ty),
+                None => TokenKind::Ident(text.to_owned()),
+            },
         };
         Token {
             kind,
@@ -198,10 +221,15 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn text(&mut self) -> Result<Token, LexError> {
+    /// Lex a string. A string with no interpolation is one `Text` token; a
+    /// string with `@(…)` is a `Text` segment, then an `InterpolationStart`,
+    /// the tokens of the expression, and an `InterpolationEnd`, repeated.
+    fn text(&mut self) -> Result<Vec<Token>, LexError> {
         let (start, _) = self.current().expect("string starts at a quote");
         self.advance();
+        let mut tokens = Vec::new();
         let mut value = String::new();
+        let mut segment_start = self.offset();
         loop {
             let Some((position, character)) = self.current() else {
                 return Err(self.error(Span::new(start, self.source.len()), "unterminated string"));
@@ -209,10 +237,26 @@ impl<'a> Lexer<'a> {
             match character {
                 '"' => {
                     self.advance();
-                    return Ok(Token {
+                    tokens.push(Token {
                         kind: TokenKind::Text(value),
-                        span: Span::new(start, self.offset()),
+                        span: Span::new(segment_start, self.offset()),
                     });
+                    return Ok(tokens);
+                }
+                '@' if matches!(self.peek(1), Some((_, '('))) => {
+                    tokens.push(Token {
+                        kind: TokenKind::Text(std::mem::take(&mut value)),
+                        span: Span::new(segment_start, self.offset()),
+                    });
+                    let interpolation_start = self.offset();
+                    self.advance();
+                    self.advance();
+                    tokens.push(Token {
+                        kind: TokenKind::InterpolationStart,
+                        span: Span::new(interpolation_start, self.offset()),
+                    });
+                    self.interpolation(&mut tokens)?;
+                    segment_start = self.offset();
                 }
                 '\\' => {
                     let escape_start = position;
@@ -229,11 +273,12 @@ impl<'a> Lexer<'a> {
                         'e' => '\u{1b}',
                         '\\' => '\\',
                         '"' => '"',
+                        '@' => '@',
                         _ => {
                             return Err(self.error(
                                 Span::new(escape_start, self.offset() + escape.len_utf8()),
                                 format!(
-                                    "invalid escape `\\{escape}`; only \\n, \\t, \\r, \\e, \\\\, and \\\" are allowed"
+                                    "invalid escape `\\{escape}`; only \\n, \\t, \\r, \\e, \\\\, \\\", and \\@ are allowed"
                                 ),
                             ));
                         }
@@ -245,6 +290,39 @@ impl<'a> Lexer<'a> {
                     value.push(character);
                     self.advance();
                 }
+            }
+        }
+    }
+
+    /// Lex the tokens of an interpolation, up to its matching `)`, appending
+    /// them and the closing `InterpolationEnd` to `tokens`.
+    fn interpolation(&mut self, tokens: &mut Vec<Token>) -> Result<(), LexError> {
+        let mut depth = 0usize;
+        loop {
+            let start = self.offset();
+            let next = self.next_tokens()?;
+            if next.is_empty() {
+                return Err(self.error(
+                    Span::new(start, self.source.len()),
+                    "unterminated interpolation",
+                ));
+            }
+            for token in next {
+                match token.kind {
+                    TokenKind::LParen => depth += 1,
+                    TokenKind::RParen => {
+                        if depth == 0 {
+                            tokens.push(Token {
+                                kind: TokenKind::InterpolationEnd,
+                                span: token.span,
+                            });
+                            return Ok(());
+                        }
+                        depth -= 1;
+                    }
+                    _ => {}
+                }
+                tokens.push(token);
             }
         }
     }
@@ -273,21 +351,74 @@ mod tests {
     #[test]
     fn lexes_keywords_identifiers_and_punctuation() {
         assert_eq!(
-            kinds("fn build(rec repo) { return(repo.dir); };"),
+            kinds("fn build(repo<rec>) { return repo.dir; };"),
             vec![
                 TokenKind::Fn,
                 TokenKind::Ident("build".to_owned()),
                 TokenKind::LParen,
-                TokenKind::Rec,
                 TokenKind::Ident("repo".to_owned()),
+                TokenKind::Less,
+                TokenKind::Type(Type::Record),
+                TokenKind::Greater,
                 TokenKind::RParen,
                 TokenKind::LBrace,
                 TokenKind::Return,
-                TokenKind::LParen,
                 TokenKind::Ident("repo".to_owned()),
                 TokenKind::Dot,
                 TokenKind::Ident("dir".to_owned()),
-                TokenKind::RParen,
+                TokenKind::Semi,
+                TokenKind::RBrace,
+                TokenKind::Semi,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_an_interpolated_string() {
+        assert_eq!(
+            kinds("\"a@(x)b\""),
+            vec![
+                TokenKind::Text("a".to_owned()),
+                TokenKind::InterpolationStart,
+                TokenKind::Ident("x".to_owned()),
+                TokenKind::InterpolationEnd,
+                TokenKind::Text("b".to_owned()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_a_let_binding_and_type_annotation() {
+        assert_eq!(
+            kinds("let x<txt> = \"a\";"),
+            vec![
+                TokenKind::Let,
+                TokenKind::Ident("x".to_owned()),
+                TokenKind::Less,
+                TokenKind::Type(Type::Text),
+                TokenKind::Greater,
+                TokenKind::Equals,
+                TokenKind::Text("a".to_owned()),
+                TokenKind::Semi,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_a_match_arm_fat_arrow() {
+        assert_eq!(
+            kinds("match s { \"a\" => {}; };"),
+            vec![
+                TokenKind::Match,
+                TokenKind::Ident("s".to_owned()),
+                TokenKind::LBrace,
+                TokenKind::Text("a".to_owned()),
+                TokenKind::FatArrow,
+                TokenKind::LBrace,
+                TokenKind::RBrace,
                 TokenKind::Semi,
                 TokenKind::RBrace,
                 TokenKind::Semi,
@@ -299,19 +430,17 @@ mod tests {
     #[test]
     fn lexes_a_return_arrow() {
         assert_eq!(
-            kinds("fn f() -> txt { return(\"x\"); };"),
+            kinds("fn f() -> txt { return \"x\"; };"),
             vec![
                 TokenKind::Fn,
                 TokenKind::Ident("f".to_owned()),
                 TokenKind::LParen,
                 TokenKind::RParen,
                 TokenKind::Arrow,
-                TokenKind::Txt,
+                TokenKind::Type(Type::Text),
                 TokenKind::LBrace,
                 TokenKind::Return,
-                TokenKind::LParen,
                 TokenKind::Text("x".to_owned()),
-                TokenKind::RParen,
                 TokenKind::Semi,
                 TokenKind::RBrace,
                 TokenKind::Semi,
@@ -400,7 +529,7 @@ mod tests {
             (
                 "invalid escape",
                 r#""bad \q""#,
-                "invalid escape `\\q`; only \\n, \\t, \\r, \\e, \\\\, and \\\" are allowed",
+                "invalid escape `\\q`; only \\n, \\t, \\r, \\e, \\\\, \\\", and \\@ are allowed",
             ),
             ("unterminated string", "\"open", "unterminated string"),
             ("lone colon", "a : b", "expected `::` in a path"),

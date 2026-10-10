@@ -1,0 +1,15 @@
+# std/fs.kiru
+#
+# File helpers written on top of the native file kernel.
+
+mod std::fs {
+
+  # Append `text` to a file, creating it when it is absent.
+  fn append(path<txt>, text<txt>) {
+    match std::fs::exists(path) {
+      "true" => { std::fs::write(path, "@(std::fs::read(path))@(text)"); };
+      _ => { std::fs::write(path, text); };
+    };
+  };
+
+};

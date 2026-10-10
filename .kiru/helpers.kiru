@@ -1,24 +1,25 @@
-module kiru;
+mod kiru {
 
-# Wrap a line in `nix develop` when the project asks for it.
-fn wrap(rec project, txt line) -> txt {
-  switch(project.Nix) {
-    case("true") { return("nix develop -c sh -c " + std::process::quote(line)); };
-    default { return(line); };
+  # Wrap a line in `nix develop` when the project asks for it.
+  fn wrap(project<rec>, line<txt>) -> txt {
+    return match project.Nix {
+      "true" => "nix develop -c sh -c @(std::quote(line))";
+      _ => line;
+    };
   };
-};
 
-# Sequential step: stream the command's output; a non-zero exit stops the run.
-fn run(rec project, txt line) {
-  std::io::log("Running '" + line + "'");
-  txt code = std::process::command({ Dir = project.Dir }, wrap(project, line));
-  switch(code) {
-    case("0") { std::io::log("'" + line + "' ran successfully"); };
-    default { std::io::eprint("'" + line + "' failed"); };
+  # Sequential step: stream the command's output; a non-zero exit stops the run.
+  fn run(project<rec>, line<txt>) {
+    std::log("Running '@(line)'");
+    let code<txt> = std::command({ Dir = project.Dir }, wrap(project, line));
+    match code {
+      "0" => { std::log("'@(line)' ran successfully"); };
+      _ => { std::eprint("'@(line)' failed"); };
+    };
   };
-};
 
-# Orchestrated step: hide stdout, keep stderr for debugging, return the code.
-fn status(rec project, txt line) -> txt {
-  return(std::process::command({ Dir = project.Dir, Stdout = "null" }, wrap(project, line)));
+  # Orchestrated step: hide stdout, keep stderr for debugging, return the code.
+  fn status(project<rec>, line<txt>) -> txt {
+    return std::command({ Dir = project.Dir, Stdout = "null" }, wrap(project, line));
+  };
 };

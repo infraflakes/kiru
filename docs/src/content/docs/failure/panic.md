@@ -1,6 +1,6 @@
 ---
 title: Panic and Failure
-description: panic, std::io::eprint, runtime errors, and exit status.
+description: panic, std::eprint, runtime errors, and exit status.
 ---
 
 A program can fail on purpose. In this section we'll see how, and what happens
@@ -20,12 +20,12 @@ fn give_up() {
 every other thread and sends `SIGTERM` to every running process group, so no
 command a Kiru program started outlives the failure.
 
-`std::io::eprint(message)` writes an `ERROR:` line to stderr, red when stderr
+`std::eprint(message)` writes an `ERROR:` line to stderr, red when stderr
 is a terminal, then panics:
 
 ```kiru
-fn fail(txt reason) {
-  std::io::eprint("cannot continue: " + reason);
+fn fail(reason<txt>) {
+  std::eprint("cannot continue: " + reason);
 };
 ```
 
@@ -40,18 +40,20 @@ A function whose every path ends in `panic;` or a call that panics never
 returns, so it can stand where a value is expected:
 
 ```kiru
-fn fail(txt reason) -> txt {
-  std::io::eprint(reason);
+fn fail(reason<txt>) -> txt {
+  std::eprint(reason);
 };
 ```
 
 ## Runtime errors
 
-The runtime detects some failures the compiler cannot, and fails the same way:
+The runtime detects some failures the compiler cannot, and reports them the
+same way: an `ERROR:` line naming the call, then the run stops.
 
 ```text
-a command that cannot start
-too many concurrent commands
+ERROR: std::get(...): index 2 is outside a list of 2 element(s)
+ERROR: std::command(...): a command that cannot start
+ERROR: std::spawn(...): too many concurrent commands
 ```
 
 ## Exit status
@@ -64,10 +66,10 @@ A command's exit code is ordinary data. An unobserved code fails nothing; a
 program decides when a nonzero code means failure:
 
 ```kiru
-txt code = std::process::command({}, "false");
-switch(code) {
-  case("0") {};
-  default { std::io::eprint("command failed"); };
+let code<txt> = std::command({}, "false");
+match code {
+  "0" => {};
+  _ => { std::eprint("command failed"); };
 };
 ```
 

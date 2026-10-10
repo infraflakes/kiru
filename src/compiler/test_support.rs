@@ -18,8 +18,8 @@ pub(crate) fn checked_files(files: &[(&str, &str)], entry: &str) -> Result<Progr
     for (name, source) in files {
         std::fs::write(directory.path().join(name), source).expect("write file");
     }
-    let mut loaded = load_files(&directory.path().join(entry)).map_err(|error| error.message)?;
-    let mut program = resolve_names(&mut loaded).map_err(|diagnostic| diagnostic.message)?;
+    let loaded = load_files(&directory.path().join(entry)).map_err(|error| error.message)?;
+    let mut program = resolve_names(&loaded).map_err(|diagnostic| diagnostic.message)?;
     validate_program(&mut program).map_err(|diagnostic| diagnostic.message)?;
     Ok(program)
 }

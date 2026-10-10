@@ -1,71 +1,74 @@
 # std/process.kiru
 #
-# The command abstraction and the shell quoting it needs.
+# The command abstraction. The stream helper stays in `std::process`; the
+# high-frequency `quote`, `command`, and `capture` are added to the `std::` root
+# in a second `mod std` block, because they need the text and process helpers
+# declared above.
 
-module std::process;
+mod std::process {
 
-# Quote text as one POSIX shell word: wrap it in single quotes and replace an
-# embedded quote with the `'\''` sequence, so the shell reads exactly the text
-# and nothing else.
-fn quote(txt text) -> txt {
-  return("'" + std::text::replace(text, "'", "'\\''") + "'");
+  # The shell redirection a stream mode selects: an empty mode inherits the
+  # stream, and "null" discards it. Any other mode stops the run.
+  fn redirect(mode<txt>, operator<txt>) -> txt {
+    match mode {
+      "" => { return ""; };
+      "null" => { return " @(operator) /dev/null"; };
+      _ => { std::eprint("command: `@(mode)` is not a stream mode; use \"\" or \"null\""); };
+    };
+  };
+
 };
 
-# The shell redirection a stream mode selects: an empty mode inherits the
-# stream, and "null" discards it. Any other mode stops the run.
-fn redirect(txt mode, txt operator) -> txt {
-  switch(mode) {
-    case("") { return(""); };
-    case("null") { return(" " + operator + " /dev/null"); };
-    default { std::io::eprint("command: `" + mode + "` is not a stream mode; use \"\" or \"null\""); };
-  };
-};
+mod std {
 
-# Run a command line and return its exit code.
-#
-# The spec is the official API; every entry is uppercase, and an absent or
-# empty entry is the default. `Dir` changes the working directory, `Env` is
-# prepended as exported assignments, and `Timeout` bounds the run with
-# `timeout` when it is not empty. `Stdin`, `Stdout`, and `Stderr` select the
-# stream: empty inherits it and "null" discards it. Nothing is captured;
-# `quote` makes the text safe for the shell.
-fn command(rec spec, txt line) -> txt {
-  mut txt command_line = line;
-
-  switch(spec.Dir) {
-    case("") {};
-    default { command_line = "cd " + quote(spec.Dir) + " && " + command_line; };
+  # Quote text as one POSIX shell word: wrap it in single quotes and replace an
+  # embedded quote with the `'\''` sequence, so the shell reads exactly the text
+  # and nothing else.
+  fn quote(text<txt>) -> txt {
+    return "'@(std::text::replace(text, "'", "'\\''"))'";
   };
 
-  switch(spec.Env) {
-    case("") {};
-    default { command_line = "export " + spec.Env + "; " + command_line; };
+  # Run a command line and return its exit code.
+  #
+  # The spec is the official API; every entry is uppercase, and an absent or
+  # empty entry is the default. `Dir` changes the working directory, `Env` is
+  # prepended as exported assignments, and `Timeout` bounds the run with
+  # `timeout` when it is not empty. `Stdin`, `Stdout`, and `Stderr` select the
+  # stream: empty inherits it and "null" discards it. Nothing is captured;
+  # `quote` makes the text safe for the shell.
+  fn command(spec<rec>, line<txt>) -> txt {
+    let directed<txt> = match spec.Dir {
+      "" => line;
+      _ => "cd @(quote(spec.Dir)) && @(line)";
+    };
+    let exported<txt> = match spec.Env {
+      "" => directed;
+      _ => "export @(spec.Env); @(directed)";
+    };
+    let timed<txt> = match spec.Timeout {
+      "" => exported;
+      _ => "timeout @(spec.Timeout) sh -c @(quote(exported))";
+    };
+    let redirects<txt> = std::process::redirect(spec.Stdin, "<") + std::process::redirect(spec.Stdout, ">") + std::process::redirect(spec.Stderr, "2>");
+    let wrapped<txt> = match redirects {
+      "" => timed;
+      _ => "{ @(timed); }@(redirects)";
+    };
+    return std::process::wait_for(std::process::spawn({}, ["/bin/sh", "-c", wrapped]));
   };
 
-  switch(spec.Timeout) {
-    case("") {};
-    default { command_line = "timeout " + spec.Timeout + " sh -c " + quote(command_line); };
+  # Run a command line and return its exit code and captured output as the
+  # record `{ code, out, err }`. The line's stdout and stderr are redirected to
+  # temporary files, which are read once the command exits and then removed. Use
+  # `command({}, line)` when the output should stream live instead.
+  fn capture(line<txt>) -> rec {
+    let out_path<txt> = std::fs::temp_file();
+    let err_path<txt> = std::fs::temp_file();
+    let code<txt> = command({}, "@(line) > @(quote(out_path)) 2> @(quote(err_path))");
+    let result<rec> = { code = code, out = std::fs::read(out_path), err = std::fs::read(err_path) };
+    std::fs::remove(out_path);
+    std::fs::remove(err_path);
+    return result;
   };
 
-  txt redirects = redirect(spec.Stdin, "<") + redirect(spec.Stdout, ">") + redirect(spec.Stderr, "2>");
-  switch(redirects) {
-    case("") {};
-    default { command_line = "{ " + command_line + "; }" + redirects; };
-  };
-
-  return(wait_for(spawn({}, ["/bin/sh", "-c", command_line])));
-};
-
-# Run a command line and return its exit code and captured output as the
-# record `{ code, out, err }`. The line's stdout and stderr are redirected to
-# temporary files, which are read once the command exits and then removed. Use
-# `command({}, line)` when the output should stream live instead.
-fn capture(txt line) -> rec {
-  txt out_path = std::fs::temp_file();
-  txt err_path = std::fs::temp_file();
-  txt code = command({}, line + " > " + quote(out_path) + " 2> " + quote(err_path));
-  rec result = { code = code, out = std::fs::read(out_path), err = std::fs::read(err_path) };
-  std::fs::remove(out_path);
-  std::fs::remove(err_path);
-  return(result);
 };

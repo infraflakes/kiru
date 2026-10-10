@@ -196,9 +196,10 @@ fn stdio_mode(mode: &str) -> Stdio {
     }
 }
 
-/// Report a runtime failure and record it. The failure stops the run.
+/// Report a runtime failure the way `std::eprint` does, then record it. The
+/// failure stops the run.
 pub(crate) fn failure(state: &RuntimeState, line: &str, reason: &str) -> Panic {
     state.fail_fast();
-    eprintln!("{}: {line}: {reason}", crate::runtime::program_name());
+    crate::runtime::report_error(&format!("{line}: {reason}"));
     Panic
 }

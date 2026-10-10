@@ -9,7 +9,6 @@
 pub(crate) mod environment;
 pub(crate) mod file_system;
 pub(crate) mod list_operations;
-pub(crate) mod path_operations;
 pub(crate) mod terminal_output;
 pub(crate) mod text_operations;
 

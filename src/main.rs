@@ -8,6 +8,7 @@ mod model;
 mod native_registry;
 mod runtime;
 mod syntax;
+mod types;
 
 fn main() {
     std::process::exit(cli::run());

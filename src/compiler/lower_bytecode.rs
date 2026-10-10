@@ -3,14 +3,15 @@
 //! Every function and module value becomes one `Code`. Each
 //! parameter and local binding gets a fixed register, and each expression
 //! allocates the registers above them. Calls name a code id, references name a
-//! register or a global, and a `switch` lowers to a compare-and-jump chain
+//! register or a global, and a `match` lowers to a compare-and-jump chain
 //! that keeps the first-match order.
 
 use std::collections::HashMap;
 
 use crate::bytecode::{Bytecode, Code, Instruction};
 use crate::model::{
-    Case, DeclarationId, DeclarationKind, Expression, Function, Program, Statement,
+    DeclarationId, DeclarationKind, Expression, Function, MatchArm, MatchBody, Program, Statement,
+    StringPart,
 };
 
 /// Lower a validated, pruned program to bytecode.
@@ -64,10 +65,7 @@ impl Lowerer<'_> {
         for (index, declaration) in self.program.declarations.iter().enumerate() {
             let has_code = matches!(
                 declaration.kind,
-                DeclarationKind::Function(_)
-                    | DeclarationKind::Text(_)
-                    | DeclarationKind::Record(_)
-                    | DeclarationKind::List(_)
+                DeclarationKind::Function(_) | DeclarationKind::Value { .. }
             );
             if !has_code {
                 continue;
@@ -79,10 +77,7 @@ impl Lowerer<'_> {
                 registers: 0,
                 arity: 0,
             });
-            if matches!(
-                declaration.kind,
-                DeclarationKind::Text(_) | DeclarationKind::Record(_) | DeclarationKind::List(_)
-            ) {
+            if matches!(declaration.kind, DeclarationKind::Value { .. }) {
                 self.declaration_globals[index] = Some(self.module_values.len() as u32);
                 self.module_values.push(code_id);
             }
@@ -100,9 +95,7 @@ impl Lowerer<'_> {
                 DeclarationKind::Function(function) => {
                     self.lower_function(function, &declaration.parameters)
                 }
-                DeclarationKind::Text(expression)
-                | DeclarationKind::Record(expression)
-                | DeclarationKind::List(expression) => self.lower_initializer(expression),
+                DeclarationKind::Value { expression, .. } => self.lower_initializer(expression),
                 DeclarationKind::Binding(_) | DeclarationKind::Native(_) => continue,
             };
             self.codes[code_id as usize] = code;
@@ -172,7 +165,17 @@ impl Lowerer<'_> {
                     .push(Instruction::SetField { record, key, value });
             }
             Statement::Expression(expression) => {
-                let _ = self.expression(expression);
+                if let Expression::Match {
+                    subject,
+                    cases,
+                    default,
+                    ..
+                } = expression
+                {
+                    self.lower_match(subject, cases, default, None);
+                } else {
+                    let _ = self.expression(expression);
+                }
             }
             Statement::Return { value, .. } => {
                 let value = value.as_ref().map(|value| self.expression(value));
@@ -181,12 +184,6 @@ impl Lowerer<'_> {
             Statement::Panic { .. } => self.instructions.push(Instruction::Panic),
             Statement::Async { call, .. } => self.lower_async(call),
             Statement::Wait { .. } => self.instructions.push(Instruction::Wait),
-            Statement::Switch {
-                subject,
-                cases,
-                default,
-                ..
-            } => self.lower_switch(subject, cases, default),
             Statement::ForEach {
                 item,
                 iterable,
@@ -240,6 +237,17 @@ impl Lowerer<'_> {
                 });
                 dst
             }
+            Expression::Interpolated { parts, .. } => self.lower_interpolated(parts),
+            Expression::Match {
+                subject,
+                cases,
+                default,
+                ..
+            } => {
+                let dst = self.fresh();
+                self.lower_match(subject, cases, default, Some(dst));
+                dst
+            }
             Expression::Reference { declaration, .. } => {
                 let dst = self.fresh();
                 let program = self.program;
@@ -248,9 +256,7 @@ impl Lowerer<'_> {
                         let slot = self.slot(*declaration);
                         self.instructions.push(Instruction::LoadLocal { dst, slot });
                     }
-                    DeclarationKind::Text(_)
-                    | DeclarationKind::Record(_)
-                    | DeclarationKind::List(_) => {
+                    DeclarationKind::Value { .. } => {
                         let global = self.declaration_globals[declaration.0]
                             .expect("a module value has a global");
                         self.instructions
@@ -286,6 +292,43 @@ impl Lowerer<'_> {
                 dst
             }
         }
+    }
+
+    /// Lower an interpolated string to a chain of concatenations: the first
+    /// part seeds the accumulator and each later part is concatenated onto it.
+    fn lower_interpolated(&mut self, parts: &[StringPart]) -> u16 {
+        let mut accumulator = None;
+        for part in parts {
+            let register = match part {
+                StringPart::Literal(value) => {
+                    let constant = self.constant(value);
+                    let dst = self.fresh();
+                    self.instructions
+                        .push(Instruction::LoadConst { dst, constant });
+                    dst
+                }
+                StringPart::Expression(expression) => self.expression(expression),
+            };
+            accumulator = Some(match accumulator {
+                None => register,
+                Some(left) => {
+                    let dst = self.fresh();
+                    self.instructions.push(Instruction::Concat {
+                        dst,
+                        left,
+                        right: register,
+                    });
+                    dst
+                }
+            });
+        }
+        accumulator.unwrap_or_else(|| {
+            let constant = self.constant("");
+            let dst = self.fresh();
+            self.instructions
+                .push(Instruction::LoadConst { dst, constant });
+            dst
+        })
     }
 
     fn lower_call(&mut self, callee: DeclarationId, arguments: &[Expression], dst: u16) {
@@ -342,16 +385,20 @@ impl Lowerer<'_> {
         }
     }
 
-    fn lower_switch(
+    /// Lower a `match` to a compare-and-jump chain that keeps the first-match
+    /// order. A `dst` register receives the taken arm's value in expression
+    /// position; in statement position the taken arm's block runs.
+    fn lower_match(
         &mut self,
         subject: &Expression,
-        cases: &[Case],
-        default: &Option<Vec<Statement>>,
+        cases: &[MatchArm],
+        default: &Option<MatchBody>,
+        dst: Option<u16>,
     ) {
         let subject = self.expression(subject);
         let mut ends = Vec::new();
-        for case in cases {
-            let pattern = self.expression(&case.pattern);
+        for arm in cases {
+            let pattern = self.expression(&arm.pattern);
             let jump_if_equal = self.instructions.len();
             self.instructions.push(Instruction::JumpIfEqual {
                 target: 0,
@@ -364,7 +411,7 @@ impl Lowerer<'_> {
             if let Instruction::JumpIfEqual { target, .. } = &mut self.instructions[jump_if_equal] {
                 *target = body;
             }
-            self.statements(&case.body);
+            self.lower_match_body(&arm.body, dst);
             let jump_end = self.instructions.len();
             self.instructions.push(Instruction::Jump { target: 0 });
             ends.push(jump_end);
@@ -374,13 +421,30 @@ impl Lowerer<'_> {
             }
         }
         if let Some(default) = default {
-            self.statements(default);
+            self.lower_match_body(default, dst);
         }
         let end = self.instructions.len() as u32;
         for jump_end in ends {
             if let Instruction::Jump { target } = &mut self.instructions[jump_end] {
                 *target = end;
             }
+        }
+    }
+
+    /// Lower one match arm's body. An expression body writes the arm's value to
+    /// `dst` when there is one; a block body runs its statements.
+    fn lower_match_body(&mut self, body: &MatchBody, dst: Option<u16>) {
+        match body {
+            MatchBody::Expression(expression) => {
+                let value = self.expression(expression);
+                if let Some(dst) = dst {
+                    self.instructions.push(Instruction::StoreLocal {
+                        slot: dst,
+                        src: value,
+                    });
+                }
+            }
+            MatchBody::Block(statements) => self.statements(statements),
         }
     }
 

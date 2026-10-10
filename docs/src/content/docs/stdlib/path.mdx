@@ -4,21 +4,22 @@ description: Build and split paths.
 ---
 
 `std::path` splits paths and joins them. A path is text, so `std::text` works
-on it too. `base`, `dir`, and `ext` use the operating system's path rules;
-`join` and `is_absolute` assume POSIX `/` separators.
+on it too. Every function splits on POSIX `/` separators; a path is plain text,
+not an operating-system path object.
 
 <details>
 <summary><code>base</code> — the last segment</summary>
 
 ```kiru
-std::path::base(txt path) -> txt
+std::path::base(path<txt>) -> txt
 ```
 
 - `path` — the path to read.
-- Returns the last segment.
+- Returns the text after the last `/`; the whole path when it has no `/`. An
+  empty path has no segment and stops the run.
 
 ```kiru
-std::io::print(std::path::base("/a/b/c"));   # c
+std::print(std::path::base("/a/b/c"));   # c
 ```
 
 </details>
@@ -27,14 +28,14 @@ std::io::print(std::path::base("/a/b/c"));   # c
 <summary><code>dir</code> — a path without its last segment</summary>
 
 ```kiru
-std::path::dir(txt path) -> txt
+std::path::dir(path<txt>) -> txt
 ```
 
 - `path` — the path to read.
-- Returns the parent path.
+- Returns the text before the last `/`, or `""` when there is none.
 
 ```kiru
-std::io::print(std::path::dir("/a/b/c"));   # /a/b
+std::print(std::path::dir("/a/b/c"));   # /a/b
 ```
 
 </details>
@@ -43,14 +44,15 @@ std::io::print(std::path::dir("/a/b/c"));   # /a/b
 <summary><code>ext</code> — the extension</summary>
 
 ```kiru
-std::path::ext(txt path) -> txt
+std::path::ext(path<txt>) -> txt
 ```
 
 - `path` — the path to read.
-- Returns the extension without the dot, or `""` when there is none.
+- Returns the text after the last `.` of the last segment, or `""` when the last
+  segment has no dot.
 
 ```kiru
-std::io::print(std::path::ext("archive.tar.gz"));   # gz
+std::print(std::path::ext("archive.tar.gz"));   # gz
 ```
 
 </details>
@@ -59,7 +61,7 @@ std::io::print(std::path::ext("archive.tar.gz"));   # gz
 <summary><code>join</code> — join two path segments</summary>
 
 ```kiru
-std::path::join(txt base, txt name) -> txt
+std::path::join(base<txt>, name<txt>) -> txt
 ```
 
 Joins two path segments. An absolute `name` replaces `base`, an empty `base` is
@@ -69,7 +71,7 @@ replaced by `name`, and a `base` already ending in `/` is used as is.
 - Returns the joined path.
 
 ```kiru
-txt config = std::path::join(std::env::var("HOME"), ".config");
+let config<txt> = std::path::join(std::env::var("HOME"), ".config");
 ```
 
 </details>
@@ -78,14 +80,14 @@ txt config = std::path::join(std::env::var("HOME"), ".config");
 <summary><code>is_absolute</code> — whether a path is absolute</summary>
 
 ```kiru
-std::path::is_absolute(txt path) -> txt
+std::path::is_absolute(path<txt>) -> txt
 ```
 
 - `path` — the path to test.
 - Returns `"true"` when the path starts with `/`, otherwise `"false"`.
 
 ```kiru
-std::io::print(std::path::is_absolute("/a"));   # true
+std::print(std::path::is_absolute("/a"));   # true
 ```
 
 </details>

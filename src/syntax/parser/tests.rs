@@ -1,7 +1,8 @@
 //! End to end tests for the parser grammar layers.
 
 use super::parse_file;
-use crate::syntax::ast::{Declaration, File, Statement, ValueKind};
+use crate::syntax::ast::{Declaration, Expression, File, Item, Statement};
+use crate::types::Type;
 
 fn parse(source: &str) -> File {
     parse_file(source).expect("source parses")
@@ -9,6 +10,14 @@ fn parse(source: &str) -> File {
 
 fn parse_error(source: &str) -> String {
     parse_file(source).expect_err("source is rejected").message
+}
+
+/// The declaration at a top-level item, for the cases that write one.
+fn declaration(file: &File, index: usize) -> &Declaration {
+    match &file.items[index] {
+        Item::Declaration(declaration) => declaration,
+        other => panic!("expected a declaration, found {other:?}"),
+    }
 }
 
 /// Run every rejection case against its exact expected message, collecting all
@@ -30,87 +39,104 @@ fn expect_rejections(cases: &[(&str, &str, &str)]) {
 }
 
 #[test]
-fn parses_module_and_imports() {
-    let file = parse("module tasks::build;\nimport \"std/repo.kiru\";\n");
-    assert_eq!(
-        file.module.expect("has a module").segments,
-        vec!["tasks", "build"]
-    );
-    assert_eq!(file.imports[0].path, "std/repo.kiru");
+fn parses_a_mod_block() {
+    let file = parse("mod a::b { fn f() {}; };");
+    let Item::Module(module) = &file.items[0] else {
+        panic!("expected a module");
+    };
+    assert_eq!(module.path, vec!["a".to_owned(), "b".to_owned()]);
+    assert_eq!(module.declarations.len(), 1);
 }
 
 #[test]
-fn parses_function_with_switch_and_calls() {
+fn parses_mod_and_import() {
+    let file = parse("import \"std/repo.kiru\";\nmod tasks::build { fn f() {}; };");
+    let Item::Import(import) = &file.items[0] else {
+        panic!("expected an import");
+    };
+    assert_eq!(import.path, "std/repo.kiru");
+    let Item::Module(module) = &file.items[1] else {
+        panic!("expected a module");
+    };
+    assert_eq!(module.path, vec!["tasks".to_owned(), "build".to_owned()]);
+}
+
+#[test]
+fn parses_function_with_match_and_calls() {
     let file = parse(
-        "fn main(rec args) {\n\
-           switch(args.cmd) {\n\
-             case(\"ci\") { \n\
-               txt code = std::process::command({}, \"cargo test\");\n\
-               txt done = \"done\" + code;\n\
-               std::io::print(done);\n\
+        "fn main(args<rec>) {\n\
+           match args.cmd {\n\
+             \"ci\" => {\n\
+               let code<txt> = std::command({}, \"cargo test\");\n\
+               let done<txt> = \"done\" + code;\n\
+               std::print(done);\n\
              };\n\
-             default { std::io::print(\"\"); };\n\
+             _ => { std::print(\"\"); };\n\
            };\n\
          };",
     );
-    let Declaration::Function(function) = &file.declarations[0] else {
+    let Declaration::Function(function) = declaration(&file, 0) else {
         panic!("expected a function");
     };
     assert_eq!(function.name, "main");
     assert_eq!(function.parameters[0].name, "args");
-    assert_eq!(function.parameters[0].kind, ValueKind::Record);
+    assert_eq!(function.parameters[0].ty, Type::Record);
     assert_eq!(function.body.len(), 1);
+    assert!(matches!(
+        function.body[0],
+        Statement::Expression(Expression::Match { .. })
+    ));
 }
 
 #[test]
 fn parses_typed_parameters() {
-    let file = parse("fn f(txt a, rec b) -> txt { return(a); };");
-    let Declaration::Function(function) = &file.declarations[0] else {
+    let file = parse("fn f(a<txt>, b<rec>) -> txt { return a; };");
+    let Declaration::Function(function) = declaration(&file, 0) else {
         panic!("expected a function");
     };
     assert_eq!(function.parameters[0].name, "a");
-    assert_eq!(function.parameters[0].kind, ValueKind::Text);
+    assert_eq!(function.parameters[0].ty, Type::Text);
     assert_eq!(function.parameters[1].name, "b");
-    assert_eq!(function.parameters[1].kind, ValueKind::Record);
-    assert_eq!(function.return_kind, Some(ValueKind::Text));
+    assert_eq!(function.parameters[1].ty, Type::Record);
+    assert_eq!(function.return_type, Some(Type::Text));
 }
 
 #[test]
-fn parses_return_kinds() {
+fn parses_return_types() {
     let file = parse(
-        "fn text_value() -> txt { return(\"\"); };\n\
-         fn record_value() -> rec { return({}); };\n\
-         fn no_value() { return(); };",
+        "fn text_value() -> txt { return \"\"; };\n\
+         fn record_value() -> rec { return {}; };\n\
+         fn no_value() { return; };",
     );
-    let Declaration::Function(text_value) = &file.declarations[0] else {
+    let Declaration::Function(text_value) = declaration(&file, 0) else {
         panic!("expected a function");
     };
-    assert_eq!(text_value.return_kind, Some(ValueKind::Text));
-    let Declaration::Function(record_value) = &file.declarations[1] else {
+    assert_eq!(text_value.return_type, Some(Type::Text));
+    let Declaration::Function(record_value) = declaration(&file, 1) else {
         panic!("expected a function");
     };
-    assert_eq!(record_value.return_kind, Some(ValueKind::Record));
-    let Declaration::Function(no_value) = &file.declarations[2] else {
+    assert_eq!(record_value.return_type, Some(Type::Record));
+    let Declaration::Function(no_value) = declaration(&file, 2) else {
         panic!("expected a function");
     };
-    assert_eq!(no_value.return_kind, None);
+    assert_eq!(no_value.return_type, None);
 }
 
 #[test]
-fn rejects_a_parameter_without_a_kind() {
-    let message = parse_error("fn f(a) { return(a); };");
+fn rejects_a_parameter_without_a_type() {
+    let message = parse_error("fn f(a) { return a; };");
     assert!(
-        message.contains("expected `txt`, `rec`, or `list`"),
+        message.contains("expected `<` in the parameter list"),
         "{message}"
     );
 }
 
 #[test]
-fn rejects_a_return_arrow_without_a_kind() {
-    let message = parse_error("fn f() -> { return(); };");
+fn rejects_a_return_arrow_without_a_type() {
+    let message = parse_error("fn f() -> { return; };");
     assert_eq!(
         message,
-        "expected `txt`, `rec`, or `list` after `->`, found `{`"
+        "expected `txt`, `rec` or `list` after `->`, found `{`"
     );
 }
 
@@ -122,7 +148,7 @@ fn parses_async_call_and_wait() {
            wait;\n\
          };",
     );
-    let Declaration::Function(function) = &file.declarations[0] else {
+    let Declaration::Function(function) = declaration(&file, 0) else {
         panic!("expected a function");
     };
     assert!(matches!(function.body[0], Statement::Async { .. }));
@@ -137,8 +163,8 @@ fn rejects_nested_async() {
 
 #[test]
 fn parses_a_rooted_path() {
-    let file = parse("fn main() { std::io::print(::value); };");
-    let Declaration::Function(function) = &file.declarations[0] else {
+    let file = parse("fn main() { std::print(::value); };");
+    let Declaration::Function(function) = declaration(&file, 0) else {
         panic!("expected a function");
     };
     let Statement::Expression(crate::syntax::Expression::Call { arguments, .. }) =
@@ -155,23 +181,22 @@ fn parses_a_rooted_path() {
 
 #[test]
 fn parses_value_void_and_panic_returns() {
-    let file =
-        parse("fn f(txt a) -> txt { return(a); };\nfn g() { return(); };\nfn h() { panic; };");
-    let Declaration::Function(value) = &file.declarations[0] else {
+    let file = parse("fn f(a<txt>) -> txt { return a; };\nfn g() { return; };\nfn h() { panic; };");
+    let Declaration::Function(value) = declaration(&file, 0) else {
         panic!("expected a function");
     };
     assert!(matches!(
         value.body[0],
         Statement::Return { value: Some(_), .. }
     ));
-    let Declaration::Function(empty) = &file.declarations[1] else {
+    let Declaration::Function(empty) = declaration(&file, 1) else {
         panic!("expected a function");
     };
     assert!(matches!(
         empty.body[0],
         Statement::Return { value: None, .. }
     ));
-    let Declaration::Function(panics) = &file.declarations[2] else {
+    let Declaration::Function(panics) = declaration(&file, 2) else {
         panic!("expected a function");
     };
     assert!(matches!(panics.body[0], Statement::Panic { .. }));
@@ -179,14 +204,14 @@ fn parses_value_void_and_panic_returns() {
 
 #[test]
 fn rejects_missing_semicolon() {
-    let message = parse_error("txt x = \"a\"\n");
+    let message = parse_error("let x<txt> = \"a\"\n");
     assert!(message.contains("after the initializer"), "{message}");
 }
 
 #[test]
 fn parses_field_assignment() {
-    let file = parse("fn f(rec args) { args.cmd = \"x\"; };");
-    let Declaration::Function(function) = &file.declarations[0] else {
+    let file = parse("fn f(args<rec>) { args.cmd = \"x\"; };");
+    let Declaration::Function(function) = declaration(&file, 0) else {
         panic!("expected a function");
     };
     assert!(matches!(
@@ -197,8 +222,8 @@ fn parses_field_assignment() {
 
 #[test]
 fn parses_mut_bindings_and_parameters() {
-    let file = parse("fn f(mut txt x) { mut rec r = { a = \"1\" }; r.a = \"2\"; };");
-    let Declaration::Function(function) = &file.declarations[0] else {
+    let file = parse("fn f(mut x<txt>) { let mut r<rec> = { a = \"1\" }; r.a = \"2\"; };");
+    let Declaration::Function(function) = declaration(&file, 0) else {
         panic!("expected a function");
     };
     assert!(function.parameters[0].mutable);
@@ -210,7 +235,7 @@ fn parses_mut_bindings_and_parameters() {
 
 #[test]
 fn rejects_mut_module_value() {
-    let message = parse_error("mut txt x = \"a\";");
+    let message = parse_error("let mut x<txt> = \"a\";");
     assert_eq!(message, "a module value cannot be `mut`");
 }
 
@@ -218,19 +243,14 @@ fn rejects_mut_module_value() {
 fn parser_errors() {
     expect_rejections(&[
         (
-            "module after a declaration",
-            "fn a() {};\nmodule b;",
-            "`module` must be the first declaration",
-        ),
-        (
-            "import after a declaration",
-            "txt x = \"a\";\nimport \"b.kiru\";\n",
-            "imports must come before declarations",
-        ),
-        (
             "namespaced declaration",
-            "foo::bar rec x = { dir = \"b\" };\n",
+            "foo::bar let x<rec> = { dir = \"b\" };\n",
             "expected a declaration, found `foo`",
+        ),
+        (
+            "import inside a mod",
+            "mod a { import \"b.kiru\"; };",
+            "expected a declaration, found `import`",
         ),
     ]);
 }

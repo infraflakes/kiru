@@ -22,12 +22,12 @@ received:
 <span class="filename">Filename: tasks.kiru</span>
 
 ```kiru
-fn main(rec args) {
-  std::io::print("command: " + args.cmd);
+fn main(args<rec>) {
+  std::print("command: " + args.cmd);
 };
 ```
 
-When `main` declares `rec args`, the runtime builds a record from the words
+When `main` declares `args<rec>`, the runtime builds a record from the words
 after the program name and passes it in. The record has two fields: `cmd`, the
 first word, and `flag`, the second word.
 
@@ -46,25 +46,25 @@ A missing word reads as `""`, so a program never has to guard a lookup.
 ## Branching on the Command
 
 Right now the program only prints the command. Let's make it do something
-instead. Use `switch` to compare `args.cmd` against the commands we know:
+instead. Use `match` to compare `args.cmd` against the commands we know:
 
 <span class="filename">Filename: tasks.kiru</span>
 
 ```kiru
-fn main(rec args) {
-  switch(args.cmd) {
-    case("test") { std::io::print("running tests"); };
-    case("build") { std::io::print("building"); };
-    default { std::io::eprint("unknown command: " + args.cmd); };
+fn main(args<rec>) {
+  match args.cmd {
+    "test" => { std::print("running tests"); };
+    "build" => { std::print("building"); };
+    _ => { std::eprint("unknown command: " + args.cmd); };
   };
 };
 ```
 
-`switch` compares a text against case patterns and runs the first arm that
-matches. A pattern can be a string literal, a name, or a field path, and
-`default` runs when nothing matched.
+`match` compares a text against patterns and runs the first arm that matches. A
+pattern can be a string literal, a name, or a field path, and the `_` arm runs
+when nothing matched.
 
-`std::io::print` writes a line to stdout. `std::io::eprint` writes an `ERROR:`
+`std::print` writes a line to stdout. `std::eprint` writes an `ERROR:`
 line to stderr and then exits the program, which is what we want for an unknown
 command:
 
@@ -80,21 +80,21 @@ $ echo $?
 ## Running a Command
 
 Printing a message is not much of a task runner. Let's actually run the command.
-`std::process::command` runs a command line through the shell and returns its
+`std::command` runs a command line through the shell and returns its
 exit code as text:
 
 <span class="filename">Filename: tasks.kiru</span>
 
 ```kiru
-fn run(txt line) -> txt {
-  return(std::process::command({}, line));
+fn run(line<txt>) -> txt {
+  return std::command({}, line);
 };
 
-fn main(rec args) {
-  switch(args.cmd) {
-    case("test") { run("cargo test"); };
-    case("build") { run("cargo build"); };
-    default { std::io::eprint("unknown command: " + args.cmd); };
+fn main(args<rec>) {
+  match args.cmd {
+    "test" => { run("cargo test"); };
+    "build" => { run("cargo build"); };
+    _ => { std::eprint("unknown command: " + args.cmd); };
   };
 };
 ```
@@ -129,22 +129,22 @@ report the result ourselves:
 <span class="filename">Filename: tasks.kiru</span>
 
 ```kiru
-fn run(txt line) -> txt {
-  return(std::process::command({}, line));
+fn run(line<txt>) -> txt {
+  return std::command({}, line);
 };
 
-fn report(txt name, txt code) {
-  switch(code) {
-    case("0") { std::io::print(name + " passed"); };
-    default { std::io::print(name + " failed with code " + code); };
+fn report(name<txt>, code<txt>) {
+  match code {
+    "0" => { std::print(name + " passed"); };
+    _ => { std::print(name + " failed with code " + code); };
   };
 };
 
-fn main(rec args) {
-  switch(args.cmd) {
-    case("test") { report("tests", run("cargo test")); };
-    case("build") { report("build", run("cargo build")); };
-    default { std::io::eprint("unknown command: " + args.cmd); };
+fn main(args<rec>) {
+  match args.cmd {
+    "test" => { report("tests", run("cargo test")); };
+    "build" => { report("build", run("cargo build")); };
+    _ => { std::eprint("unknown command: " + args.cmd); };
   };
 };
 ```
@@ -160,19 +160,19 @@ tests passed
 ## Capturing Output
 
 Sometimes you want a command's output as a value instead of printing it live.
-`std::process::capture` runs a command line and returns a record with the exit
+`std::capture` runs a command line and returns a record with the exit
 code and both streams:
 
 <span class="filename">Filename: tasks.kiru</span>
 
 ```kiru
-fn main(rec args) {
-  rec result = std::process::capture("cargo test");
-  switch(result.code) {
-    case("0") { std::io::print("tests passed"); };
-    default {
-      std::io::print("tests failed");
-      std::io::print(result.err);
+fn main(args<rec>) {
+  let result<rec> = std::capture("cargo test");
+  match result.code {
+    "0" => { std::print("tests passed"); };
+    _ => {
+      std::print("tests failed");
+      std::print(result.err);
     };
   };
 };

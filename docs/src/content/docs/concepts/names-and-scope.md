@@ -14,9 +14,9 @@ a forward reference is an error:
 
 ```console
 $ kc main.kiru
-main.kiru:2:15: error: `banner` is declared after this point
-  txt title = banner("kiru");
-              ^^^^^^
+main.kiru:1:18: error: `banner` is declared after this point
+let title<txt> = banner("kiru");
+                 ^^^^^^
 ```
 
 A function body sees, in order of closeness, its parameters, the bindings it
@@ -33,12 +33,12 @@ A leading `::` starts at the root instead, so a root name a local shadows stays
 reachable:
 
 ```kiru
-txt name = "root";
+let name<txt> = "root";
 
 fn show() {
-  txt name = "local";
-  std::io::print(name);      # local
-  std::io::print(::name);    # root
+  let name<txt> = "local";
+  std::print(name);      # local
+  std::print(::name);    # root
 };
 ```
 
@@ -51,8 +51,8 @@ once, a function name is declared once, and a function may share a name with a
 value:
 
 ```kiru
-txt thing = "value thing";
-fn thing() -> txt { return("function thing"); };
+let thing<txt> = "value thing";
+fn thing() -> txt { return "function thing"; };
 ```
 
 A second value or function with the same name is an error:
@@ -60,7 +60,7 @@ A second value or function with the same name is an error:
 ```console
 $ kc main.kiru
 main.kiru:2:5: error: `title` is declared more than once in this namespace
-txt title = "b";
+let title<txt> = "b";
     ^^^^^
 ```
 
@@ -69,11 +69,11 @@ body, but it may shadow a top-level name.
 
 ## Scopes
 
-Each function body is a scope. Each `case` arm and each loop body is its own
+Each function body is a scope. Each match arm and each loop body is its own
 scope too: a name declared in one arm is not visible in another, and a name
 declared in a loop body is not visible after the loop.
 
 Nested blocks still share the enclosing function's bindings for assignment, so
 an arm or a loop body can reassign a `mut` binding declared outside it.
-[Switch](/concepts/switch/) and [Lists and
+[Match](/concepts/match/) and [Lists and
 Loops](/concepts/lists-and-loops/) show the shape.

@@ -1,22 +1,22 @@
 import "entry.kiru";
 
-rec kiru = {
+let kiru<rec> = {
   name = "kiru",
   Dir = ".",
   Nix = "true",
 };
 
-rec docs = {
+let docs<rec> = {
   name = "docs",
   Dir = "docs",
   Nix = "true"
 };
 
-fn main(rec args) {
-  switch(args.cmd) {
-    case("kiru") { kiru::kiru_command(kiru, args.flag); };
-    case("docs") { kiru::docs_command(docs, args.flag); };
-    case("all") { kiru::all_command(kiru, docs, args.flag); };
-    default { std::io::eprint(kiru::usage); };
+fn main(args<rec>) {
+  match args.cmd {
+    "kiru" => { kiru::kiru_command(kiru, args.flag); };
+    "docs" => { kiru::docs_command(docs, args.flag); };
+    "all" => { kiru::all_command(kiru, docs, args.flag); };
+    _ => { std::eprint(kiru::usage); };
   };
 };

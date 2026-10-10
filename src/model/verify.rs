@@ -58,10 +58,6 @@ pub(crate) fn validate_program_structure(program: &Program) -> Result<(), String
         }
     }
     for file in &program.files {
-        check_id(file.namespace.0, namespace_count, "a file namespace")?;
-        for import in &file.imports {
-            check_id(import.0, file_count, "a file import")?;
-        }
         for declaration in &file.declarations {
             check_id(declaration.0, declaration_count, "a file declaration")?;
         }
@@ -84,13 +80,8 @@ pub(crate) fn validate_program_structure(program: &Program) -> Result<(), String
         match &declaration.kind {
             DeclarationKind::Function(function) => {
                 check_statements(program, &function.body, declaration.order)?;
-                if declaration.derived.kind != Some(function.return_kind) {
-                    return Err("a function's kind does not match its declaration".to_owned());
-                }
             }
-            DeclarationKind::Text(expression)
-            | DeclarationKind::Record(expression)
-            | DeclarationKind::List(expression) => {
+            DeclarationKind::Value { expression, .. } => {
                 check_expression(program, expression, declaration.order)?;
             }
             DeclarationKind::Binding(_) => {}
@@ -120,9 +111,7 @@ fn verify_spans(program: &Program) {
             DeclarationKind::Function(function) => {
                 walk_statements(&mut check, &function.body);
             }
-            DeclarationKind::Text(expression)
-            | DeclarationKind::Record(expression)
-            | DeclarationKind::List(expression) => {
+            DeclarationKind::Value { expression, .. } => {
                 walk_expression(&mut check, expression);
             }
             DeclarationKind::Binding(_) | DeclarationKind::Native(_) => {}
@@ -184,11 +173,6 @@ impl Visitor for SpanCheck {
             statement
         {
             assert!(name_span.start <= name_span.end);
-        }
-        if let Statement::Switch { cases, .. } = statement {
-            for case in cases {
-                assert!(case.span.start <= case.span.end);
-            }
         }
     }
 }
@@ -252,7 +236,9 @@ impl Visitor for EdgeCheck<'_> {
             | Expression::Record { .. }
             | Expression::List { .. }
             | Expression::Field { .. }
-            | Expression::Add { .. } => {}
+            | Expression::Add { .. }
+            | Expression::Interpolated { .. }
+            | Expression::Match { .. } => {}
         }
     }
 
@@ -271,7 +257,6 @@ impl Visitor for EdgeCheck<'_> {
             | Statement::Panic { .. }
             | Statement::Async { .. }
             | Statement::Wait { .. }
-            | Statement::Switch { .. }
             | Statement::Break { .. }
             | Statement::Forever { .. } => {}
         }

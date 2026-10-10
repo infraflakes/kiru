@@ -21,6 +21,12 @@ pub(crate) enum Expression {
         elements: Vec<Expression>,
         span: Span,
     },
+    /// A string with `@(…)` interpolation, split into literal and expression
+    /// parts.
+    Interpolated {
+        parts: Vec<StringPart>,
+        span: Span,
+    },
     /// A reference to a declaration or a binding. The leading `::`, if any,
     /// was consumed by resolution and is not part of the edge.
     Reference {
@@ -44,6 +50,14 @@ pub(crate) enum Expression {
         right: Box<Expression>,
         span: Span,
     },
+    /// `match subject { pattern => body; … };` — a term whose value is the
+    /// taken arm's expression, or void when its arms are blocks.
+    Match {
+        subject: Box<Expression>,
+        cases: Vec<MatchArm>,
+        default: Option<MatchBody>,
+        span: Span,
+    },
 }
 
 impl Expression {
@@ -52,12 +66,23 @@ impl Expression {
             Expression::Text { span, .. }
             | Expression::Record { span, .. }
             | Expression::List { span, .. }
+            | Expression::Interpolated { span, .. }
             | Expression::Reference { span, .. }
             | Expression::Call { span, .. }
             | Expression::Field { span, .. }
-            | Expression::Add { span, .. } => *span,
+            | Expression::Add { span, .. }
+            | Expression::Match { span, .. } => *span,
         }
     }
+}
+
+/// One part of an interpolated string.
+#[derive(Debug)]
+pub(crate) enum StringPart {
+    /// Literal text.
+    Literal(String),
+    /// An `@(…)` expression whose text is inserted.
+    Expression(Expression),
 }
 
 /// One `key = expression` entry of a record literal.
@@ -112,12 +137,6 @@ pub(crate) enum Statement {
     Wait {
         span: Span,
     },
-    Switch {
-        subject: Expression,
-        cases: Vec<Case>,
-        default: Option<Vec<Statement>>,
-        span: Span,
-    },
     /// `for item in <list> { ... };` runs the body once per element, with the
     /// loop binding `item` bound to each text element in turn.
     ForEach {
@@ -150,7 +169,6 @@ impl Statement {
             | Statement::Panic { span }
             | Statement::Async { span, .. }
             | Statement::Wait { span }
-            | Statement::Switch { span, .. }
             | Statement::ForEach { span, .. }
             | Statement::Forever { span, .. }
             | Statement::Break { span } => *span,
@@ -158,10 +176,18 @@ impl Statement {
     }
 }
 
-/// One `case(pattern) { ... };` arm of a switch.
+/// One `pattern => body;` arm of a `match`. A `_` arm is the default.
 #[derive(Debug)]
-pub(crate) struct Case {
+pub(crate) struct MatchArm {
     pub(crate) pattern: Expression,
-    pub(crate) body: Vec<Statement>,
+    pub(crate) body: MatchBody,
     pub(crate) span: Span,
+}
+
+/// The body of a match arm: an expression in expression position, or a block
+/// of statements in statement position.
+#[derive(Debug)]
+pub(crate) enum MatchBody {
+    Expression(Box<Expression>),
+    Block(Vec<Statement>),
 }

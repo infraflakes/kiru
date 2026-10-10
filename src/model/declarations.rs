@@ -5,7 +5,7 @@ use crate::syntax::Span;
 
 use super::expressions::{Expression, Statement};
 use super::ids::{DeclarationId, FileId, NamespaceId};
-use super::kinds::Kind;
+use crate::types::Type;
 
 /// One declaration or binding node.
 #[derive(Debug)]
@@ -31,9 +31,7 @@ impl Declaration {
     pub(crate) fn function(&self) -> Option<&Function> {
         match &self.kind {
             DeclarationKind::Function(function) => Some(function),
-            DeclarationKind::Text(_)
-            | DeclarationKind::Record(_)
-            | DeclarationKind::List(_)
+            DeclarationKind::Value { .. }
             | DeclarationKind::Binding(_)
             | DeclarationKind::Native(_) => None,
         }
@@ -43,34 +41,26 @@ impl Declaration {
     pub(crate) fn function_mut(&mut self) -> Option<&mut Function> {
         match &mut self.kind {
             DeclarationKind::Function(function) => Some(function),
-            DeclarationKind::Text(_)
-            | DeclarationKind::Record(_)
-            | DeclarationKind::List(_)
+            DeclarationKind::Value { .. }
             | DeclarationKind::Binding(_)
             | DeclarationKind::Native(_) => None,
         }
     }
 
-    /// The initializer expression when this node is a text, record, or list
-    /// value.
+    /// The initializer expression when this node is a module value.
     pub(crate) fn initializer(&self) -> Option<&Expression> {
         match &self.kind {
-            DeclarationKind::Text(expression)
-            | DeclarationKind::Record(expression)
-            | DeclarationKind::List(expression) => Some(expression),
+            DeclarationKind::Value { expression, .. } => Some(expression),
             DeclarationKind::Function(_)
             | DeclarationKind::Binding(_)
             | DeclarationKind::Native(_) => None,
         }
     }
 
-    /// The initializer expression when this node is a text, record, or list
-    /// value.
+    /// The initializer expression when this node is a module value.
     pub(crate) fn initializer_mut(&mut self) -> Option<&mut Expression> {
         match &mut self.kind {
-            DeclarationKind::Text(expression)
-            | DeclarationKind::Record(expression)
-            | DeclarationKind::List(expression) => Some(expression),
+            DeclarationKind::Value { expression, .. } => Some(expression),
             DeclarationKind::Function(_)
             | DeclarationKind::Binding(_)
             | DeclarationKind::Native(_) => None,
@@ -81,10 +71,6 @@ impl Declaration {
 /// What a phase has learned about a node.
 #[derive(Debug, Default)]
 pub(crate) struct Derived {
-    /// The value's kind, a binding's kind, or a function's return kind. A
-    /// function seeds this from its declaration at link time, so a call reads
-    /// the kind the declaration fixed without looking at the body.
-    pub(crate) kind: Option<Kind>,
     /// Whether every path of a function ends in `panic;` or a call to a
     /// function that stops the run. A call to such a function ends its
     /// caller's path exactly like `panic;` does.
@@ -95,53 +81,29 @@ pub(crate) struct Derived {
 #[derive(Debug)]
 pub(crate) enum DeclarationKind {
     Function(Function),
-    /// A module-level `txt`; the startup pass evaluates it once and it holds
-    /// text.
-    Text(Expression),
-    /// A module-level `rec`; the startup pass evaluates it once. The
-    /// expression is a record literal, a record variable, or a call returning
-    /// a record.
-    Record(Expression),
-    /// A module-level `list`; the startup pass evaluates it once. The
-    /// expression is a list literal, a list variable, or a call returning a
-    /// list.
-    List(Expression),
+    /// A module-level `let`; the startup pass evaluates it once and it holds a
+    /// value of its declared type.
+    Value {
+        ty: Type,
+        expression: Expression,
+    },
     /// A parameter or local binding.
-    Binding(BindingKind),
+    Binding(Binding),
     Native(Native),
 }
 
-/// The role of a binding node. `mutable` marks a `mut` binding: it may be
-/// reassigned and, for a record, have its fields assigned. Module values are
-/// never bindings and are always immutable.
+/// A parameter or local binding: the data type it holds and whether it may be
+/// reassigned.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum BindingKind {
-    /// A function parameter.
-    Parameter { mutable: bool },
-    /// A `txt` binding; it holds text.
-    Text { mutable: bool },
-    /// A `rec` binding.
-    Record { mutable: bool },
-    /// A `list` binding.
-    List { mutable: bool },
+pub(crate) struct Binding {
+    pub(crate) ty: Type,
+    pub(crate) mutable: bool,
 }
 
-impl BindingKind {
-    /// Whether this binding may be reassigned or have its fields assigned.
-    pub(crate) fn mutable(self) -> bool {
-        match self {
-            BindingKind::Parameter { mutable }
-            | BindingKind::Text { mutable }
-            | BindingKind::Record { mutable }
-            | BindingKind::List { mutable } => mutable,
-        }
-    }
-}
-
-/// A function body; its parameters are separate nodes. `return_kind` is the
-/// kind the declaration fixes: `Nothing` when no arrow is written.
+/// A function body; its parameters are separate nodes. `return_type` is the
+/// type the declaration fixes: `Void` when the function returns no value.
 #[derive(Debug)]
 pub(crate) struct Function {
     pub(crate) body: Vec<Statement>,
-    pub(crate) return_kind: Kind,
+    pub(crate) return_type: Type,
 }

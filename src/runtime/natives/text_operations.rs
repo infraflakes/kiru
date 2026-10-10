@@ -49,9 +49,3 @@ pub(crate) fn trim(text: &str) -> Value {
 pub(crate) fn split(text: &str, separator: &str) -> Value {
     Value::List(text.split(separator).map(str::to_owned).collect())
 }
-
-/// Split `text` into a list of lines. A trailing newline does not produce a
-/// trailing empty element.
-pub(crate) fn lines(text: &str) -> Value {
-    Value::List(text.lines().map(str::to_owned).collect())
-}

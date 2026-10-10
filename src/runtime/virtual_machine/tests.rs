@@ -62,27 +62,75 @@ fn evaluates_expressions() {
     expect_text_results(&[
         (
             "returns a text value",
-            "fn answer() -> txt { return(\"42\"); };\nfn main() {};",
+            "fn answer() -> txt { return \"42\"; };\nfn main() {};",
             "answer",
             "42",
         ),
         (
             "missing field reads empty",
-            "fn f() -> txt { rec r = { a = \"1\" }; return(r.b + \"!\"); };\nfn main() {};",
+            "fn f() -> txt { let r<rec> = { a = \"1\" }; return r.b + \"!\"; };\nfn main() {};",
             "f",
             "!",
         ),
         (
             "duplicate key last wins",
-            "fn f() -> txt { rec r = { a = \"1\", a = \"2\" }; return(r.a); };\nfn main() {};",
+            "fn f() -> txt { let r<rec> = { a = \"1\", a = \"2\" }; return r.a; };\nfn main() {};",
             "f",
             "2",
         ),
         (
             "module values are evaluated once at startup",
-            "txt base = \"a\";\ntxt derived = base + \"b\";\nfn f() -> txt { return(derived + base); };\nfn main() {};",
+            "let base<txt> = \"a\";\nlet derived<txt> = base + \"b\";\nfn f() -> txt { return derived + base; };\nfn main() {};",
             "f",
             "aba",
+        ),
+    ]);
+}
+
+#[test]
+fn interpolation_inserts_values() {
+    expect_text_results(&[
+        (
+            "literal and expression parts",
+            "fn f() -> txt { let name<txt> = \"world\"; return \"hello @(name)!\"; };\nfn main() {};",
+            "f",
+            "hello world!",
+        ),
+        (
+            "an expression with a call",
+            "fn f() -> txt { let s<txt> = \"abc\"; return \"len=@(std::text::len(s))\"; };\nfn main() {};",
+            "f",
+            "len=3",
+        ),
+        (
+            "an escaped at sign stays literal",
+            "fn f() -> txt { return \"user\\@host\"; };\nfn main() {};",
+            "f",
+            "user@host",
+        ),
+    ]);
+}
+
+#[test]
+fn match_expressions_produce_values() {
+    expect_text_results(&[
+        (
+            "the first matching arm's value",
+            "fn f() -> txt { let s<txt> = \"a\"; return match s { \"a\" => \"one\"; _ => \"other\"; }; };\nfn main() {};",
+            "f",
+            "one",
+        ),
+        (
+            "the default arm's value",
+            "fn f() -> txt { let s<txt> = \"z\"; return match s { \"a\" => \"one\"; _ => \"other\"; }; };\nfn main() {};",
+            "f",
+            "other",
+        ),
+        (
+            "a record-valued match",
+            "fn f() -> txt { let s<txt> = \"a\"; let r<rec> = match s { \"a\" => { k = \"v\" }; _ => { k = \"w\" }; }; return r.k; };\nfn main() {};",
+            "f",
+            "v",
         ),
     ]);
 }
@@ -92,97 +140,97 @@ fn text_natives_evaluate() {
     expect_text_results(&[
         (
             "length counts bytes",
-            "fn f() -> txt { return(std::text::len(\"abc\")); };\nfn main() {};",
+            "fn f() -> txt { return std::text::len(\"abc\"); };\nfn main() {};",
             "f",
             "3",
         ),
         (
             "length counts bytes, not characters",
-            "fn f() -> txt { return(std::text::len(\"é\")); };\nfn main() {};",
+            "fn f() -> txt { return std::text::len(\"é\"); };\nfn main() {};",
             "f",
             "2",
         ),
         (
             "slice takes a half-open byte range",
-            "fn f() -> txt { return(std::text::slice(\"abcdef\", \"1\", \"4\")); };\nfn main() {};",
+            "fn f() -> txt { return std::text::slice(\"abcdef\", \"1\", \"4\"); };\nfn main() {};",
             "f",
             "bcd",
         ),
         (
             "find returns a byte index",
-            "fn f() -> txt { return(std::text::find(\"hello\", \"l\")); };\nfn main() {};",
+            "fn f() -> txt { return std::text::find(\"hello\", \"l\"); };\nfn main() {};",
             "f",
             "2",
         ),
         (
             "find returns empty when absent",
-            "fn f() -> txt { return(std::text::find(\"hello\", \"z\")); };\nfn main() {};",
+            "fn f() -> txt { return std::text::find(\"hello\", \"z\"); };\nfn main() {};",
             "f",
             "",
         ),
         (
             "replace replaces every occurrence",
-            "fn f() -> txt { return(std::text::replace(\"a-b-c\", \"-\", \"+\")); };\nfn main() {};",
+            "fn f() -> txt { return std::text::replace(\"a-b-c\", \"-\", \"+\"); };\nfn main() {};",
             "f",
             "a+b+c",
         ),
         (
             "replace with an empty needle wraps every character",
-            "fn f() -> txt { return(std::text::replace(\"abc\", \"\", \"-\")); };\nfn main() {};",
+            "fn f() -> txt { return std::text::replace(\"abc\", \"\", \"-\"); };\nfn main() {};",
             "f",
             "-a-b-c-",
         ),
         (
             "replace with no match leaves the text",
-            "fn f() -> txt { return(std::text::replace(\"abc\", \"z\", \"-\")); };\nfn main() {};",
+            "fn f() -> txt { return std::text::replace(\"abc\", \"z\", \"-\"); };\nfn main() {};",
             "f",
             "abc",
         ),
         (
             "starts_with answers text",
-            "fn f() -> txt { return(std::text::starts_with(\"hello\", \"he\")); };\nfn main() {};",
+            "fn f() -> txt { return std::text::starts_with(\"hello\", \"he\"); };\nfn main() {};",
             "f",
             "true",
         ),
         (
             "ends_with answers text",
-            "fn f() -> txt { return(std::text::ends_with(\"hello\", \"lo\")); };\nfn main() {};",
+            "fn f() -> txt { return std::text::ends_with(\"hello\", \"lo\"); };\nfn main() {};",
             "f",
             "true",
         ),
         (
             "ends_with is false for a non-matching suffix",
-            "fn f() -> txt { return(std::text::ends_with(\"hello\", \"he\")); };\nfn main() {};",
+            "fn f() -> txt { return std::text::ends_with(\"hello\", \"he\"); };\nfn main() {};",
             "f",
             "false",
         ),
         (
             "ends_with is true for an empty suffix",
-            "fn f() -> txt { return(std::text::ends_with(\"abc\", \"\")); };\nfn main() {};",
+            "fn f() -> txt { return std::text::ends_with(\"abc\", \"\"); };\nfn main() {};",
             "f",
             "true",
         ),
         (
             "ends_with on empty text needs an empty suffix",
-            "fn f() -> txt { return(std::text::ends_with(\"\", \"x\")); };\nfn main() {};",
+            "fn f() -> txt { return std::text::ends_with(\"\", \"x\"); };\nfn main() {};",
             "f",
             "false",
         ),
         (
             "ends_with on two empty texts",
-            "fn f() -> txt { return(std::text::ends_with(\"\", \"\")); };\nfn main() {};",
+            "fn f() -> txt { return std::text::ends_with(\"\", \"\"); };\nfn main() {};",
             "f",
             "true",
         ),
         (
             "contains answers text",
-            "fn f() -> txt { return(std::text::contains(\"hello\", \"ell\")); };\nfn main() {};",
+            "fn f() -> txt { return std::text::contains(\"hello\", \"ell\"); };\nfn main() {};",
             "f",
             "true",
         ),
         (
             "trim removes surrounding whitespace",
-            "fn f() -> txt { return(std::text::trim(\"  hi\\n\")); };\nfn main() {};",
+            "fn f() -> txt { return std::text::trim(\"  hi\\n\"); };\nfn main() {};",
             "f",
             "hi",
         ),
@@ -192,7 +240,7 @@ fn text_natives_evaluate() {
 #[test]
 fn slice_outside_the_text_fails_the_run() {
     let runtime = runtime(
-        "fn f() -> txt { return(std::text::slice(\"abc\", \"1\", \"9\")); };\nfn main() {};",
+        "fn f() -> txt { return std::text::slice(\"abc\", \"1\", \"9\"); };\nfn main() {};",
     );
     assert!(runtime.call_root("f", Vec::new()).is_err());
     assert!(runtime.state.panicked(), "the run remembers the failure");
@@ -200,8 +248,7 @@ fn slice_outside_the_text_fails_the_run() {
 
 #[test]
 fn the_kiru_quote_escapes_an_embedded_quote() {
-    let runtime =
-        runtime("fn f() -> txt { return(std::process::quote(\"a'b\")); };\nfn main() {};");
+    let runtime = runtime("fn f() -> txt { return std::quote(\"a'b\"); };\nfn main() {};");
     assert_eq!(call_text(&runtime, "f"), "'a'\\''b'");
 }
 
@@ -210,10 +257,10 @@ fn file_natives_round_trip() {
     let directory = tempfile::tempdir().expect("temp dir");
     let path = directory.path().join("data");
     let runtime = runtime(
-        "fn write_it(txt path) { std::fs::write(path, \"a\"); std::fs::append(path, \"b\"); };\n\
-         fn read_it(txt path) -> txt { return(std::fs::read(path)); };\n\
-         fn has(txt path) -> txt { return(std::fs::exists(path)); };\n\
-         fn remove_it(txt path) { std::fs::remove(path); };\n\
+        "fn write_it(path<txt>) { std::fs::write(path, \"a\"); std::fs::append(path, \"b\"); };\n\
+         fn read_it(path<txt>) -> txt { return std::fs::read(path); };\n\
+         fn has(path<txt>) -> txt { return std::fs::exists(path); };\n\
+         fn remove_it(path<txt>) { std::fs::remove(path); };\n\
          fn main() {};",
     );
     let path = Value::Text(path.display().to_string());
@@ -246,8 +293,8 @@ fn file_natives_round_trip() {
 #[test]
 fn temp_file_creates_a_unique_file() {
     let runtime = runtime(
-        "fn make() -> txt { return(std::fs::temp_file()); };\n\
-         fn drop_it(txt path) { std::fs::remove(path); };\n\
+        "fn make() -> txt { return std::fs::temp_file(); };\n\
+         fn drop_it(path<txt>) { std::fs::remove(path); };\n\
          fn main() {};",
     );
     let first = call_text(&runtime, "make");
@@ -276,7 +323,7 @@ fn temp_file_creates_a_unique_file() {
 #[test]
 fn capture_returns_the_commands_stdout() {
     let runtime = runtime(
-        "fn f() -> txt { rec r = std::process::capture(\"sh -c 'printf hello; printf oops >&2; exit 4'\"); return(r.out + \":\" + r.err + \":\" + r.code); };\nfn main() {};",
+        "fn f() -> txt { let r<rec> = std::capture(\"sh -c 'printf hello; printf oops >&2; exit 4'\"); return r.out + \":\" + r.err + \":\" + r.code; };\nfn main() {};",
     );
     assert_eq!(call_text(&runtime, "f"), "hello:oops:4");
 }
@@ -286,61 +333,61 @@ fn lists_and_for_evaluate() {
     expect_text_results(&[
         (
             "a list literal joins",
-            "fn f() -> txt { return(std::text::join([\"a\", \"b\"], \"-\")); };\nfn main() {};",
+            "fn f() -> txt { return std::join([\"a\", \"b\"], \"-\"); };\nfn main() {};",
             "f",
             "a-b",
         ),
         (
             "split then join",
-            "fn f() -> txt { return(std::text::join(std::text::split(\"a,b,c\", \",\"), \"-\")); };\nfn main() {};",
+            "fn f() -> txt { return std::join(std::split(\"a,b,c\", \",\"), \"-\"); };\nfn main() {};",
             "f",
             "a-b-c",
         ),
         (
             "lines drops a trailing newline",
-            "fn f() -> txt { return(std::text::len(std::text::join(std::text::lines(\"a\\nb\\n\"), \"|\"))); };\nfn main() {};",
+            "fn f() -> txt { return std::text::len(std::join(std::text::lines(\"a\\nb\\n\"), \"|\")); };\nfn main() {};",
             "f",
             "3",
         ),
         (
             "for accumulates over a list",
-            "fn f() -> txt { mut txt out = \"\"; for x in [\"a\", \"b\", \"c\"] { out = out + x; }; return(out); };\nfn main() {};",
+            "fn f() -> txt { let mut out<txt> = \"\"; for x in [\"a\", \"b\", \"c\"] { out = out + x; }; return out; };\nfn main() {};",
             "f",
             "abc",
         ),
         (
             "break ends the loop",
-            "fn f() -> txt { mut txt out = \"\"; for x in [\"a\", \"b\", \"c\"] { out = out + x; break; }; return(out); };\nfn main() {};",
+            "fn f() -> txt { let mut out<txt> = \"\"; for x in [\"a\", \"b\", \"c\"] { out = out + x; break; }; return out; };\nfn main() {};",
             "f",
             "a",
         ),
         (
             "a switch default skips an element",
-            "fn f() -> txt { mut txt out = \"\"; for x in [\"a\", \"b\", \"c\"] { switch(x) { case(\"b\") {}; default { out = out + x; }; }; }; return(out); };\nfn main() {};",
+            "fn f() -> txt { let mut out<txt> = \"\"; for x in [\"a\", \"b\", \"c\"] { match x { \"b\" => {}; _ => { out = out + x; }; }; }; return out; };\nfn main() {};",
             "f",
             "ac",
         ),
         (
             "an unbounded for breaks",
-            "fn f() -> txt { mut txt out = \"x\"; for { out = \"y\"; break; }; return(out); };\nfn main() {};",
+            "fn f() -> txt { let mut out<txt> = \"x\"; for { out = \"y\"; break; }; return out; };\nfn main() {};",
             "f",
             "y",
         ),
         (
             "an empty list runs the body zero times",
-            "fn f() -> txt { mut txt out = \"x\"; for x in [] { out = \"y\"; }; return(out); };\nfn main() {};",
+            "fn f() -> txt { let mut out<txt> = \"x\"; for x in [] { out = \"y\"; }; return out; };\nfn main() {};",
             "f",
             "x",
         ),
         (
             "a nested loop over a split",
-            "fn f() -> txt { mut txt last = \"\"; for row in std::text::split(\"1;2;3\", \";\") { for cell in std::text::split(row, \";\") { last = cell; }; }; return(last); };\nfn main() {};",
+            "fn f() -> txt { let mut last<txt> = \"\"; for row in std::split(\"1;2;3\", \";\") { for cell in std::split(row, \";\") { last = cell; }; }; return last; };\nfn main() {};",
             "f",
             "3",
         ),
         (
             "a module list value is read",
-            "list xs = [\"a\", \"b\"];\nfn f() -> txt { return(std::text::join(xs, \"\")); };\nfn main() {};",
+            "let xs<list> = [\"a\", \"b\"];\nfn f() -> txt { return std::join(xs, \"\"); };\nfn main() {};",
             "f",
             "ab",
         ),
@@ -355,7 +402,7 @@ fn glob_lists_matching_paths() {
     std::fs::write(directory.path().join("c.log"), "").expect("write c");
     let pattern = format!("{}/*.txt", directory.path().display());
     let runtime = runtime(&format!(
-        "fn f() -> txt {{ return(std::text::join(std::fs::glob(\"{pattern}\"), \"|\")); }};\nfn main() {{}};",
+        "fn f() -> txt {{ return std::join(std::fs::glob(\"{pattern}\"), \"|\"); }};\nfn main() {{}};",
         pattern = pattern
     ));
     let result = call_text(&runtime, "f");
@@ -370,13 +417,13 @@ fn spawn_and_wait_for_run_an_argv_without_a_shell() {
     expect_text_results(&[
         (
             "an argv exits zero",
-            "fn f() -> txt { txt pid = std::process::spawn({ Stdout = \"null\" }, [\"true\"]); return(std::process::wait_for(pid)); };\nfn main() {};",
+            "fn f() -> txt { let pid<txt> = std::process::spawn({ Stdout = \"null\" }, [\"true\"]); return std::process::wait_for(pid); };\nfn main() {};",
             "f",
             "0",
         ),
         (
             "an argv exit code comes back",
-            "fn f() -> txt { txt pid = std::process::spawn({ Stdout = \"null\" }, [\"false\"]); return(std::process::wait_for(pid)); };\nfn main() {};",
+            "fn f() -> txt { let pid<txt> = std::process::spawn({ Stdout = \"null\" }, [\"false\"]); return std::process::wait_for(pid); };\nfn main() {};",
             "f",
             "1",
         ),
@@ -387,7 +434,7 @@ fn spawn_and_wait_for_run_an_argv_without_a_shell() {
 fn spawn_runs_in_its_directory() {
     let directory = tempfile::tempdir().expect("temp dir");
     let source = format!(
-        "fn f() -> txt {{ txt pid = std::process::spawn({{ Dir = \"{}\" }}, [\"touch\", \"made\"]); return(std::process::wait_for(pid)); }};\nfn main() {{}};",
+        "fn f() -> txt {{ let pid<txt> = std::process::spawn({{ Dir = \"{}\" }}, [\"touch\", \"made\"]); return std::process::wait_for(pid); }};\nfn main() {{}};",
         directory.path().display()
     );
     let runtime = runtime(&source);
@@ -401,7 +448,7 @@ fn spawn_runs_in_its_directory() {
 #[test]
 fn signal_kills_a_spawned_process() {
     let runtime = runtime(
-        "fn f() -> txt { txt pid = std::process::spawn({ Stdout = \"null\" }, [\"sleep\", \"5\"]); std::process::signal(pid, \"KILL\"); return(std::process::wait_for(pid)); };\nfn main() {};",
+        "fn f() -> txt { let pid<txt> = std::process::spawn({ Stdout = \"null\" }, [\"sleep\", \"5\"]); std::process::signal(pid, \"KILL\"); return std::process::wait_for(pid); };\nfn main() {};",
     );
     assert_eq!(call_text(&runtime, "f"), "137");
 }
@@ -411,67 +458,61 @@ fn list_operations_evaluate() {
     expect_text_results(&[
         (
             "length",
-            "fn f() -> txt { return(std::lists::len([\"a\", \"b\", \"c\"])); };\nfn main() {};",
+            "fn f() -> txt { return std::lists::len([\"a\", \"b\", \"c\"]); };\nfn main() {};",
             "f",
             "3",
         ),
         (
             "get",
-            "fn f() -> txt { return(std::lists::get([\"a\", \"b\", \"c\"], \"1\")); };\nfn main() {};",
+            "fn f() -> txt { return std::get([\"a\", \"b\", \"c\"], \"1\"); };\nfn main() {};",
             "f",
             "b",
         ),
         (
             "append then join",
-            "fn f() -> txt { return(std::text::join(std::lists::append([\"a\", \"b\"], \"c\"), \"-\")); };\nfn main() {};",
+            "fn f() -> txt { return std::join(std::append([\"a\", \"b\"], \"c\"), \"-\"); };\nfn main() {};",
             "f",
             "a-b-c",
         ),
         (
             "contains true",
-            "fn f() -> txt { return(std::lists::contains([\"a\", \"b\"], \"b\")); };\nfn main() {};",
+            "fn f() -> txt { return std::lists::contains([\"a\", \"b\"], \"b\"); };\nfn main() {};",
             "f",
             "true",
         ),
         (
             "contains false",
-            "fn f() -> txt { return(std::lists::contains([\"a\", \"b\"], \"z\")); };\nfn main() {};",
+            "fn f() -> txt { return std::lists::contains([\"a\", \"b\"], \"z\"); };\nfn main() {};",
             "f",
             "false",
         ),
         (
             "reverse",
-            "fn f() -> txt { return(std::text::join(std::lists::reverse([\"a\", \"b\", \"c\"]), \"\")); };\nfn main() {};",
+            "fn f() -> txt { return std::join(std::lists::reverse([\"a\", \"b\", \"c\"]), \"\"); };\nfn main() {};",
             "f",
             "cba",
         ),
         (
             "last",
-            "fn f() -> txt { return(std::lists::last([\"a\", \"b\", \"c\"])); };\nfn main() {};",
+            "fn f() -> txt { return std::last([\"a\", \"b\", \"c\"]); };\nfn main() {};",
             "f",
             "c",
         ),
         (
-            "last of an empty list is empty",
-            "fn f() -> txt { return(std::lists::last([])); };\nfn main() {};",
-            "f",
-            "",
-        ),
-        (
             "concat joins two lists in order",
-            "fn f() -> txt { return(std::text::join(std::lists::concat([\"a\", \"b\"], [\"c\", \"d\"]), \"\")); };\nfn main() {};",
+            "fn f() -> txt { return std::join(std::lists::concat([\"a\", \"b\"], [\"c\", \"d\"]), \"\"); };\nfn main() {};",
             "f",
             "abcd",
         ),
         (
             "concat with an empty list",
-            "fn f() -> txt { return(std::text::join(std::lists::concat([], [\"a\"]), \"\")); };\nfn main() {};",
+            "fn f() -> txt { return std::join(std::lists::concat([], [\"a\"]), \"\"); };\nfn main() {};",
             "f",
             "a",
         ),
         (
             "sort",
-            "fn f() -> txt { return(std::text::join(std::lists::sort([\"c\", \"a\", \"b\"]), \"\")); };\nfn main() {};",
+            "fn f() -> txt { return std::join(std::lists::sort([\"c\", \"a\", \"b\"]), \"\"); };\nfn main() {};",
             "f",
             "abc",
         ),
@@ -483,37 +524,37 @@ fn path_operations_evaluate() {
     expect_text_results(&[
         (
             "join",
-            "fn f() -> txt { return(std::path::join(\"/a/b\", \"c\")); };\nfn main() {};",
+            "fn f() -> txt { return std::path::join(\"/a/b\", \"c\"); };\nfn main() {};",
             "f",
             "/a/b/c",
         ),
         (
             "base",
-            "fn f() -> txt { return(std::path::base(\"/a/b/c.txt\")); };\nfn main() {};",
+            "fn f() -> txt { return std::path::base(\"/a/b/c.txt\"); };\nfn main() {};",
             "f",
             "c.txt",
         ),
         (
             "dir",
-            "fn f() -> txt { return(std::path::dir(\"/a/b/c.txt\")); };\nfn main() {};",
+            "fn f() -> txt { return std::path::dir(\"/a/b/c.txt\"); };\nfn main() {};",
             "f",
             "/a/b",
         ),
         (
             "ext",
-            "fn f() -> txt { return(std::path::ext(\"/a/b/c.txt\")); };\nfn main() {};",
+            "fn f() -> txt { return std::path::ext(\"/a/b/c.txt\"); };\nfn main() {};",
             "f",
             "txt",
         ),
         (
             "is_absolute true",
-            "fn f() -> txt { return(std::path::is_absolute(\"/a\")); };\nfn main() {};",
+            "fn f() -> txt { return std::path::is_absolute(\"/a\"); };\nfn main() {};",
             "f",
             "true",
         ),
         (
             "is_absolute false",
-            "fn f() -> txt { return(std::path::is_absolute(\"a\")); };\nfn main() {};",
+            "fn f() -> txt { return std::path::is_absolute(\"a\"); };\nfn main() {};",
             "f",
             "false",
         ),
@@ -523,14 +564,14 @@ fn path_operations_evaluate() {
 #[test]
 fn env_reads_an_unset_variable_as_empty() {
     let runtime = runtime(
-        "fn f() -> txt { return(std::env::var(\"KIRU_DEFINITELY_UNSET_VAR\")); };\nfn main() {};",
+        "fn f() -> txt { return std::env::var(\"KIRU_DEFINITELY_UNSET_VAR\"); };\nfn main() {};",
     );
     assert_eq!(call_text(&runtime, "f"), "");
 }
 
 #[test]
 fn env_reports_a_current_directory() {
-    let runtime = runtime("fn f() -> txt { return(std::env::current_dir()); };\nfn main() {};");
+    let runtime = runtime("fn f() -> txt { return std::env::current_dir(); };\nfn main() {};");
     assert!(!call_text(&runtime, "f").is_empty());
 }
 
@@ -543,10 +584,22 @@ fn status_code_reads_a_number_or_a_message() {
 }
 
 #[test]
-fn a_list_get_that_misses_reads_empty() {
-    let runtime =
-        runtime("fn f() -> txt { return(std::lists::get([\"a\"], \"9\")); };\nfn main() {};");
-    assert_eq!(call_text(&runtime, "f"), "");
+fn a_list_get_out_of_range_fails_the_run() {
+    let runtime = runtime("fn f() -> txt { return std::get([\"a\"], \"9\"); };\nfn main() {};");
+    assert!(runtime.call_root("f", Vec::new()).is_err());
+    assert!(runtime.state.panicked(), "the run remembers the failure");
+}
+
+#[test]
+fn a_list_get_with_a_malformed_index_fails_the_run() {
+    let runtime = runtime("fn f() -> txt { return std::get([\"a\"], \"x\"); };\nfn main() {};");
+    assert!(runtime.call_root("f", Vec::new()).is_err());
+}
+
+#[test]
+fn last_of_an_empty_list_fails_the_run() {
+    let runtime = runtime("fn f() -> txt { return std::last([]); };\nfn main() {};");
+    assert!(runtime.call_root("f", Vec::new()).is_err());
 }
 
 #[test]
@@ -554,13 +607,13 @@ fn list_contains_evaluates() {
     expect_text_results(&[
         (
             "present",
-            "fn f() -> txt { return(std::lists::contains([\"a\", \"b\"], \"b\")); };\nfn main() {};",
+            "fn f() -> txt { return std::lists::contains([\"a\", \"b\"], \"b\"); };\nfn main() {};",
             "f",
             "true",
         ),
         (
             "absent",
-            "fn f() -> txt { return(std::lists::contains([\"a\", \"b\"], \"z\")); };\nfn main() {};",
+            "fn f() -> txt { return std::lists::contains([\"a\", \"b\"], \"z\"); };\nfn main() {};",
             "f",
             "false",
         ),
@@ -569,14 +622,14 @@ fn list_contains_evaluates() {
 
 #[test]
 fn env_temp_dir_is_nonempty() {
-    let runtime = runtime("fn f() -> txt { return(std::env::temp_dir()); };\nfn main() {};");
+    let runtime = runtime("fn f() -> txt { return std::env::temp_dir(); };\nfn main() {};");
     assert!(!call_text(&runtime, "f").is_empty());
 }
 
 #[test]
 fn command_accepts_a_null_stream() {
     let runtime = runtime(
-        "fn f() -> txt { return(std::process::command({ Stdout = \"null\", Stderr = \"null\" }, \"echo hidden; true\")); };\nfn main() {};",
+        "fn f() -> txt { return std::command({ Stdout = \"null\", Stderr = \"null\" }, \"echo hidden; true\"); };\nfn main() {};",
     );
     assert_eq!(call_text(&runtime, "f"), "0");
 }
@@ -584,7 +637,7 @@ fn command_accepts_a_null_stream() {
 #[test]
 fn command_rejects_an_unknown_stream_mode() {
     let runtime = runtime(
-        "fn f() -> txt { return(std::process::command({ Stdout = \"hide\" }, \"true\")); };\nfn main() {};",
+        "fn f() -> txt { return std::command({ Stdout = \"hide\" }, \"true\"); };\nfn main() {};",
     );
     assert!(runtime.call_root("f", Vec::new()).is_err());
     assert!(runtime.state.panicked(), "the run remembers the failure");
@@ -593,7 +646,7 @@ fn command_rejects_an_unknown_stream_mode() {
 #[test]
 fn signal_rejects_an_unknown_name() {
     let runtime = runtime(
-        "fn f() -> txt { txt pid = std::process::spawn({ Stdout = \"null\" }, [\"true\"]); std::process::signal(pid, \"NOPE\"); return(std::process::wait_for(pid)); };\nfn main() {};",
+        "fn f() -> txt { let pid<txt> = std::process::spawn({ Stdout = \"null\" }, [\"true\"]); std::process::signal(pid, \"NOPE\"); return std::process::wait_for(pid); };\nfn main() {};",
     );
     assert!(runtime.call_root("f", Vec::new()).is_err());
 }
@@ -629,15 +682,15 @@ fn a_void_call_produces_nothing() {
 #[test]
 fn switch_takes_the_first_match_then_default() {
     let runtime = runtime(
-        "txt a = \"a\";\n\
-         fn f(txt s) -> txt {\n\
-           mut txt found = \"\";\n\
-           switch(s) {\n\
-             case(\"a\") { found = \"one\"; };\n\
-             case(a) { found = \"two\"; };\n\
-             default { found = \"other\"; };\n\
+        "let a<txt> = \"a\";\n\
+         fn f(s<txt>) -> txt {\n\
+           let mut found<txt> = \"\";\n\
+           match s {\n\
+             \"a\" => { found = \"one\"; };\n\
+             a => { found = \"two\"; };\n\
+             _ => { found = \"other\"; };\n\
            };\n\
-           return(found);\n\
+           return found;\n\
          };\n\
          fn main() {};",
     );
@@ -653,15 +706,13 @@ fn switch_takes_the_first_match_then_default() {
 
 #[test]
 fn command_returns_the_exit_code() {
-    let runtime =
-        runtime("fn f() -> txt { return(std::process::command({}, \"exit 3\")); };\nfn main() {};");
+    let runtime = runtime("fn f() -> txt { return std::command({}, \"exit 3\"); };\nfn main() {};");
     assert_eq!(call_text(&runtime, "f"), "3");
 }
 
 #[test]
 fn command_returns_zero_on_success() {
-    let runtime =
-        runtime("fn f() -> txt { return(std::process::command({}, \"true\")); };\nfn main() {};");
+    let runtime = runtime("fn f() -> txt { return std::command({}, \"true\"); };\nfn main() {};");
     assert_eq!(call_text(&runtime, "f"), "0");
 }
 
@@ -670,7 +721,7 @@ fn a_bare_command_statement_runs() {
     let directory = tempfile::tempdir().expect("temp dir");
     let marker = directory.path().join("ran");
     let source = format!(
-        "fn f() -> txt {{ std::process::command({{}}, \"touch {}\"); return(\"ok\"); }};\nfn main() {{}};",
+        "fn f() -> txt {{ std::command({{}}, \"touch {}\"); return \"ok\"; }};\nfn main() {{}};",
         marker.display()
     );
     assert_eq!(call_text(&runtime(&source), "f"), "ok");
@@ -687,8 +738,8 @@ fn panic_stops_the_run() {
 #[test]
 fn async_does_not_wait_for_the_call() {
     let runtime = runtime(
-        "fn worker() -> txt { return(\"w\"); };\n\
-         fn f() -> txt { async worker(); return(\"done\"); };\n\
+        "fn worker() -> txt { return \"w\"; };\n\
+         fn f() -> txt { async worker(); return \"done\"; };\n\
          fn main() {};",
     );
     assert_eq!(call_text(&runtime, "f"), "done");
@@ -699,8 +750,8 @@ fn wait_blocks_until_the_thread_finishes() {
     let directory = tempfile::tempdir().expect("temp dir");
     let marker = directory.path().join("finished");
     let source = format!(
-        "fn worker() {{ std::process::command({{}}, \"sleep 0.2; touch {}\"); }};\n\
-         fn f() -> txt {{ async worker(); wait; return(\"done\"); }};\n\
+        "fn worker() {{ std::command({{}}, \"sleep 0.2; touch {}\"); }};\n\
+         fn f() -> txt {{ async worker(); wait; return \"done\"; }};\n\
          fn main() {{}};",
         marker.display()
     );
@@ -715,13 +766,13 @@ fn wait_joins_every_outstanding_thread() {
     let second = directory.path().join("second");
     let third = directory.path().join("third");
     let source = format!(
-        "fn work(txt marker) {{ std::process::command({{}}, \"sleep 0.2; touch \" + marker); }};\n\
+        "fn work(marker<txt>) {{ std::command({{}}, \"sleep 0.2; touch \" + marker); }};\n\
          fn f() -> txt {{\n\
            async work(\"{first}\");\n\
            async work(\"{second}\");\n\
            async work(\"{third}\");\n\
            wait;\n\
-           return(\"done\");\n\
+           return \"done\";\n\
          }};\nfn main() {{}};",
         first = first.display(),
         second = second.display(),
@@ -741,7 +792,7 @@ fn a_second_wait_returns_immediately() {
            async worker();\n\
            wait;\n\
            wait;\n\
-           return(\"done\");\n\
+           return \"done\";\n\
          };\n\
          fn main() {};",
     );
@@ -752,7 +803,7 @@ fn a_second_wait_returns_immediately() {
 fn wait_inside_a_spawned_thread_returns_without_joining_its_spawner() {
     let runtime = runtime(
         "fn worker() { wait; };\n\
-         fn f() -> txt { async worker(); wait; return(\"done\"); };\n\
+         fn f() -> txt { async worker(); wait; return \"done\"; };\n\
          fn main() {};",
     );
     assert_eq!(call_text(&runtime, "f"), "done");
@@ -763,9 +814,9 @@ fn wait_inside_a_spawned_thread_joins_its_own_children() {
     let directory = tempfile::tempdir().expect("temp dir");
     let marker = directory.path().join("finished");
     let source = format!(
-        "fn child() {{ std::process::command({{}}, \"sleep 0.2; touch {}\"); }};\n\
+        "fn child() {{ std::command({{}}, \"sleep 0.2; touch {}\"); }};\n\
          fn worker() {{ async child(); wait; }};\n\
-         fn f() -> txt {{ async worker(); wait; return(\"done\"); }};\n\
+         fn f() -> txt {{ async worker(); wait; return \"done\"; }};\n\
          fn main() {{}};",
         marker.display()
     );
@@ -780,7 +831,7 @@ fn wait_inside_a_spawned_thread_joins_its_own_children() {
 fn panic_in_an_async_thread_sets_the_panicked_flag() {
     let runtime = runtime(
         "fn worker() { panic; };\n\
-         fn f() -> txt { async worker(); return(\"done\"); };\n\
+         fn f() -> txt { async worker(); return \"done\"; };\n\
          fn main() {};",
     );
     // The detached panic can reach the caller before or after `f` returns.
@@ -799,7 +850,7 @@ fn panic_in_an_async_thread_sets_the_panicked_flag() {
 fn panic_in_a_waited_thread_fails_the_run() {
     let runtime = runtime(
         "fn worker() { panic; };\n\
-         fn f() -> txt { async worker(); wait; return(\"done\"); };\nfn main() {};",
+         fn f() -> txt { async worker(); wait; return \"done\"; };\nfn main() {};",
     );
     let _ = runtime.call_root("f", Vec::new());
     assert!(runtime.state.panicked(), "the joined panic fails the run");
@@ -811,9 +862,9 @@ fn async_over_a_command_call_runs_on_the_thread() {
     let marker = directory.path().join("ran");
     let source = format!(
         "fn f() -> txt {{\n\
-           async std::process::command({{}}, \"touch {}\");\n\
+           async std::command({{}}, \"touch {}\");\n\
            wait;\n\
-           return(\"done\");\n\
+           return \"done\";\n\
          }};\n\
          fn main() {{}};",
         marker.display()
@@ -828,9 +879,9 @@ fn async_of_a_command_call_runs_in_its_directory() {
     let marker = directory.path().join("ran");
     let source = format!(
         "fn f() -> txt {{\n\
-           async std::process::command({{ Dir = \"{}\" }}, \"touch ran\");\n\
+           async std::command({{ Dir = \"{}\" }}, \"touch ran\");\n\
            wait;\n\
-           return(\"done\");\n\
+           return \"done\";\n\
          }};\n\
          fn main() {{}};",
         directory.path().display()
@@ -848,12 +899,12 @@ fn a_panic_cancels_other_threads_commands() {
     let marker = directory.path().join("survived");
     let source = format!(
         "fn worker() {{ panic; }};\n\
-         fn other() {{ std::process::command({{}}, \"sleep 0.2; touch {}\"); }};\n\
+         fn other() {{ std::command({{}}, \"sleep 0.2; touch {}\"); }};\n\
          fn f() -> txt {{\n\
            async worker();\n\
            async other();\n\
            wait;\n\
-           return(\"done\");\n\
+           return \"done\";\n\
          }};\n\
          fn main() {{}};",
         marker.display()
@@ -870,7 +921,7 @@ fn a_panic_cancels_other_threads_commands() {
 #[test]
 fn a_retained_program_still_runs() {
     let mut program = checked_program(
-        "fn answer() -> txt { return(\"42\"); };\n\
+        "fn answer() -> txt { return \"42\"; };\n\
          fn main() { answer(); };",
     );
     prune_unreachable(&mut program);
@@ -884,8 +935,8 @@ fn a_retained_program_still_runs() {
 #[test]
 fn retained_module_values_still_evaluate() {
     let mut program = checked_program(
-        "txt base = \"a\";\n\
-         fn f() -> txt { return(base + \"b\"); };\n\
+        "let base<txt> = \"a\";\n\
+         fn f() -> txt { return base + \"b\"; };\n\
          fn main() { f(); };",
     );
     prune_unreachable(&mut program);
