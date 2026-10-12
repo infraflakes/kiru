@@ -7,7 +7,8 @@ mod span;
 mod token;
 
 pub(crate) use ast::{
-    Declaration, Expression, Field, Item, MatchBody, Module, Statement, StringPart,
+    BinaryOp, Declaration, Expression, Field, Item, MatchBody, Module, Parameter, Statement,
+    StringPart, TypeDeclaration, TypeDeclarationKind, TypeExpr, UnaryOp,
 };
 pub(crate) use parser::parse_file;
 pub(crate) use span::Span;

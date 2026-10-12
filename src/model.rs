@@ -1,4 +1,4 @@
-//! The program model: the linked program graph, the kind system, the
+//! The program model: the linked program graph, the type system, the
 //! structural visitors, and the structural verifier.
 //!
 //! A declaration is a node with identity, a reference is an edge to a node,
@@ -7,24 +7,32 @@
 //! stage repeats that work. The model is the shared intermediate the compiler
 //! builds and the runtime reads.
 
+mod body;
 mod declarations;
-mod expressions;
 mod ids;
 mod program;
-mod values;
-mod verify;
+mod structure;
+mod types;
 mod visitors;
 
-pub(crate) use declarations::{Binding, Declaration, DeclarationKind, Derived, Function};
-pub(crate) use expressions::{Expression, Field, MatchArm, MatchBody, Statement, StringPart};
+pub(crate) use body::{
+    Expression, Field, Function, MatchArm, MatchBody, Pattern, Statement, StringPart,
+};
+pub(crate) use declarations::{
+    Declaration, Derived, TypeDecl, TypeFieldDecl, TypeKind, VariantDecl,
+};
 pub(crate) use ids::{DeclarationId, FileId, NamespaceId};
 pub(crate) use program::{
-    File, NameTable, Namespace, Origin, Program, Registry, join_path, namespace_at,
+    File, MethodTable, NameTable, Namespace, Origin, Program, TypeTable, first_duplicate,
+    join_path, namespace_at, namespace_path, rec_field, rec_field_decl,
 };
-pub(crate) use values::{Record, Value};
-pub(crate) use verify::verify_program;
+pub(crate) use structure::verify_program;
+pub(crate) use types::{
+    BuiltinType, Type, TypeHead, TypeId, fits, has_parameter, substitute, substitute_optional,
+    unify,
+};
 pub(crate) use visitors::{
-    Visitor, VisitorMut, walk_expression, walk_expression_mut, walk_statements, walk_statements_mut,
+    Visitor, VisitorMut, walk_expression, walk_expression_mut, walk_statements,
 };
 
 /// The entry function name the runtime calls.

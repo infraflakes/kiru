@@ -1,13 +1,14 @@
 //! Spawning, reaping, signalling, and sleeping on processes.
 //!
 //! `spawn` runs an argv in its own process group without a shell and returns
-//! the pid; `wait_for` reaps it and returns the exit code; `signal` sends a
-//! named signal to its group. A stop condition sends SIGTERM to every live
-//! group, then SIGKILL after the grace period. A thread that does not own the
-//! terminal runs with stdout and stderr discarded.
+//! the pid; `wait_for` reaps it and returns the raw `wait` status, which the
+//! standard library decodes into an exit code; `signal` sends a numbered signal
+//! to its group. A stop condition sends SIGTERM to every live group, then
+//! SIGKILL after the grace period. A thread that does not own the terminal runs
+//! with stdout and stderr discarded.
 
 use std::os::unix::process::{CommandExt, ExitStatusExt};
-use std::process::{Command as ProcessCommand, ExitStatus, Stdio};
+use std::process::{Command as ProcessCommand, ExitStatus};
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "linux")]
@@ -19,7 +20,6 @@ use nix::unistd::Pid;
 #[cfg(target_os = "linux")]
 use nix::unistd::getppid;
 
-use crate::model::Record;
 use crate::runtime::Panic;
 
 use super::signals::signal_group;
@@ -32,13 +32,14 @@ const STOP_GRACE: Duration = Duration::from_secs(2);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 /// Spawn `argv` in its own process group without a shell and return its pid.
-/// `spec` may name `Dir` (working directory) and `Stdin`/`Stdout`/`Stderr`
-/// ("null" discards the stream; anything else inherits it).
-pub(crate) fn spawn(state: &RuntimeState, spec: &Record, argv: &[String]) -> Result<i32, String> {
+/// The child inherits every stream; a caller that wants another stream, a
+/// directory, or an environment builds a shell line instead, so the syscall
+/// stays the syscall.
+pub(crate) fn spawn(state: &RuntimeState, argv: &[String]) -> Result<i32, String> {
     let Some(program) = argv.first() else {
         return Err("`spawn` needs at least the program to run".to_owned());
     };
-    let mut command = command_for(spec, argv);
+    let mut command = command_for(argv);
     let mut child = command
         .spawn()
         .map_err(|error| format!("{program}: {error}"))?;
@@ -60,8 +61,10 @@ pub(crate) enum WaitFailure {
     Cancelled,
 }
 
-/// Reap the process `pid` and return its exit code: a signal is `128 + signal`,
-/// and an ordinary exit is its own code. A stop condition ends the wait early.
+/// Reap the process `pid` and return its raw `wait` status. What the status
+/// means — `128 + signal` when a signal ended the process, its own code
+/// otherwise — is the standard library's rule, not the syscall's. A stop
+/// condition ends the wait early.
 pub(crate) fn wait_for(state: &RuntimeState, pid: i32) -> Result<i32, WaitFailure> {
     let Some(mut child) = state.take_child(pid) else {
         return Err(WaitFailure::Reported(format!("{pid}: no such process")));
@@ -72,12 +75,14 @@ pub(crate) fn wait_for(state: &RuntimeState, pid: i32) -> Result<i32, WaitFailur
     if state.cancelled() {
         return Err(WaitFailure::Cancelled);
     }
-    Ok(exit_code(status))
+    Ok(raw_status(status))
 }
 
-/// Send a named signal to the process group `pid`.
-pub(crate) fn signal(pid: i32, name: &str) -> Result<(), String> {
-    let signal = parse_signal(name)?;
+/// Send the signal `number` to the process group `pid`. The number is the
+/// signal's ABI value; the name-to-number table lives in the standard library.
+pub(crate) fn signal(pid: i32, number: i32) -> Result<(), String> {
+    let signal =
+        Signal::try_from(number).map_err(|_| format!("unknown signal number `{number}`"))?;
     signal_group(pid, signal);
     Ok(())
 }
@@ -98,23 +103,6 @@ pub(crate) fn sleep_seconds(state: &RuntimeState, seconds: u64) -> Result<(), Pa
         return Err(Panic);
     }
     Ok(())
-}
-
-/// The signal a name selects.
-fn parse_signal(name: &str) -> Result<Signal, String> {
-    let signal = match name {
-        "TERM" => Signal::SIGTERM,
-        "KILL" => Signal::SIGKILL,
-        "INT" => Signal::SIGINT,
-        "HUP" => Signal::SIGHUP,
-        "QUIT" => Signal::SIGQUIT,
-        "USR1" => Signal::SIGUSR1,
-        "USR2" => Signal::SIGUSR2,
-        "STOP" => Signal::SIGSTOP,
-        "CONT" => Signal::SIGCONT,
-        other => return Err(format!("unknown signal `{other}`")),
-    };
-    Ok(signal)
 }
 
 /// Poll the child while watching for cancellation. A stop condition sends
@@ -148,25 +136,19 @@ fn wait_for_stop(
     }
 }
 
-/// The code of a finished command: a signal is `128 + signal`, and an
-/// ordinary exit is its own code.
-fn exit_code(status: ExitStatus) -> i32 {
+/// The raw `wait` status a finished command encodes: the exit code in the high
+/// byte, the signal in the low seven bits, exactly as `waitpid` reports it.
+/// Decoding it into an exit code is the standard library's job.
+fn raw_status(status: ExitStatus) -> i32 {
     if let Some(signal) = status.signal() {
-        return 128 + signal;
+        return signal;
     }
-    status.code().unwrap_or(1)
+    status.code().unwrap_or(1) << 8
 }
 
-fn command_for(spec: &Record, argv: &[String]) -> ProcessCommand {
+fn command_for(argv: &[String]) -> ProcessCommand {
     let mut command = ProcessCommand::new(&argv[0]);
     command.args(&argv[1..]);
-    let directory = spec.get("Dir");
-    if !directory.is_empty() {
-        command.current_dir(directory);
-    }
-    command.stdin(stdio_mode(spec.get("Stdin")));
-    command.stdout(stdio_mode(spec.get("Stdout")));
-    command.stderr(stdio_mode(spec.get("Stderr")));
 
     command.process_group(0);
     #[cfg(target_os = "linux")]
@@ -184,16 +166,6 @@ fn command_for(spec: &Record, argv: &[String]) -> ProcessCommand {
         });
     }
     command
-}
-
-/// The stdio a stream mode selects: `"null"` discards the stream, and anything
-/// else inherits it.
-fn stdio_mode(mode: &str) -> Stdio {
-    if mode == "null" {
-        Stdio::null()
-    } else {
-        Stdio::inherit()
-    }
 }
 
 /// Report a runtime failure the way `std::eprint` does, then record it. The

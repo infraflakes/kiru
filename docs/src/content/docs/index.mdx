@@ -20,36 +20,42 @@ Kiru is a small, statically typed language for orchestrating processes: running
 commands, handling the data they produce, and tying steps together. A Kiru
 program compiles to one self-contained binary.
 
-This book teaches Kiru from the ground up. You don't need any prior Kiru, but
+This book teaches Kiru from the ground up. You do not need any prior Kiru, but
 you should be comfortable with a command line and with another programming
 language.
 
 ## How to Read This Book
 
 The book is meant to be read in order. [Getting
-Started](/getting-started/installation/) gets you installed and running,
-[A First Program](/getting-started/a-first-program/) builds a small working
-program, and the chapters after that explain each part in more depth. You can
-start writing useful Kiru in the second chapter.
+Started](/getting-started/installation/) installs the compiler, [Hello,
+World!](/getting-started/hello-world/) writes and runs a first program, and [A
+First Program](/getting-started/a-first-program/) builds a small task runner.
+The chapters after that explain each part in more depth. You can start writing
+useful Kiru by the third chapter.
 
-If you want to look something up, the [standard
-library](/stdlib/std/) reference and the appendices at the end cover the
-whole surface.
+If you want to look something up, the [standard library](/stdlib/std/) reference
+and the appendices at the end cover the whole surface.
 
 ## What Kiru Looks Like
 
-Here is a complete Kiru program:
+Here is a complete Kiru program. It builds the project, stops with the build's
+error output if the build fails, and then runs the tests:
 
 ```kiru
-fn main(args<rec>) {
-  match args.cmd {
-    "test" => { std::print(std::command({}, "cargo test")); };
-    _ => { std::eprint("usage: test"); };
+use std;
+
+fn main() -> int {
+  let build: std::Output = std::command("cargo build").capture();
+  match build.code {
+    0 => { std::print("build ok"); };
+    _ => { std::eprint(build.err); };
   };
+  return std::command("cargo test").run();
 };
 ```
 
-`main` reads the command line, `match` chooses an arm, and
-`std::command` runs a command and returns its exit code.
-[A First Program](/getting-started/a-first-program/) walks through a program
-like this one.
+`std::command(line)` builds a command; `.capture()` runs it and returns the exit
+code and the captured streams, while `.run()` runs it and returns the exit
+code. `match` chooses what to do with the result. [A First
+Program](/getting-started/a-first-program/) walks through a program like this
+one.

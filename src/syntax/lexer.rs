@@ -1,7 +1,6 @@
 //! Turning source text into tokens.
 
 use crate::syntax::Span;
-use crate::types::Type;
 
 use super::token::{Token, TokenKind};
 
@@ -89,8 +88,36 @@ impl<'a> Lexer<'a> {
             return self.text();
         }
 
+        if current.is_ascii_digit() {
+            return Ok(vec![self.number()?]);
+        }
+
         if is_identifier_start(current) {
             return Ok(vec![self.identifier()]);
+        }
+
+        // A two-character operator comes first, so `==` never lexes as two `=`.
+        let next = self.peek(1).map(|(_, next)| next);
+        let two_character_token = match (current, next) {
+            ('=', Some('>')) => Some(TokenKind::FatArrow),
+            ('=', Some('=')) => Some(TokenKind::EqEq),
+            ('!', Some('=')) => Some(TokenKind::NotEq),
+            ('<', Some('=')) => Some(TokenKind::LessEq),
+            ('>', Some('=')) => Some(TokenKind::GreaterEq),
+            ('&', Some('&')) => Some(TokenKind::AndAnd),
+            ('|', Some('|')) => Some(TokenKind::OrOr),
+            ('-', Some('>')) => Some(TokenKind::Arrow),
+            (':', Some(':')) => Some(TokenKind::PathSep),
+            ('.', Some('.')) => Some(TokenKind::DotDot),
+            _ => None,
+        };
+        if let Some(kind) = two_character_token {
+            self.advance();
+            self.advance();
+            return Ok(vec![Token {
+                kind,
+                span: Span::new(start, self.offset()),
+            }]);
         }
 
         let single_character_token = match current {
@@ -98,8 +125,15 @@ impl<'a> Lexer<'a> {
             ',' => Some(TokenKind::Comma),
             ';' => Some(TokenKind::Semi),
             '+' => Some(TokenKind::Plus),
+            '-' => Some(TokenKind::Minus),
+            '*' => Some(TokenKind::Star),
+            '/' => Some(TokenKind::Slash),
+            '%' => Some(TokenKind::Percent),
+            '!' => Some(TokenKind::Bang),
             '<' => Some(TokenKind::Less),
             '>' => Some(TokenKind::Greater),
+            '=' => Some(TokenKind::Equals),
+            ':' => Some(TokenKind::Colon),
             '{' => Some(TokenKind::LBrace),
             '}' => Some(TokenKind::RBrace),
             '(' => Some(TokenKind::LParen),
@@ -116,56 +150,40 @@ impl<'a> Lexer<'a> {
             }]);
         }
 
-        if current == '=' {
-            if let Some((_, '>')) = self.peek(1) {
-                self.advance();
-                self.advance();
-                return Ok(vec![Token {
-                    kind: TokenKind::FatArrow,
-                    span: Span::new(start, self.offset()),
-                }]);
-            }
-            self.advance();
-            return Ok(vec![Token {
-                kind: TokenKind::Equals,
-                span: Span::new(start, self.offset()),
-            }]);
-        }
-
-        if current == '-' {
-            if let Some((_, '>')) = self.peek(1) {
-                self.advance();
-                self.advance();
-                return Ok(vec![Token {
-                    kind: TokenKind::Arrow,
-                    span: Span::new(start, self.offset()),
-                }]);
-            }
-            return Err(self.error(
-                Span::new(start, start + current.len_utf8()),
-                "expected `->`",
-            ));
-        }
-
-        if current == ':' {
-            if let Some((_, ':')) = self.peek(1) {
-                self.advance();
-                self.advance();
-                return Ok(vec![Token {
-                    kind: TokenKind::PathSep,
-                    span: Span::new(start, self.offset()),
-                }]);
-            }
-            return Err(self.error(
-                Span::new(start, start + current.len_utf8()),
-                "expected `::` in a path",
-            ));
+        // A lone `&` or `|` is a prefix of a two-character operator.
+        if let '&' | '|' = current {
+            let message = match current {
+                '&' => "expected `&&`".to_owned(),
+                _ => "expected `||`".to_owned(),
+            };
+            return Err(self.error(Span::new(start, start + current.len_utf8()), message));
         }
 
         Err(self.error(
             Span::new(start, start + current.len_utf8()),
             format!("unexpected character `{current}`"),
         ))
+    }
+
+    /// Lex an integer literal. The sign is a separate unary operator, so only
+    /// digits are read here.
+    fn number(&mut self) -> Result<Token, LexError> {
+        let (start, _) = self.current().expect("a number starts at a digit");
+        while let Some((_, character)) = self.current() {
+            if !character.is_ascii_digit() {
+                break;
+            }
+            self.advance();
+        }
+        let span = Span::new(start, self.offset());
+        let text = &self.source[start..self.offset()];
+        let value = text
+            .parse::<i64>()
+            .map_err(|_| self.error(span, format!("integer `{text}` is too large")))?;
+        Ok(Token {
+            kind: TokenKind::Int(value),
+            span,
+        })
     }
 
     fn skip_trivia(&mut self) {
@@ -199,9 +217,12 @@ impl<'a> Lexer<'a> {
         let kind = match text {
             "mod" => TokenKind::Mod,
             "import" => TokenKind::Import,
+            "use" => TokenKind::Use,
+            "pub" => TokenKind::Pub,
             "fn" => TokenKind::Fn,
+            "enum" => TokenKind::Enum,
             "let" => TokenKind::Let,
-            "mut" => TokenKind::Mut,
+            "rec" => TokenKind::Rec,
             "match" => TokenKind::Match,
             "return" => TokenKind::Return,
             "panic" => TokenKind::Panic,
@@ -210,10 +231,9 @@ impl<'a> Lexer<'a> {
             "for" => TokenKind::For,
             "in" => TokenKind::In,
             "break" => TokenKind::Break,
-            _ => match Type::from_keyword(text) {
-                Some(ty) => TokenKind::Type(ty),
-                None => TokenKind::Ident(text.to_owned()),
-            },
+            "true" => TokenKind::True,
+            "false" => TokenKind::False,
+            _ => TokenKind::Ident(text.to_owned()),
         };
         Token {
             kind,
@@ -351,15 +371,14 @@ mod tests {
     #[test]
     fn lexes_keywords_identifiers_and_punctuation() {
         assert_eq!(
-            kinds("fn build(repo<rec>) { return repo.dir; };"),
+            kinds("fn build(repo: txt) { return repo.dir; };"),
             vec![
                 TokenKind::Fn,
                 TokenKind::Ident("build".to_owned()),
                 TokenKind::LParen,
                 TokenKind::Ident("repo".to_owned()),
-                TokenKind::Less,
-                TokenKind::Type(Type::Record),
-                TokenKind::Greater,
+                TokenKind::Colon,
+                TokenKind::Ident("txt".to_owned()),
                 TokenKind::RParen,
                 TokenKind::LBrace,
                 TokenKind::Return,
@@ -392,13 +411,12 @@ mod tests {
     #[test]
     fn lexes_a_let_binding_and_type_annotation() {
         assert_eq!(
-            kinds("let x<txt> = \"a\";"),
+            kinds("let x: txt = \"a\";"),
             vec![
                 TokenKind::Let,
                 TokenKind::Ident("x".to_owned()),
-                TokenKind::Less,
-                TokenKind::Type(Type::Text),
-                TokenKind::Greater,
+                TokenKind::Colon,
+                TokenKind::Ident("txt".to_owned()),
                 TokenKind::Equals,
                 TokenKind::Text("a".to_owned()),
                 TokenKind::Semi,
@@ -437,7 +455,7 @@ mod tests {
                 TokenKind::LParen,
                 TokenKind::RParen,
                 TokenKind::Arrow,
-                TokenKind::Type(Type::Text),
+                TokenKind::Ident("txt".to_owned()),
                 TokenKind::LBrace,
                 TokenKind::Return,
                 TokenKind::Text("x".to_owned()),
@@ -532,9 +550,72 @@ mod tests {
                 "invalid escape `\\q`; only \\n, \\t, \\r, \\e, \\\\, \\\", and \\@ are allowed",
             ),
             ("unterminated string", "\"open", "unterminated string"),
-            ("lone colon", "a : b", "expected `::` in a path"),
-            ("lone dash", "a - b", "expected `->`"),
+            ("lone ampersand", "a & b", "expected `&&`"),
+            ("lone pipe", "a | b", "expected `||`"),
             ("unknown character", "a @ b", "unexpected character `@`"),
         ]);
+    }
+
+    #[test]
+    fn lexes_operators_and_literals() {
+        assert_eq!(
+            kinds("true false 42 x + y == z && !w"),
+            vec![
+                TokenKind::True,
+                TokenKind::False,
+                TokenKind::Int(42),
+                TokenKind::Ident("x".to_owned()),
+                TokenKind::Plus,
+                TokenKind::Ident("y".to_owned()),
+                TokenKind::EqEq,
+                TokenKind::Ident("z".to_owned()),
+                TokenKind::AndAnd,
+                TokenKind::Bang,
+                TokenKind::Ident("w".to_owned()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_a_colon_and_a_path_separator() {
+        assert_eq!(
+            kinds("let x: txt = std::run();"),
+            vec![
+                TokenKind::Let,
+                TokenKind::Ident("x".to_owned()),
+                TokenKind::Colon,
+                TokenKind::Ident("txt".to_owned()),
+                TokenKind::Equals,
+                TokenKind::Ident("std".to_owned()),
+                TokenKind::PathSep,
+                TokenKind::Ident("run".to_owned()),
+                TokenKind::LParen,
+                TokenKind::RParen,
+                TokenKind::Semi,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_comparison_and_arrow_operators() {
+        assert_eq!(
+            kinds("a<=b >= c != d - e -> f"),
+            vec![
+                TokenKind::Ident("a".to_owned()),
+                TokenKind::LessEq,
+                TokenKind::Ident("b".to_owned()),
+                TokenKind::GreaterEq,
+                TokenKind::Ident("c".to_owned()),
+                TokenKind::NotEq,
+                TokenKind::Ident("d".to_owned()),
+                TokenKind::Minus,
+                TokenKind::Ident("e".to_owned()),
+                TokenKind::Arrow,
+                TokenKind::Ident("f".to_owned()),
+                TokenKind::Eof,
+            ]
+        );
     }
 }

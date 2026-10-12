@@ -1,0 +1,161 @@
+# std/text.kiru
+#
+# Text methods. The byte kernel (`len`, `byte`, `find_byte`, `slice`) is a
+# native; a function whose first parameter is a `txt` is callable as
+# `text.name(...)`, so the kernel natives are the methods directly and the rest
+# build on them.
+
+mod std::text {
+
+  # `Option` and the text kernel's `split` live at the `std` root. `txt` and
+  # `Vec<T>` are the language's own types, so neither needs a `use`.
+  use std;
+
+  # The byte index of the first occurrence of `needle`, or `none` when it is
+  # absent. The kernel native `find_byte` is the absence itself, not a `-1`
+  # sentinel, so this is the kernel under the method's name.
+  pub fn find(self: txt, needle: txt) -> Option<int> {
+    return find_byte(self, needle);
+  };
+
+  # Whether `self` contains `needle`.
+  pub fn contains(self: txt, needle: txt) -> bool {
+    return self.find(needle).contains();
+  };
+
+  # Whether the byte at `index` is ASCII whitespace.
+  fn is_ascii_space(self: txt, index: int) -> bool {
+    let code: int = self.byte(index);
+    let head: bool = code == 32 || code == 9 || code == 10;
+    let tail: bool = code == 13 || code == 11 || code == 12;
+    return head || tail;
+  };
+
+  # `self` without leading and trailing ASCII whitespace: space, tab, line
+  # feed, carriage return, vertical tab, or form feed. ASCII is deliberate:
+  # text at the OS boundary is bytes, so Unicode whitespace (a Rust library
+  # policy) is not stripped. Each end walks `byte` while it is whitespace, then
+  # one `slice` views the trimmed run — O(the trimmed run) native calls, usually
+  # a handful.
+  pub fn trim(self: txt) -> txt {
+    let count: int = self.len();
+    let start: int = 0;
+    for {
+      match start < count { false => { break; }; true => {}; };
+      match self.is_ascii_space(start) {
+        true => { start = start + 1; };
+        false => { break; };
+      };
+    };
+    let end: int = count;
+    for {
+      match end > start { false => { break; }; true => {}; };
+      match self.is_ascii_space(end - 1) {
+        true => { end = end - 1; };
+        false => { break; };
+      };
+    };
+    return self.slice(start, end);
+  };
+
+  # The whole number `self` writes, or `none` when it is not one. A leading `-`
+  # negates, and the first byte that is not a digit stops the read.
+  pub fn number(self: txt) -> Option<int> {
+    let count: int = self.len();
+    match count {
+      0 => { return Option.none; };
+      _ => {};
+    };
+    # 45 is `-`.
+    let negative: bool = self.byte(0) == 45;
+    let start: int = match negative { true => 1; false => 0; };
+    match start == count {
+      true => { return Option.none; };
+      _ => {};
+    };
+    let value: int = 0;
+    let index: int = start;
+    for {
+      match index < count { false => { break; }; true => {}; };
+      # 48 is `0` and 57 is `9`.
+      let digit: int = self.byte(index);
+      match digit >= 48 && digit <= 57 {
+        true => {};
+        false => { return Option.none; };
+      };
+      value = value * 10 + (digit - 48);
+      index = index + 1;
+    };
+    match negative {
+      true => { return Option.some(-value); };
+      _ => { return Option.some(value); };
+    };
+  };
+
+  # Whether `self` starts with `prefix`: the first occurrence is at index zero.
+  pub fn starts_with(self: txt, prefix: txt) -> bool {
+    let starts: bool = match self.find(prefix) {
+      Option.some(index) => index == 0;
+      Option.none => false;
+    };
+    return starts;
+  };
+
+  # Whether `self` ends with `suffix`. The empty suffix ends every text, and an
+  # empty `self` ends only the empty suffix; both are checked first, because
+  # `split` rejects an empty separator. Otherwise splitting on `suffix` leaves
+  # a final empty piece exactly when the suffix matches at the end.
+  pub fn ends_with(self: txt, suffix: txt) -> bool {
+    match suffix {
+      "" => { return true; };
+      _ => {};
+    };
+    match self {
+      "" => { return false; };
+      _ => {};
+    };
+    let last: txt = "";
+    for part in split(self, suffix) {
+      last = part;
+    };
+    let ends: bool = match last {
+      "" => true;
+      _ => false;
+    };
+    return ends;
+  };
+
+  # Replace every occurrence of `from` with `to`: split on `from` and join with
+  # `to`. An empty needle is an error, exactly as an empty separator is in
+  # `split` — a degenerate needle has one rule, not two.
+  pub fn replace(self: txt, from: txt, to: txt) -> txt {
+    match from.len() {
+      0 => { std::eprint("std::text::replace: the needle must not be empty"); };
+      _ => {};
+    };
+    return std::join(split(self, from), to);
+  };
+
+  # Split `self` into a vec of lines. A trailing newline does not produce a
+  # trailing empty element. The index tracks the write position, so each line
+  # appends in place rather than measuring the vec again.
+  pub fn lines(self: txt) -> Vec<txt> {
+    let result: Vec<txt> = [];
+    let at: int = 0;
+    let pending: txt = "";
+    let first: bool = true;
+    for part in split(self, "\n") {
+      match first {
+        true => { first = false; };
+        _ => { result[at] = pending; at = at + 1; };
+      };
+      pending = part;
+    };
+    match pending {
+      "" => {};
+      _ => { result[at] = pending; at = at + 1; };
+    };
+    return result;
+  };
+
+};

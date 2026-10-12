@@ -9,7 +9,7 @@ use crate::native_registry::Native;
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Bytecode {
     pub(crate) codes: Vec<Code>,
-    /// The text literals and record keys the instructions reference.
+    /// The text literals and map keys the instructions reference.
     pub(crate) constants: Vec<String>,
     /// The code id of each module value, in declaration order. The startup pass
     /// runs them once and stores the result in the globals table.
@@ -47,45 +47,140 @@ pub(crate) enum Instruction {
         slot: u16,
         src: u16,
     },
-    BuildRecord {
+    BuildMap {
         dst: u16,
         fields: Vec<(u32, u16)>,
     },
-    BuildList {
+    BuildVec {
         dst: u16,
         elements: Vec<u16>,
     },
-    /// Read the element at `index` of the list in `list` into `dst`. The index
-    /// register holds an internal number.
-    ListIndex {
+    /// Read the element at `index` of the Vec in `Vec` into `dst`. The index
+    /// register holds an `int`.
+    VecIndex {
         dst: u16,
-        list: u16,
+        vec: u16,
         index: u16,
     },
-    /// Jump when the number in `index` has reached the length of the list in
-    /// `list`, ending a `for` loop.
+    /// Construct an enum variant: `dst = Variant(tag, payload...)`.
+    MakeVariant {
+        dst: u16,
+        tag: u16,
+        payload: Vec<u16>,
+    },
+    /// Load the absence into `dst`: the `none` of the declared absence type and
+    /// the no-value result of a call that returns nothing. There is one
+    /// absence.
+    LoadNothing {
+        dst: u16,
+    },
+    /// Jump when the value is not a variant with `tag`; used by a match arm.
+    JumpIfVariantNotEqual {
+        target: u16,
+        tag: u16,
+        jump: u32,
+    },
+    /// Jump when the value is the absence; the `none` arm of a match.
+    JumpIfNothing {
+        value: u16,
+        jump: u32,
+    },
+    /// Jump when the value is present; the `some` arm of a match.
+    JumpIfNotNothing {
+        value: u16,
+        jump: u32,
+    },
+    /// Extract payload position `index` of a variant into `dst`.
+    GetVariantField {
+        dst: u16,
+        variant: u16,
+        index: u16,
+    },
+    /// `Vec[index] = value`: replace the element at `index`, or append when
+    /// `index` equals the Vec's length.
+    SetIndex {
+        vec: u16,
+        index: u16,
+        value: u16,
+    },
+    /// Make a function value: `dst = <function code>`. A closure also carries
+    /// the values of the locals it captured, in `captures`.
+    MakeFunction {
+        dst: u16,
+        code: u32,
+        captures: Vec<u16>,
+    },
+    /// Call a function value: `dst = callee(arguments...)`.
+    CallValue {
+        dst: u16,
+        callee: u16,
+        arguments: Vec<u16>,
+    },
+    /// Jump when the number in `index` has reached the length of the Vec in
+    /// `Vec`, ending a `for` loop.
     JumpIfIndexAtEnd {
         target: u32,
         index: u16,
-        list: u16,
+        vec: u16,
     },
-    /// Add one to the internal number in `reg`.
+    /// Add one to the number in `reg`.
     IncrementNumber {
         reg: u16,
     },
-    /// Load an internal number, used only for a loop counter.
+    /// Load an integer literal.
     LoadNumber {
         dst: u16,
         value: i64,
     },
+    /// Load a boolean literal.
+    LoadBool {
+        dst: u16,
+        value: bool,
+    },
+    /// Integer arithmetic: both operands are integers and the result is one.
+    NumberOp {
+        op: NumberOp,
+        dst: u16,
+        left: u16,
+        right: u16,
+    },
+    /// Negate the integer in `src` into `dst`.
+    Negate {
+        dst: u16,
+        src: u16,
+    },
+    /// The boolean not of `src` into `dst`.
+    Not {
+        dst: u16,
+        src: u16,
+    },
+    /// Compare two values into a boolean.
+    Compare {
+        op: CompareOp,
+        dst: u16,
+        left: u16,
+        right: u16,
+    },
+    /// Jump when the boolean in `condition` is false, which short-circuits
+    /// `&&` and `||`.
+    JumpIfFalse {
+        target: u32,
+        condition: u16,
+    },
+    /// Format a value as text: text as is, an integer in decimal, a boolean as
+    /// `true` or `false`.
+    ToText {
+        dst: u16,
+        src: u16,
+    },
     SetField {
-        record: u16,
+        map: u16,
         key: u32,
         value: u16,
     },
     GetField {
         dst: u16,
-        record: u16,
+        map: u16,
         key: u32,
     },
     Concat {
@@ -93,18 +188,15 @@ pub(crate) enum Instruction {
         left: u16,
         right: u16,
     },
-    CallFunction {
-        dst: u16,
-        code: u32,
-        arguments: Vec<u16>,
-    },
     CallNative {
         dst: u16,
         native: Native,
         arguments: Vec<u16>,
     },
+    /// Return the value in `value`. A `return;` in a function that returns
+    /// nothing loads the absence first, so a return always names one register.
     Return {
-        value: Option<u16>,
+        value: u16,
     },
     Panic,
     Jump {
@@ -115,13 +207,36 @@ pub(crate) enum Instruction {
         left: u16,
         right: u16,
     },
-    Async {
-        code: u32,
-        arguments: Vec<u16>,
-    },
     AsyncNative {
         native: Native,
         arguments: Vec<u16>,
     },
+    /// Spawn a thread that calls a function value: `callee(arguments...)`.
+    AsyncValue {
+        callee: u16,
+        arguments: Vec<u16>,
+    },
     Wait,
+}
+
+/// An integer operation.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) enum NumberOp {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+}
+
+/// A comparison. Ordering compares integers; equality compares any two values
+/// of the same type.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) enum CompareOp {
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+    Equal,
+    NotEqual,
 }

@@ -3,20 +3,26 @@ title: std
 description: The high-frequency builtins at the std root.
 ---
 
-`std::` holds the functions used most often: output, running one shell line,
-splitting and joining text, and reading a list's ends. The category modules
-(`std::io`, `std::process`, `std::text`, `std::lists`) hold the rest.
+`std::` holds the builtins used most often: output, the shell command builder,
+and `quote`. The category modules hold the rest: `std::process`, `std::io`,
+`std::fs`, `std::text`, `std::vec`, `std::env`, `std::path`, `std::time`, and
+`std::cli`.
+
+The built-in types are declared in categories: `std::text` declares `txt`,
+`std::vec` declares `Vec<T>`, and `std` declares `bool` and `int`. A program
+writes them bare only after the matching `use`; a qualified `std::text::txt`
+works without one. `std::map` and `std::set` are not built-ins: they declare the
+`Map<K, V>` and `Set<K>` records ([std::map](/stdlib/map/),
+[std::set](/stdlib/set/)).
 
 <details>
 <summary><code>print</code> — write a line to stdout</summary>
 
 ```kiru
-std::print(message<txt>)
+std::print(message: txt)
 ```
 
 Writes `message` to stdout with a trailing newline.
-
-- `message` — the line to write.
 
 ```kiru
 std::print("hello");
@@ -25,16 +31,14 @@ std::print("hello");
 </details>
 
 <details>
-<summary><code>eprint</code> — write an ERROR line and panic</summary>
+<summary><code>fail</code> — write an ERROR line and stop the run</summary>
 
 ```kiru
-std::eprint(message<txt>)
+std::eprint(message: txt)
 ```
 
-Writes an `ERROR:` line to stderr, red when stderr is a terminal, then panics.
-Because `eprint` always panics, calling it never returns.
-
-- `message` — the reason for the failure.
+Writes an `ERROR:` line to stderr, red when stderr is a terminal, then stops the
+run. Because `fail` always stops the run, calling it never returns.
 
 ```kiru
 std::eprint("missing token");
@@ -45,68 +49,50 @@ Related: [Panic and Failure](/failure/panic/).
 </details>
 
 <details>
-<summary><code>log</code> — write an INFO line</summary>
+<summary><code>info</code> — write an INFO line</summary>
 
 ```kiru
-std::log(message<txt>)
+std::info(message: txt)
 ```
 
 Writes an `INFO:` line to stdout; the prefix is yellow when stdout is a
 terminal.
 
-- `message` — the line to write.
-
 ```kiru
-std::log("starting");
+std::info("starting");
 ```
 
 </details>
 
 <details>
-<summary><code>command</code> — run one shell line</summary>
+<summary><code>command</code> — build a command</summary>
 
 ```kiru
-std::command(spec<rec>, line<txt>) -> txt
+std::command(line: txt) -> std::Command
 ```
 
-Runs one command line through `/bin/sh -c` and returns the exit code.
+Starts a command under construction. Each setting method returns a new
+`Command`, so calls chain. `.run()` runs the line and returns the exit code
+as an `int`; `.capture()` runs it and returns a `std::Output` of `code`, `out`,
+and `err`. `std::Output`'s fields are `pub`, so a program reads them directly;
+`std::Command` is a `pub` type a program can name and hold, but its fields are
+private, reached only through its methods.
 
-- `spec` — options for the command: `Dir`, `Env`, `Timeout`, and
-  `Stdin`/`Stdout`/`Stderr`. Each key is uppercase, and an absent or empty
-  entry is the default.
-- `line` — shell syntax. Values that must not become shell syntax belong in
-  `Env` or are escaped with `quote`.
-- Returns the exit code as text.
+| | |
+| --- | --- |
+| `command.dir(path: txt) -> Command` | the working directory |
+| `command.env(name: txt, value: txt) -> Command` | export one variable |
+| `command.timeout(seconds: int) -> Command` | bound the run |
+| `command.stream(stream: txt, target: txt) -> Command` | attach `stdin`, `stdout`, or `stderr` to a path |
+| `command.run() -> int` | run and return the exit code |
+| `command.capture() -> std::Output` | run and return `code`, `out`, and `err` |
 
 ```kiru
-let code<txt> = std::command({ Dir = "docs" }, "bun run build");
+use std;
+let code: int = std::command("bun run build").dir("docs").run();
 ```
 
-Related: [Running Commands](/commands/running-a-command/), [The Command Spec and
-Streams](/commands/the-command-spec/).
-
-</details>
-
-<details>
-<summary><code>capture</code> — run one line and collect its output</summary>
-
-```kiru
-std::capture(line<txt>) -> rec
-```
-
-Runs one command line and returns its exit code and both streams.
-
-- `line` — shell syntax, run through `command`.
-- Returns the record `{ code, out, err }`. stdout and stderr are redirected to
-  temporary files, read once the command exits, and removed, so a large output
-  never blocks on a pipe.
-
-```kiru
-let result<rec> = std::capture("git rev-parse HEAD");
-std::print(result.out);
-```
-
-Related: [The Command Spec and Streams](/commands/the-command-spec/).
+Related: [Running Commands](/commands/running-a-command/).
 
 </details>
 
@@ -114,106 +100,20 @@ Related: [The Command Spec and Streams](/commands/the-command-spec/).
 <summary><code>quote</code> — escape text as one shell word</summary>
 
 ```kiru
-std::quote(text<txt>) -> txt
+std::quote(text: txt) -> txt
 ```
 
-Wraps text in single quotes and escapes every embedded quote as `'\''`, so the
-shell reads exactly the text.
-
-- `text` — the data to pass to a command.
-- Returns one POSIX shell word.
+Wraps `text` in single quotes and escapes every embedded quote as `'\''`, so
+the shell reads exactly the text and nothing else.
 
 ```kiru
-let line<txt> = "echo " + std::quote("a b");
-```
-
-Related: [Text](/concepts/text/).
-
-</details>
-
-<details>
-<summary><code>split</code> — split text into a list</summary>
-
-```kiru
-std::split(text<txt>, separator<txt>) -> list
-```
-
-- `text` — the text to split.
-- `separator` — the text between parts. An empty separator splits between
-  characters.
-- Returns the parts as a list.
-
-```kiru
-let parts<list> = std::split("a,b,c", ",");
+use std;
+use std::text;
+let argument: txt = "a b";
+let line: txt = "echo @(std::quote(argument))";
 ```
 
 </details>
 
-<details>
-<summary><code>join</code> — join a list into one text</summary>
-
-```kiru
-std::join(parts<list>, separator<txt>) -> txt
-```
-
-- `parts` — the list to join.
-- `separator` — the text between each pair.
-- Returns the joined text.
-
-```kiru
-std::print(std::join(["a", "b"], "-"));   # a-b
-```
-
-</details>
-
-<details>
-<summary><code>get</code> — the element at an index</summary>
-
-```kiru
-std::get(items<list>, index<txt>) -> txt
-```
-
-- `items` — the list to read.
-- `index` — a zero-based index as digit text.
-- Returns the element. A malformed index, or one outside the list, stops the
-  run.
-
-```kiru
-std::print(std::get(["a", "b", "c"], "1"));   # b
-```
-
-</details>
-
-<details>
-<summary><code>append</code> — a new list with one element added</summary>
-
-```kiru
-std::append(items<list>, text<txt>) -> list
-```
-
-- `items` — the source list.
-- `text` — the element to add at the end.
-- Returns a new list.
-
-```kiru
-let xs<list> = std::append(["a", "b"], "c");
-```
-
-</details>
-
-<details>
-<summary><code>last</code> — the last element</summary>
-
-```kiru
-std::last(items<list>) -> txt
-```
-
-- `items` — the list to read.
-- Returns the last element. An empty list has no last index, so it stops the
-  run.
-
-```kiru
-std::print(std::last(["a", "b", "c"]));   # c
-```
-
-</details>
+`std::split` and `std::join` are the text and vec helpers; they are documented
+on [std::text](/stdlib/text/) and [std::vec](/stdlib/vec/).

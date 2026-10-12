@@ -1,51 +1,44 @@
-//! The text natives: length, slicing, search, splitting, and trimming.
+//! The text natives: byte access and byte search.
 //!
-//! Length and slicing count bytes, not characters, so they are constant time
-//! and line up with files and shell byte streams. Slicing is half-open and
-//! fails the run on an index outside the text or one that splits a character.
+//! Indices count bytes, not characters, so they line up with files and shell
+//! byte streams. Everything above this byte kernel — trimming, splitting,
+//! matching — is kiru.
 
-use crate::model::Value;
+use crate::runtime::{Text, Value};
 
-use super::parse_whole_number;
-
-/// The number of bytes in `text`.
-pub(crate) fn length(text: &str) -> Value {
-    Value::Text(text.len().to_string())
-}
-
-/// The bytes of `text` in the half-open range `start..end`. An index outside
-/// the text, or one that splits a character, fails the run.
-pub(crate) fn slice(text: &str, start: &str, end: &str) -> Result<Value, String> {
-    let start = parse_whole_number(start)?;
-    let end = parse_whole_number(end)?;
-    if start > end || end > text.len() {
+/// The byte at `index`, for `s.byte(index)`. An index outside the text, or a
+/// negative one, fails the run. This is the floor's byte access: everything
+/// above it — number parsing, scanning — is kiru.
+pub(crate) fn byte(text: &str, index: i64) -> Result<Value, String> {
+    let bytes = text.as_bytes();
+    if index < 0 || index as usize >= bytes.len() {
         return Err(format!(
-            "range {start}..{end} is outside text of {} byte(s)",
-            text.len()
+            "index {index} is outside text of {} byte(s)",
+            bytes.len()
         ));
     }
-    if !text.is_char_boundary(start) || !text.is_char_boundary(end) {
-        return Err(format!("range {start}..{end} splits a character"));
-    }
-    Ok(Value::Text(text[start..end].to_owned()))
+    Ok(Value::Int(bytes[index as usize] as i64))
 }
 
-/// The byte index of the first occurrence of `needle`, or `""` when it is
-/// absent.
+/// The byte index of the first occurrence of `needle`, or the absence when it
+/// is not present. There is no `-1` sentinel: an absent index is `Value::Nothing`,
+/// the one absence, exactly as an absent map key or `Option.none`.
 pub(crate) fn find(text: &str, needle: &str) -> Value {
-    Value::Text(
-        text.find(needle)
-            .map(|index| index.to_string())
-            .unwrap_or_default(),
-    )
+    match text.find(needle) {
+        Some(index) => Value::Int(index as i64),
+        None => Value::Nothing,
+    }
 }
 
-/// `text` without leading and trailing whitespace.
-pub(crate) fn trim(text: &str) -> Value {
-    Value::Text(text.trim().to_owned())
-}
-
-/// Split `text` into a list of elements separated by `separator`.
-pub(crate) fn split(text: &str, separator: &str) -> Value {
-    Value::List(text.split(separator).map(str::to_owned).collect())
+/// The bytes in `[start, end)`, for `s.slice(start, end)`. A negative index, an
+/// index outside the text, or `start > end` fails the run, exactly as `byte`
+/// does; the range must also fall on character boundaries.
+pub(crate) fn slice(text: &Text, start: i64, end: i64) -> Result<Value, String> {
+    let len = text.byte_len();
+    if start < 0 || end < 0 || start > end || end as usize > len {
+        return Err(format!(
+            "slice [{start}, {end}) is outside text of {len} byte(s)"
+        ));
+    }
+    Ok(Value::Text(text.slice(start as usize, end as usize)?))
 }

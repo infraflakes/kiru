@@ -1,0 +1,79 @@
+# std/path.kiru
+#
+# Path helpers written on top of the native path kernel and the text kernel.
+
+mod std::path {
+
+  # `Option` lives at the `std` root; `txt` and `Vec<T>` in their categories.
+  use std;
+  use std::text;
+  use std::vec;
+
+  # Whether a path is absolute.
+  pub fn is_absolute(path: txt) -> bool {
+    return path.starts_with("/");
+  };
+
+  # Join two path segments. An absolute `name` replaces `base`; an empty `base`
+  # is replaced by `name`; and a `base` already ending in `/` is used as is.
+  pub fn join(base: txt, name: txt) -> txt {
+    let joined: txt = match is_absolute(name) {
+      true => name;
+      _ => match base {
+        "" => name;
+        _ => match base.ends_with("/") {
+          true => "@(base)@(name)";
+          _ => "@(base)/@(name)";
+        };
+      };
+    };
+    return joined;
+  };
+
+  # The last segment of a path. An empty path has no segment, so it stops the
+  # run.
+  pub fn base(path: txt) -> txt {
+    match path.len() {
+      0 => { std::eprint("base: the path is empty"); };
+      _ => {};
+    };
+    return std::split(path, "/").last();
+  };
+
+  # The path without its last segment, or the empty text when there is no
+  # separator. The index tracks the write position, so each head appends in
+  # place.
+  pub fn dir(path: txt) -> txt {
+    match path.len() {
+      0 => { return ""; };
+      _ => {};
+    };
+    let head: Vec<txt> = [];
+    let at: int = 0;
+    let pending: txt = "";
+    let first: bool = true;
+    for part in std::split(path, "/") {
+      match first {
+        true => { first = false; };
+        _ => { head[at] = pending; at = at + 1; };
+      };
+      pending = part;
+    };
+    return std::join(head, "/");
+  };
+
+  # The extension of a path, without the dot. A path whose last segment has no
+  # dot has no extension, so it is the absence.
+  pub fn ext(path: txt) -> Option<txt> {
+    match path.len() {
+      0 => { return Option.none; };
+      _ => {};
+    };
+    let name: txt = base(path);
+    match name.find(".") {
+      Option.some(_) => { return Option.some(std::split(name, ".").last()); };
+      Option.none => { return Option.none; };
+    };
+  };
+
+};

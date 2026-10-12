@@ -1,31 +1,45 @@
 ---
 title: Panic and Failure
-description: panic, std::eprint, runtime errors, and exit status.
+description: panic, std::eprint, the runtime errors, and the exit status.
 ---
 
-A program can fail on purpose. In this section we'll see how, and what happens
-when it does.
+A program can fail on purpose, and the runtime can fail on its own. This
+chapter covers `panic;`, the runtime errors, and the exit status.
+
+## Panic
 
 `panic;` marks the program as failed and exits `1`:
-
-<span class="filename">Filename: src/main.kiru</span>
 
 ```kiru
 fn give_up() {
   panic;
+};
+
+fn main() {
+  give_up();
 };
 ```
 
 `panic;` is a statement, not a value. It stops the whole program: it cancels
 every other thread and sends `SIGTERM` to every running process group, so no
 command a Kiru program started outlives the failure.
+[Threads](/concurrency/threads/) covers the threads.
 
-`std::eprint(message)` writes an `ERROR:` line to stderr, red when stderr
-is a terminal, then panics:
+## Reporting with fail
+
+`std::eprint(message)` writes an `ERROR:` line to stderr, red when stderr is a
+terminal, then panics:
 
 ```kiru
-fn fail(reason<txt>) {
-  std::eprint("cannot continue: " + reason);
+use std;
+use std::text;
+
+fn report(reason: txt) {
+  std::eprint("cannot continue: @(reason)");
+};
+
+fn main() {
+  report("missing token");
 };
 ```
 
@@ -40,10 +54,22 @@ A function whose every path ends in `panic;` or a call that panics never
 returns, so it can stand where a value is expected:
 
 ```kiru
-fn fail(reason<txt>) -> txt {
+use std;
+use std::text;
+
+fn report(reason: txt) -> txt {
   std::eprint(reason);
 };
+
+fn main() {
+  let x: txt = report("nope");
+  std::print(x);
+};
 ```
+
+A command's exit code is ordinary data, and a nonzero code fails nothing by
+itself. [Running Commands](/commands/running-a-command/) shows how a program
+reports a failed command with a `match` on the code and `std::eprint`.
 
 ## Runtime errors
 
@@ -51,27 +77,30 @@ The runtime detects some failures the compiler cannot, and reports them the
 same way: an `ERROR:` line naming the call, then the run stops.
 
 ```text
-ERROR: std::get(...): index 2 is outside a list of 2 element(s)
-ERROR: std::command(...): a command that cannot start
-ERROR: std::spawn(...): too many concurrent commands
+ERROR: xs[i]: index 2 is outside a vec of 2 element(s)
+ERROR: std::process::spawn(...): no-such-program: No such file or directory (os error 2)
+ERROR: std::process::spawn(...): too many concurrent processes
 ```
 
 ## Exit status
 
-A normal run exits with the status `main` returns: no return means `0`, numeric
-text is that exit code, and non-numeric text is printed to stderr and exits
-`1`. [The Entry File and main](/getting-started/compiling-and-running/) covers it.
-
-A command's exit code is ordinary data. An unobserved code fails nothing; a
-program decides when a nonzero code means failure:
+A normal run exits with the status `main` returns. `main` declares `-> int` or
+nothing; a returned `int` is the exit code, clamped to `0..=255`, and no return
+means `0`:
 
 ```kiru
-let code<txt> = std::command({}, "false");
-match code {
-  "0" => {};
-  _ => { std::eprint("command failed"); };
+use std;
+fn main() -> int {
+  return 2;
 };
 ```
 
-[Signals and Shutdown](/failure/signals/) covers Ctrl+C and the
-other signals that exit `130`.
+```console
+$ ./app
+$ echo $?
+2
+```
+
+A `panic;` or a runtime error exits `1`. A signal exits `130`.
+[Signals and Shutdown](/failure/signals/) covers the signals, and
+[Hello, World!](/getting-started/hello-world/) covers the `kc` command.

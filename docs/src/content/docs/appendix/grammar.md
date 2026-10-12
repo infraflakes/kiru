@@ -4,29 +4,38 @@ description: The accepted syntax in one place.
 ---
 
 A compact grammar of the language. Terminals are quoted; `*` means zero or
-more; `?` means optional.
+more; `?` means optional. A term produces a value; a statement ends with `;`.
 
 ```text
 file        := item*
-item        := declaration | module | import
-module      := "mod" path "{" declaration* "}" ";"
+item        := declaration | module | import | use
+module      := "mod" path "{" (declaration | use)* "}" ";"
 import      := "import" string ";"
+use         := "use" path ";"
 
-declaration := function | binding
-function    := "fn" ident "(" params? ")" ("->" type)? block ";"
-binding     := "let" "mut"? ident "<" type ">" "=" expression ";"
-
+declaration          := "pub"? (function | binding | builtin_type | rec_declaration | enum_declaration)
+function             := "fn" ident type_params? "(" params? ")" ("->" type)? block ";"
+binding              := "let" ident ":" type "=" expression ";"
+builtin_type         := "type" ident type_params? ";"                   # a runtime type; the missing body is the marker
+rec_declaration      := "rec" ident type_params? "{" (field_decl ("," field_decl)* ","?)? "}" ";"
+enum_declaration     := "enum" ident type_params? "{" (variant ("," variant)* ","?)? "}" ";"
+field_decl  := "pub"? ident ":" type
+variant     := "pub"? ident ("(" (type ("," type)* ","?)? ")")?
+type_params := "<" ident ("," ident)* ","? ">"
 params      := param ("," param)* ","?
-param       := "mut"? ident "<" type ">"
-type        := "txt" | "rec" | "list"
-fields      := "{" (field ("," field)* ","?)? "}"
-field       := ident "=" expression
-path        := "::"? ident ("::" ident)*
+param       := ident ":" type
+
+type          := function_type | type_path
+function_type := "fn" "(" (type ("," type)* ","?)? ")" ("->" type)?
+type_path     := path type_args?
+type_args     := "<" type ("," type)* ","? ">"
+path          := "::"? ident ("::" ident)*
 
 block       := "{" statement* "}"
 statement   := binding
              | assignment
              | field_assignment
+             | index_assignment
              | expression ";"
              | "return" expression? ";"
              | "panic" ";"
@@ -34,81 +43,52 @@ statement   := binding
              | "wait" ";"
              | for
              | "break" ";"
-assignment  := ident "=" expression ";"
+assignment       := ident "=" expression ";"
 field_assignment := ident "." ident "=" expression ";"
+index_assignment := ident "[" expression "]" "=" expression ";"
 for         := "for" (ident "in" expression)? block ";"
 
-expression  := term ("+" term)*
-term        := primary ("." ident)*
-primary     := string
-             | fields
-             | list_literal
-             | "match" expression match
-             | path arguments?
-             | path
+expression     := logical_or
+logical_or     := logical_and ("||" logical_and)*
+logical_and    := equality ("&&" equality)*
+equality       := comparison (("==" | "!=") comparison)*
+comparison     := additive (("<" | "<=" | ">" | ">=") additive)*
+additive       := multiplicative (("+" | "-") multiplicative)*
+multiplicative := unary (("*" | "/" | "%") unary)*
+unary          := ("-" | "!") unary | term
+term           := primary postfix*
+postfix        := "." ident arguments?                        # field, or method call
+                | "[" expression "]"                            # index
+primary        := string
+                | number
+                | "true"
+                | "false"
+                | "{" (field ("," field)* ","?)? "}"            # record literal (a declared type)
+                | "[" (expression ("," expression)* ","?)? "]"  # vec literal
+                | "(" expression ")"                            # grouping
+                | "fn" "(" params? ")" ("->" type)? block       # closure
+                | "match" expression "{" arm* "}"
+                | path arguments?                               # call by path
+arguments   := "(" (expression ("," expression)* ","?)? ")"
+field       := ident "=" expression
+
 match       := "{" arm* "}"
 arm         := pattern "=>" (expression | block) ";"
-pattern     := string | fields | list_literal | "_" | ident ("." ident)*
-arguments   := "(" (expression ("," expression)* ","?)? ")"
-list_literal := "[" (expression ("," expression)* ","?)? "]"
+pattern     := variant_pattern | expression
+variant_pattern := ident ("." ident)+ ("(" (pattern_binding ("," pattern_binding)* ","?)? ")")?
+pattern_binding := ident | "_"
 ```
 
 ## Lexical
 
 ```text
 ident       := (letter | "_") (letter | digit | "_")*
+number      := digit+
 string      := '"' (character | escape | interpolation)* '"'
 interpolation := "@(" expression ")"
 escape      := "\n" | "\t" | "\r" | "\e" | "\\" | "\"" | "\@"
 comment     := "#" to end of line
 ```
 
-[Text](/concepts/text/) covers strings, escapes, and the absence of numeric
-literals.
-
-## Notes
-
-- A `mod a::b { ... };` block declares an inline namespace. A file may hold
-  several, and reopening a path merges into the same namespace.
-- `import "path";` is an item that splices the imported file's items at its
-  position; it is global-level only, never inside a `mod`. A file is imported
-  once, so importing it twice or in a cycle is an error.
-- Every declaration and every statement ends with `;`, including a braced block
-  used as a statement: `fn ... { ... };`, `mod ... { ... };`, `match ... { ... };`,
-  `for { ... };`.
-- A `path` may open with `::` to name the root namespace: `::value` and
-  `::func()`.
-- A `return` is `return;` to end a function with no return type, and
-  `return expr;` to end a `-> txt`, `-> rec`, or `-> list` function.
-- `panic;` exits the program with an error.
-- A match is a term: `match subject { pattern => body; … };`. The subject is
-  text, a record, or a list, and every pattern has that same type. In expression
-  position its arms are expressions, it must have a `_` arm, and it yields the
-  taken arm's value; in statement position its arms are blocks and the `_` arm
-  is optional. A pattern is a text, record, or list literal, a name, or a field
-  path — never a call or a concatenation; the `_` arm is the default.
-- A string may interpolate expressions with `@(expr)`; the expression must be
-  text, and `\@` writes a literal `@(`.
-- `async <call>;` starts a call on its own thread and binds nothing; `wait;`
-  joins the asyncs the calling thread spawned.
-- A binding is written `let name<txt> = value;`, `let name<rec> = value;`, or
-  `let name<list> = value;`. A `rec` binding takes a record literal, a record
-  variable, or a call returning a record; a `list` binding takes a list literal,
-  a list variable, or a call returning a list.
-- A binding is immutable unless written `let mut`: `let mut name<txt> = value;`.
-  A `mut` binding may be reassigned and, for a record, have its fields assigned;
-  `name.field = expr;` replaces one field. A top-level value can never be `mut`.
-  A record literal that initializes an immutable binding may not repeat a field
-  name; a `mut` binding may, and its last value wins.
-- Each parameter declares its name then its type in angle brackets, optionally
-  preceded by `mut`: `fn f(a<txt>, b<rec>) -> txt`. A function's return type is
-  written `-> txt`, `-> rec`, or `-> list` after the parameter list; no arrow
-  means it returns no value. `main` takes at most one parameter, and it must be
-  `rec`.
-- `for` has two shapes: `for item in <list> { ... };` runs the body once per
-  element, and `for { ... };` repeats until a `break;`. `break;` ends the
-  nearest loop and is an error outside a loop.
-- A bare statement must be a call or a match; a lone value is an error.
-- A term with no arguments after `.` is a field access.
-- The reserved words are `mod`, `import`, `fn`, `let`, `txt`, `rec`, `list`,
-  `mut`, `match`, `return`, `panic`, `async`, `wait`, `for`, `in`, and `break`.
+[Text](/concepts/text/) covers strings, escapes, and interpolation, and
+[Values](/concepts/values/) covers the operators.

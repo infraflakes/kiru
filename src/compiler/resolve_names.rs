@@ -4,10 +4,16 @@
 //! name into an edge to a node, and selects the entry: the entry file's own
 //! root `main`. After this stage, no later stage resolves a name again.
 
-mod link_bodies;
-mod register_declarations;
+mod builder;
+mod linking;
+mod reference_linking;
+mod reference_resolution;
+mod register_builtins;
+mod register_files;
+mod scopes;
+mod select_entry;
 
 #[cfg(test)]
 mod tests;
 
-pub(crate) use link_bodies::resolve_names;
+pub(crate) use linking::resolve_names;

@@ -3,9 +3,8 @@ title: Hello, World!
 description: Write, compile, and run your first Kiru program.
 ---
 
-Now that you've installed Kiru, it's time to write your first program. It's
-traditional to start with a program that prints `Hello, world!` to the screen,
-so we'll do the same.
+Now that Kiru is installed, the next step is a program that prints
+`Hello, world!` to the screen.
 
 ## Writing the Program
 
@@ -37,39 +36,97 @@ $ ./main
 hello, world
 ```
 
-If you see `hello, world`, you've written and run a Kiru program. If not, check
-the [Installation](/getting-started/installation/) chapter.
+If you see `hello, world`, you have written and run a Kiru program. If not,
+check the [Installation](/getting-started/installation/) chapter.
 
-## The Anatomy of a Kiru Program
+## The Anatomy of a Program
 
-Let's look at the program piece by piece. First, the outer part:
+The program has two parts. The outer part declares the entry function:
 
 ```kiru
 fn main() {
 };
 ```
 
-This declares a function named `main`. Every compiled Kiru program starts at the
-`main` in its entry file, so this is where execution begins. The body is wrapped
-in `{}`, and the whole declaration ends with a `;`.
+`main` is where execution begins. The body is wrapped in `{}`, and the whole
+declaration ends with a `;`.
 
-Next, the line inside the body:
+The line inside the body calls a function:
 
 ```kiru
   std::print("hello, world");
 ```
 
-This calls `std::print`, which writes a line to stdout. `std` is the standard
-library namespace, which every program has; `::` separates the namespace from
-the function. The argument is a string literal in double quotes.
+`std::print` writes a line to stdout. `std` is the standard library namespace,
+which every program has; `::` separates the namespace from the function. The
+argument is a string literal in double quotes.
 
 ## main's Signature
 
-`main` may take no parameter or one parameter. The one-parameter form receives
-the command line; [A First Program](/getting-started/a-first-program/) shows it.
-`main` may also declare a return type of `-> txt`, which becomes the program's
-exit status; [Compiling and Running](/getting-started/compiling-and-running/)
-covers that.
+`main` takes no parameter or one parameter, and returns nothing or an `int`:
 
-An entry file with no `main`, or a `main` with two parameters, is a compile
-error.
+- with no parameter, the program reads no arguments;
+- with one parameter, it must be declared `Vec<txt>`, and the runtime passes the
+  words after the program name. [A First
+  Program](/getting-started/a-first-program/) uses this form;
+- a return type must be `int`, and the returned value becomes the program's exit
+  status. [Panic and Failure](/failure/panic/) defines the status.
+
+An entry file with no `main`, a `main` with two parameters, or a parameter or
+return type other than the above is a compile error.
+
+## The kc Compiler
+
+`kc` compiles a program and has three commands:
+
+```console
+$ kc <path/to/entry> [-o <output>]
+$ kc help
+$ kc version
+```
+
+`kc <path>` checks the entry file and everything it imports, then writes a
+standalone executable next to the entry path with the `.kiru` suffix removed:
+
+```console
+$ kc tools/release.kiru
+$ ./tools/release
+```
+
+With `-o`, you choose the output path:
+
+```console
+$ kc main.kiru -o app
+$ ./app
+```
+
+The output is one file. It holds the compiler and your program, so you can copy,
+rename, and ship it on its own. There is no linking step and no interpreter to
+install. The compiler refuses to overwrite the entry file.
+
+## What the Compiler Checks
+
+A program that compiles has been checked for:
+
+- syntax and lexical rules (an invalid escape, a missing `;`);
+- modules and imports (a malformed `mod` block, a missing file, an import cycle,
+  a file imported more than once);
+- names (an unknown name, a forward reference, a duplicate declaration, a
+  function that references itself);
+- arity (the wrong number of arguments);
+- parameters (a parameter without a type, a `main` parameter that is not
+  `Vec<txt>`);
+- statements (a bare value used as a statement);
+- types (text where an `int` is required, a call that returns no value bound or
+  passed);
+- returns (a function with a return type that can reach the end without
+  returning a value);
+- match arms (a pattern that is not a literal, a name, or a field path; two
+  equal patterns);
+- loops (`break` outside a loop);
+- threads (an `async` nested inside another `async`).
+
+A failed check prints the file, position, and message, and exits `1`.
+
+Some failures can only happen while the program runs; [Panic and
+Failure](/failure/panic/) covers them.

@@ -1,0 +1,804 @@
+//! Linking parsed bodies into model nodes.
+//!
+//! The linking pass walks each pending declaration's parsed body, creating
+//! local bindings and resolving references and calls into edges to declaration
+//! nodes. After linking, no phase resolves a name again.
+
+use crate::compiler::Diagnostic;
+use crate::compiler::load_files::LoadedProgram;
+use crate::model::Type;
+use crate::model::{
+    Declaration, DeclarationId, Derived, Expression, Field, FileId, Function, MatchArm, MatchBody,
+    NamespaceId, Pattern, Program, Statement, StringPart, rec_field,
+};
+use crate::syntax::Span;
+use crate::syntax::{BinaryOp, UnaryOp};
+use crate::syntax::{
+    Declaration as ParsedDeclaration, Expression as ParsedExpression, Statement as ParsedStatement,
+    TypeExpr,
+};
+
+use super::builder::Builder;
+use super::scopes::{Context, Scopes};
+
+/// Build the program model from the joined item stream.
+pub(crate) fn resolve_names(loaded: &LoadedProgram) -> Result<Program, Diagnostic> {
+    let mut builder = Builder::new();
+    // Reserve the declared types first, so a native can name the absence type,
+    // then register the natives before the declarations that call them.
+    builder.reserve_items(loaded)?;
+    builder.register_builtins();
+    builder.register_declarations(loaded)?;
+    let entry = builder.resolve_entry(loaded)?;
+    builder.link_declarations(loaded)?;
+    let program = builder.finish(entry);
+    crate::model::verify_program(&program);
+    Ok(program)
+}
+
+impl Builder {
+    fn link_declarations(&mut self, loaded: &LoadedProgram) -> Result<(), Diagnostic> {
+        for pending in std::mem::take(&mut self.pending) {
+            let skeleton = &self.skeletons[pending.declaration.0];
+            let name = skeleton.name.clone();
+            let order = skeleton.order;
+            let file = pending.file;
+            let namespace = pending.namespace;
+            let declaration = &loaded.items[pending.syntax_index].declaration;
+
+            let (value, ty) = match declaration {
+                ParsedDeclaration::Function(function) => {
+                    let mut scopes = Scopes::default();
+                    scopes.push();
+                    let type_parameters = function.type_parameters.clone();
+                    let mut context = Context {
+                        scopes: &mut scopes,
+                        namespace,
+                        file,
+                        current: pending.declaration,
+                        order,
+                        type_parameters: &type_parameters,
+                    };
+                    let mut parameters = Vec::new();
+                    let mut parameter_types = Vec::new();
+                    for parameter in &function.parameters {
+                        let ty =
+                            self.resolve_type(&parameter.ty, namespace, file, &type_parameters)?;
+                        parameter_types.push(ty.clone());
+                        let id = self.declare_local(
+                            context.scopes,
+                            LocalDeclaration {
+                                file,
+                                namespace,
+                                name: &parameter.name,
+                                name_span: parameter.span,
+                                owner: pending.declaration,
+                                ty,
+                            },
+                        )?;
+                        context.scopes.declare(&parameter.name, id);
+                        parameters.push(id);
+                    }
+                    let body = self.link_statements(&function.body, &mut context)?;
+                    // No return type means the function's calls produce no
+                    // value: its function type has no return type.
+                    let returns = match &function.return_type {
+                        Some(expr) => Some(Box::new(self.resolve_type(
+                            expr,
+                            namespace,
+                            file,
+                            &type_parameters,
+                        )?)),
+                        None => None,
+                    };
+                    let ty = Type::Function {
+                        parameters: parameter_types,
+                        returns,
+                    };
+                    (
+                        Expression::Function(Function {
+                            ty: ty.clone(),
+                            parameters,
+                            body,
+                            type_parameters,
+                            captures: Vec::new(),
+                            span: function.span,
+                        }),
+                        ty,
+                    )
+                }
+                ParsedDeclaration::Binding(binding) => {
+                    let mut scopes = Scopes::default();
+                    let mut context = Context {
+                        scopes: &mut scopes,
+                        namespace,
+                        file,
+                        current: pending.declaration,
+                        order,
+                        type_parameters: &[],
+                    };
+                    let expression = self.link_expression(&binding.value, &mut context)?;
+                    let ty = self.resolve_type(&binding.ty, namespace, file, &[])?;
+                    (expression, ty)
+                }
+                ParsedDeclaration::Type(_) => {
+                    unreachable!("a type declaration has no body to link")
+                }
+            };
+            self.declarations[pending.declaration.0] = Some(Declaration {
+                name,
+                file: Some(file),
+                namespace,
+                order,
+                owner: None,
+                ty,
+                value: Some(value),
+                native: None,
+                derived: Derived { halts: false },
+            });
+        }
+        Ok(())
+    }
+
+    /// Resolve a written type in a declaration's namespace and file.
+    fn resolve_type(
+        &self,
+        expr: &TypeExpr,
+        namespace: NamespaceId,
+        file: FileId,
+        parameters: &[String],
+    ) -> Result<Type, Diagnostic> {
+        self.resolve_type_expr(expr, namespace, parameters, &self.files[file.0].path)
+    }
+    fn link_statements(
+        &mut self,
+        statements: &[ParsedStatement],
+        context: &mut Context,
+    ) -> Result<Vec<Statement>, Diagnostic> {
+        let mut linked = Vec::new();
+        for statement in statements {
+            match statement {
+                ParsedStatement::Binding(binding) => {
+                    let value = self.link_expression(&binding.value, context)?;
+                    let declaration = self.declare_local(
+                        context.scopes,
+                        LocalDeclaration {
+                            file: context.file,
+                            namespace: context.namespace,
+                            name: &binding.name,
+                            name_span: binding.name_span,
+                            owner: context.current,
+                            ty: self.resolve_type(
+                                &binding.ty,
+                                context.namespace,
+                                context.file,
+                                context.type_parameters,
+                            )?,
+                        },
+                    )?;
+                    context.scopes.declare(&binding.name, declaration);
+                    linked.push(Statement::Bind {
+                        declaration,
+                        value,
+                        span: binding.span,
+                    });
+                }
+                ParsedStatement::Assignment {
+                    name,
+                    name_span,
+                    value,
+                    span,
+                } => {
+                    let declaration =
+                        self.resolve(context, std::slice::from_ref(name), false, *name_span)?;
+                    let value = self.link_expression(value, context)?;
+                    linked.push(Statement::Assign {
+                        declaration,
+                        name_span: *name_span,
+                        value,
+                        span: *span,
+                    });
+                }
+                ParsedStatement::FieldAssignment {
+                    name,
+                    name_span,
+                    field,
+                    value,
+                    span,
+                    ..
+                } => {
+                    let declaration =
+                        self.resolve(context, std::slice::from_ref(name), false, *name_span)?;
+                    let value = self.link_expression(value, context)?;
+                    linked.push(Statement::FieldAssign {
+                        declaration,
+                        name_span: *name_span,
+                        field: field.clone(),
+                        value,
+                        span: *span,
+                    });
+                }
+                ParsedStatement::IndexAssignment {
+                    name,
+                    name_span,
+                    index,
+                    value,
+                    span,
+                } => {
+                    let declaration =
+                        self.resolve(context, std::slice::from_ref(name), false, *name_span)?;
+                    let index = self.link_expression(index, context)?;
+                    let value = self.link_expression(value, context)?;
+                    linked.push(Statement::IndexAssign {
+                        declaration,
+                        name_span: *name_span,
+                        index,
+                        value,
+                        span: *span,
+                    });
+                }
+                ParsedStatement::Expression(expression) => {
+                    linked.push(Statement::Expression(
+                        self.link_expression(expression, context)?,
+                    ));
+                }
+                ParsedStatement::Return { value, span } => {
+                    let value = match value {
+                        Some(value) => Some(self.link_expression(value, context)?),
+                        None => None,
+                    };
+                    linked.push(Statement::Return { value, span: *span });
+                }
+                ParsedStatement::Panic { span } => {
+                    linked.push(Statement::Panic { span: *span });
+                }
+                ParsedStatement::Async { call, span } => {
+                    linked.push(Statement::Async {
+                        call: self.link_expression(call, context)?,
+                        span: *span,
+                    });
+                }
+                ParsedStatement::Wait { span } => {
+                    linked.push(Statement::Wait { span: *span });
+                }
+                ParsedStatement::ForEach {
+                    item,
+                    item_span,
+                    iterable,
+                    body,
+                    span,
+                } => {
+                    let iterable = self.link_expression(iterable, context)?;
+                    // The item's type is the iterable's element type, so a
+                    // method call on it dispatches on the real receiver. An
+                    // iterable whose type is not known here falls back to text,
+                    // and the checker re-verifies the body either way.
+                    let element = match self.receiver_type(&iterable) {
+                        Some(Type::Vec(element)) => *element,
+                        _ => Type::Text,
+                    };
+                    context.scopes.push();
+                    let declaration = self.declare_local(
+                        context.scopes,
+                        LocalDeclaration {
+                            file: context.file,
+                            namespace: context.namespace,
+                            name: item,
+                            name_span: *item_span,
+                            owner: context.current,
+                            ty: element,
+                        },
+                    )?;
+                    context.scopes.declare(item, declaration);
+                    let body = self.link_statements(body, context)?;
+                    context.scopes.pop();
+                    linked.push(Statement::ForEach {
+                        item: declaration,
+                        iterable,
+                        body,
+                        span: *span,
+                    });
+                }
+                ParsedStatement::Forever { body, span } => {
+                    context.scopes.push();
+                    let body = self.link_statements(body, context)?;
+                    context.scopes.pop();
+                    linked.push(Statement::Forever { body, span: *span });
+                }
+                ParsedStatement::Break { span } => {
+                    linked.push(Statement::Break { span: *span });
+                }
+            }
+        }
+        Ok(linked)
+    }
+
+    fn link_fields(
+        &mut self,
+        fields: &[crate::syntax::Field],
+        context: &mut Context,
+    ) -> Result<Vec<Field>, Diagnostic> {
+        let mut linked = Vec::new();
+        for field in fields {
+            linked.push(Field {
+                name: field.name.clone(),
+                name_span: field.name_span,
+                value: self.link_expression(&field.value, context)?,
+                span: field.span,
+            });
+        }
+        Ok(linked)
+    }
+
+    pub(super) fn link_expression(
+        &mut self,
+        expression: &ParsedExpression,
+        context: &mut Context,
+    ) -> Result<Expression, Diagnostic> {
+        Ok(match expression {
+            ParsedExpression::Text { value, span } => Expression::Text {
+                value: value.clone(),
+                span: *span,
+            },
+            ParsedExpression::Map { fields, span } => Expression::Map {
+                fields: self.link_fields(fields, context)?,
+                span: *span,
+            },
+            ParsedExpression::Vec { elements, span } => {
+                let mut linked_elements = Vec::new();
+                for element in elements {
+                    linked_elements.push(self.link_expression(element, context)?);
+                }
+                Expression::Vec {
+                    elements: linked_elements,
+                    span: *span,
+                }
+            }
+            ParsedExpression::Interpolated { parts, span } => {
+                let mut linked_parts = Vec::new();
+                for part in parts {
+                    linked_parts.push(match part {
+                        crate::syntax::StringPart::Literal(value) => {
+                            StringPart::Literal(value.clone())
+                        }
+                        crate::syntax::StringPart::Expression(expression) => {
+                            StringPart::Expression(self.link_expression(expression, context)?)
+                        }
+                    });
+                }
+                Expression::Interpolated {
+                    parts: linked_parts,
+                    span: *span,
+                }
+            }
+            ParsedExpression::Match {
+                subject,
+                cases,
+                default,
+                span,
+            } => {
+                let subject = self.link_expression(subject, context)?;
+                let mut linked_cases = Vec::new();
+                for case in cases {
+                    context.scopes.push();
+                    let pattern = self.link_pattern(&case.pattern, context)?;
+                    let body = self.link_match_body(&case.body, context)?;
+                    context.scopes.pop();
+                    linked_cases.push(MatchArm {
+                        pattern,
+                        body,
+                        span: case.span,
+                    });
+                }
+                let default = match default {
+                    Some(body) => {
+                        context.scopes.push();
+                        let linked_body = self.link_match_body(body, context)?;
+                        context.scopes.pop();
+                        Some(linked_body)
+                    }
+                    None => None,
+                };
+                Expression::Match {
+                    subject: Box::new(subject),
+                    cases: linked_cases,
+                    default,
+                    span: *span,
+                }
+            }
+            ParsedExpression::Closure(closure) => self.link_closure(
+                &closure.parameters,
+                &closure.return_type,
+                &closure.body,
+                closure.span,
+                context,
+            )?,
+            ParsedExpression::MethodCall {
+                receiver,
+                method,
+                method_span,
+                arguments,
+                span,
+            } => {
+                if let Some((ty, index)) = self.variant_member(context, receiver, method)? {
+                    let mut payload = Vec::new();
+                    for argument in arguments {
+                        payload.push(self.link_expression(argument, context)?);
+                    }
+                    return Ok(Expression::Variant {
+                        ty,
+                        index,
+                        payload,
+                        span: *span,
+                    });
+                }
+                let linked = self.link_expression(receiver, context)?;
+                let receiver_head = self.receiver_type(&linked).map(|ty| ty.head());
+                // A `receiver.name(args)` call is a call to a function named
+                // `name` whose first parameter accepts the receiver: the
+                // receiver becomes the first argument. The name is resolved in
+                // the caller's namespace and the namespaces it uses, exactly
+                // like a bare name; among those, the receiver's type head
+                // selects the one function whose first parameter has that head.
+                let declaration =
+                    self.select_method(context, method, receiver_head, *method_span)?;
+                let Some(declaration) = declaration else {
+                    return Err(self.method_not_found(
+                        context,
+                        method,
+                        receiver_head,
+                        *method_span,
+                    ));
+                };
+                // A method call is an ordinary call to a declaration made
+                // earlier; there is no method category to exempt.
+                self.check_earlier(context, declaration, method, *method_span)?;
+                let mut linked_arguments = vec![linked];
+                for argument in arguments {
+                    linked_arguments.push(self.link_expression(argument, context)?);
+                }
+                Expression::Call {
+                    callee: Box::new(Expression::Reference {
+                        declaration,
+                        span: *method_span,
+                    }),
+                    callee_span: *method_span,
+                    arguments: linked_arguments,
+                    span: *span,
+                }
+            }
+            ParsedExpression::Name { root, path, span } => {
+                let declaration = self.resolve(context, path, *root, *span)?;
+                Expression::Reference {
+                    declaration,
+                    span: *span,
+                }
+            }
+            ParsedExpression::Call {
+                root,
+                callee,
+                callee_span,
+                arguments,
+                span,
+            } => {
+                let mut linked_arguments = Vec::new();
+                for argument in arguments {
+                    linked_arguments.push(self.link_expression(argument, context)?);
+                }
+                // A call selects a method by its first argument's type head,
+                // exactly as a method call selects by its receiver's; a call
+                // whose first argument gives no head falls back to the name
+                // pool.
+                let head = linked_arguments
+                    .first()
+                    .and_then(|argument| self.receiver_type(argument))
+                    .map(|ty| ty.head());
+                let declaration = self.resolve_call(context, callee, *root, head, *callee_span)?;
+                Expression::Call {
+                    callee: Box::new(Expression::Reference {
+                        declaration,
+                        span: *callee_span,
+                    }),
+                    callee_span: *callee_span,
+                    arguments: linked_arguments,
+                    span: *span,
+                }
+            }
+            ParsedExpression::Field {
+                target,
+                name,
+                name_span,
+                span,
+            } => {
+                if let Some((ty, index)) = self.variant_member(context, target, name)? {
+                    return Ok(Expression::Variant {
+                        ty,
+                        index,
+                        payload: Vec::new(),
+                        span: *span,
+                    });
+                }
+                Expression::Field {
+                    target: Box::new(self.link_expression(target, context)?),
+                    name: name.clone(),
+                    name_span: *name_span,
+                    span: *span,
+                }
+            }
+            ParsedExpression::Index {
+                target,
+                index,
+                span,
+            } => Expression::Index {
+                target: Box::new(self.link_expression(target, context)?),
+                index: Box::new(self.link_expression(index, context)?),
+                span: *span,
+            },
+            ParsedExpression::Bool { value, span } => Expression::Bool {
+                value: *value,
+                span: *span,
+            },
+            ParsedExpression::Int { value, span } => Expression::Int {
+                value: *value,
+                span: *span,
+            },
+            ParsedExpression::Binary {
+                op,
+                left,
+                right,
+                span,
+            } => Expression::Binary {
+                op: *op,
+                left: Box::new(self.link_expression(left, context)?),
+                right: Box::new(self.link_expression(right, context)?),
+                span: *span,
+            },
+            ParsedExpression::Unary { op, operand, span } => Expression::Unary {
+                op: *op,
+                operand: Box::new(self.link_expression(operand, context)?),
+                span: *span,
+            },
+        })
+    }
+
+    /// Link an anonymous function literal into a function expression. Its body
+    /// is linked with the enclosing scopes still open, so a reference to an
+    /// outer local resolves and is recorded as a capture. Its parameters and
+    /// locals belong to the nearest enclosing function, so a nested literal is
+    /// the same kind of node as any other function.
+    fn link_closure(
+        &mut self,
+        parameters: &[crate::syntax::Parameter],
+        return_type: &Option<TypeExpr>,
+        body: &[crate::syntax::Statement],
+        span: Span,
+        context: &mut Context,
+    ) -> Result<Expression, Diagnostic> {
+        context.scopes.push();
+        let mut parameter_ids = Vec::new();
+        let mut parameter_types = Vec::new();
+        for parameter in parameters {
+            let ty = self.resolve_type(&parameter.ty, context.namespace, context.file, &[])?;
+            parameter_types.push(ty.clone());
+            let id = self.declare_local(
+                context.scopes,
+                LocalDeclaration {
+                    file: context.file,
+                    namespace: context.namespace,
+                    name: &parameter.name,
+                    name_span: parameter.span,
+                    owner: context.current,
+                    ty,
+                },
+            )?;
+            context.scopes.declare(&parameter.name, id);
+            parameter_ids.push(id);
+        }
+        let linked_body = self.link_statements(body, context)?;
+        context.scopes.pop();
+        let returns = match return_type {
+            Some(expr) => Some(Box::new(self.resolve_type(
+                expr,
+                context.namespace,
+                context.file,
+                &[],
+            )?)),
+            None => None,
+        };
+        let ty = Type::Function {
+            parameters: parameter_types,
+            returns,
+        };
+        // Capture only the enclosing locals the body reads, including those a
+        // nested literal needs, not every local in scope.
+        let captures = self.collect_captures(&linked_body, &parameter_ids);
+        Ok(Expression::Function(Function {
+            ty,
+            parameters: parameter_ids,
+            body: linked_body,
+            type_parameters: Vec::new(),
+            captures,
+            span,
+        }))
+    }
+
+    /// The enclosing locals a function literal body reads, following into
+    /// nested literals so a value they need is available in this frame. A
+    /// reference is a capture when it names a local of an enclosing function
+    /// that no function nested here owns.
+    fn collect_captures(
+        &self,
+        body: &[Statement],
+        parameters: &[DeclarationId],
+    ) -> Vec<DeclarationId> {
+        let mut locals = LocalCollector {
+            locals: parameters.iter().copied().collect(),
+        };
+        crate::model::walk_statements(&mut locals, body);
+        let mut collector = CaptureCollector {
+            declarations: &self.declarations,
+            locals: &locals.locals,
+            captures: Vec::new(),
+        };
+        crate::model::walk_statements(&mut collector, body);
+        collector.captures
+    }
+
+    /// The type of a method receiver, from declared types alone. kiru annotates
+    /// every binding, parameter, and return, so this is exact for a name and a
+    /// declared field; elsewhere it gives the head (a Vec literal is `Vec`,
+    /// and so on), which is all method dispatch keys on. The checker then
+    /// re-verifies the desugared call, so an approximation can never be unsound.
+    fn receiver_type(&self, expression: &Expression) -> Option<Type> {
+        match expression {
+            Expression::Text { .. } | Expression::Interpolated { .. } => Some(Type::Text),
+            Expression::Int { .. } => Some(Type::Int),
+            Expression::Bool { .. } => Some(Type::Bool),
+            Expression::Map { .. } => None,
+            Expression::Vec { .. } => Some(Type::Vec(Box::new(Type::Text))),
+            Expression::Variant { ty, .. } => Some(Type::Named(*ty, Vec::new())),
+            Expression::Reference { declaration, .. } => self.declared_type(*declaration),
+            Expression::Call { callee, .. } => self.receiver_type(callee)?.return_type(),
+            Expression::Field { target, name, .. } => {
+                let target = self.receiver_type(target)?;
+                self.field_type(&target, name)
+            }
+            Expression::Index { target, .. } => match self.receiver_type(target)? {
+                Type::Vec(element) => Some(*element),
+                _ => None,
+            },
+            Expression::Binary { op, .. } => Some(match op {
+                BinaryOp::Add
+                | BinaryOp::Subtract
+                | BinaryOp::Multiply
+                | BinaryOp::Divide
+                | BinaryOp::Remainder => Type::Int,
+                _ => Type::Bool,
+            }),
+            Expression::Unary { op, .. } => Some(match op {
+                UnaryOp::Negate => Type::Int,
+                UnaryOp::Not => Type::Bool,
+            }),
+            Expression::Match { cases, default, .. } => {
+                for arm in cases {
+                    if let MatchBody::Expression(expression) = &arm.body {
+                        return self.receiver_type(expression);
+                    }
+                }
+                match default {
+                    Some(MatchBody::Expression(expression)) => self.receiver_type(expression),
+                    _ => None,
+                }
+            }
+            // A function literal has no methods; dispatch does not key on it.
+            Expression::Function(_) => None,
+        }
+    }
+
+    /// The declared type of a name, whatever its body produces.
+    fn declared_type(&self, declaration: DeclarationId) -> Option<Type> {
+        Some(self.declarations[declaration.0].as_ref()?.ty.clone())
+    }
+
+    /// The type of a field, substituting a declared type's arguments.
+    fn field_type(&self, target: &Type, name: &str) -> Option<Type> {
+        match target {
+            Type::Named(id, arguments) => rec_field(&self.types, *id, arguments, name),
+            _ => None,
+        }
+    }
+    fn link_match_body(
+        &mut self,
+        body: &crate::syntax::MatchBody,
+        context: &mut Context,
+    ) -> Result<MatchBody, Diagnostic> {
+        Ok(match body {
+            crate::syntax::MatchBody::Expression(expression) => {
+                MatchBody::Expression(Box::new(self.link_expression(expression, context)?))
+            }
+            crate::syntax::MatchBody::Block(statements) => {
+                MatchBody::Block(self.link_statements(statements, context)?)
+            }
+        })
+    }
+}
+/// Collects the local declarations a function literal body introduces anywhere
+/// within it, including those of nested literals. A reference to one of these
+/// is not a capture of the enclosing literal.
+struct LocalCollector {
+    locals: std::collections::HashSet<DeclarationId>,
+}
+
+impl crate::model::Visitor for LocalCollector {
+    fn expression(&mut self, expression: &Expression) {
+        if let Expression::Function(function) = expression {
+            self.locals.extend(function.parameters.iter().copied());
+        }
+    }
+
+    fn statement(&mut self, statement: &Statement) {
+        match statement {
+            Statement::Bind { declaration, .. } => {
+                self.locals.insert(*declaration);
+            }
+            Statement::ForEach { item, .. } => {
+                self.locals.insert(*item);
+            }
+            Statement::Assign { .. }
+            | Statement::FieldAssign { .. }
+            | Statement::IndexAssign { .. }
+            | Statement::Expression(_)
+            | Statement::Return { .. }
+            | Statement::Panic { .. }
+            | Statement::Async { .. }
+            | Statement::Wait { .. }
+            | Statement::Forever { .. }
+            | Statement::Break { .. } => {}
+        }
+    }
+
+    fn pattern(&mut self, pattern: &Pattern) {
+        if let Pattern::Variant { bindings, .. } = pattern {
+            self.locals.extend(bindings.iter().flatten().copied());
+        }
+    }
+}
+
+/// Collects the enclosing locals a function literal body reads, following into
+/// nested literals so a value they need is present in this frame too.
+struct CaptureCollector<'a> {
+    declarations: &'a [Option<Declaration>],
+    locals: &'a std::collections::HashSet<DeclarationId>,
+    captures: Vec<DeclarationId>,
+}
+
+impl crate::model::Visitor for CaptureCollector<'_> {
+    fn expression(&mut self, expression: &Expression) {
+        if let Expression::Reference { declaration, .. } = expression {
+            let is_local = self.declarations[declaration.0]
+                .as_ref()
+                .is_some_and(|node| node.owner.is_some());
+            if is_local
+                && !self.locals.contains(declaration)
+                && !self.captures.contains(declaration)
+            {
+                self.captures.push(*declaration);
+            }
+        }
+    }
+
+    fn statement(&mut self, _: &Statement) {}
+
+    fn pattern(&mut self, _: &Pattern) {}
+}
+
+/// What a local binding needs: where it was written, what it is called, which
+/// function owns it, and the type it holds.
+pub(super) struct LocalDeclaration<'a> {
+    pub(super) file: FileId,
+    pub(super) namespace: NamespaceId,
+    pub(super) name: &'a str,
+    pub(super) name_span: Span,
+    pub(super) owner: DeclarationId,
+    pub(super) ty: Type,
+}

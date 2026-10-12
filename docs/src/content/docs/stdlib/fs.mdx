@@ -5,13 +5,13 @@ description: Read and write files.
 
 `std::fs` reads and writes files, tests whether a path exists, and expands
 globs. If any operation except `exists` fails, the program exits with an error;
-`exists` returns `"false"` instead.
+`exists` returns `false` instead.
 
 <details>
 <summary><code>read</code> — read a whole file</summary>
 
 ```kiru
-std::fs::read(path<txt>) -> txt
+std::fs::read(path: txt) -> txt
 ```
 
 Reads a whole file as text.
@@ -30,7 +30,7 @@ std::print(std::fs::read("notes.txt"));
 <summary><code>write</code> — replace a file with text</summary>
 
 ```kiru
-std::fs::write(path<txt>, text<txt>)
+std::fs::write(path: txt, text: txt)
 ```
 
 Replaces a file with text, creating it when absent.
@@ -48,11 +48,11 @@ std::fs::write("notes.txt", "hello\n");
 <summary><code>append</code> — append text to a file</summary>
 
 ```kiru
-std::fs::append(path<txt>, text<txt>)
+std::fs::append(path: txt, text: txt)
 ```
 
-Appends text to a file, creating it when absent. It reads the file, joins the
-text, and writes it back, so it is not atomic across concurrent writers.
+Appends text to a file, creating it when absent. The append is not atomic
+across concurrent writers.
 
 - `path` — the file to append to.
 - `text` — the text to add.
@@ -67,7 +67,7 @@ std::fs::append("notes.txt", "more\n");
 <summary><code>remove</code> — remove a file</summary>
 
 ```kiru
-std::fs::remove(path<txt>)
+std::fs::remove(path: txt)
 ```
 
 Removes a file.
@@ -85,19 +85,41 @@ std::fs::remove("notes.txt");
 <summary><code>exists</code> — whether a path exists</summary>
 
 ```kiru
-std::fs::exists(path<txt>) -> txt
+std::fs::exists(path: txt) -> bool
 ```
 
-Tests whether a path exists. It returns `"false"` instead of failing when the
+Tests whether a path exists. It returns `false` instead of failing when the
 path is absent.
 
 - `path` — the path to test.
-- Returns `"true"` or `"false"`.
+- Returns `true` or `false`.
 
 ```kiru
 match std::fs::exists("notes.txt") {
-  "true" => { std::print("found"); };
+  true => { std::print("found"); };
   _ => { std::print("missing"); };
+};
+```
+
+</details>
+
+<details>
+<summary><code>is_dir</code> — whether a path names a directory</summary>
+
+```kiru
+std::fs::is_dir(path: txt) -> bool
+```
+
+Tests whether a path names a directory.
+
+- `path` — the path to test.
+- Returns `true` when it names a directory, `false` for a file or a path that
+  does not exist.
+
+```kiru
+match std::fs::is_dir("docs") {
+  true => { std::print("a directory"); };
+  _ => { std::print("not a directory"); };
 };
 ```
 
@@ -116,7 +138,8 @@ Creates an exclusive, owner-only empty file under `$TMPDIR` (falling back to
 - Returns the path as text. The caller owns the file and must remove it.
 
 ```kiru
-let path<txt> = std::fs::temp_file();
+use std::text;
+let path: txt = std::fs::temp_file();
 std::fs::write(path, "scratch");
 std::fs::remove(path);
 ```
@@ -124,19 +147,21 @@ std::fs::remove(path);
 </details>
 
 <details>
-<summary><code>glob</code> — expand a glob into a list</summary>
+<summary><code>glob</code> — expand a glob into a Vec</summary>
 
 ```kiru
-std::fs::glob(pattern<txt>) -> list
+std::fs::glob(pattern: txt) -> Vec<txt>
 ```
 
-Expands a glob pattern into a list of matching paths.
+Expands a glob pattern into a vec of matching paths.
 
 - `pattern` — supports `*`, `?`, `[...]`, and `**`.
 - Returns the matches in sorted order.
 
 ```kiru
-let files<list> = std::fs::glob("src/*.kiru");
+use std::text;
+use std::vec;
+let files: Vec<txt> = std::fs::glob("src/*.kiru");
 ```
 
 </details>

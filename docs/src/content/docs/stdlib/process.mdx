@@ -1,30 +1,32 @@
 ---
 title: std::process
-description: Run and manage processes.
+description: Start, wait for, and signal processes.
 ---
 
-`std::process` starts processes, waits for them, and signals them.
+`std::process` starts processes directly, waits for them, and signals them.
+[Running Commands](/commands/running-a-command/) and [Process
+Groups](/commands/process-groups/) cover how these fit together; `std::command`
+is the shell builder.
 
 <details>
 <summary><code>spawn</code> — run an argv and return its pid</summary>
 
 ```kiru
-std::process::spawn(spec<rec>, argv<list>) -> txt
+std::process::spawn(argv: Vec<txt>) -> int
 ```
 
-Runs `argv` without a shell, in its own process group, and returns the pid.
+Runs `argv` without a shell, in its own process group, and returns the pid as an
+`int`.
 
-- `spec` — options for the child: `Dir` (working directory) and
-  `Stdin`/`Stdout`/`Stderr` (`"null"` discards a stream; anything else
-  inherits it).
-- `argv` — the program and its arguments, each an element of the list.
-- Returns the pid as text.
+- `argv` — the program and its arguments, each an element of the vec.
 
 ```kiru
-let pid<txt> = std::process::spawn({}, ["make", "-j4"]);
+use std;
+use std::text;
+use std::vec;
+use std::process;
+let pid: int = std::process::spawn(["make", "-j4"]);
 ```
-
-Related: [Process Groups](/commands/process-groups/).
 
 </details>
 
@@ -32,18 +34,22 @@ Related: [Process Groups](/commands/process-groups/).
 <summary><code>wait_for</code> — reap a process and return its exit code</summary>
 
 ```kiru
-std::process::wait_for(pid<txt>) -> txt
+std::process::wait_for(pid: int) -> int
 ```
 
 Waits for the process named by `pid` and reaps it.
 
 - `pid` — a pid returned by `spawn`.
-- Returns the exit code as text, or `128 + signal` when the process was
+- Returns the exit code as an `int`, or `128 + signal` when the process was
   signalled.
 
 ```kiru
-let pid<txt> = std::process::spawn({}, ["true"]);
-let code<txt> = std::process::wait_for(pid);
+use std;
+use std::text;
+use std::vec;
+use std::process;
+let pid: int = std::process::spawn(["true"]);
+let code: int = std::process::wait_for(pid);
 ```
 
 </details>
@@ -52,7 +58,7 @@ let code<txt> = std::process::wait_for(pid);
 <summary><code>signal</code> — send a signal to a process group</summary>
 
 ```kiru
-std::process::signal(pid<txt>, name<txt>)
+std::process::signal(pid: int, name: txt)
 ```
 
 Sends a named signal to the process group led by `pid`.
@@ -62,6 +68,11 @@ Sends a named signal to the process group led by `pid`.
   `CONT`.
 
 ```kiru
+use std;
+use std::text;
+use std::vec;
+use std::process;
+let pid: int = std::process::spawn(["sleep", "5"]);
 std::process::signal(pid, "TERM");
 ```
 

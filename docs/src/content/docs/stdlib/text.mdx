@@ -3,40 +3,23 @@ title: std::text
 description: Inspect and transform text.
 ---
 
-`std::text` measures, slices, searches, and transforms text. Length and slicing
-count bytes, not characters, so they line up with files and shell streams.
+`std::text` adds methods to `txt`. Length and byte indices count bytes, not
+characters, so they line up with files and shell streams. A `txt` method needs
+`use std::text;` (the same `use` that brings `txt`). [Text](/concepts/text/)
+covers the literals, escapes, and interpolation.
 
 <details>
 <summary><code>len</code> — the number of bytes</summary>
 
 ```kiru
-std::text::len(text<txt>) -> txt
+text.len() -> int
 ```
 
-- `text` — the text to measure.
-- Returns the byte count as digit text.
+- Returns the byte count.
 
 ```kiru
-std::print(std::text::len("abc"));   # 3
-```
-
-</details>
-
-<details>
-<summary><code>slice</code> — a half-open byte range</summary>
-
-```kiru
-std::text::slice(text<txt>, start<txt>, end<txt>) -> txt
-```
-
-Returns the bytes from `start` up to but not including `end`.
-
-- `text` — the source.
-- `start`, `end` — byte indices as digit text. If an index is outside the text
-  or falls inside a multi-byte character, the program exits with an error.
-
-```kiru
-std::print(std::text::slice("abcdef", "1", "4"));   # bcd
+use std::text;
+let n: int = "abc".len();   # n is 3
 ```
 
 </details>
@@ -45,15 +28,59 @@ std::print(std::text::slice("abcdef", "1", "4"));   # bcd
 <summary><code>find</code> — the first byte index of a needle</summary>
 
 ```kiru
-std::text::find(text<txt>, needle<txt>) -> txt
+text.find(needle: txt) -> std::Option<int>
 ```
 
-- `text` — the text to search.
 - `needle` — the text to find.
-- Returns the byte index of the first occurrence, or `""` when absent.
+- Returns `some(index)` for the byte index of the first occurrence, or `none`
+  when it is absent. [Absence](/concepts/absence/) covers the optional value.
 
 ```kiru
-std::print(std::text::find("hello", "l"));   # 2
+use std;
+use std::text;
+match "hello".find("l") {
+  std::Option.some(index) => { std::print("@(index)"); };   # 2
+  std::Option.none => { std::print("absent"); };
+};
+```
+
+`std::text::find_byte(text, needle) -> std::Option<int>` returns the same
+index.
+
+</details>
+
+<details>
+<summary><code>byte</code> — the byte at an index</summary>
+
+```kiru
+text.byte(index: int) -> int
+```
+
+- `index` — a byte index.
+- Returns the byte value there. An index outside the text stops the run.
+
+```kiru
+use std::text;
+let b: int = "abc".byte(1);   # b is 98, the byte `b`
+```
+
+</details>
+
+<details>
+<summary><code>number</code> — the number the text writes</summary>
+
+```kiru
+text.number() -> std::Option<int>
+```
+
+- Returns `some(number)` when the whole text is a decimal integer (a leading `-`
+  negates), or `none` when it is not one.
+
+```kiru
+use std;
+use std::text;
+let n: int = "42".number().or(0);    # n is 42
+let bad: int = "4x".number().or(0);  # 0
 ```
 
 </details>
@@ -62,14 +89,33 @@ std::print(std::text::find("hello", "l"));   # 2
 <summary><code>trim</code> — drop surrounding whitespace</summary>
 
 ```kiru
-std::text::trim(text<txt>) -> txt
+text.trim() -> txt
 ```
 
-- `text` — the text to trim.
-- Returns the text without leading or trailing whitespace.
+- Returns the text without leading or trailing ASCII whitespace.
 
 ```kiru
-std::print(std::text::trim("  hi\n"));   # hi
+use std::text;
+let s: txt = "  hi\n".trim();   # s is "hi"
+```
+
+</details>
+
+<details>
+<summary><code>split</code> — split text on a separator</summary>
+
+```kiru
+text.split(separator: txt) -> Vec<txt>
+```
+
+- `separator` — the text between parts. An empty separator stops the run.
+- Returns the parts as a vec. It is declared at the `std` root as
+  `std::split(text, separator)`.
+
+```kiru
+use std::text;
+use std::vec;
+let parts: Vec<txt> = "a,b,c".split(",");
 ```
 
 </details>
@@ -78,14 +124,15 @@ std::print(std::text::trim("  hi\n"));   # hi
 <summary><code>lines</code> — split text into lines</summary>
 
 ```kiru
-std::text::lines(text<txt>) -> list
+text.lines() -> Vec<txt>
 ```
 
-- `text` — the text to split on newlines.
-- Returns the lines as a list. A trailing newline adds no empty line.
+- Returns the lines, split on `\n`. A trailing newline adds no empty line.
 
 ```kiru
-let lines<list> = std::text::lines("a\nb\n");
+use std::text;
+use std::vec;
+let lines: Vec<txt> = "a\nb\n".lines();
 ```
 
 </details>
@@ -94,15 +141,15 @@ let lines<list> = std::text::lines("a\nb\n");
 <summary><code>contains</code> — whether text contains a needle</summary>
 
 ```kiru
-std::text::contains(text<txt>, needle<txt>) -> txt
+text.contains(needle: txt) -> bool
 ```
 
-- `text` — the text to search.
 - `needle` — the text to find.
-- Returns `"true"` or `"false"`.
+- Returns `true` or `false`.
 
 ```kiru
-std::print(std::text::contains("hello", "ell"));   # true
+use std::text;
+let found: bool = "hello".contains("ell");   # true
 ```
 
 </details>
@@ -111,15 +158,15 @@ std::print(std::text::contains("hello", "ell"));   # true
 <summary><code>starts_with</code> — whether text starts with a prefix</summary>
 
 ```kiru
-std::text::starts_with(text<txt>, prefix<txt>) -> txt
+text.starts_with(prefix: txt) -> bool
 ```
 
-- `text` — the text to test.
 - `prefix` — the expected start.
-- Returns `"true"` or `"false"`.
+- Returns `true` or `false`.
 
 ```kiru
-std::print(std::text::starts_with("hello", "he"));   # true
+use std::text;
+let starts: bool = "hello".starts_with("he");   # true
 ```
 
 </details>
@@ -128,15 +175,15 @@ std::print(std::text::starts_with("hello", "he"));   # true
 <summary><code>ends_with</code> — whether text ends with a suffix</summary>
 
 ```kiru
-std::text::ends_with(text<txt>, suffix<txt>) -> txt
+text.ends_with(suffix: txt) -> bool
 ```
 
-- `text` — the text to test.
 - `suffix` — the expected end.
-- Returns `"true"` or `"false"`.
+- Returns `true` or `false`.
 
 ```kiru
-std::print(std::text::ends_with("hello", "lo"));   # true
+use std::text;
+let ends: bool = "hello".ends_with("lo");   # true
 ```
 
 </details>
@@ -145,16 +192,15 @@ std::print(std::text::ends_with("hello", "lo"));   # true
 <summary><code>replace</code> — replace every occurrence</summary>
 
 ```kiru
-std::text::replace(text<txt>, from<txt>, to<txt>) -> txt
+text.replace(from: txt, to: txt) -> txt
 ```
 
-- `text` — the source.
-- `from` — the text to replace. An empty `from` wraps every character.
+- `from` — the text to replace. An empty `from` stops the run.
 - `to` — the replacement.
 - Returns a new text.
 
 ```kiru
-std::print(std::text::replace("a-b-c", "-", "+"));   # a+b+c
+std::print("a-b-c".replace("-", "+"));   # a+b+c
 ```
 
 </details>

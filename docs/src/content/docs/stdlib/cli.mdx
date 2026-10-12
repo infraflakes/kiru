@@ -1,0 +1,111 @@
+---
+title: std::cli
+description: "A command tree: declare commands, link them, parse the words."
+---
+
+`std::cli` is a command tree built from values. `std::cli::command(name)` starts
+a command, `.with(child)` links a child, and `command.parse(words)` descends by
+the leading words and runs the command they name. `main` receives the words but
+does not parse flags; `std::cli` does.
+
+```kiru
+use std;
+use std::cli;
+use std::text;
+use std::vec;
+
+let verbose: std::cli::Flag = std::cli::bool_flag("--verbose").short("-v").help("more output");
+let jobs: std::cli::Flag = std::cli::value_flag("--jobs").short("-j").help("parallel jobs").fallback("1");
+
+fn build_action(context: std::cli::Context) -> int {
+  let loud: bool = context.contains(verbose);
+  let count: int = context.number(jobs);
+  let files: Vec<txt> = context.args();
+  return 0;
+};
+
+fn usage_action(context: std::cli::Context) -> int {
+  std::print("kiru build [--verbose] [--jobs N]");
+  return 1;
+};
+
+fn main(words: Vec<txt>) -> int {
+  let root: std::cli::Subcommand = std::cli::command("kiru").about("build things").action(usage_action);
+  let build: std::cli::Subcommand = std::cli::command("build").about("build the project").flag(verbose).flag(jobs).action(build_action);
+  let tree: std::cli::Subcommand = root.with(build);
+  return tree.parse(words);
+};
+```
+
+## The types
+
+```kiru
+use std;
+use std::text;
+use std::vec;
+pub rec Flag {
+  name: txt,      # "--verbose"
+  short: txt,     # "-v", or ""
+  help: txt,      # the help line
+  takes: bool,    # true when it takes a value
+  fallback: txt,  # the value when the flag is absent
+};
+
+pub rec Context {
+  path: Vec<txt>,    # ["kiru", "build"]
+  flags: Vec<Flag>,  # this command's flags plus its ancestors'
+  words: Vec<txt>,   # what is left to read
+};
+
+pub rec Subcommand {
+  name: txt,
+  about: txt,
+  flags: Vec<Flag>,
+  children: Vec<Subcommand>,
+  action: fn(Context) -> int,
+};
+```
+
+The types are `pub` so a program can name `Subcommand`, `Flag`, and `Context`, but
+their fields are **private**: a command and a flag are read and changed only
+through the methods below, never by a field. [Modules](/concepts/modules/)
+covers visibility.
+
+## Building
+
+| | |
+| --- | --- |
+| `std::cli::command(name: txt) -> Subcommand` | a command with no about line, flags, children, or action |
+| `std::cli::bool_flag(name: txt) -> Flag` | a flag that is present or absent |
+| `std::cli::value_flag(name: txt) -> Flag` | a flag that takes a value |
+| `command.about(text: txt) -> Subcommand` | this command with its about line |
+| `command.flag(flag: Flag) -> Subcommand` | this command with one more flag |
+| `command.with(child: Subcommand) -> Subcommand` | this command with one more child |
+| `command.action(handler: fn(Context) -> int) -> Subcommand` | this command with its action |
+| `flag.short(short: txt) -> Flag` | this flag with its short form |
+| `flag.help(text: txt) -> Flag` | this flag with its help line |
+| `flag.fallback(value: txt) -> Flag` | this flag with its fallback value |
+| `command.usage() -> txt` | the usage text: the name and about line, then the children and flags |
+
+`with` returns a new command, because a value passed to a function is a local
+copy — so you rebind: `root = root.with(build);`. Nesting is indefinite.
+
+## Reading
+
+The readers take the `Flag` value, so a flag is declared once and a typo at the
+use site is impossible.
+
+| | |
+| --- | --- |
+| `context.contains(flag: Flag) -> bool` | whether the flag was given |
+| `context.value(flag: Flag) -> txt` | the word after it, or the flag's fallback |
+| `context.number(flag: Flag) -> int` | the word after it as a whole number; a bad value stops the run |
+| `context.args() -> Vec<txt>` | the words that are neither flags nor flag values |
+
+## Parsing
+
+`command.parse(words: Vec<txt>) -> int` descends the tree by the leading words,
+accumulates the flags of the ancestors into the `Context`, and runs the leaf's
+action, whose `int` is the exit code. `--help` or `-h` prints the command's
+usage and succeeds; a flag the command does not declare stops the run with the
+usage. A command with no action reports that and fails.

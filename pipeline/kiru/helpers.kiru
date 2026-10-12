@@ -1,0 +1,33 @@
+mod kiru {
+
+  # The built-in type categories whose names this namespace writes bare.
+  use std;
+  use std::text;
+
+  # The project a build script operates on.
+  pub rec Project { pub name: txt, pub Dir: txt, pub Nix: bool };
+
+  # Wrap a line in `nix develop` when the project asks for it.
+  fn wrap(project: Project, line: txt) -> txt {
+    let wrapped: txt = match project.Nix {
+      true => "nix develop -c sh -c @(std::quote(line))";
+      _ => line;
+    };
+    return wrapped;
+  };
+
+  # Sequential step: stream the command's output; a non-zero exit stops the run.
+  fn run(project: Project, line: txt) {
+    std::log("Running '@(line)'");
+    let code: int = std::command(wrap(project, line)).dir(project.Dir).run();
+    match code {
+      0 => { std::log("'@(line)' ran successfully"); };
+      _ => { std::eprint("'@(line)' failed"); };
+    };
+  };
+
+  # Orchestrated step: hide stdout, keep stderr for debugging, return the code.
+  fn status(project: Project, line: txt) -> int {
+    return std::command(wrap(project, line)).dir(project.Dir).stream("stdout", "/dev/null").run();
+  };
+};

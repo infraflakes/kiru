@@ -1,0 +1,299 @@
+# std/fs.kiru
+#
+# File helpers written on top of the native file kernel.
+
+mod std::fs {
+
+  use std;
+  use std::text;
+  use std::vec;
+
+  # Append `text` to a file, creating it when it is absent.
+  pub fn append(path: txt, text: txt) {
+    match std::fs::exists(path) {
+      true => { std::fs::write(path, "@(std::fs::read(path))@(text)"); };
+      _ => { std::fs::write(path, text); };
+    };
+  };
+
+  # Create a unique empty file in the temporary directory and return its path.
+  # The caller owns the file and must remove it.
+  pub fn temp_file() -> txt {
+    return std::fs::mkstemp("@(std::env::temp_dir())/kiru-XXXXXX");
+  };
+
+  # Whether the `[...]` class starting at `p` matches `value`: the index just
+  # after the closing `]`, or `-1`. A leading `!` or `^` negates, `a-z` is a
+  # range, and `\` escapes the next byte.
+  fn class_end(pattern: txt, p: int, value: int) -> int {
+    let count: int = pattern.len();
+    let index: int = p + 1;
+    let negate: bool = false;
+    match index < count && (pattern.byte(index) == 33 || pattern.byte(index) == 94) {
+      true => { negate = true; index = index + 1; };
+      _ => {};
+    };
+    let matched: bool = false;
+    let first: bool = true;
+    for {
+      match index < count { false => { break; }; true => {}; };
+      let code: int = pattern.byte(index);
+      # 93 is `]`: it closes the class unless it is the first character.
+      match code == 93 && !first {
+        true => { break; };
+        _ => {};
+      };
+      first = false;
+      # `\` escapes the next byte.
+      let escaped: bool = code == 92 && index + 1 < count;
+      let item: int = match escaped { true => pattern.byte(index + 1); false => code; };
+      let step: int = match escaped { true => 2; false => 1; };
+      # A range `a-z`.
+      let is_range: bool = index + step + 1 < count
+        && pattern.byte(index + step) == 45
+        && pattern.byte(index + step + 1) != 93;
+      match is_range {
+        true => {
+          let high: int = pattern.byte(index + step + 1);
+          match item <= value && value <= high {
+            true => { matched = true; };
+            _ => {};
+          };
+          index = index + step + 2;
+        };
+        _ => {
+          match item == value {
+            true => { matched = true; };
+            _ => {};
+          };
+          index = index + step;
+        };
+      };
+    };
+    match index < count {
+      true => { index = index + 1; };
+      _ => {};
+    };
+    let answer: bool = match negate { true => !matched; false => matched; };
+    let result: int = match answer { true => index; false => -1; };
+    return result;
+  };
+
+  # Whether the token at `p` in `pattern` matches the byte `value`: the index
+  # just after the token, or `-1` when it does not match.
+  fn token_matches(pattern: txt, p: int, value: int) -> int {
+    let count: int = pattern.len();
+    let code: int = pattern.byte(p);
+    # 92 is `\`: the next byte is a literal.
+    match code == 92 {
+      true => {
+        let next: int = match p + 1 < count { true => p + 1; false => -1; };
+        match next < 0 {
+          true => { return -1; };
+          _ => {};
+        };
+        let literal: int = pattern.byte(next);
+        let answer: int = match literal == value { true => next + 1; false => -1; };
+        return answer;
+      };
+      _ => {};
+    };
+    # 63 is `?`: any one byte.
+    match code == 63 {
+      true => { return p + 1; };
+      _ => {};
+    };
+    # 91 is `[`: a class.
+    match code == 91 {
+      true => { return class_end(pattern, p, value); };
+      _ => {};
+    };
+    let answer: int = match code == value { true => p + 1; false => -1; };
+    return answer;
+  };
+
+  # Whether `name` matches the wildcard `pattern`. `*` matches any run of bytes,
+  # `?` one byte, `[...]` a class, and `\` escapes the next byte. Backtracking
+  # is iterative — a remembered `*` and the name index to resume at — so the
+  # matcher needs no recursion.
+  fn match_name(pattern: txt, name: txt) -> bool {
+    let plen: int = pattern.len();
+    let nlen: int = name.len();
+    let p: int = 0;
+    let n: int = 0;
+    let star: int = -1;
+    let mark: int = 0;
+    for {
+      match n < nlen { false => { break; }; true => {}; };
+      # 42 is `*`: remember it and let it match a run.
+      match p < plen && pattern.byte(p) == 42 {
+        true => { star = p; mark = n; p = p + 1; };
+        _ => {
+          let next: int = match p < plen { true => token_matches(pattern, p, name.byte(n)); false => -1; };
+          match next >= 0 {
+            true => { p = next; n = n + 1; };
+            _ => {
+              match star >= 0 {
+                true => { p = star + 1; mark = mark + 1; n = mark; };
+                _ => { return false; };
+              };
+            };
+          };
+        };
+      };
+    };
+    for {
+      match p < plen && pattern.byte(p) == 42 { false => { break; }; true => {}; };
+      p = p + 1;
+    };
+    return p == plen;
+  };
+
+  # Whether `segment` holds a wildcard byte: `*`, `?`, or a class `[`.
+  fn has_wildcard(segment: txt) -> bool {
+    let count: int = segment.len();
+    let index: int = 0;
+    for {
+      match index < count { false => { break; }; true => {}; };
+      let code: int = segment.byte(index);
+      match code == 42 || code == 63 || code == 91 {
+        true => { return true; };
+        _ => {};
+      };
+      index = index + 1;
+    };
+    return false;
+  };
+
+  # Whether `path` names a directory. A trailing slash makes `exists` false for
+  # a file and true for a directory, so the `exists` native answers it.
+  pub fn is_dir(path: txt) -> bool {
+    return std::fs::exists("@(path)/");
+  };
+
+  # The path `name` under `prefix`. The relative root has no prefix, and a
+  # prefix already ending in `/` needs no second slash. (`std::path` loads after
+  # this file, so the join is written here rather than reached there.)
+  fn child_of(prefix: txt, name: txt) -> txt {
+    match prefix {
+      "" => { return name; };
+      _ => {};
+    };
+    match prefix.ends_with("/") {
+      true => { return "@(prefix)@(name)"; };
+      _ => { return "@(prefix)/@(name)"; };
+    };
+  };
+
+  # The entry names of a directory. The relative root lists the current
+  # directory.
+  fn entries(prefix: txt) -> Vec<txt> {
+    match prefix {
+      "" => { return std::fs::list("."); };
+      _ => { return std::fs::list(prefix); };
+    };
+  };
+
+  # Expand a glob `pattern` into a vec of matching paths, sorted. `*` matches
+  # any run of bytes, `?` one byte, `[...]` a class, and `\` escapes the next
+  # byte; a `**` segment descends recursively. The pattern is split on `/`, a
+  # literal segment is descended directly, and a wildcard segment lists the
+  # directory and matches each name. This replaces the `glob` crate: pattern
+  # matching is kiru, not a Rust library above the syscall floor.
+  pub fn glob(pattern: txt) -> Vec<txt> {
+    let segments: Vec<txt> = std::split(pattern, "/");
+    let absolute: bool = pattern.starts_with("/");
+    # A worklist of (segment index, prefix), in two parallel vecs because a
+    # worklist entry is a pair and there is no recursion. `count` is its length.
+    let work_at: Vec<int> = [];
+    let work_prefix: Vec<txt> = [];
+    let count: int = 1;
+    work_at[0] = match absolute { true => 1; false => 0; };
+    work_prefix[0] = match absolute { true => "/"; false => ""; };
+    let results: Vec<txt> = [];
+    let found: int = 0;
+    for {
+      match count > 0 { false => { break; }; true => {}; };
+      count = count - 1;
+      let at: int = work_at[count];
+      let prefix: txt = work_prefix[count];
+      match at == segments.len() {
+        true => {
+          # The relative root ("") is not a path; every other prefix is a match.
+          match prefix {
+            "" => {};
+            _ => { results[found] = prefix; found = found + 1; };
+          };
+        };
+        _ => {
+          let segment: txt = segments[at];
+          match segment == "**" {
+            true => {
+              # `**` matches zero segments...
+              work_at[count] = at + 1;
+              work_prefix[count] = prefix;
+              count = count + 1;
+              # ...or one entry and keeps matching. A file is consumed here; a
+              # directory is descended into, and its own zero-match consumes it
+              # (so a directory is never matched twice).
+              match is_dir(prefix) {
+                true => {
+                  for name in entries(prefix) {
+                    let child: txt = child_of(prefix, name);
+                    match is_dir(child) {
+                      true => {
+                        work_at[count] = at;
+                        work_prefix[count] = child;
+                        count = count + 1;
+                      };
+                      _ => {
+                        work_at[count] = at + 1;
+                        work_prefix[count] = child;
+                        count = count + 1;
+                      };
+                    };
+                  };
+                };
+                _ => {};
+              };
+            };
+            _ => {
+              match has_wildcard(segment) {
+                true => {
+                  match is_dir(prefix) {
+                    true => {
+                      for name in entries(prefix) {
+                        match match_name(segment, name) {
+                          true => {
+                            work_at[count] = at + 1;
+                            work_prefix[count] = child_of(prefix, name);
+                            count = count + 1;
+                          };
+                          _ => {};
+                        };
+                      };
+                    };
+                    _ => {};
+                  };
+                };
+                _ => {
+                  let next: txt = child_of(prefix, segment);
+                  match std::fs::exists(next) {
+                    true => {
+                      work_at[count] = at + 1;
+                      work_prefix[count] = next;
+                      count = count + 1;
+                    };
+                    _ => {};
+                  };
+                };
+              };
+            };
+          };
+        };
+      };
+    };
+    return std::vec::sorted(results);
+  };
+
+};

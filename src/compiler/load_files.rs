@@ -6,10 +6,10 @@
 
 mod load_error;
 mod loaded_program;
-mod read_entry_and_imports;
+mod loader;
 mod resolve_import_paths;
 #[cfg(test)]
 mod tests;
 
 pub(crate) use loaded_program::{LoadedProgram, ScopedDeclaration};
-pub(crate) use read_entry_and_imports::load_files;
+pub(crate) use loader::load_files;

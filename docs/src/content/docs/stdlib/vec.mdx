@@ -1,0 +1,292 @@
+---
+title: std::vec
+description: Inspect and transform vec.
+---
+
+`std::vec` declares the `Vec<T>` type and adds methods to it. Write `Vec<T>`
+after `use std::vec;` (or name it `std::vec::vec`). A transform returns a new
+vec, so calls chain. [Vecs](/concepts/vecs/) and [Closures](/concepts/closures/)
+cover the narrative.
+
+<details>
+<summary><code>len</code> — the number of elements</summary>
+
+```kiru
+items.len() -> int
+```
+
+- Returns the element count, for a vec of any element type.
+
+```kiru
+use std::text;
+use std::vec;
+let items: Vec<txt> = ["a", "b", "c"];
+std::print("@(items.len())");   # 3
+```
+
+</details>
+
+<details>
+<summary><code>add</code> — a new vec with one element added</summary>
+
+```kiru
+items.with(element: T) -> Vec<T>
+```
+
+- `element` — the element to add at the end.
+- Returns a new vec.
+
+```kiru
+use std::text;
+use std::vec;
+let xs: Vec<txt> = ["a", "b"].with("c");
+```
+
+</details>
+
+<details>
+<summary><code>add_first</code> — a new vec with one element at the front</summary>
+
+```kiru
+items.with_first(element: T) -> Vec<T>
+```
+
+- `element` — the element to add at the front.
+- Returns a new vec.
+
+```kiru
+use std::text;
+use std::vec;
+let xs: Vec<txt> = ["b", "c"].with_first("a");
+```
+
+</details>
+
+<details>
+<summary><code>concat</code> — join two Vec</summary>
+
+```kiru
+items.concat(other: Vec<T>) -> Vec<T>
+```
+
+- `other` — the vec to append.
+- Returns a new vec with every element of `other` after `items`.
+
+```kiru
+use std::text;
+use std::vec;
+let xs: Vec<txt> = ["a", "b"].concat(["c", "d"]);
+```
+
+</details>
+
+<details>
+<summary><code>reverse</code> — a new vec in reverse order</summary>
+
+```kiru
+items.reversed() -> Vec<T>
+```
+
+- Returns a new vec in reverse order.
+
+```kiru
+use std::text;
+use std::vec;
+let xs: Vec<txt> = ["a", "b", "c"].reversed();
+```
+
+</details>
+
+<details>
+<summary><code>contains</code> — whether a value is an element</summary>
+
+```kiru
+items.contains(element: T) -> bool
+```
+
+- `element` — the element to find.
+- Returns `true` or `false`.
+
+```kiru
+use std;
+use std::text;
+use std::vec;
+let present: bool = ["a", "b"].contains("b");   # true
+```
+
+</details>
+
+<details>
+<summary><code>find</code> — the first index of a value</summary>
+
+```kiru
+items.find(element: T) -> Option<int>
+```
+
+- `element` — the element to find.
+- Returns `Option.some(index)` at the first position where `==` holds, or
+  `Option.none` when it is not an element.
+
+```kiru
+use std;
+use std::text;
+use std::vec;
+let first: int = ["a", "b", "a"].find("a").or(-1);   # 0
+let missing: int = ["a", "b"].find("z").or(-1);     # -1
+```
+
+Related: [Absence](/concepts/absence/).
+
+</details>
+
+<details>
+<summary><code>first</code> — the first element</summary>
+
+```kiru
+items.first() -> T
+```
+
+- Returns the first element. An empty vec has no first element, so it stops the
+  run.
+
+```kiru
+use std::text;
+use std::vec;
+let xs: Vec<txt> = ["a", "b", "c"];   # xs.first() is "a"
+```
+
+</details>
+
+<details>
+<summary><code>last</code> — the last element</summary>
+
+```kiru
+items.last() -> T
+```
+
+- Returns the last element. An empty vec has no last element, so it stops the
+  run.
+
+```kiru
+use std::text;
+use std::vec;
+let xs: Vec<txt> = ["a", "b", "c"];   # xs.last() is "c"
+```
+
+</details>
+
+<details>
+<summary><code>map</code> — a new vec with a function applied</summary>
+
+```kiru
+items.map(apply: fn(T) -> U) -> Vec<U>
+```
+
+- `apply` — a function value called on each element.
+- Returns a new vec of the results.
+
+```kiru
+use std;
+use std::vec;
+fn double(x: int) -> int { return x * 2; };
+
+let xs: Vec<int> = [1, 2, 3].map(double);   # [2, 4, 6]
+```
+
+</details>
+
+<details>
+<summary><code>filter</code> — a new vec of the accepted elements</summary>
+
+```kiru
+items.filter(keep: fn(T) -> bool) -> Vec<T>
+```
+
+- `keep` — a function value answering `true` for an element to keep.
+- Returns a new vec with the elements `keep` accepts.
+
+```kiru
+use std;
+use std::vec;
+fn even(x: int) -> bool { return x % 2 == 0; };
+
+let xs: Vec<int> = [1, 2, 3, 4].filter(even);   # [2, 4]
+```
+
+</details>
+
+<details>
+<summary><code>sort_by</code> — a new vec ordered by a comparator</summary>
+
+```kiru
+items.sorted_by(less: fn(T, T) -> bool) -> Vec<T>
+```
+
+- `less` — a function value answering `true` when its first argument orders
+  before its second.
+- Returns a new vec ordered by `less`.
+
+```kiru
+use std;
+use std::vec;
+fn greater(a: int, b: int) -> bool { return a > b; };
+
+let xs: Vec<int> = [1, 3, 2].sorted_by(greater);   # [3, 2, 1]
+```
+
+</details>
+
+<details>
+<summary><code>sort</code> — a new vec of text in order</summary>
+
+```kiru
+std::vec::sorted(items: Vec<txt>) -> Vec<txt>
+```
+
+- `items` — the source vec.
+- Returns a new vec of the same text ordered byte by byte. It applies to
+  `Vec<txt>` alone.
+
+```kiru
+use std::text;
+use std::vec;
+let xs: Vec<txt> = std::vec::sorted(["c", "a", "b"]);   # [a, b, c]
+```
+
+</details>
+
+<details>
+<summary><code>unique</code> — a new vec without adjacent duplicates</summary>
+
+```kiru
+items.uniqued() -> Vec<T>
+```
+
+- Returns a new vec with adjacent duplicates dropped, comparing with `==`. A
+  sorted vec becomes unique, so `sorted` then `uniqued` leaves one of each.
+
+```kiru
+use std::text;
+use std::vec;
+let xs: Vec<txt> = ["a", "a", "b"].uniqued();   # [a, b]
+let unique: Vec<txt> = std::vec::sorted(["b", "a", "b"]).uniqued();   # [a, b]
+```
+
+</details>
+
+<details>
+<summary><code>join</code> — join a vec of text into one text</summary>
+
+```kiru
+std::join(parts: Vec<txt>, separator: txt) -> txt
+```
+
+- `parts` — the vec to join.
+- `separator` — the text between each pair.
+- Returns the joined text. It applies to `Vec<txt>` alone.
+
+```kiru
+std::print(std::join(["a", "b"], "-"));   # a-b
+```
+
+</details>

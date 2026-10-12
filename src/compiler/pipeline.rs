@@ -1,7 +1,7 @@
 //! The compile pipeline, in order.
 //!
 //! This is the one place the engine's stages are named in sequence: load the
-//! files, resolve names into edges, validate kinds and flow, prune what the
+//! files, resolve names into edges, validate types and flow, prune what the
 //! entry cannot reach, lower the result to bytecode, then copy this executable
 //! and attach the serialized bytecode behind the binary trailer. The command
 //! line layer only parses arguments and prints the message this returns.

@@ -8,21 +8,41 @@
 //! edges before its subtree is visited.
 //!
 //! Both visitor methods are required, so each pass names every node kind it
-//! visits and lists every variant explicitly. A new node kind is then a
+//! visits and Vec every variant explicitly. A new node kind is then a
 //! compile error in every pass, not a silently missed node.
 
-use super::expressions::{Expression, MatchBody, Statement, StringPart};
+use super::body::{Expression, MatchBody, Pattern, Statement, StringPart};
 
 /// A read-only walk over a body.
 pub(crate) trait Visitor {
     fn expression(&mut self, expression: &Expression);
     fn statement(&mut self, statement: &Statement);
+    /// Observe one match pattern: its value expression and its bindings.
+    fn pattern(&mut self, pattern: &Pattern);
 }
 
 /// A rewriting walk over a body.
 pub(crate) trait VisitorMut {
     fn expression(&mut self, expression: &mut Expression);
     fn statement(&mut self, statement: &mut Statement);
+    /// Rewrite one match pattern's value expression and bindings.
+    fn pattern(&mut self, pattern: &mut Pattern);
+}
+
+/// Visit one match pattern: its bindings, then its value expression.
+pub(crate) fn walk_pattern(visitor: &mut impl Visitor, pattern: &Pattern) {
+    visitor.pattern(pattern);
+    if let Pattern::Value(expression) = pattern {
+        walk_expression(visitor, expression);
+    }
+}
+
+/// Rewrite one match pattern: its bindings, then its value expression.
+pub(crate) fn walk_pattern_mut(visitor: &mut impl VisitorMut, pattern: &mut Pattern) {
+    visitor.pattern(pattern);
+    if let Pattern::Value(expression) = pattern {
+        walk_expression_mut(visitor, expression);
+    }
 }
 
 /// Visit every statement and, recursively, every expression under it.
@@ -53,14 +73,18 @@ pub(crate) fn walk_expression_mut(visitor: &mut impl VisitorMut, expression: &mu
     walk_expression_children_mut(visitor, expression);
 }
 
-/// Walk the children of one statement: its expressions, its switch subjects,
-/// case patterns, and case and default bodies, and its defer body.
+/// Walk the children of one statement: its expressions, its match subject,
+/// its arm patterns and bodies.
 fn walk_statement(visitor: &mut impl Visitor, statement: &Statement) {
     match statement {
         Statement::Bind { value, .. }
         | Statement::Assign { value, .. }
         | Statement::FieldAssign { value, .. }
         | Statement::Expression(value) => walk_expression(visitor, value),
+        Statement::IndexAssign { index, value, .. } => {
+            walk_expression(visitor, index);
+            walk_expression(visitor, value);
+        }
         Statement::Return { value, .. } => {
             if let Some(value) = value {
                 walk_expression(visitor, value);
@@ -85,6 +109,10 @@ fn walk_statement_mut(visitor: &mut impl VisitorMut, statement: &mut Statement) 
         | Statement::Assign { value, .. }
         | Statement::FieldAssign { value, .. }
         | Statement::Expression(value) => walk_expression_mut(visitor, value),
+        Statement::IndexAssign { index, value, .. } => {
+            walk_expression_mut(visitor, index);
+            walk_expression_mut(visitor, value);
+        }
         Statement::Return { value, .. } => {
             if let Some(value) = value {
                 walk_expression_mut(visitor, value);
@@ -102,17 +130,20 @@ fn walk_statement_mut(visitor: &mut impl VisitorMut, statement: &mut Statement) 
     }
 }
 
-/// Walk the children of one expression: records, call arguments, field
+/// Walk the children of one expression: maps, call arguments, field
 /// targets, and the operands of an addition.
 fn walk_expression_children(visitor: &mut impl Visitor, expression: &Expression) {
     match expression {
-        Expression::Text { .. } | Expression::Reference { .. } => {}
-        Expression::Record { fields, .. } => {
+        Expression::Text { .. }
+        | Expression::Bool { .. }
+        | Expression::Int { .. }
+        | Expression::Reference { .. } => {}
+        Expression::Map { fields, .. } => {
             for field in fields {
                 walk_expression(visitor, &field.value);
             }
         }
-        Expression::List { elements, .. } => {
+        Expression::Vec { elements, .. } => {
             for element in elements {
                 walk_expression(visitor, element);
             }
@@ -124,16 +155,30 @@ fn walk_expression_children(visitor: &mut impl Visitor, expression: &Expression)
                 }
             }
         }
-        Expression::Call { arguments, .. } => {
+        Expression::Call {
+            callee, arguments, ..
+        } => {
+            walk_expression(visitor, callee);
             for argument in arguments {
                 walk_expression(visitor, argument);
             }
         }
         Expression::Field { target, .. } => walk_expression(visitor, target),
-        Expression::Add { left, right, .. } => {
+        Expression::Variant { payload, .. } => {
+            for element in payload {
+                walk_expression(visitor, element);
+            }
+        }
+        Expression::Index { target, index, .. } => {
+            walk_expression(visitor, target);
+            walk_expression(visitor, index);
+        }
+        Expression::Binary { left, right, .. } => {
             walk_expression(visitor, left);
             walk_expression(visitor, right);
         }
+        Expression::Unary { operand, .. } => walk_expression(visitor, operand),
+        Expression::Function(function) => walk_statements(visitor, &function.body),
         Expression::Match {
             subject,
             cases,
@@ -142,7 +187,7 @@ fn walk_expression_children(visitor: &mut impl Visitor, expression: &Expression)
         } => {
             walk_expression(visitor, subject);
             for arm in cases {
-                walk_expression(visitor, &arm.pattern);
+                walk_pattern(visitor, &arm.pattern);
                 match &arm.body {
                     MatchBody::Expression(expression) => walk_expression(visitor, expression),
                     MatchBody::Block(statements) => walk_statements(visitor, statements),
@@ -161,13 +206,16 @@ fn walk_expression_children(visitor: &mut impl Visitor, expression: &Expression)
 /// Rewrite the children of one expression, mirroring `walk_expression_children`.
 fn walk_expression_children_mut(visitor: &mut impl VisitorMut, expression: &mut Expression) {
     match expression {
-        Expression::Text { .. } | Expression::Reference { .. } => {}
-        Expression::Record { fields, .. } => {
+        Expression::Text { .. }
+        | Expression::Bool { .. }
+        | Expression::Int { .. }
+        | Expression::Reference { .. } => {}
+        Expression::Map { fields, .. } => {
             for field in fields {
                 walk_expression_mut(visitor, &mut field.value);
             }
         }
-        Expression::List { elements, .. } => {
+        Expression::Vec { elements, .. } => {
             for element in elements {
                 walk_expression_mut(visitor, element);
             }
@@ -179,16 +227,30 @@ fn walk_expression_children_mut(visitor: &mut impl VisitorMut, expression: &mut 
                 }
             }
         }
-        Expression::Call { arguments, .. } => {
+        Expression::Call {
+            callee, arguments, ..
+        } => {
+            walk_expression_mut(visitor, callee);
             for argument in arguments {
                 walk_expression_mut(visitor, argument);
             }
         }
         Expression::Field { target, .. } => walk_expression_mut(visitor, target),
-        Expression::Add { left, right, .. } => {
+        Expression::Variant { payload, .. } => {
+            for element in payload {
+                walk_expression_mut(visitor, element);
+            }
+        }
+        Expression::Index { target, index, .. } => {
+            walk_expression_mut(visitor, target);
+            walk_expression_mut(visitor, index);
+        }
+        Expression::Binary { left, right, .. } => {
             walk_expression_mut(visitor, left);
             walk_expression_mut(visitor, right);
         }
+        Expression::Unary { operand, .. } => walk_expression_mut(visitor, operand),
+        Expression::Function(function) => walk_statements_mut(visitor, &mut function.body),
         Expression::Match {
             subject,
             cases,
@@ -197,7 +259,7 @@ fn walk_expression_children_mut(visitor: &mut impl VisitorMut, expression: &mut 
         } => {
             walk_expression_mut(visitor, subject);
             for arm in cases {
-                walk_expression_mut(visitor, &mut arm.pattern);
+                walk_pattern_mut(visitor, &mut arm.pattern);
                 match &mut arm.body {
                     MatchBody::Expression(expression) => walk_expression_mut(visitor, expression),
                     MatchBody::Block(statements) => walk_statements_mut(visitor, statements),
