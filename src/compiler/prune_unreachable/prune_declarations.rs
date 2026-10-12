@@ -3,8 +3,8 @@
 use std::collections::HashSet;
 
 use crate::model::{
-    Declaration, DeclarationId, Expression, Program, Statement, VisitorMut, walk_expression_mut,
-    walk_statements_mut,
+    Declaration, DeclarationId, Expression, Pattern, Program, Statement, VisitorMut,
+    walk_expression_mut,
 };
 
 use super::mark_reachable::collect_reachable_declarations;
@@ -17,7 +17,7 @@ pub(crate) fn prune_unreachable(program: &mut Program) {
     crate::model::verify_program(program);
 }
 
-/// Move the reachable declarations into a fresh vector, in their old order,
+/// Move the reachable declarations into a fresh Vector, in their old order,
 /// and return the old-to-new id mapping; a dropped declaration maps to `None`.
 fn compact(
     program: &mut Program,
@@ -49,8 +49,8 @@ fn remap(program: &mut Program, mapping: &[Option<DeclarationId>]) {
         }
     }
     for namespace in &mut program.namespaces {
-        namespace.values.remap(mapping);
-        namespace.functions.remap(mapping);
+        namespace.names.remap(mapping);
+        namespace.methods.remap(mapping);
     }
 }
 
@@ -61,14 +61,9 @@ fn remap_declaration(declaration: &mut Declaration, mapping: &[Option<Declaratio
     if let Some(owner) = &mut declaration.owner {
         *owner = mapped(mapping, *owner);
     }
-    for parameter in &mut declaration.parameters {
-        *parameter = mapped(mapping, *parameter);
-    }
     let mut remapper = EdgeRemapper { mapping };
-    if let Some(function) = declaration.function_mut() {
-        walk_statements_mut(&mut remapper, &mut function.body);
-    } else if let Some(expression) = declaration.initializer_mut() {
-        walk_expression_mut(&mut remapper, expression);
+    if let Some(value) = &mut declaration.value {
+        walk_expression_mut(&mut remapper, value);
     }
 }
 
@@ -85,16 +80,35 @@ impl VisitorMut for EdgeRemapper<'_> {
             Expression::Reference { declaration, .. } => {
                 *declaration = mapped(self.mapping, *declaration);
             }
-            Expression::Call { callee, .. } => {
-                *callee = mapped(self.mapping, *callee);
+            Expression::Function(function) => {
+                for parameter in &mut function.parameters {
+                    *parameter = mapped(self.mapping, *parameter);
+                }
+                for capture in &mut function.captures {
+                    *capture = mapped(self.mapping, *capture);
+                }
             }
             Expression::Text { .. }
-            | Expression::Record { .. }
-            | Expression::List { .. }
+            | Expression::Map { .. }
+            | Expression::Vec { .. }
+            | Expression::Bool { .. }
+            | Expression::Int { .. }
+            | Expression::Variant { .. }
+            | Expression::Call { .. }
             | Expression::Field { .. }
-            | Expression::Add { .. }
+            | Expression::Index { .. }
+            | Expression::Binary { .. }
+            | Expression::Unary { .. }
             | Expression::Interpolated { .. }
             | Expression::Match { .. } => {}
+        }
+    }
+
+    fn pattern(&mut self, pattern: &mut Pattern) {
+        if let Pattern::Variant { bindings, .. } = pattern {
+            for id in bindings.iter_mut().flatten() {
+                *id = mapped(self.mapping, *id);
+            }
         }
     }
 
@@ -102,7 +116,8 @@ impl VisitorMut for EdgeRemapper<'_> {
         match statement {
             Statement::Bind { declaration, .. }
             | Statement::Assign { declaration, .. }
-            | Statement::FieldAssign { declaration, .. } => {
+            | Statement::FieldAssign { declaration, .. }
+            | Statement::IndexAssign { declaration, .. } => {
                 *declaration = mapped(self.mapping, *declaration);
             }
             Statement::ForEach { item, .. } => {

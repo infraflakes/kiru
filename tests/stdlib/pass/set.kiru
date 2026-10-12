@@ -1,0 +1,76 @@
+# The set type and its methods. `Set<K>` is a rec over a vec kept sorted by a
+# comparator it carries, so these checks exercise the type as ordinary kiru:
+# construction, the ordered insert, membership, removal, the set operations,
+# and the subset test. `Set.entries` and `Set.less` are private to `std::set`,
+# so a program builds and reads a set only through the methods below.
+
+use std;
+use std::set;
+use std::text;
+use std::vec;
+
+fn check(name: txt, got: txt, want: txt) {
+  match got == want {
+    true => {};
+    false => { std::fail("@(name): expected `@(want)`, found `@(got)`"); };
+  };
+};
+
+# A comparator that orders text the other way, to show the order is the value
+# the set carries, not text order.
+fn reverse_less(a: txt, b: txt) -> bool {
+  return b < a;
+};
+
+fn int_less(a: int, b: int) -> bool {
+  return a < b;
+};
+
+fn int_text(value: int) -> txt {
+  return "@(value)";
+};
+
+fn main() {
+  let empty: std::set::Set<txt> = std::set::of([], std::vec::text_less);
+  check("an empty set has length 0", "@(empty.len())", "0");
+  check("an empty set has nothing", "@(empty.contains("a"))", "false");
+
+  let s: std::set::Set<txt> = std::set::of(["b", "a", "c", "a"], std::vec::text_less);
+  check("of sorts and drops duplicates", "@(s.len())", "3");
+  check("items is in order", std::join(s.items(), ","), "a,b,c");
+  check("contains finds a present key", "@(s.contains("b"))", "true");
+  check("contains rejects an absent key", "@(s.contains("z"))", "false");
+
+  let added: std::set::Set<txt> = s.with("d");
+  check("insert inserts a new key in order", std::join(added.items(), ","), "a,b,c,d");
+  check("insert keeps the source", "@(s.len())", "3");
+  let dup: std::set::Set<txt> = s.with("a");
+  check("insert ignores a duplicate", std::join(dup.items(), ","), "a,b,c");
+  check("insert in the middle keeps order", std::join(s.with("ab").items(), ","), "a,ab,b,c");
+
+  let removed: std::set::Set<txt> = s.without("b");
+  check("remove drops a key", std::join(removed.items(), ","), "a,c");
+  check("remove of an absent key is a no-op", std::join(s.without("z").items(), ","), "a,b,c");
+
+  let other: std::set::Set<txt> = std::set::of(["b", "c", "d"], std::vec::text_less);
+  check("union", std::join(s.union(other).items(), ","), "a,b,c,d");
+  check("intersection", std::join(s.intersection(other).items(), ","), "b,c");
+  check("difference", std::join(s.difference(other).items(), ","), "a");
+  check("difference the other way", std::join(other.difference(s).items(), ","), "d");
+  check("is_subset true", "@(std::set::of(["a", "b"], std::vec::text_less).is_subset(s))", "true");
+  check("is_subset false", "@(s.is_subset(std::set::of(["a"], std::vec::text_less)))", "false");
+  check("a set is a subset of itself", "@(s.is_subset(s))", "true");
+
+  # The order is the comparator the set carries: a reverse comparator orders
+  # text descending.
+  let descending: std::set::Set<txt> = std::set::of(["a", "c", "b"], reverse_less);
+  check("a reverse comparator orders descending", std::join(descending.items(), ","), "c,b,a");
+  check("contains follows the reverse order", "@(descending.contains("b"))", "true");
+  check("insert follows the reverse order", std::join(descending.with("bb").items(), ","), "c,bb,b,a");
+
+  # A comparator on ints shows the key type is free of any bound.
+  let numbers: std::set::Set<int> = std::set::of([3, 1, 2, 1], int_less);
+  check("an int set sorts and dedups", std::join(numbers.items().map(int_text), ","), "1,2,3");
+
+  std::print("set: ok");
+};

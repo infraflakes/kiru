@@ -1,20 +1,20 @@
 mod kiru {
 
-  fn build_docs(docs<rec>) {
+  fn build_docs(docs: Project) {
     run(docs, "bun install --frozen-lockfile");
     run(docs, "bun run build");
   };
 
-  fn check_docs(docs<rec>) {
+  fn check_docs(docs: Project) {
     run(docs, "bun run check");
     run(docs, "bun run types");
   };
 
-  fn format_docs(docs<rec>) {
+  fn format_docs(docs: Project) {
     run(docs, "bun run fix");
   };
 
-  fn update_docs(docs<rec>) {
+  fn update_docs(docs: Project) {
     run(docs, "bun update");
     run(docs, "biome migrate");
   };

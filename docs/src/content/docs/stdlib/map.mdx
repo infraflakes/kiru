@@ -1,0 +1,232 @@
+---
+title: std::map
+description: The Map record and its methods.
+---
+
+`std::map` declares the `Map<K, V>` record and the map methods. `Map` is an
+ordinary `rec` over a vec of entries, so a function whose first parameter is a
+`Map<K, V>` is callable as `m.name(...)`. `use std::map;` brings the type and
+the methods into scope; a qualified `std::map::Map` names the type without it,
+but the methods still need the `use`. `Entry` and `Map`'s field `entries` are
+private to `std::map`, so a map is built and read only through the methods
+below. [Maps](/concepts/maps/) covers the narrative.
+
+```kiru
+use std::vec;
+rec Entry<K, V> { pub key: K, pub value: V };
+pub rec Map<K, V> { entries: Vec<Entry<K, V>> };
+```
+
+<details>
+<summary><code>empty</code> — the empty map</summary>
+
+```kiru
+std::map::empty<K, V>() -> Map<K, V>
+```
+
+- Returns a map with no entries.
+
+`empty` has no argument to solve `K` and `V` from, so the call takes them from
+its expected type: write the annotation and it works.
+
+```kiru
+use std;
+use std::text;
+use std::map;
+fn main() {
+  let m: Map<txt, txt> = std::map::empty();
+  std::print("@(m.len())");   # 0
+};
+```
+
+</details>
+
+<details>
+<summary><code>of</code> — a map from a vec of entries</summary>
+
+```kiru
+std::map::of<K, V>(entries: Vec<Entry<K, V>>) -> Map<K, V>
+```
+
+- `entries` — the entries to build from. A later entry with the same key
+  replaces an earlier one.
+- Returns a new map with one entry per distinct key.
+
+```kiru
+use std;
+use std::text;
+use std::map;
+fn main() {
+  let m: Map<txt, txt> = std::map::of([{ key = "a", value = "1" }]);
+  std::print("@(m.len())");   # 1
+};
+```
+
+The annotation supplies `K` and `V`, which flow into the argument, so the
+`{ key = …, value = … }` literals are `Entry<txt, txt>` and `Entry` never has to
+be written.
+
+</details>
+
+<details>
+<summary><code>get</code> — the value stored for a key</summary>
+
+```kiru
+map.get(key: K) -> V
+```
+
+- `key` — the key to read.
+- Returns the value stored for `key`. A key the map does not have has no value,
+  so `get` stops the run with `get: the map has no entry for the key`; a caller
+  that cannot promise the key is present uses `get_or`.
+
+```kiru
+use std;
+use std::text;
+use std::map;
+fn main() {
+  let m: Map<txt, txt> = std::map::of([{ key = "a", value = "1" }]);
+  std::print(m.get("a"));   # 1
+};
+```
+
+</details>
+
+<details>
+<summary><code>get_or</code> — the value stored for a key, or a fallback</summary>
+
+```kiru
+map.get_or(key: K, fallback: V) -> V
+```
+
+- `key` — the key to read.
+- `fallback` — the value to return when the key is absent.
+- Returns the value stored for `key`, or `fallback` when the map does not have
+  it.
+
+```kiru
+use std;
+use std::text;
+use std::map;
+fn main() {
+  let m: Map<txt, txt> = std::map::of([{ key = "a", value = "1" }]);
+  std::print(m.get_or("a", "missing"));   # 1
+  std::print(m.get_or("z", "missing"));   # missing
+};
+```
+
+</details>
+
+<details>
+<summary><code>insert</code> — a new map with one key written</summary>
+
+```kiru
+map.with(key: K, value: V) -> Map<K, V>
+```
+
+- `key` — the key to write.
+- `value` — the value to store for it.
+- Returns a new map: an existing key is replaced in place, a new key is
+  appended. The map it is called on is unchanged.
+
+```kiru
+use std;
+use std::text;
+use std::map;
+fn main() {
+  let m: Map<txt, txt> = std::map::of([{ key = "a", value = "1" }]);
+  let n: Map<txt, txt> = m.with("b", "2");
+  std::print("@(n.len())");   # 2
+};
+```
+
+</details>
+
+<details>
+<summary><code>contains</code> — whether a key is present</summary>
+
+```kiru
+map.contains(key: K) -> bool
+```
+
+- `key` — the key to test.
+- Returns `true` or `false`.
+
+```kiru
+use std;
+use std::text;
+use std::map;
+fn main() {
+  let m: Map<txt, txt> = std::map::of([{ key = "a", value = "1" }]);
+  std::print("@(m.contains("a")) @(m.contains("z"))");   # true false
+};
+```
+
+</details>
+
+<details>
+<summary><code>keys</code> — the keys, in order</summary>
+
+```kiru
+map.keys() -> Vec<K>
+```
+
+- Returns a new vec of the keys in insertion order.
+
+```kiru
+use std;
+use std::text;
+use std::map;
+use std::vec;
+fn main() {
+  let m: Map<txt, txt> = std::map::of([{ key = "a", value = "1" }, { key = "b", value = "2" }]);
+  let ks: Vec<txt> = m.keys();
+  std::print(std::join(ks, ","));   # a,b
+};
+```
+
+</details>
+
+<details>
+<summary><code>values</code> — the values, in order</summary>
+
+```kiru
+map.values() -> Vec<V>
+```
+
+- Returns a new vec of the values in insertion order.
+
+```kiru
+use std;
+use std::text;
+use std::map;
+use std::vec;
+fn main() {
+  let m: Map<txt, txt> = std::map::of([{ key = "a", value = "1" }, { key = "b", value = "2" }]);
+  let vs: Vec<txt> = m.values();
+  std::print(std::join(vs, ","));   # 1,2
+};
+```
+
+</details>
+
+<details>
+<summary><code>len</code> — the number of entries</summary>
+
+```kiru
+map.len() -> int
+```
+
+- Returns the entry count.
+
+```kiru
+use std;
+use std::text;
+use std::map;
+fn main() {
+  let m: Map<txt, txt> = std::map::of([{ key = "a", value = "1" }, { key = "b", value = "2" }]);
+  std::print("@(m.len())");   # 2
+};
+```
+
+</details>

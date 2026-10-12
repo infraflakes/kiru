@@ -1,0 +1,48 @@
+# The text methods: len, trim, split, find, replace, and the predicates.
+
+use std;
+use std::text;
+use std::vec;
+
+fn check(name: txt, got: txt, want: txt) {
+  match got == want {
+    true => {};
+    false => { std::fail("@(name): expected `@(want)`, found `@(got)`"); };
+  };
+};
+
+fn main() {
+  let s: txt = "abc";
+  check("len counts bytes", "@(s.len())", "3");
+  let padded: txt = "  hi  ";
+  check("trim", "[@(padded.trim())]", "[hi]");
+  let trailing: txt = "  hi\n";
+  check("trim removes a trailing newline", "[@(trailing.trim())]", "[hi]");
+  let csv: txt = "a,b,c";
+  let comma: txt = ",";
+  check("split chains into a vec method", "@(csv.split(comma).len())", "3");
+  let hello: txt = "hello";
+  let needle: txt = "l";
+  check("find wraps a byte index", "@(hello.find(needle).or(-1))", "2");
+  let absent: txt = "z";
+  check("find is none when absent", "@(hello.find(absent).or(-1))", "-1");
+  check("replace replaces every occurrence", "a-b-c".replace("-", "+"), "a+b+c");
+  check("replace with no match leaves the text", "abc".replace("z", "-"), "abc");
+  check("starts_with true", "@(hello.starts_with("he"))", "true");
+  check("starts_with false", "@(hello.starts_with("lo"))", "false");
+  check("ends_with true", "@(hello.ends_with("lo"))", "true");
+  check("ends_with false", "@(hello.ends_with("he"))", "false");
+  let empty: txt = "";
+  check("ends_with on two empty texts", "@(empty.ends_with(empty))", "true");
+  check("contains", "@(hello.contains("ell"))", "true");
+  check("byte reads a byte value", "@("abc".byte(1))", "98");
+  check("number reads a number", "@("42".number().or(-1))", "42");
+  check("number reads a negative number", "@("-7".number().or(0))", "-7");
+  check("number is none for text", "@("x".number().or(-1))", "-1");
+  check("number is none for empty text", "@("".number().or(-1))", "-1");
+  let accent: txt = "é";
+  check("len counts bytes, not characters", "@(accent.len())", "2");
+  check("find_byte returns a byte index", "@(std::text::find_byte(hello, needle).or(-1))", "2");
+  check("find_byte is none when absent", "@(std::text::find_byte(hello, absent).or(-1))", "-1");
+  std::print("text: ok");
+};

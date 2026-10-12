@@ -1,0 +1,53 @@
+---
+title: std::Option
+description: A value that may be present or absent.
+---
+
+`std::Option<T>` is an ordinary enum: a value that is either present (`some`)
+or absent (`none`). [Absence](/concepts/absence/) covers where it appears and
+what produces it.
+
+```kiru
+pub enum Option<T> { pub some(T), pub none };
+```
+
+`Option` lives in the `std` namespace. Write it `std::Option`, or add `use std;`
+to write it bare. Both variants are `pub`, so a program outside `std`
+constructs and matches them; the helpers are methods, so calling one needs
+`use std;`.
+
+<details>
+<summary><code>or</code> — the value, or a fallback</summary>
+
+```kiru
+option.or(fallback: T) -> T
+```
+
+- `fallback` — the value to use when `option` is `none`.
+- Returns the value inside `some`, or `fallback`.
+
+```kiru
+use std;
+use std::text;
+let index: int = "a=b".find("=").or(-1);   # 1
+```
+
+</details>
+
+<details>
+<summary><code>contains</code> — whether a value is present</summary>
+
+```kiru
+option.contains() -> bool
+```
+
+- Returns `true` for `some`, `false` for `none`.
+
+```kiru
+use std;
+use std::text;
+let found: std::Option<int> = "a=b".find("=");
+let present: bool = found.contains();   # true
+```
+
+</details>

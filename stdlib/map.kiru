@@ -1,0 +1,122 @@
+# std/map.kiru
+#
+# The map: an ordered association from keys to values, built over `vec`. A
+# `Map<K, V>` is an ordinary `rec`, not a built-in type — the runtime
+# represents it like any other rec, so nothing here needs a native. A function
+# whose first parameter is a `Map<K, V>` is callable as `m.name(...)`, so these
+# are the map methods. The type and its helpers share the `std::map` namespace,
+# so `use std::map;` brings in both.
+
+mod std::map {
+
+  # `bool`/`int`/`Option` live at the `std` root and `Vec<T>` in its own
+  # category; `Entry` and `Map` are declared in this namespace.
+  use std;
+  use std::vec;
+
+  # One key/value association. The type is private to `std::map`; a program
+  # builds one with a `{ key = …, value = … }` literal, whose shape `of`
+  # gives it, so it never names `Entry`.
+  rec Entry<K, V> { pub key: K, pub value: V };
+
+  # An ordered association of keys to values, keyed by equality. A later write
+  # to a key replaces the earlier value and keeps its place.
+  pub rec Map<K, V> { entries: Vec<Entry<K, V>> };
+
+  # The empty map.
+  pub fn empty<K, V>() -> Map<K, V> {
+    return { entries = [] };
+  };
+
+  # A new map with `key` set to `value`, replacing any existing value in place
+  # and appending a new key. Declared before `of`, which builds on it.
+  pub fn with<K, V>(self: Map<K, V>, key: K, value: V) -> Map<K, V> {
+    let out: Vec<Entry<K, V>> = [];
+    let replaced: bool = false;
+    let at: int = 0;
+    for entry in self.entries {
+      match entry.key == key {
+        true => { out[at] = { key = key, value = value }; replaced = true; };
+        _ => { out[at] = entry; };
+      };
+      at = at + 1;
+    };
+    match replaced {
+      true => {};
+      _ => { out[at] = { key = key, value = value }; };
+    };
+    return { entries = out };
+  };
+
+  # A map from a vec of entries. A later entry replaces an earlier one with the
+  # same key, so the result has one entry per distinct key.
+  pub fn of<K, V>(entries: Vec<Entry<K, V>>) -> Map<K, V> {
+    let result: Map<K, V> = { entries = [] };
+    for entry in entries {
+      result = result.with(entry.key, entry.value);
+    };
+    return result;
+  };
+
+  # The value stored for `key`. A missing key has no value, so it stops the run.
+  pub fn get<K, V>(self: Map<K, V>, key: K) -> V {
+    for entry in self.entries {
+      match entry.key == key {
+        true => { return entry.value; };
+        _ => {};
+      };
+    };
+    std::fail("get: the map has no entry for the key");
+  };
+
+  # The value stored for `key`, or `fallback` when it is missing.
+  pub fn get_or<K, V>(self: Map<K, V>, key: K, fallback: V) -> V {
+    for entry in self.entries {
+      match entry.key == key {
+        true => { return entry.value; };
+        _ => {};
+      };
+    };
+    return fallback;
+  };
+
+  # Whether `key` is present.
+  pub fn contains<K, V>(self: Map<K, V>, key: K) -> bool {
+    let found: bool = false;
+    for entry in self.entries {
+      match entry.key == key {
+        true => { found = true; break; };
+        _ => {};
+      };
+    };
+    return found;
+  };
+
+  # The keys, in order.
+  pub fn keys<K, V>(self: Map<K, V>) -> Vec<K> {
+    let out: Vec<K> = [];
+    let at: int = 0;
+    for entry in self.entries {
+      out[at] = entry.key;
+      at = at + 1;
+    };
+    return out;
+  };
+
+  # The values, in order.
+  pub fn values<K, V>(self: Map<K, V>) -> Vec<V> {
+    let out: Vec<V> = [];
+    let at: int = 0;
+    for entry in self.entries {
+      out[at] = entry.value;
+      at = at + 1;
+    };
+    return out;
+  };
+
+  # The number of entries.
+  pub fn len<K, V>(self: Map<K, V>) -> int {
+    return self.entries.len();
+  };
+
+};

@@ -30,7 +30,6 @@ impl Parser {
     fn parse_statement(&mut self) -> Result<Statement, ParseError> {
         match &self.current().kind {
             TokenKind::Let => Ok(Statement::Binding(self.parse_let_binding()?)),
-            TokenKind::Mut => Err(self.error_here("`mut` must follow `let`")),
             TokenKind::Return => self.parse_return(),
             TokenKind::Panic => self.parse_panic(),
             TokenKind::Async => self.parse_async(),
@@ -45,8 +44,15 @@ impl Parser {
             TokenKind::Ident(_) if matches!(self.peek(1).kind, TokenKind::Equals) => {
                 self.parse_assignment()
             }
-            TokenKind::Ident(_) if matches!(self.peek(1).kind, TokenKind::Dot) => {
+            TokenKind::Ident(_)
+                if matches!(self.peek(1).kind, TokenKind::Dot)
+                    && matches!(self.peek(2).kind, TokenKind::Ident(_))
+                    && matches!(self.peek(3).kind, TokenKind::Equals) =>
+            {
                 self.parse_field_assignment()
+            }
+            TokenKind::Ident(_) if matches!(self.peek(1).kind, TokenKind::LBracket) => {
+                self.parse_index_assignment()
             }
             _ => {
                 let expression = self.parse_expression()?;
@@ -91,7 +97,7 @@ impl Parser {
         Ok(Statement::Wait { span })
     }
 
-    /// Parse a `for` statement: `for item in <list> { ... };` iterates a list,
+    /// Parse a `for` statement: `for item in <Vec> { ... };` iterates a Vec,
     /// and `for { ... };` repeats until a `break`.
     fn parse_for(&mut self) -> Result<Statement, ParseError> {
         let start = self.advance().start;
@@ -155,11 +161,32 @@ impl Parser {
         })
     }
 
+    /// Parse a `name[index] = expression;` index assignment statement.
+    fn parse_index_assignment(&mut self) -> Result<Statement, ParseError> {
+        let (name, name_span) = self.expect_identifier("in an index assignment")?;
+        let start = name_span.start;
+        self.expect(&TokenKind::LBracket, "to open the index")?;
+        let index = self.parse_expression()?;
+        self.expect(&TokenKind::RBracket, "to close the index")?;
+        self.expect(&TokenKind::Equals, "after the index")?;
+        let value = self.parse_expression()?;
+        let span = self.span_through_semicolon(start, "after the index assignment")?;
+        Ok(Statement::IndexAssignment {
+            name,
+            name_span,
+            index,
+            value,
+            span,
+        })
+    }
+
     /// Parse a `match subject { pattern => body; … };` term. In statement
     /// position (`value` is false) the arm bodies are blocks; in expression
     /// position they are expressions. The `_` arm is the default.
     pub(super) fn parse_match(&mut self, value: bool) -> Result<Expression, ParseError> {
         let start = self.advance().start;
+        // The subject may end in a bare `{ ... }` shape, so its `{` opens the
+        // subject and the body's `{` follows it.
         let subject = self.parse_expression()?;
         self.expect(&TokenKind::LBrace, "to open the match")?;
 
@@ -170,6 +197,9 @@ impl Parser {
                 return Err(
                     self.error_here("expected `}` to close the match, found the end of the file")
                 );
+            }
+            if default.is_some() {
+                return Err(self.error_here("the `_` arm must be last"));
             }
             let arm_start = self.current().span.start;
             let is_default = self.check_wildcard_arm();
@@ -192,12 +222,7 @@ impl Parser {
                     body,
                     span,
                 }),
-                None => {
-                    if default.is_some() {
-                        return Err(self.error_here("a match allows at most one `_` arm"));
-                    }
-                    default = Some(body);
-                }
+                None => default = Some(body),
             }
         }
         let close = self.expect(&TokenKind::RBrace, "to close the match")?;

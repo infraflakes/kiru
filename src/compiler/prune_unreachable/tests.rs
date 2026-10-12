@@ -13,12 +13,14 @@ fn retained_names(program: &Program) -> Vec<&str> {
 
 #[test]
 fn drops_std_the_entry_never_reaches() {
-    let mut program = checked_program("fn main() { std::print(\"x\"); };");
+    let mut program = checked_program(
+        "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nfn main() { std::print(\"x\"); };",
+    );
     prune_unreachable(&mut program);
     let names = retained_names(&program);
     assert!(names.contains(&"print"), "print is reachable: {names:?}");
     assert!(
-        !names.contains(&"eprint"),
+        !names.contains(&"fail"),
         "an unreached std helper must be dropped: {names:?}"
     );
 }
@@ -26,9 +28,10 @@ fn drops_std_the_entry_never_reaches() {
 #[test]
 fn drops_unreachable_user_declarations() {
     let mut program = checked_program(
-        "fn unused() -> txt { return \"\"; };\n\
-         let dead<txt> = \"x\";\n\
-         let dead_record<rec> = { key = \"v\" };\n\
+        "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nfn unused() -> txt { return \"\"; };\n\
+         let dead: txt = \"x\";\n\
+         rec Dead { key: txt };\n\
+         let dead_record: Dead = { key = \"v\" };\n\
          fn main() {};",
     );
     prune_unreachable(&mut program);
@@ -38,7 +41,7 @@ fn drops_unreachable_user_declarations() {
 #[test]
 fn retains_transitive_calls() {
     let mut program = checked_program(
-        "fn leaf() -> txt { return \"\"; };\n\
+        "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nfn leaf() -> txt { return \"\"; };\n\
          fn middle() -> txt { return leaf(); };\n\
          fn helper() { middle(); };\n\
          fn main() { helper(); };",
@@ -54,9 +57,10 @@ fn retains_transitive_calls() {
 #[test]
 fn retains_module_values_the_entry_reads() {
     let mut program = checked_program(
-        "let greeting<txt> = \"hi\";\n\
-         let backend<rec> = { dir = \"/x\" };\n\
-         fn read(repo<rec>) -> txt { return repo.dir; };\n\
+        "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nlet greeting: txt = \"hi\";\n\
+         rec Repo { dir: txt };\n\
+         let backend: Repo = { dir = \"/x\" };\n\
+         fn read(repo: Repo) -> txt { return repo.dir; };\n\
          fn main() { std::print(greeting); std::print(read(backend)); };",
     );
     prune_unreachable(&mut program);
@@ -69,8 +73,9 @@ fn retains_module_values_the_entry_reads() {
 #[test]
 fn a_retained_program_still_checks() {
     let mut program = checked_program(
-        "let backend<rec> = { dir = \"/x\" };\n\
-         fn read(repo<rec>) -> txt { return repo.dir; };\n\
+        "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nrec Repo { dir: txt };\n\
+         let backend: Repo = { dir = \"/x\" };\n\
+         fn read(repo: Repo) -> txt { return repo.dir; };\n\
          fn main() { std::print(read(backend)); };",
     );
     prune_unreachable(&mut program);
@@ -79,7 +84,9 @@ fn a_retained_program_still_checks() {
 
 #[test]
 fn retention_shrinks_the_payload() {
-    let mut program = checked_program("fn main() { std::print(\"x\"); };");
+    let mut program = checked_program(
+        "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nfn main() { std::print(\"x\"); };",
+    );
     let before = postcard::to_allocvec(&lower_bytecode(&program))
         .expect("serializes")
         .len();

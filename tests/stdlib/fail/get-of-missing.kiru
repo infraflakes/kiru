@@ -1,0 +1,11 @@
+# `get` on a key the map does not have has no value, so it must stop the run.
+
+use std;
+use std::map;
+use std::text;
+
+fn main() {
+  let m: std::map::Map<txt, txt> = std::map::of([{ key = "a", value = "1" }]);
+  let value: txt = m.get("z");
+  std::print(value);
+};

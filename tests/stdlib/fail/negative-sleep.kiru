@@ -1,0 +1,8 @@
+# A negative sleep count stops the run.
+
+use std;
+use std::time;
+
+fn main() {
+  std::time::sleep(-1);
+};

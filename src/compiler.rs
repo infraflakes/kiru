@@ -4,7 +4,7 @@
 //! A compile walks the stages in order, and this facade is the one place that
 //! names them. `load_files` reads the entry and every import; `resolve_names`
 //! builds the program model and resolves every name into an edge;
-//! `validate_program` derives every kind and enforces the body and flow rules;
+//! `validate_program` derives every type and enforces the body and flow rules;
 //! `prune_unreachable` keeps only what the entry reaches; `lower_bytecode`
 //! lowers the result to a compact instruction stream; and `package_binary`
 //! serializes that bytecode behind the binary trailer. The model it builds
@@ -18,6 +18,7 @@ pub(crate) const DIAGNOSTIC_PREFIX: &str = "kc";
 mod diagnostics;
 mod load_files;
 mod lower_bytecode;
+mod lower_expressions;
 mod package_binary;
 mod pipeline;
 mod prune_unreachable;
@@ -28,7 +29,7 @@ mod validate_program;
 
 pub(in crate::compiler) use diagnostics::{
     Diagnostic, duplicate_field, duplicate_in_namespace, duplicate_name, expected_instead,
-    function_used_as_value, value_called,
+    native_used_as_value, private_member, value_called,
 };
 pub(crate) use load_files::{LoadedProgram, load_files};
 pub(crate) use lower_bytecode::lower_bytecode;

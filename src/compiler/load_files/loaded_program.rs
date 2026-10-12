@@ -27,10 +27,19 @@ pub(crate) struct ScopedDeclaration {
     pub(crate) declaration: Declaration,
 }
 
+/// One `use` in the joined stream: the namespace that wrote it and the path it
+/// names.
+#[derive(Debug)]
+pub(crate) struct ScopedUse {
+    pub(crate) namespace: Vec<String>,
+    pub(crate) path: Vec<String>,
+}
+
 /// The whole program: every loaded file plus the joined item stream.
 #[derive(Debug)]
 pub(crate) struct LoadedProgram {
     pub(crate) entry: usize,
     pub(crate) files: Vec<LoadedFile>,
     pub(crate) items: Vec<ScopedDeclaration>,
+    pub(crate) uses: Vec<ScopedUse>,
 }

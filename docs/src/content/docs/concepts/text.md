@@ -1,19 +1,21 @@
 ---
 title: Text
-description: Literals, escapes, comments, and + as the only operator.
+description: Literals, escapes, comments, interpolation, ordering, and bytes.
 ---
 
-Text is the only scalar value Kiru has. Numbers, versions, paths, and flags are
-all text, so text is where a program starts. In this section we'll look at how
-to write text, the escapes it understands, and the one operator that joins it.
-
-A literal is written with double quotes and may span lines:
+Text is the type a program shares with the operating system: paths, versions,
+and command output are all text. A literal is written with double quotes and may
+span lines:
 
 ```kiru
-let name<txt> = "backend";
-let message<txt> = "first line
+use std::text;
+fn main() {
+  let name: txt = "backend";
+  let message: txt = "first line
 second line";
-let empty<txt> = "";
+  let empty: txt = "";
+  std::print(name);
+};
 ```
 
 ## Escapes
@@ -35,7 +37,7 @@ Any other escape is an error:
 ```console
 $ kc main.kiru
 main.kiru:1:19: error: invalid escape `\q`; only \n, \t, \r, \e, \\, \", and \@ are allowed
-let s<txt> = "bad \q";
+let s: txt = "bad \q";
                   ^^
 ```
 
@@ -44,40 +46,104 @@ let s<txt> = "bad \q";
 A comment starts with `#` and runs to the end of the line:
 
 ```kiru
-let retries<txt> = "3";   # numbers are text
+use std;
+fn main() { let retries: int = 3;   # an integer
+};
 ```
 
 An identifier starts with a letter or `_`, then letters, digits, or `_`.
 
-## Concatenation
+## Building text
 
-`+` joins two texts and is the only operator:
+Text is built by interpolation, not by `+`. `+` is integer addition; to join a
+value into text, write it inside `@(…)`:
 
 ```kiru
-fn label(name<txt>, code<txt>) -> txt {
-  return "  " + name + ": " + code + "\n";
+use std;
+use std::text;
+fn label(name: txt, code: int) -> txt {
+  return "  @(name): @(code)\n";
 };
+fn main() { std::print(label("build", 3)); };
 ```
 
-Both sides must be text; anything else is an error. There is no arithmetic and
-no comparison operator; compare text with [Match](/concepts/match/).
-
-`+` never changes its operands, so a command line is built exactly as written.
-Text that must reach a command as data rather than as shell syntax is escaped
-with `std::quote`; [std](/stdlib/std/) covers it.
+`std::quote` escapes text that must reach a command as data rather than as shell
+syntax; [std](/stdlib/std/) covers it.
 
 ## Interpolation
 
-A string may insert a text expression with `@(…)`:
+A string may insert an expression with `@(…)`. The expression may be text, an
+integer, or a boolean; an integer is written in decimal and a boolean as `true`
+or `false`:
 
 ```kiru
-let name<txt> = "backend";
-let message<txt> = "building @(name)…";
+use std;
+use std::text;
+fn main() {
+  let name: txt = "backend";
+  let count: int = 3;
+  let message: txt = "building @(name) (@(count))…";
+  let enabled: txt = "verbose: @(true)";
+  std::print(message);
+  std::print(enabled);
+};
 ```
 
-The expression inside `@(…)` must be text, and may be any text expression: a
-name, a field, a call, or another string. `\@` writes a literal `@(`:
+The expression may be any expression of those types: a name, a field, a call, an
+arithmetic or comparison expression, or another string. `\@` writes a literal
+`@(`:
 
 ```kiru
-let at<txt> = "user\@host";   # user@host
+use std::text;
+fn main() {
+  let at: txt = "user\@host";   # user@host
+  std::print(at);
+};
+```
+
+## Ordering
+
+`<`, `<=`, `>`, and `>=` order text byte by byte as well as integers, and `==`
+and `!=` compare any two values for equality:
+
+```kiru
+use std;
+fn main() {
+  let before: bool = "apple" < "banana";   # true
+  let same: bool = "a" == "a";             # true
+  std::print("@(before) @(same)");
+};
+```
+
+A `Map` and a vec cannot be ordered, only compared for equality.
+
+## Bytes
+
+Text is a sequence of bytes, and every index counts bytes rather than
+characters. `len` is the byte count, `byte` reads one byte, and `slice(start,
+end)` is the half-open range of bytes:
+
+```kiru
+use std;
+use std::text;
+fn main() {
+  let word: txt = "héllo";
+  std::print("@(word.len())");        # 6, not 5
+  std::print(word.slice(0, 3));       # hé
+};
+```
+
+Because the byte count and the character count differ, a `slice` range that
+falls inside a character is refused: `slice` stops the run rather than produce
+text that is not UTF-8. `find` returns a byte index, and an absent needle is the
+absence ([Absence](/concepts/absence/) covers it):
+
+```kiru
+use std;
+use std::text;
+fn main() {
+  let line: txt = "a=b";
+  let needle: txt = "=";
+  std::print("@(line.find(needle).or(-1))");   # 1
+};
 ```

@@ -18,10 +18,10 @@ use std::sync::{Arc, RwLock};
 #[cfg(test)]
 use std::collections::HashMap;
 
-use crate::bytecode::{Bytecode, Instruction};
+use crate::bytecode::{Bytecode, CompareOp, Instruction, NumberOp};
 use crate::lock_recovery::RwLockExt;
-use crate::model::{Record, Value};
 use crate::runtime::Panic;
+use crate::runtime::{Map, Text, Value};
 
 use super::processes::{self as process, RuntimeState};
 
@@ -29,13 +29,11 @@ use super::processes::{self as process, RuntimeState};
 /// process exit code: zero on success, one on failure or panic, and 130 when
 /// a signal arrived.
 pub(crate) fn run(bytecode: Arc<Bytecode>, words: &[String]) -> i32 {
-    let arguments = match build_arguments_record(words) {
-        Ok(record) => record,
-        Err(message) => {
-            super::report_error(message);
-            return 1;
-        }
-    };
+    let arguments: Vec<Value> = words
+        .iter()
+        .cloned()
+        .map(|word| Value::Text(word.into()))
+        .collect();
     let state = Arc::new(RuntimeState::new());
     // The signal handler keeps a raw pointer to the state, so the state must
     // outlive the run, including a partially installed handler set.
@@ -65,36 +63,19 @@ pub(crate) fn run(bytecode: Arc<Bytecode>, words: &[String]) -> i32 {
         1
     } else {
         match entry_status {
-            Ok(Value::Text(status)) => status_code(&status),
-            Ok(_) => 0,
+            Ok(value) => exit_code(&value),
             Err(_) => 1,
         }
     }
 }
 
-/// The process status a program's `main` returned: a whole number is the exit
-/// code, clamped to `0..=255`; any other text is a failure message printed to
-/// stderr with status `1`.
-fn status_code(status: &str) -> i32 {
-    match status.parse::<u32>() {
-        Ok(code) => code.min(255) as i32,
-        Err(_) => {
-            super::report_error(status);
-            1
-        }
+/// The process status a program's `main` returned: its `int` clamped to
+/// `0..=255`, and `0` when it returned nothing.
+fn exit_code(value: &Value) -> i32 {
+    match value {
+        Value::Int(code) => (*code).clamp(0, 255) as i32,
+        _ => 0,
     }
-}
-
-/// The args record: the first word is `cmd` and the second is `flag`, both
-/// verbatim; an absent word reads `""`. A third word is a usage error.
-pub(super) fn build_arguments_record(words: &[String]) -> Result<Record, &'static str> {
-    if words.len() > 2 {
-        return Err("expected one command and one flag");
-    }
-    Ok(Record::from_pairs([
-        ("cmd".to_owned(), words.first().cloned().unwrap_or_default()),
-        ("flag".to_owned(), words.get(1).cloned().unwrap_or_default()),
-    ]))
 }
 
 /// The virtual machine over one program. Detached threads share the bytecode,
@@ -125,13 +106,15 @@ impl Runtime {
         Ok(())
     }
 
-    /// Call the entry, passing the args record when the entry takes one.
-    fn call_entry(&self, arguments: Record) -> Result<Value, Panic> {
+    /// Call the entry, passing the command-line words when the entry takes one.
+    /// The decode boundary has already rejected an entry with more than one
+    /// parameter.
+    fn call_entry(&self, words: Vec<Value>) -> Result<Value, Panic> {
         let arity = self.bytecode.codes[self.bytecode.entry as usize].arity;
-        let arguments = match arity {
-            0 => Vec::new(),
-            1 => vec![Value::Record(arguments)],
-            _ => return Err(self.fail()),
+        let arguments = if arity == 1 {
+            vec![Value::Vec(Arc::new(words))]
+        } else {
+            Vec::new()
         };
         self.run_code(self.bytecode.entry, arguments)
     }
@@ -160,7 +143,7 @@ impl Runtime {
             match &code.instructions[pc] {
                 Instruction::LoadConst { dst, constant } => {
                     frame.registers[*dst as usize] =
-                        Value::Text(self.bytecode.constants[*constant as usize].clone());
+                        Value::Text(self.bytecode.constants[*constant as usize].clone().into());
                 }
                 Instruction::LoadGlobal { dst, global } => {
                     frame.registers[*dst as usize] =
@@ -172,47 +155,141 @@ impl Runtime {
                 Instruction::StoreLocal { slot, src } => {
                     frame.registers[*slot as usize] = frame.registers[*src as usize].clone();
                 }
-                Instruction::BuildRecord { dst, fields } => {
-                    let mut record = Record::default();
+                Instruction::BuildMap { dst, fields } => {
+                    let mut map = Map::default();
                     for (key, value) in fields {
                         let key = self.bytecode.constants[*key as usize].clone();
-                        let value = self.text(&frame.registers[*value as usize])?;
-                        record.set(key, value);
+                        let value = frame.registers[*value as usize].clone();
+                        map.set(key, value);
                     }
-                    frame.registers[*dst as usize] = Value::Record(record);
+                    frame.registers[*dst as usize] = Value::Map(map);
                 }
-                Instruction::BuildList { dst, elements } => {
-                    let mut list = Vec::with_capacity(elements.len());
+                Instruction::BuildVec { dst, elements } => {
+                    let mut vec = Vec::with_capacity(elements.len());
                     for element in elements {
-                        list.push(self.text(&frame.registers[*element as usize])?);
+                        vec.push(frame.registers[*element as usize].clone());
                     }
-                    frame.registers[*dst as usize] = Value::List(list);
+                    frame.registers[*dst as usize] = Value::Vec(Arc::new(vec));
                 }
-                Instruction::ListIndex { dst, list, index } => {
+                Instruction::VecIndex { dst, vec, index } => {
                     let element = match (
-                        &frame.registers[*list as usize],
+                        &frame.registers[*vec as usize],
                         &frame.registers[*index as usize],
                     ) {
-                        (Value::List(list), Value::Number(index)) => {
-                            let Some(element) = list.get(*index as usize) else {
-                                return Err(self.fail());
+                        (Value::Vec(vec), Value::Int(index)) => {
+                            let Some(element) = vec.get(*index as usize) else {
+                                return Err(self.index_failure(*index, vec.len()));
                             };
                             element.clone()
                         }
                         _ => return Err(self.fail()),
                     };
-                    frame.registers[*dst as usize] = Value::Text(element);
+                    frame.registers[*dst as usize] = element;
                 }
-                Instruction::JumpIfIndexAtEnd {
-                    target,
+                Instruction::MakeVariant { dst, tag, payload } => {
+                    let mut values = Vec::with_capacity(payload.len());
+                    for element in payload {
+                        values.push(frame.registers[*element as usize].clone());
+                    }
+                    frame.registers[*dst as usize] = Value::Variant {
+                        tag: *tag,
+                        payload: Arc::new(values),
+                    };
+                }
+                Instruction::LoadNothing { dst } => {
+                    frame.registers[*dst as usize] = Value::Nothing;
+                }
+                Instruction::JumpIfVariantNotEqual { target, tag, jump } => {
+                    let not_equal = match &frame.registers[*target as usize] {
+                        Value::Variant { tag: actual, .. } => actual != tag,
+                        _ => return Err(self.fail()),
+                    };
+                    if not_equal {
+                        pc = *jump as usize;
+                        continue;
+                    }
+                }
+                Instruction::JumpIfNothing { value, jump } => {
+                    if matches!(frame.registers[*value as usize], Value::Nothing) {
+                        pc = *jump as usize;
+                        continue;
+                    }
+                }
+                Instruction::JumpIfNotNothing { value, jump } => {
+                    if !matches!(frame.registers[*value as usize], Value::Nothing) {
+                        pc = *jump as usize;
+                        continue;
+                    }
+                }
+                Instruction::GetVariantField {
+                    dst,
+                    variant,
                     index,
-                    list,
                 } => {
+                    let value = match &frame.registers[*variant as usize] {
+                        Value::Variant { payload, .. } => match payload.get(*index as usize) {
+                            Some(value) => value.clone(),
+                            None => return Err(self.fail()),
+                        },
+                        _ => return Err(self.fail()),
+                    };
+                    frame.registers[*dst as usize] = value;
+                }
+                Instruction::SetIndex { vec, index, value } => {
+                    let at = match &frame.registers[*index as usize] {
+                        Value::Int(at) => *at,
+                        _ => return Err(self.fail()),
+                    };
+                    let value = frame.registers[*value as usize].clone();
+                    let Value::Vec(items) = &mut frame.registers[*vec as usize] else {
+                        return Err(self.fail());
+                    };
+                    // Unshare before writing, so the copy a clone made is real.
+                    let items = Arc::make_mut(items);
+                    let length = items.len();
+                    if at == length as i64 {
+                        items.push(value);
+                    } else if at >= 0 && (at as usize) < length {
+                        items[at as usize] = value;
+                    } else {
+                        return Err(self.index_failure(at, length));
+                    }
+                }
+                Instruction::MakeFunction {
+                    dst,
+                    code,
+                    captures,
+                } => {
+                    let values: Vec<Value> = captures
+                        .iter()
+                        .map(|capture| frame.registers[*capture as usize].clone())
+                        .collect();
+                    frame.registers[*dst as usize] = Value::Function {
+                        code: *code,
+                        captures: Arc::new(values),
+                    };
+                }
+                Instruction::CallValue {
+                    dst,
+                    callee,
+                    arguments,
+                } => {
+                    let values = self.argument_values(frame, arguments);
+                    let (code, captures) = match &frame.registers[*callee as usize] {
+                        Value::Function { code, captures } => (*code, Arc::clone(captures)),
+                        _ => return Err(self.fail()),
+                    };
+                    let mut arguments = captures.as_ref().clone();
+                    arguments.extend(values);
+                    let value = self.run_code(code, arguments)?;
+                    frame.registers[*dst as usize] = value;
+                }
+                Instruction::JumpIfIndexAtEnd { target, index, vec } => {
                     let at_end = match (
                         &frame.registers[*index as usize],
-                        &frame.registers[*list as usize],
+                        &frame.registers[*vec as usize],
                     ) {
-                        (Value::Number(index), Value::List(list)) => *index >= list.len() as i64,
+                        (Value::Int(index), Value::Vec(vec)) => *index >= vec.len() as i64,
                         _ => return Err(self.fail()),
                     };
                     if at_end {
@@ -221,41 +298,137 @@ impl Runtime {
                     }
                 }
                 Instruction::IncrementNumber { reg } => match &mut frame.registers[*reg as usize] {
-                    Value::Number(number) => *number += 1,
+                    Value::Int(number) => *number += 1,
                     _ => return Err(self.fail()),
                 },
                 Instruction::LoadNumber { dst, value } => {
-                    frame.registers[*dst as usize] = Value::Number(*value);
+                    frame.registers[*dst as usize] = Value::Int(*value);
                 }
-                Instruction::SetField { record, key, value } => {
-                    let key = self.bytecode.constants[*key as usize].clone();
-                    let value = self.text(&frame.registers[*value as usize])?;
-                    match &mut frame.registers[*record as usize] {
-                        Value::Record(record) => record.set(key, value),
+                Instruction::LoadBool { dst, value } => {
+                    frame.registers[*dst as usize] = Value::Bool(*value);
+                }
+                Instruction::NumberOp {
+                    op,
+                    dst,
+                    left,
+                    right,
+                } => {
+                    let (Value::Int(left), Value::Int(right)) = (
+                        &frame.registers[*left as usize],
+                        &frame.registers[*right as usize],
+                    ) else {
+                        return Err(self.fail());
+                    };
+                    let value = match op {
+                        NumberOp::Add => left + right,
+                        NumberOp::Subtract => left - right,
+                        NumberOp::Multiply => left * right,
+                        NumberOp::Divide => {
+                            if *right == 0 {
+                                return Err(self.fail());
+                            }
+                            left / right
+                        }
+                        NumberOp::Remainder => {
+                            if *right == 0 {
+                                return Err(self.fail());
+                            }
+                            left % right
+                        }
+                    };
+                    frame.registers[*dst as usize] = Value::Int(value);
+                }
+                Instruction::Negate { dst, src } => match &frame.registers[*src as usize] {
+                    Value::Int(value) => frame.registers[*dst as usize] = Value::Int(-value),
+                    _ => return Err(self.fail()),
+                },
+                Instruction::Not { dst, src } => match &frame.registers[*src as usize] {
+                    Value::Bool(value) => frame.registers[*dst as usize] = Value::Bool(!value),
+                    _ => return Err(self.fail()),
+                },
+                Instruction::Compare {
+                    op,
+                    dst,
+                    left,
+                    right,
+                } => {
+                    let left = &frame.registers[*left as usize];
+                    let right = &frame.registers[*right as usize];
+                    let value = match op {
+                        CompareOp::Less
+                        | CompareOp::LessEqual
+                        | CompareOp::Greater
+                        | CompareOp::GreaterEqual => {
+                            let ordering = match (left, right) {
+                                (Value::Int(left), Value::Int(right)) => left.cmp(right),
+                                (Value::Text(left), Value::Text(right)) => {
+                                    left.as_str().cmp(right.as_str())
+                                }
+                                _ => return Err(self.fail()),
+                            };
+                            match op {
+                                CompareOp::Less => ordering.is_lt(),
+                                CompareOp::LessEqual => ordering.is_le(),
+                                CompareOp::Greater => ordering.is_gt(),
+                                _ => ordering.is_ge(),
+                            }
+                        }
+                        CompareOp::Equal | CompareOp::NotEqual => {
+                            let equal = left == right;
+                            match op {
+                                CompareOp::Equal => equal,
+                                _ => !equal,
+                            }
+                        }
+                    };
+                    frame.registers[*dst as usize] = Value::Bool(value);
+                }
+                Instruction::JumpIfFalse { target, condition } => {
+                    match &frame.registers[*condition as usize] {
+                        Value::Bool(false) => {
+                            pc = *target as usize;
+                            continue;
+                        }
+                        Value::Bool(true) => {}
                         _ => return Err(self.fail()),
                     }
                 }
-                Instruction::GetField { dst, record, key } => {
+                Instruction::ToText { dst, src } => {
+                    let text = match &frame.registers[*src as usize] {
+                        Value::Text(text) => text.clone(),
+                        Value::Int(value) => Text::from(value.to_string()),
+                        Value::Bool(value) => Text::from(value.to_string()),
+                        _ => return Err(self.fail()),
+                    };
+                    frame.registers[*dst as usize] = Value::Text(text);
+                }
+                Instruction::SetField { map, key, value } => {
+                    let key = self.bytecode.constants[*key as usize].clone();
+                    let value = frame.registers[*value as usize].clone();
+                    match &mut frame.registers[*map as usize] {
+                        Value::Map(map) => map.set(key, value),
+                        _ => return Err(self.fail()),
+                    }
+                }
+                Instruction::GetField { dst, map, key } => {
                     let key = &self.bytecode.constants[*key as usize];
-                    let value = match &frame.registers[*record as usize] {
-                        Value::Record(record) => Value::Text(record.get(key).to_owned()),
+                    // A missing key is the absence, never empty text.
+                    let value = match &frame.registers[*map as usize] {
+                        Value::Map(map) => map.get(key).cloned().unwrap_or(Value::Nothing),
                         _ => return Err(self.fail()),
                     };
                     frame.registers[*dst as usize] = value;
                 }
                 Instruction::Concat { dst, left, right } => {
-                    let left = self.text(&frame.registers[*left as usize])?;
-                    let right = self.text(&frame.registers[*right as usize])?;
-                    frame.registers[*dst as usize] = Value::Text(left + &right);
-                }
-                Instruction::CallFunction {
-                    dst,
-                    code: callee,
-                    arguments,
-                } => {
-                    let values = self.argument_values(frame, arguments);
-                    let value = self.run_code(*callee, values)?;
-                    frame.registers[*dst as usize] = value;
+                    let left = match &frame.registers[*left as usize] {
+                        Value::Text(text) => text.clone(),
+                        _ => return Err(self.fail()),
+                    };
+                    let right = match &frame.registers[*right as usize] {
+                        Value::Text(text) => text.clone(),
+                        _ => return Err(self.fail()),
+                    };
+                    frame.registers[*dst as usize] = Value::Text(Text::concat(left, right));
                 }
                 Instruction::CallNative {
                     dst,
@@ -267,9 +440,7 @@ impl Runtime {
                     frame.registers[*dst as usize] = value;
                 }
                 Instruction::Return { value } => {
-                    return Ok(value
-                        .map(|value| frame.registers[value as usize].clone())
-                        .unwrap_or(Value::Nothing));
+                    return Ok(frame.registers[*value as usize].clone());
                 }
                 Instruction::Panic => {
                     self.state.panic();
@@ -284,32 +455,12 @@ impl Runtime {
                     left,
                     right,
                 } => {
-                    let equal = match (
-                        &frame.registers[*left as usize],
-                        &frame.registers[*right as usize],
-                    ) {
-                        (Value::Text(left), Value::Text(right)) => left == right,
-                        (Value::Record(left), Value::Record(right)) => left == right,
-                        (Value::List(left), Value::List(right)) => left == right,
-                        _ => return Err(self.fail()),
-                    };
-                    if equal {
+                    // Equality is the one `Value` relation: a match arm compares
+                    // the same way `==` does.
+                    if frame.registers[*left as usize] == frame.registers[*right as usize] {
                         pc = *target as usize;
                         continue;
                     }
-                }
-                Instruction::Async {
-                    code: callee,
-                    arguments,
-                } => {
-                    let values = self.argument_values(frame, arguments);
-                    let runtime = self.detached();
-                    let callee = *callee;
-                    self.state.spawn_thread(move || {
-                        if runtime.run_code(callee, values).is_err() {
-                            runtime.state.record_failure();
-                        }
-                    });
                 }
                 Instruction::AsyncNative { native, arguments } => {
                     let values = self.argument_values(frame, arguments);
@@ -317,6 +468,20 @@ impl Runtime {
                     let native = *native;
                     self.state.spawn_thread(move || {
                         if runtime.call_native(native, values).is_err() {
+                            runtime.state.record_failure();
+                        }
+                    });
+                }
+                Instruction::AsyncValue { callee, arguments } => {
+                    let actual = self.argument_values(frame, arguments);
+                    let (code, mut values) = match &frame.registers[*callee as usize] {
+                        Value::Function { code, captures } => (*code, captures.as_ref().clone()),
+                        _ => return Err(self.fail()),
+                    };
+                    values.extend(actual);
+                    let runtime = self.detached();
+                    self.state.spawn_thread(move || {
+                        if runtime.run_code(code, values).is_err() {
                             runtime.state.record_failure();
                         }
                     });
@@ -338,23 +503,17 @@ impl Runtime {
             .collect()
     }
 
-    /// The text a value holds, or a failure when it is not text.
-    fn text(&self, value: &Value) -> Result<String, Panic> {
-        match value {
-            Value::Text(text) => Ok(text.clone()),
-            Value::Record(_) | Value::List(_) | Value::Nothing | Value::Number(_) => {
-                Err(self.fail())
-            }
-        }
-    }
-
     /// The text of a value, or a failure when it is not text.
     pub(super) fn text_value(&self, value: Value) -> Result<String, Panic> {
         match value {
-            Value::Text(text) => Ok(text),
-            Value::Record(_) | Value::List(_) | Value::Nothing | Value::Number(_) => {
-                Err(self.fail())
-            }
+            Value::Text(text) => Ok(text.as_str().to_owned()),
+            Value::Map(_)
+            | Value::Vec(_)
+            | Value::Variant { .. }
+            | Value::Function { .. }
+            | Value::Bool(_)
+            | Value::Int(_)
+            | Value::Nothing => Err(self.fail()),
         }
     }
 
@@ -374,5 +533,15 @@ impl Runtime {
     /// It only returns the panic; it never signals another body's commands.
     pub(super) fn fail(&self) -> Panic {
         Panic
+    }
+
+    /// The failure for an index outside a Vec. It names the index and the
+    /// length, so an out-of-bounds `xs[i]` reports what went wrong.
+    fn index_failure(&self, index: i64, length: usize) -> Panic {
+        process::failure(
+            &self.state,
+            "xs[i]",
+            &format!("index {index} is outside a Vec of {length} element(s)"),
+        )
     }
 }

@@ -11,12 +11,12 @@ not an operating-system path object.
 <summary><code>base</code> — the last segment</summary>
 
 ```kiru
-std::path::base(path<txt>) -> txt
+std::path::base(path: txt) -> txt
 ```
 
 - `path` — the path to read.
 - Returns the text after the last `/`; the whole path when it has no `/`. An
-  empty path has no segment and stops the run.
+  empty path has no segment, so it stops the run.
 
 ```kiru
 std::print(std::path::base("/a/b/c"));   # c
@@ -28,11 +28,12 @@ std::print(std::path::base("/a/b/c"));   # c
 <summary><code>dir</code> — a path without its last segment</summary>
 
 ```kiru
-std::path::dir(path<txt>) -> txt
+std::path::dir(path: txt) -> txt
 ```
 
 - `path` — the path to read.
-- Returns the text before the last `/`, or `""` when there is none.
+- Returns the text before the last `/`, or `""` when there is none; an empty
+  path has none.
 
 ```kiru
 std::print(std::path::dir("/a/b/c"));   # /a/b
@@ -44,15 +45,16 @@ std::print(std::path::dir("/a/b/c"));   # /a/b
 <summary><code>ext</code> — the extension</summary>
 
 ```kiru
-std::path::ext(path<txt>) -> txt
+std::path::ext(path: txt) -> std::Option<txt>
 ```
 
 - `path` — the path to read.
-- Returns the text after the last `.` of the last segment, or `""` when the last
-  segment has no dot.
+- Returns the text after the last `.` of the last segment as `Option.some`, or
+  `Option.none` when the last segment has no dot.
 
 ```kiru
-std::print(std::path::ext("archive.tar.gz"));   # gz
+use std;
+std::print(std::path::ext("archive.tar.gz").or(""));   # gz
 ```
 
 </details>
@@ -61,7 +63,7 @@ std::print(std::path::ext("archive.tar.gz"));   # gz
 <summary><code>join</code> — join two path segments</summary>
 
 ```kiru
-std::path::join(base<txt>, name<txt>) -> txt
+std::path::join(base: txt, name: txt) -> txt
 ```
 
 Joins two path segments. An absolute `name` replaces `base`, an empty `base` is
@@ -71,7 +73,9 @@ replaced by `name`, and a `base` already ending in `/` is used as is.
 - Returns the joined path.
 
 ```kiru
-let config<txt> = std::path::join(std::env::var("HOME"), ".config");
+use std;
+use std::text;
+let config: txt = std::path::join(std::env::var("HOME").or("/tmp"), ".config");
 ```
 
 </details>
@@ -80,14 +84,15 @@ let config<txt> = std::path::join(std::env::var("HOME"), ".config");
 <summary><code>is_absolute</code> — whether a path is absolute</summary>
 
 ```kiru
-std::path::is_absolute(path<txt>) -> txt
+std::path::is_absolute(path: txt) -> bool
 ```
 
 - `path` — the path to test.
-- Returns `"true"` when the path starts with `/`, otherwise `"false"`.
+- Returns `true` when the path starts with `/`, otherwise `false`.
 
 ```kiru
-std::print(std::path::is_absolute("/a"));   # true
+use std;
+let absolute: bool = std::path::is_absolute("/a");   # true
 ```
 
 </details>

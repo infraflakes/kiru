@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use crate::model::{
-    DeclarationId, Expression, Program, Statement, Visitor, walk_expression, walk_statements,
+    DeclarationId, Expression, Pattern, Program, Statement, Visitor, walk_expression,
 };
 
 /// The declarations reachable from the entry: every function's parameters and
@@ -19,13 +19,8 @@ pub(super) fn collect_reachable_declarations(program: &Program) -> HashSet<Decla
             continue;
         }
         let declaration = program.declaration(id);
-        collector
-            .pending
-            .extend(declaration.parameters.iter().copied());
-        if let Some(function) = declaration.function() {
-            walk_statements(&mut collector, &function.body);
-        } else if let Some(expression) = declaration.initializer() {
-            walk_expression(&mut collector, expression);
+        if let Some(value) = declaration.value() {
+            walk_expression(&mut collector, value);
         }
     }
     reachable
@@ -42,14 +37,32 @@ impl Visitor for ReachableCollector {
     fn expression(&mut self, expression: &Expression) {
         match expression {
             Expression::Reference { declaration, .. } => self.pending.push(*declaration),
-            Expression::Call { callee, .. } => self.pending.push(*callee),
+            // A function value owns its parameters; an unused one still needs
+            // a register, so every parameter is retained.
+            Expression::Function(function) => {
+                self.pending.extend(function.parameters.iter().copied());
+            }
             Expression::Text { .. }
-            | Expression::Record { .. }
-            | Expression::List { .. }
+            | Expression::Map { .. }
+            | Expression::Vec { .. }
+            | Expression::Bool { .. }
+            | Expression::Int { .. }
+            | Expression::Variant { .. }
+            | Expression::Call { .. }
             | Expression::Field { .. }
-            | Expression::Add { .. }
+            | Expression::Index { .. }
+            | Expression::Binary { .. }
+            | Expression::Unary { .. }
             | Expression::Interpolated { .. }
             | Expression::Match { .. } => {}
+        }
+    }
+
+    fn pattern(&mut self, pattern: &Pattern) {
+        if let Pattern::Variant { bindings, .. } = pattern {
+            for id in bindings.iter().flatten() {
+                self.pending.push(*id);
+            }
         }
     }
 
@@ -57,7 +70,8 @@ impl Visitor for ReachableCollector {
         match statement {
             Statement::Bind { declaration, .. }
             | Statement::Assign { declaration, .. }
-            | Statement::FieldAssign { declaration, .. } => {
+            | Statement::FieldAssign { declaration, .. }
+            | Statement::IndexAssign { declaration, .. } => {
                 self.pending.push(*declaration);
             }
             Statement::ForEach { item, .. } => self.pending.push(*item),

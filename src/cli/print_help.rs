@@ -3,7 +3,7 @@
 /// Print the command-line help.
 pub(crate) fn print_help() {
     println!(
-        "Kiru Compiler: The compiler for Kiru programming language.\n\n\
+        "Kiru Compiler<The> compiler for Kiru programming language.\n\n\
          Usage: kc [PATH] [-o PATH]\n\
          \x20      kc help\n\
          \x20      kc version\n\n\

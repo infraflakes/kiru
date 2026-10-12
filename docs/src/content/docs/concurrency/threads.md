@@ -1,27 +1,28 @@
 ---
 title: Threads
-description: Run a call on its own thread and wait for it.
+description: Running a call on its own thread with async, and joining it with wait.
 ---
 
 Kiru can run a function on its own thread while the rest of the program
 continues. This is useful for work that should happen in parallel, such as
 building two projects at once.
 
-## Starting a Thread
+## Starting a thread
 
 `async <call>;` starts a call on its own thread:
 
-<span class="filename">Filename: src/main.kiru</span>
-
 ```kiru
+use std;
+use std::text;
+
 fn work() {
-  std::command({}, "echo working");
+  std::command("echo working").run();
 };
 
 fn main() {
   async work();
   wait;
-  std::command({}, "echo done");
+  std::command("echo done").run();
 };
 ```
 
@@ -34,34 +35,45 @@ done
 The call's arguments are evaluated at the statement, in the current body,
 before the thread starts.
 
-## No Handles
+## No handles
 
 Each `async` starts one thread and binds nothing. There is no handle to store,
-so a thread cannot be bound, passed, or returned:
+so a thread cannot be bound, passed, or returned; a call that returns no value
+is likewise not a value:
 
 ```console
 $ kc main.kiru
-main.kiru:5:16: error: expected text, found a call that returns no value
-  let x<txt> = work();
+main.kiru:4:16: error: expected text, found no value
+  let x: txt = work();
                ^^^^^^
 ```
 
-`async` takes one call: a user function or a native call such as
-`std::command({}, "cargo build")`. It cannot contain another `async`,
-because `async` is a statement, not a call:
+`async` takes one call: a user function, a native call such as
+`std::command("cargo build").run()`, or a call through a function value. It
+cannot contain another `async`, because `async` is a statement, not a call:
 
 ```kiru
+use std;
+use std::text;
+
 fn main() {
-  async std::command({}, "cargo build");
+  async std::command("echo parallel").run();
   wait;
 };
 ```
 
-## Waiting for Threads
+## Waiting for threads
 
 `wait;` joins the threads the calling thread started, then continues:
 
 ```kiru
+use std;
+use std::text;
+
+fn build(name: txt) {
+  std::command("echo building @(name)").run();
+};
+
 fn main() {
   async build("frontend");
   async build("backend");
@@ -78,16 +90,18 @@ When `main` returns, the runtime waits for every running thread before it uses
 `main`'s return value as the exit status. A thread the program never joins
 still runs to completion.
 
-## Shared Output
+## Shared output
 
 Every thread writes to the same stdout and stderr, so output from parallel work
 interleaves. The order between threads is not fixed; writes within one thread
-stay in order. A thread that should stay quiet sets `Stdout = "null"` or
-`Stderr = "null"` on its commands:
+stay in order. A thread that should stay quiet hides a stream on its commands:
 
 ```kiru
+use std;
+use std::text;
+
 fn check() {
-  std::command({ Stdout = "null" }, "make");
+  std::command("echo noise").stream("stdout", "/dev/null").run();
 };
 
 fn main() {
@@ -102,8 +116,8 @@ $ ./app
 checks finished
 ```
 
-A `panic;` in any thread stops the whole program. [Panic](/failure/panic/)
-covers it.
+A `panic;` in any thread stops the whole program.
+[Panic](/failure/panic/) covers it.
 
 :::note
 Threads are OS threads. Each runs a function body with its own scope, and sees

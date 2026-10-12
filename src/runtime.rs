@@ -1,10 +1,12 @@
-//! Running a compiled program: the run loop, threads, defers, and the process
+//! Running a compiled program: the run loop, threads, panics, and the process
 //! kernel.
 
 mod natives;
 mod processes;
+mod values;
 mod virtual_machine;
 
+pub(crate) use values::{Map, Text, Value};
 pub(crate) use virtual_machine::run;
 
 /// The name this program reports under: the invoked binary's file name, or
@@ -22,7 +24,7 @@ pub(crate) fn program_name() -> String {
         .unwrap_or_else(|| "kiru".to_owned())
 }
 
-/// Report a runtime error the way `std::eprint` does: a red `ERROR:` prefix on
+/// Report a runtime error the way `std::fail` does: a red `ERROR:` prefix on
 /// a terminal, then the message on stderr. The caller then stops the run, so
 /// every failure a program can raise reads the same way.
 pub(crate) fn report_error(message: &str) {
@@ -34,7 +36,7 @@ pub(crate) fn report_error(message: &str) {
     }
 }
 
-/// A failure that unwinds the body that raised it and runs its defers. It
+/// A failure that unwinds the body that raised it. It
 /// leaves every other body running; the run exits nonzero once the entry body
 /// ends and every thread has joined.
 #[derive(Clone, Copy, Debug)]

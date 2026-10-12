@@ -1,0 +1,239 @@
+# std/set.kiru
+#
+# The set: a collection of distinct keys, kept sorted by a comparator it
+# carries. A `Set<K>` is an ordinary `rec`, not a built-in type — the runtime
+# represents it like any other rec, so nothing here needs a native. A function
+# whose first parameter is a `Set<K>` is callable as `s.name(...)`, so these are
+# the set methods. The type and its helpers share the `std::set` namespace, so
+# `use std::set;` brings in both.
+#
+# A set orders by a value, not a bound: kiru has no bounds and the checker
+# rejects ordering a type parameter, so `Set<K>` carries `less: fn(K, K) -> bool`
+# exactly as `sort_by` takes a comparator. Two keys are the same when `==`
+# answers `true`; `less` fixes their order.
+
+mod std::set {
+
+  # `bool`/`int`/`Option` live at the `std` root and `Vec<T>` in its own
+  # category; `Set` is declared in this namespace.
+  use std;
+  use std::vec;
+
+  # A set of keys, kept sorted by the comparator it carries, with no
+  # duplicates. Both fields are private; the methods are the API.
+  pub rec Set<K> { entries: Vec<K>, less: fn(K, K) -> bool };
+
+  # The first index at which `item` belongs in the sorted `entries`: every key
+  # before it orders before `item`, every key at or after it does not. The
+  # binary search the three O(log n) methods share; `less` decides the order.
+  fn lower_bound<K>(entries: Vec<K>, item: K, less: fn(K, K) -> bool) -> int {
+    let low: int = 0;
+    let high: int = entries.len();
+    for {
+      match low < high { false => { break; }; true => {}; };
+      let middle: int = low + (high - low) / 2;
+      match less(entries[middle], item) {
+        true => { low = middle + 1; };
+        _ => { high = middle; };
+      };
+    };
+    return low;
+  };
+
+  # A set from a vec of keys: `items` sorted by `less`, with duplicates dropped.
+  # `sort_by` then `unique` is the unique pass, so equal keys end up adjacent and
+  # only the first of each survives.
+  pub fn of<K>(items: Vec<K>, less: fn(K, K) -> bool) -> Set<K> {
+    let entries: Vec<K> = items.sorted_by(less).uniqued();
+    return { entries = entries, less = less };
+  };
+
+  # A new set with `item` inserted in order. A key already present is ignored,
+  # so the set it is called on is unchanged and the result is the same set.
+  pub fn with<K>(self: Set<K>, item: K) -> Set<K> {
+    let at: int = lower_bound(self.entries, item, self.less);
+    let count: int = self.entries.len();
+    match at < count && self.entries[at] == item {
+      true => { return self; };
+      _ => {};
+    };
+    let out: Vec<K> = [];
+    let index: int = 0;
+    for entry in self.entries {
+      match index == at {
+        true => { out[index] = item; index = index + 1; };
+        _ => {};
+      };
+      out[index] = entry;
+      index = index + 1;
+    };
+    match at == count {
+      true => { out[index] = item; };
+      _ => {};
+    };
+    return { entries = out, less = self.less };
+  };
+
+  # Whether `item` is a key. The binary search narrows with `less`, then `==`
+  # confirms the candidate, so the answer is O(log n).
+  pub fn contains<K>(self: Set<K>, item: K) -> bool {
+    let at: int = lower_bound(self.entries, item, self.less);
+    match at < self.entries.len() && self.entries[at] == item {
+      true => { return true; };
+      _ => {};
+    };
+    return false;
+  };
+
+  # A new set with `item` removed. A key that is not present leaves the set
+  # unchanged.
+  pub fn without<K>(self: Set<K>, item: K) -> Set<K> {
+    let at: int = lower_bound(self.entries, item, self.less);
+    match at < self.entries.len() && self.entries[at] == item {
+      true => {};
+      _ => { return self; };
+    };
+    let out: Vec<K> = [];
+    let write: int = 0;
+    let index: int = 0;
+    for entry in self.entries {
+      match index == at {
+        true => {};
+        _ => { out[write] = entry; write = write + 1; };
+      };
+      index = index + 1;
+    };
+    return { entries = out, less = self.less };
+  };
+
+  # A new set with every key of `self` and of `other`. A key in both appears
+  # once. The two sorted vecs are merged in one pass, ordered by `self`'s
+  # comparator.
+  pub fn union<K>(self: Set<K>, other: Set<K>) -> Set<K> {
+    let less: fn(K, K) -> bool = self.less;
+    let left: Vec<K> = self.entries;
+    let right: Vec<K> = other.entries;
+    let left_count: int = left.len();
+    let right_count: int = right.len();
+    let out: Vec<K> = [];
+    let at: int = 0;
+    let i: int = 0;
+    let j: int = 0;
+    for {
+      match i < left_count && j < right_count { false => { break; }; true => {}; };
+      match left[i] == right[j] {
+        true => { out[at] = left[i]; i = i + 1; j = j + 1; };
+        _ => {
+          match less(right[j], left[i]) {
+            true => { out[at] = right[j]; j = j + 1; };
+            _ => { out[at] = left[i]; i = i + 1; };
+          };
+        };
+      };
+      at = at + 1;
+    };
+    for {
+      match i < left_count { false => { break; }; true => {}; };
+      out[at] = left[i];
+      i = i + 1;
+      at = at + 1;
+    };
+    for {
+      match j < right_count { false => { break; }; true => {}; };
+      out[at] = right[j];
+      j = j + 1;
+      at = at + 1;
+    };
+    return { entries = out, less = self.less };
+  };
+
+  # A new set of the keys present in both `self` and `other`, merged in one
+  # pass and ordered by `self`'s comparator.
+  pub fn intersection<K>(self: Set<K>, other: Set<K>) -> Set<K> {
+    let less: fn(K, K) -> bool = self.less;
+    let left: Vec<K> = self.entries;
+    let right: Vec<K> = other.entries;
+    let left_count: int = left.len();
+    let right_count: int = right.len();
+    let out: Vec<K> = [];
+    let at: int = 0;
+    let i: int = 0;
+    let j: int = 0;
+    for {
+      match i < left_count && j < right_count { false => { break; }; true => {}; };
+      match left[i] == right[j] {
+        true => { out[at] = left[i]; at = at + 1; i = i + 1; j = j + 1; };
+        _ => {
+          match less(left[i], right[j]) {
+            true => { i = i + 1; };
+            _ => { j = j + 1; };
+          };
+        };
+      };
+    };
+    return { entries = out, less = self.less };
+  };
+
+  # A new set of the keys of `self` that are not in `other`, merged in one pass
+  # and ordered by `self`'s comparator.
+  pub fn difference<K>(self: Set<K>, other: Set<K>) -> Set<K> {
+    let less: fn(K, K) -> bool = self.less;
+    let left: Vec<K> = self.entries;
+    let right: Vec<K> = other.entries;
+    let left_count: int = left.len();
+    let right_count: int = right.len();
+    let out: Vec<K> = [];
+    let at: int = 0;
+    let i: int = 0;
+    let j: int = 0;
+    for {
+      match i < left_count { false => { break; }; true => {}; };
+      match j < right_count && left[i] == right[j] {
+        true => { i = i + 1; j = j + 1; };
+        _ => {
+          match j < right_count && less(right[j], left[i]) {
+            true => { j = j + 1; };
+            _ => { out[at] = left[i]; at = at + 1; i = i + 1; };
+          };
+        };
+      };
+    };
+    return { entries = out, less = self.less };
+  };
+
+  # Whether every key of `self` is also a key of `other`. The sorted vecs are
+  # walked in one pass; the first key of `self` that `other` passes is absent.
+  pub fn is_subset<K>(self: Set<K>, other: Set<K>) -> bool {
+    let less: fn(K, K) -> bool = self.less;
+    let left: Vec<K> = self.entries;
+    let right: Vec<K> = other.entries;
+    let left_count: int = left.len();
+    let right_count: int = right.len();
+    let i: int = 0;
+    let j: int = 0;
+    for {
+      match i < left_count { false => { break; }; true => {}; };
+      match j < right_count && right[j] == left[i] {
+        true => { i = i + 1; j = j + 1; };
+        _ => {
+          match j < right_count && less(right[j], left[i]) {
+            true => { j = j + 1; };
+            _ => { return false; };
+          };
+        };
+      };
+    };
+    return true;
+  };
+
+  # The number of keys.
+  pub fn len<K>(self: Set<K>) -> int {
+    return self.entries.len();
+  };
+
+  # The keys, in order.
+  pub fn items<K>(self: Set<K>) -> Vec<K> {
+    return self.entries;
+  };
+
+};

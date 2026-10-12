@@ -1,0 +1,26 @@
+# The path helpers: join, base, dir, ext, is_absolute.
+
+use std;
+use std::text;
+
+fn check(name: txt, got: txt, want: txt) {
+  match got == want {
+    true => {};
+    false => { std::fail("@(name): expected `@(want)`, found `@(got)`"); };
+  };
+};
+
+fn main() {
+  check("join", std::path::join("/a/b", "c"), "/a/b/c");
+  check("base", std::path::base("/a/b/c.txt"), "c.txt");
+  check("base of a path without a separator is the whole path", std::path::base("c.txt"), "c.txt");
+  check("dir", std::path::dir("/a/b/c.txt"), "/a/b");
+  check("dir of an empty path is the empty text", std::path::dir(""), "");
+  check("dir of a path without a separator is the empty text", std::path::dir("c.txt"), "");
+  check("ext", std::path::ext("/a/b/c.txt").or(""), "txt");
+  check("ext of a path without a dot is the absence", "@(std::path::ext("/a/b/c").or("-"))", "-");
+  check("ext of an empty path is the absence", "@(std::path::ext("").or("-"))", "-");
+  check("is_absolute true", "@(std::path::is_absolute("/a"))", "true");
+  check("is_absolute false", "@(std::path::is_absolute("a"))", "false");
+  std::print("path: ok");
+};

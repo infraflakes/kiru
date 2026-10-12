@@ -1,25 +1,26 @@
 ---
 title: std::io
-description: Write output and read input.
+description: Write to the standard streams, test a terminal, and read input.
 ---
 
 `std::io` writes to the standard streams, asks whether one is a terminal, and
-reads standard input.
+reads standard input. A file descriptor is an `int`: `1` for stdout and `2` for
+stderr.
 
 <details>
-<summary><code>write</code> — write to stdout or stderr</summary>
+<summary><code>write</code> — write to a stream</summary>
 
 ```kiru
-std::io::write(file_descriptor<txt>, text<txt>)
+std::io::write(file_descriptor: int, text: txt)
 ```
 
-Writes text to one standard stream exactly, with no added newline.
+Writes `text` to one standard stream exactly, with no added newline.
 
-- `file_descriptor` — `"1"` for stdout or `"2"` for stderr.
+- `file_descriptor` — `1` for stdout or `2` for stderr.
 - `text` — the bytes to write.
 
 ```kiru
-std::io::write("1", "no newline");
+std::io::write(1, "no newline");
 ```
 
 </details>
@@ -28,22 +29,20 @@ std::io::write("1", "no newline");
 <summary><code>is_terminal</code> — whether a stream is a terminal</summary>
 
 ```kiru
-std::io::is_terminal(file_descriptor<txt>) -> txt
+std::io::is_terminal(file_descriptor: int) -> bool
 ```
 
 Tells whether a standard stream is connected to a terminal.
 
-- `file_descriptor` — `"1"` for stdout or `"2"` for stderr.
-- Returns `"true"` or `"false"`.
+- `file_descriptor` — `1` for stdout or `2` for stderr.
+- Returns `true` or `false`.
 
 ```kiru
-match std::io::is_terminal("1") {
-  "true" => { std::print("interactive"); };
+match std::io::is_terminal(1) {
+  true => { std::print("interactive"); };
   _ => { std::print("redirected"); };
 };
 ```
-
-Related: [The Command Spec and Streams](/commands/the-command-spec/).
 
 </details>
 
@@ -59,8 +58,10 @@ Reads standard input to the end, so a program can be a filter.
 - Returns everything read as text.
 
 ```kiru
-let lines<list> = std::text::lines(std::io::read_stdin());
-std::print(std::lists::len(lines));
+use std::text;
+use std::vec;
+let lines: Vec<txt> = std::io::read_stdin().lines();
+std::print("@(lines.len())");
 ```
 
 </details>

@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::read_entry_and_imports::{EMBEDDED, load_files};
+use super::loader::{EMBEDDED, load_files};
 use crate::syntax::{self, Declaration};
 
 fn write(directory: &Path, name: &str, contents: &str) -> PathBuf {
@@ -18,6 +18,7 @@ fn names(program: &super::LoadedProgram) -> Vec<&str> {
         .map(|item| match &item.declaration {
             Declaration::Function(function) => function.name.as_str(),
             Declaration::Binding(binding) => binding.name.as_str(),
+            Declaration::Type(type_declaration) => type_declaration.name.as_str(),
         })
         .collect()
 }
@@ -28,6 +29,29 @@ fn embedded_standard_library_parses() {
         syntax::parse_file(source)
             .unwrap_or_else(|error| panic!("{path} must parse: {}", error.message));
     }
+}
+
+/// Every embedded file is reached from the root by an `import`, so a file added
+/// to the table but never imported is a mistake rather than a silent no-op.
+#[test]
+fn every_embedded_file_is_reachable_from_the_root() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let entry = write(directory.path(), "entry.kiru", "fn main() {};\n");
+    let program = load_files(&entry).expect("loads");
+    let loaded: Vec<&str> = program
+        .files
+        .iter()
+        .filter(|file| matches!(file.origin, crate::model::Origin::Embedded))
+        .map(|file| file.path.to_str().expect("a path"))
+        .collect();
+    let mut expected: Vec<&str> = EMBEDDED.iter().map(|(path, _)| *path).collect();
+    expected.sort();
+    let mut loaded = loaded;
+    loaded.sort();
+    assert_eq!(
+        loaded, expected,
+        "an embedded file is not imported from the root"
+    );
 }
 
 #[test]

@@ -7,32 +7,93 @@
 //! id; its handler match is exhaustive, so an id without a handler does not
 //! compile.
 //!
+//! A row's types are `Type`s, the same type every other declaration uses, so a
+//! native names any type the language has. A `Type` is not
+//! `const`-constructible, so the typed rows are built once per program by
+//! `native_rows`, which the macro generates from the same declaration as the
+//! variant and the static shape. The shape — a native's path, name, and
+//! parameter count — needs no absence type and stays `const`, so the runtime
+//! can check a handler's arity and name a failure without a program.
+//!
 //! To add a native, add one entry to `native_registry!` and one arm to
 //! `Runtime::call_native`. There is no other way: the macro generates the
-//! variant and its row together, the checker reads the row, the runtime's
-//! handler match is exhaustive, and the runtime checks the handler consumes
-//! exactly the declared arity.
+//! variant, the shape, and the typed row together, the checker reads the row,
+//! the runtime's handler match is exhaustive, and the runtime checks the
+//! handler consumes exactly the declared arity.
 
-use crate::types::Type;
+use crate::model::{Type, TypeId};
 
 /// The namespace the runtime's builtins live in.
 pub(crate) const BUILTIN_NAMESPACE: &[&str] = &["std"];
 
+/// The absence type applied to `element`: `Option<element>`. The absence type
+/// is the standard library's `Option`, whose id is known only once the
+/// program's types are reserved.
+fn option_of(absence: Option<TypeId>, element: Type) -> Type {
+    Type::Named(
+        absence.expect("the standard library declares the absence type"),
+        vec![element],
+    )
+}
+
 /// One native row: its path, name, parameter types, and result type. A native
-/// that returns no value has result type `Void`.
-#[derive(Clone, Copy, Debug)]
+/// with no result type produces no value; its calls are statements, exactly as
+/// a kiru function with no return type. Its types are `Type`s, so a row
+/// declares exactly what any other declaration does.
+#[derive(Debug)]
 pub(crate) struct NativeRow {
     pub(crate) path: &'static [&'static str],
     pub(crate) name: &'static str,
-    pub(crate) parameters: &'static [Type],
-    pub(crate) returns: Type,
+    pub(crate) parameters: Vec<Type>,
+    pub(crate) returns: Option<Type>,
 }
 
-/// Declare every native once: the enum variant, its row, and the complete
-/// list. Because the runtime's handler match is exhaustive over the variants,
-/// a native cannot exist without a row and a handler.
+/// The part of a row that does not depend on the absence type: where the
+/// native lives, what it is called, and how many parameters it declares. It
+/// stays `const`, so the runtime can name a failure and check a handler's
+/// arity, and the structural check can confirm a row exists, all without a
+/// program.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct NativeShape {
+    pub(crate) path: &'static [&'static str],
+    pub(crate) name: &'static str,
+    pub(crate) arity: usize,
+}
+
+/// Wrap an optional macro fragment in `Some`, or produce `None` when it is
+/// absent. A row writes `-> Type` when the native produces a value and nothing
+/// when its calls are statements.
+macro_rules! optional {
+    () => {
+        None
+    };
+    ($value:expr) => {
+        Some($value)
+    };
+}
+
+/// The number of comma-separated items, as a `const` expression. A row's
+/// parameter count is known without building its types, which a `const` cannot
+/// do.
+macro_rules! count {
+    () => {
+        0
+    };
+    ($head:expr $(, $tail:expr)*) => {
+        1 + count!($($tail),*)
+    };
+}
+
+/// Declare every native once: the enum variant, its static shape, its typed
+/// row, and the complete lists. Because the runtime's handler match is
+/// exhaustive over the variants, a native cannot exist without a row and a
+/// handler.
+///
+/// The first argument names the absence identifier. The generated
+/// `native_rows` binds it to the program's absence type id, and a row writes
+/// an option type as `option_of(absence, element)`.
 macro_rules! native_registry {
-    ($( $variant:ident { [$($segment:literal),* $(,)?], $name:literal, [$($parameter:expr),* $(,)?] -> $returns:expr } ),* $(,)?) => {
+    ($absence:ident, $( $variant:ident { [$($segment:literal),* $(,)?], $name:literal, [$($parameter:expr),* $(,)?] $(-> $returns:expr)? } ),* $(,)?) => {
         /// A native provided by the runtime.
         #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
         pub(crate) enum Native {
@@ -45,63 +106,76 @@ macro_rules! native_registry {
             pub(crate) const ALL: &'static [Native] = &[ $( Native::$variant ),* ];
         }
 
-        /// Every native the runtime provides, with its row.
-        pub(crate) const NATIVE_ROWS: &[(Native, NativeRow)] = &[
+        /// Every native's path, name, and parameter count. This needs no
+        /// absence type, so it stays `const` and serves the runtime and the
+        /// structural check.
+        pub(crate) const NATIVE_SHAPES: &[(Native, NativeShape)] = &[
             $( (
                 Native::$variant,
-                NativeRow {
+                NativeShape {
                     path: &[$($segment),*],
                     name: $name,
-                    parameters: &[$($parameter),*],
-                    returns: $returns,
+                    arity: count!($($parameter),*),
                 },
             ) ),*
         ];
+
+        /// Every native with its typed row, built once per program because a
+        /// `Type` is not `const`-constructible. `absence` is the program's
+        /// absence type id, which an option row names.
+        pub(crate) fn native_rows($absence: Option<TypeId>) -> Vec<(Native, NativeRow)> {
+            vec![
+                $( (
+                    Native::$variant,
+                    NativeRow {
+                        path: &[$($segment),*],
+                        name: $name,
+                        parameters: vec![ $( $parameter ),* ],
+                        returns: optional!($( $returns )?),
+                    },
+                ) ),*
+            ]
+        }
     };
 }
 
 native_registry! {
-    Spawn { ["std", "process"], "spawn", [Type::Record, Type::List] -> Type::Text },
-    WaitFor { ["std", "process"], "wait_for", [Type::Text] -> Type::Text },
-    Signal { ["std", "process"], "signal", [Type::Text, Type::Text] -> Type::Void },
-    Write { ["std", "io"], "write", [Type::Text, Type::Text] -> Type::Void },
-    IsTerminal { ["std", "io"], "is_terminal", [Type::Text] -> Type::Text },
+    absence,
+    Spawn { ["std", "process"], "spawn", [Type::Vec(Box::new(Type::Text))] -> Type::Int },
+    Reap { ["std", "process"], "reap", [Type::Int] -> Type::Int },
+    SignalGroup { ["std", "process"], "signal_group", [Type::Int, Type::Int] },
+    Write { ["std", "io"], "write", [Type::Int, Type::Text] },
+    IsTerminal { ["std", "io"], "is_terminal", [Type::Int] -> Type::Bool },
     ReadStdin { ["std", "io"], "read_stdin", [] -> Type::Text },
     Read { ["std", "fs"], "read", [Type::Text] -> Type::Text },
-    WriteFile { ["std", "fs"], "write", [Type::Text, Type::Text] -> Type::Void },
-    Remove { ["std", "fs"], "remove", [Type::Text] -> Type::Void },
-    Exists { ["std", "fs"], "exists", [Type::Text] -> Type::Text },
-    TempPath { ["std", "fs"], "temp_file", [] -> Type::Text },
-    Glob { ["std", "fs"], "glob", [Type::Text] -> Type::List },
-    Length { ["std", "text"], "len", [Type::Text] -> Type::Text },
-    Slice { ["std", "text"], "slice", [Type::Text, Type::Text, Type::Text] -> Type::Text },
-    Find { ["std", "text"], "find", [Type::Text, Type::Text] -> Type::Text },
-    Trim { ["std", "text"], "trim", [Type::Text] -> Type::Text },
-    Split { ["std"], "split", [Type::Text, Type::Text] -> Type::List },
-    Sleep { ["std", "time"], "sleep", [Type::Text] -> Type::Void },
-    ListLength { ["std", "lists"], "len", [Type::List] -> Type::Text },
-    ListGet { ["std"], "get", [Type::List, Type::Text] -> Type::Text },
-    ListAppend { ["std"], "append", [Type::List, Type::Text] -> Type::List },
-    ListPrepend { ["std", "lists"], "prepend", [Type::List, Type::Text] -> Type::List },
-    ListSort { ["std", "lists"], "sort", [Type::List] -> Type::List },
-    EnvVar { ["std", "env"], "var", [Type::Text] -> Type::Text },
+    WriteFile { ["std", "fs"], "write", [Type::Text, Type::Text] },
+    Remove { ["std", "fs"], "remove", [Type::Text] },
+    Exists { ["std", "fs"], "exists", [Type::Text] -> Type::Bool },
+    Mkstemp { ["std", "fs"], "mkstemp", [Type::Text] -> Type::Text },
+    List { ["std", "fs"], "list", [Type::Text] -> Type::Vec(Box::new(Type::Text)) },
+    Length { ["std", "text"], "len", [Type::Text] -> Type::Int },
+    Find { ["std", "text"], "find_byte", [Type::Text, Type::Text] -> option_of(absence, Type::Int) },
+    Byte { ["std", "text"], "byte", [Type::Text, Type::Int] -> Type::Int },
+    Slice { ["std", "text"], "slice", [Type::Text, Type::Int, Type::Int] -> Type::Text },
+    SleepSeconds { ["std", "time"], "sleep_seconds", [Type::Int] },
+    EnvVar { ["std", "env"], "var", [Type::Text] -> option_of(absence, Type::Text) },
     CurrentDir { ["std", "env"], "current_dir", [] -> Type::Text },
 }
 
-/// The row of a native.
-pub(crate) fn native_row(native: Native) -> &'static NativeRow {
-    NATIVE_ROWS
+/// The shape of a native: its path, name, and parameter count.
+pub(crate) fn native_shape(native: Native) -> &'static NativeShape {
+    NATIVE_SHAPES
         .iter()
         .find(|(id, _)| *id == native)
-        .map(|(_, row)| row)
-        .expect("every native has exactly one row")
+        .map(|(_, shape)| shape)
+        .expect("every native has exactly one shape")
 }
 
 /// The number of parameters a native declares. The runtime checks that a
 /// handler consumes exactly this many arguments, so a handler cannot drift
 /// from its row.
 pub(crate) fn native_arity(native: Native) -> usize {
-    native_row(native).parameters.len()
+    native_shape(native).arity
 }
 
 #[cfg(test)]
@@ -111,16 +185,16 @@ mod tests {
     #[test]
     fn every_native_id_has_exactly_one_row() {
         for native in Native::ALL {
-            let rows = NATIVE_ROWS.iter().filter(|(id, _)| id == native).count();
+            let rows = NATIVE_SHAPES.iter().filter(|(id, _)| id == native).count();
             assert_eq!(rows, 1, "{native:?} must have exactly one row");
         }
-        assert_eq!(NATIVE_ROWS.len(), Native::ALL.len());
+        assert_eq!(NATIVE_SHAPES.len(), Native::ALL.len());
     }
 
     #[test]
     fn native_paths_and_names_are_unique() {
-        for (index, (_, row)) in NATIVE_ROWS.iter().enumerate() {
-            for (_, other) in NATIVE_ROWS.iter().skip(index + 1) {
+        for (index, (_, row)) in NATIVE_SHAPES.iter().enumerate() {
+            for (_, other) in NATIVE_SHAPES.iter().skip(index + 1) {
                 assert_ne!(
                     (row.path, row.name),
                     (other.path, other.name),
@@ -134,7 +208,7 @@ mod tests {
 
     #[test]
     fn natives_live_under_the_builtin_namespace() {
-        for (native, row) in NATIVE_ROWS {
+        for (native, row) in NATIVE_SHAPES {
             assert!(
                 row.path.first().copied() == Some(BUILTIN_NAMESPACE[0]),
                 "native {native:?} is outside the builtin namespace"

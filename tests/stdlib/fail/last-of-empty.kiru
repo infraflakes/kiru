@@ -1,0 +1,10 @@
+# `last` on an empty vec has no element, so it must stop the run.
+
+use std::text;
+use std::vec;
+
+fn main() {
+  let empty: Vec<txt> = [];
+  let value: txt = empty.last();
+  std::print(value);
+};

@@ -3,193 +3,230 @@ title: A First Program
 description: Build a small task runner and meet the basics of Kiru.
 ---
 
-Let's jump in by building something useful. In this chapter we'll write a small
-task runner: a program that runs a command for you and reports whether it
-succeeded. Along the way you'll meet most of the pieces a real Kiru program
-uses, and the chapters after this one explain each piece in detail.
+This chapter builds a small task runner: a program that runs a named task and
+reports whether it succeeded. Along the way it introduces the pieces a real
+Kiru program uses — a declared type, `match`, interpolation, the command
+builder, and `std::cli`. The chapters after this one explain each piece in
+detail.
 
-Here is what the program will do:
-
-- read the command from the command line;
-- run the matching command;
-- report whether it passed or failed.
-
-## Reading the Command Line
-
-Make a new file called `tasks.kiru` and start with a `main` that prints what it
-received:
-
-<span class="filename">Filename: tasks.kiru</span>
-
-```kiru
-fn main(args<rec>) {
-  std::print("command: " + args.cmd);
-};
-```
-
-When `main` declares `args<rec>`, the runtime builds a record from the words
-after the program name and passes it in. The record has two fields: `cmd`, the
-first word, and `flag`, the second word.
-
-Compile and run it:
-
-```console
-$ kc tasks.kiru
-$ ./tasks test
-command: test
-$ ./tasks
-command:
-```
-
-A missing word reads as `""`, so a program never has to guard a lookup.
-
-## Branching on the Command
-
-Right now the program only prints the command. Let's make it do something
-instead. Use `match` to compare `args.cmd` against the commands we know:
-
-<span class="filename">Filename: tasks.kiru</span>
-
-```kiru
-fn main(args<rec>) {
-  match args.cmd {
-    "test" => { std::print("running tests"); };
-    "build" => { std::print("building"); };
-    _ => { std::eprint("unknown command: " + args.cmd); };
-  };
-};
-```
-
-`match` compares a text against patterns and runs the first arm that matches. A
-pattern can be a string literal, a name, or a field path, and the `_` arm runs
-when nothing matched.
-
-`std::print` writes a line to stdout. `std::eprint` writes an `ERROR:`
-line to stderr and then exits the program, which is what we want for an unknown
-command:
-
-```console
-$ ./tasks test
-running tests
-$ ./tasks nope
-ERROR: unknown command: nope
-$ echo $?
-1
-```
+The finished program reads a task from the command line, runs that task's
+command, and reports the result.
 
 ## Running a Command
 
-Printing a message is not much of a task runner. Let's actually run the command.
-`std::command` runs a command line through the shell and returns its
-exit code as text:
+Running other programs is what Kiru is for. `std::command(line)` starts a
+command under construction, and `.run()` runs it through the shell
+(`/bin/sh -c`) and returns the exit code as an `int`:
 
 <span class="filename">Filename: tasks.kiru</span>
 
 ```kiru
-fn run(line<txt>) -> txt {
-  return std::command({}, line);
-};
+use std;
 
-fn main(args<rec>) {
-  match args.cmd {
-    "test" => { run("cargo test"); };
-    "build" => { run("cargo build"); };
-    _ => { std::eprint("unknown command: " + args.cmd); };
-  };
+fn main() -> int {
+  return std::command("cargo build").run();
 };
 ```
 
-We added a function, `run`. A function is declared with `fn`, lists its
-parameters with their types, and declares its return type after `->`. Here
-`run` takes one `txt` and returns a `txt`: the exit code.
+`main` returns the command's exit code as the program's own status. [Running
+Commands](/commands/running-a-command/) covers the builder's other options, and
+[Panic and Failure](/failure/panic/) defines the exit status.
 
-Notice that `run` is written above `main`. A name must be declared before the
-code that uses it, so helper functions go before the functions that call them.
-[Names and Scope](/concepts/names-and-scope/) explains the rule.
-
-A command's exit code is ordinary text, and `"0"` means success. Run the
-program:
+Compile and run it in a project directory:
 
 ```console
-$ ./tasks build
-   Compiling tasks v0.1.0
-    Finished dev [unoptimized + debuginfo] target(s) in 0.42s
+$ kc tasks.kiru
+$ ./tasks
+   Compiling tasks v0.1.0 (/home/you/tasks)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.42s
 $ echo $?
 0
 ```
 
-The command's output prints live, because a command inherits the program's
-stdout and stderr by default.
+## A Declared Type
 
-## Reporting the Result
-
-The exit code is data, and nothing fails when it is nonzero. Let's check it and
-report the result ourselves:
+The runner should name each task, so give a task a shape. `rec` declares a type
+with named fields:
 
 <span class="filename">Filename: tasks.kiru</span>
 
 ```kiru
-fn run(line<txt>) -> txt {
-  return std::command({}, line);
+use std;
+use std::text;
+
+rec Task {
+  name: txt,
+  line: txt,
 };
 
-fn report(name<txt>, code<txt>) {
+fn run(task: Task) -> int {
+  std::print("== @(task.name)");
+  let code: int = std::command(task.line).run();
   match code {
-    "0" => { std::print(name + " passed"); };
-    _ => { std::print(name + " failed with code " + code); };
+    0 => { std::print("@(task.name): ok"); };
+    _ => { std::print("@(task.name): failed (@(code))"); };
   };
+  return code;
 };
 
-fn main(args<rec>) {
-  match args.cmd {
-    "test" => { report("tests", run("cargo test")); };
-    "build" => { report("build", run("cargo build")); };
-    _ => { std::eprint("unknown command: " + args.cmd); };
-  };
+fn main() -> int {
+  let task: Task = { name = "build", line = "cargo build" };
+  return run(task);
 };
 ```
 
-Now the program tells us what happened:
+Three things are new here:
+
+- `rec Task { … }` declares a type with two `txt` fields. A value of that type
+  is written `{ name = "build", line = "cargo build" }`, and the annotation
+  `let task: Task = …` tells the compiler which declared type the literal is.
+  [Declared Types](/concepts/declared-types/) covers `rec` and `enum`.
+- `run` takes a `Task` and returns an `int`. A function writes each parameter's
+  type after its name and its return type after `->`. [Functions](/concepts/functions/)
+  covers functions.
+- `match code` chooses an arm by the exit code. `0` is the literal pattern for
+  success, and `_` runs when no earlier arm matched. [Match](/concepts/match/)
+  covers patterns and arms.
+
+`std::print` writes a line to stdout. Its argument interpolates values with
+`@(…)`: `@(task.name)` inserts the name and `@(code)` inserts the exit code as
+decimal text. [Text](/concepts/text/) covers interpolation.
+
+`run` is written above `main`. A name must be declared before the code that uses
+it, so helper functions go before the functions that call them.
+[Modules](/concepts/modules/) explains the rule.
+
+Run it:
 
 ```console
-$ ./tasks test
-... test output ...
-tests passed
+$ ./tasks
+== build
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.42s
+build: ok
+```
+
+## Selecting a Task with std::cli
+
+`main` receives the command-line words, but it does not parse flags; that is
+`std::cli`'s job. A program declares a command tree and hands it the words:
+
+<span class="filename">Filename: tasks.kiru</span>
+
+```kiru
+use std;
+use std::cli;
+use std::text;
+use std::vec;
+
+rec Task {
+  name: txt,
+  line: txt,
+};
+
+fn run(task: Task) -> int {
+  std::print("== @(task.name)");
+  let code: int = std::command(task.line).run();
+  match code {
+    0 => { std::print("@(task.name): ok"); };
+    _ => { std::print("@(task.name): failed (@(code))"); };
+  };
+  return code;
+};
+
+fn build(context: std::cli::Context) -> int {
+  let task: Task = { name = "build", line = "cargo build" };
+  return run(task);
+};
+
+fn test(context: std::cli::Context) -> int {
+  let task: Task = { name = "test", line = "cargo test" };
+  return run(task);
+};
+
+fn main(words: Vec<txt>) -> int {
+  let tasks: std::cli::Subcommand = std::cli::command("tasks")
+    .about("run a project task")
+    .with(std::cli::command("build").about("build the project").action(build))
+    .with(std::cli::command("test").about("run the tests").action(test));
+  return tasks.parse(words);
+};
+```
+
+`std::cli::command(name)` starts a command named `name`, `.about(text)` sets its
+description, `.with(child)` links a child command, and `.action(handler)` sets
+the function that runs when the command is selected. Each method returns the
+command, so the calls chain. `parse(words)` descends the tree by the leading
+words and calls the selected command's action. An action takes a
+`std::cli::Context` — the parsed command line — and returns an `int`, which
+`main` returns as the exit status. A command that declares no flags ignores its
+`Context`; [std::cli](/stdlib/cli/) covers flags and the rest of the tree.
+
+`build` and `test` are ordinary functions passed to `.action` as values. A
+function value must not be generic, so both are concrete.
+
+Run it:
+
+```console
+$ ./tasks build
+== build
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.42s
+build: ok
+$ echo $?
+0
+$ ./tasks --help
+tasks: run a project task
+  build  build the project
+  test  run the tests
 ```
 
 ## Capturing Output
 
-Sometimes you want a command's output as a value instead of printing it live.
-`std::capture` runs a command line and returns a record with the exit
-code and both streams:
+A task runner often wants a command's output as data instead of printing it
+live. `.capture()` runs the command and returns a `std::Output`, a declared type
+with the fields `code`, `out`, and `err`:
 
 <span class="filename">Filename: tasks.kiru</span>
 
 ```kiru
-fn main(args<rec>) {
-  let result<rec> = std::capture("cargo test");
+use std;
+
+fn main() -> int {
+  let result: std::Output = std::command("cargo test").capture();
   match result.code {
-    "0" => { std::print("tests passed"); };
+    0 => { std::print("tests passed"); };
     _ => {
       std::print("tests failed");
       std::print(result.err);
     };
   };
+  return result.code;
 };
 ```
 
-The record has three fields: `code`, `out`, and `err`. A record is a map of
-names to text, and reading a missing field gives `""`.
+`result.code` is an `int`, so matching it against `0` compares integers, and
+`result.err` is the captured stderr as `txt`. `.run()` streams a command's
+output live and returns only the code; `.capture()` captures both streams and
+returns them. [Running Commands](/commands/running-a-command/) covers the
+choice. `std::Output` is a declared `rec`, so `result.code` and `result.err` are
+read as declared fields. [Declared Types](/concepts/declared-types/) covers
+`rec`.
+
+Run it:
+
+```console
+$ ./tasks
+... test output ...
+tests passed
+```
 
 ## Where to Go Next
 
-That is a complete Kiru program: it reads the command line, branches, runs
-commands, and reports the result. The rest of the book explains each piece in
+That is a complete Kiru program: it reads the command line, selects a task, runs
+its command, and reports the result. The rest of the book explains each piece in
 turn.
 
-- [Common Concepts](/concepts/text/) covers text, records, functions, and loops.
-- [Namespaces and Imports](/concepts/namespaces/) covers splitting a program
-  across files.
+- [Common Concepts](/concepts/text/) covers text, maps, functions, and loops.
+- [Modules](/concepts/modules/) covers splitting a program across files.
 - [Commands](/commands/running-a-command/) goes deeper into running processes.
 - [Failure and Signals](/failure/panic/) covers what happens when a program
   fails.

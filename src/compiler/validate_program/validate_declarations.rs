@@ -2,10 +2,10 @@
 //! learn which functions stop the run.
 
 use crate::compiler::Diagnostic;
-use crate::model::{DeclarationId, DeclarationKind, FileId, Function, Program};
-use crate::types::Type;
+use crate::model::Type;
+use crate::model::{DeclarationId, FileId, Function, Program};
 
-use super::validate_bodies::Walk;
+use super::body_check::Checker;
 
 /// Validate every declaration in declaration order. A callee is always
 /// declared earlier, so its type and whether it stops the run are already
@@ -17,18 +17,16 @@ pub(crate) fn validate_program(program: &mut Program) -> Result<(), Diagnostic> 
         let id = DeclarationId(index);
         let declaration = program.declaration(id);
         if let Some(function) = declaration.function() {
-            let return_type = function.return_type;
+            // A function with no return type has no return type to check
+            // against; its calls produce no value.
+            let return_type = declaration.return_type();
             let halts = verify_function(program, id, program.file_of(id), function, return_type)?;
             program.declaration_mut(id).derived.halts = halts;
-        } else if let Some(expression) = declaration.initializer() {
-            let ty = match &declaration.kind {
-                DeclarationKind::Value { ty, .. } => *ty,
-                other => {
-                    unreachable!("only a module value has an initializer, found {other:?}")
-                }
-            };
-            let mut walk = Walk::new(program, program.file_of(id));
-            walk.initializer(expression, ty, true)?;
+        } else if let Some(value) = declaration.value() {
+            let ty = declaration.ty.clone();
+            let namespace = declaration.namespace;
+            let mut walk = Checker::new(program, program.file_of(id), namespace);
+            walk.require(value, &ty)?;
         }
     }
     Ok(())
@@ -37,7 +35,7 @@ pub(crate) fn validate_program(program: &mut Program) -> Result<(), Diagnostic> 
 /// Prove one function body against its declared return type and report whether
 /// every path stops the run.
 ///
-/// A function declared `-> txt` or `-> rec` must not fall through: every path
+/// A function declared with a return type must not fall through: every path
 /// ends in `return expr;`, `panic;`, or a call to a function that stops the
 /// run. A function declared with no return type may fall through. `main` is an
 /// ordinary function; the runtime discards its value.
@@ -46,27 +44,11 @@ fn verify_function(
     id: DeclarationId,
     file: FileId,
     function: &Function,
-    return_type: Type,
+    return_type: Option<Type>,
 ) -> Result<bool, Diagnostic> {
-    let declaration = program.declaration(id);
-    let name = &declaration.name;
-    let path = &program.file(file).path;
-
-    let mut walk = Walk::for_function(program, file, name, return_type);
-    let flow = walk.statements(&function.body)?;
-
-    if return_type != Type::Void && flow.falls {
-        return Err(Diagnostic::new(
-            path,
-            function
-                .body
-                .last()
-                .map_or(declaration.name_span, |statement| statement.span()),
-            format!(
-                "`{name}` is declared to return {}, so every path must end with `return ...`, `panic;`, or a call that stops the run",
-                return_type.name()
-            ),
-        ));
-    }
+    let name = program.declaration(id).name.as_str();
+    let namespace = program.declaration(id).namespace;
+    let mut walk = Checker::for_function(program, file, namespace, name, return_type);
+    let flow = walk.check_function(function, name)?;
     Ok(!flow.falls && !flow.returns)
 }

@@ -1,19 +1,19 @@
 //! The file natives: reading, writing, removing, asking whether a path exists,
-//! creating a temporary file, and matching a glob.
+//! creating a temporary file, and listing a directory.
 //!
 //! Every operation except `exists` answers an OS failure as a reason text,
-//! which the virtual machine turns into a run failure; `exists` answers with
-//! text.
+//! which the virtual machine turns into a run failure; `exists` answers with a
+//! boolean.
 
-use crate::model::Value;
+use std::sync::Arc;
 
-use super::boolean_text;
+use crate::runtime::Value;
 
 /// Read a whole file as text. A path that cannot be read, or whose bytes are
 /// not UTF-8, fails the run.
 pub(crate) fn read(path: &str) -> Result<Value, String> {
     std::fs::read_to_string(path)
-        .map(Value::Text)
+        .map(|text| Value::Text(text.into()))
         .map_err(|error| describe(path, &error))
 }
 
@@ -33,29 +33,40 @@ pub(crate) fn remove(path: &str) -> Result<Value, String> {
 
 /// Whether a path exists.
 pub(crate) fn exists(path: &str) -> Value {
-    Value::Text(boolean_text(std::path::Path::new(path).exists()))
+    Value::Bool(std::path::Path::new(path).exists())
 }
 
-/// Create a unique empty file and return its path. The file is created with
-/// `mkstemp`, so it is exclusive and readable only by its owner; the caller
+/// Create a unique empty file from `template` and return its path. The template
+/// must end in six `X`s, which `mkstemp` replaces so the name is unique. The
+/// file is created exclusively and is readable only by its owner; the caller
 /// owns the file and must remove it.
-pub(crate) fn temp_file() -> Result<Value, String> {
-    let template = std::env::temp_dir().join("kiru-XXXXXX");
-    let (file, path) = nix::unistd::mkstemp(&template).map_err(|error| error.to_string())?;
+pub(crate) fn mkstemp(template: &str) -> Result<Value, String> {
+    let (file, path) =
+        nix::unistd::mkstemp(std::path::Path::new(template)).map_err(|error| error.to_string())?;
     drop(file);
-    Ok(Value::Text(path.to_string_lossy().into_owned()))
+    Ok(Value::Text(path.to_string_lossy().into_owned().into()))
 }
 
-/// Expand a glob pattern into a list of matching paths, in sorted order. The
-/// pattern uses `*`, `?`, `[...]`, and `**` as the `glob` crate defines them.
-pub(crate) fn glob(pattern: &str) -> Result<Value, String> {
-    let paths = glob::glob(pattern).map_err(|error| error.to_string())?;
-    let mut matches = Vec::new();
-    for entry in paths {
-        let path = entry.map_err(|error| error.to_string())?;
-        matches.push(path.to_string_lossy().into_owned());
+/// The names of the entries in a directory, excluding `.` and `..`, in sorted
+/// order. A directory that cannot be read fails the run. This is the floor for
+/// every directory operation: `glob` and a recursive walk are kiru over it.
+pub(crate) fn list(path: &str) -> Result<Value, String> {
+    let entries = std::fs::read_dir(path).map_err(|error| describe(path, &error))?;
+    let mut names: Vec<String> = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| describe(path, &error))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name == "." || name == ".." {
+            continue;
+        }
+        names.push(name);
     }
-    Ok(Value::List(matches))
+    names.sort();
+    let values = names
+        .into_iter()
+        .map(|name| Value::Text(name.into()))
+        .collect();
+    Ok(Value::Vec(Arc::new(values)))
 }
 
 /// The reason a file operation failed, naming the path it acted on.

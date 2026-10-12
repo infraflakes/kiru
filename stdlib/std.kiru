@@ -1,62 +1,130 @@
 # std.kiru
 #
-# The high-frequency builtins live at the `std::` root: output, `join`, and
-# `last`. The category modules hold the rest. This file is loaded first, so its
-# functions are available to every category; the functions that need a category
-# (`quote`, `command`, `capture`) are added later in `process.kiru`.
+# The standard library's root: the `std` namespace, and the tree of categories
+# below it. This file's own declarations come first, then the imports that
+# reach every other stdlib file, in this order, the same way a program's own
+# files reach each other.
 
 mod std {
 
+  # The built-in type categories whose names this namespace writes bare.
+  use std::text;
+  use std::vec;
+
+  # The two types that belong to no category: a truth value and a whole number.
+  # A declaration with no body declares a built-in: the missing body is the
+  # marker that says the runtime, not the program, supplies the representation.
+  pub type bool;
+  pub type int;
+
   # Write a prefix and a message, coloring the prefix on a terminal. `color` is
-  # an ANSI SGR code and `file_descriptor` is "1" for stdout or "2" for stderr.
-  fn emit(color<txt>, prefix<txt>, file_descriptor<txt>, message<txt>) {
+  # an ANSI SGR code and `file_descriptor` is 1 for stdout or 2 for stderr.
+  pub fn emit(color: txt, prefix: txt, file_descriptor: int, message: txt) {
     std::io::write(file_descriptor, match std::io::is_terminal(file_descriptor) {
-      "true" => "\e[@(color)m@(prefix)\e[0m @(message)\n";
+      true => "\e[@(color)m@(prefix)\e[0m @(message)\n";
       _ => "@(prefix) @(message)\n";
     });
   };
 
   # Write a line to stdout.
-  fn print(message<txt>) {
-    std::io::write("1", "@(message)\n");
+  pub fn print(message: txt) {
+    std::io::write(1, "@(message)\n");
   };
 
   # Write an "INFO:" line to stdout, yellow on a terminal.
-  fn log(message<txt>) {
-    emit("33", "INFO:", "1", message);
+  pub fn info(message: txt) {
+    emit("33", "INFO:", 1, message);
   };
 
   # Write an "ERROR:" line to stderr, red on a terminal, then stop the run.
-  fn eprint(message<txt>) {
-    emit("31", "ERROR:", "2", message);
+  pub fn fail(message: txt) {
+    emit("31", "ERROR:", 2, message);
     panic;
   };
 
-  # Join a list of parts into one text with `separator` between each pair.
-  fn join(parts<list>, separator<txt>) -> txt {
-    let mut result<txt> = "";
-    let mut first<txt> = "true";
+  # Join a vec of parts into one text with `separator` between each pair.
+  pub fn join(parts: Vec<txt>, separator: txt) -> txt {
+    let result: txt = "";
+    let first: bool = true;
     for part in parts {
       match first {
-        "true" => { result = part; first = "false"; };
+        true => { result = part; first = false; };
         _ => { result = "@(result)@(separator)@(part)"; };
       };
     };
     return result;
   };
 
-  # The last element of `items`. An empty list has no last index, so it stops
-  # the run.
-  fn last(items<list>) -> txt {
-    match std::lists::len(items) {
-      "0" => { eprint("last: the list is empty"); };
+  # Split `text` into a vec of elements separated by `separator`. An empty
+  # separator is an error: Rust's char-boundary split on `""` is library policy,
+  # not the language. The scan is linear: each separator is one `find_byte` over
+  # the O(1) remainder `text.slice(index, count)`, so the native calls are
+  # O(the number of separators) and the whole split is linear in the text.
+  pub fn split(text: txt, separator: txt) -> Vec<txt> {
+    match separator.len() {
+      0 => { std::fail("std::split: the separator must not be empty"); };
       _ => {};
     };
-    let mut result<txt> = "";
-    for item in items {
-      result = item;
+    let count: int = text.len();
+    let result: Vec<txt> = [];
+    let at: int = 0;
+    let index: int = 0;
+    for {
+      match index <= count { false => { break; }; true => {}; };
+      let rest: txt = text.slice(index, count);
+      let found: Option<int> = std::text::find_byte(rest, separator);
+      match found {
+        Option.some(offset) => {
+          result[at] = text.slice(index, index + offset);
+          at = at + 1;
+          index = index + offset + separator.len();
+        };
+        Option.none => {
+          result[at] = text.slice(index, count);
+          at = at + 1;
+          break;
+        };
+      };
     };
     return result;
   };
 
+
+
+  # A value that is either present (`some`) or absent (`none`).
+  pub enum Option<T> { pub some(T), pub none };
+
+  # The value inside `self`, or `fallback` when it is `none`.
+  pub fn or<T>(self: Option<T>, fallback: T) -> T {
+    let inner: T = match self {
+      Option.some(value) => value;
+      Option.none => fallback;
+    };
+    return inner;
+  };
+
+  # Whether `self` holds a value.
+  pub fn contains<T>(self: Option<T>) -> bool {
+    let present: bool = match self {
+      Option.some(_) => true;
+      Option.none => false;
+    };
+    return present;
+  };
+
+
+
+  use std::text;
+
 };
+
+import "text.kiru";
+import "vec.kiru";
+import "map.kiru";
+import "set.kiru";
+import "env.kiru";
+import "fs.kiru";
+import "path.kiru";
+import "time.kiru";
+import "process.kiru";
+import "cli.kiru";

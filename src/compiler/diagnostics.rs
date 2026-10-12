@@ -6,6 +6,16 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::syntax::Span;
 
+/// A count and its noun, pluralized: `1 argument`, `2 arguments`. Every arity
+/// diagnostic reads through this, so the singular is never wrong.
+pub(crate) fn count(count: usize, noun: &str) -> String {
+    if count == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{count} {noun}s")
+    }
+}
+
 /// One compiler error tied to a source file and byte range.
 #[derive(Debug)]
 pub(crate) struct Diagnostic {
@@ -70,15 +80,17 @@ impl Diagnostic {
     }
 }
 
-/// The message for a value of the wrong kind: `expected <required>, found
-/// <actual>`, where both names come from the kind system.
+/// The message for a value of the wrong type: `expected <required>, found
+/// <actual>`, where both names come from the type system.
 pub(crate) fn expected_instead(required: &str, actual: &str) -> String {
     format!("expected {required}, found {actual}")
 }
 
-/// The message for a function named where a value is required.
-pub(crate) fn function_used_as_value(name: &str) -> String {
-    format!("`{name}` is a function; call it")
+/// The message for a native named where a value is required. A native has no
+/// runtime value yet: a function value is a code pointer, and a native is
+/// dispatched by index.
+pub(crate) fn native_used_as_value(name: &str) -> String {
+    format!("`{name}` is a native and has no value form; call it")
 }
 
 /// The message for a value called as a function.
@@ -99,6 +111,13 @@ pub(crate) fn duplicate_field(name: &str) -> String {
 /// The message for a name declared more than once in one namespace.
 pub(crate) fn duplicate_in_namespace(name: &str) -> String {
     format!("`{name}` is declared more than once in this namespace")
+}
+
+/// The message for a field or variant reached across a namespace that does not
+/// mark it `pub`. A member is private to its own namespace, exactly like a
+/// declaration.
+pub(crate) fn private_member(owner: &str, member: &str, namespace: &str) -> String {
+    format!("`{owner}.{member}` is private to `{namespace}`; mark it `pub` to reach it")
 }
 
 /// The width of one tab stop in columns.
@@ -172,8 +191,8 @@ mod tests {
                 "multiline span",
                 Span::new(13, 22),
                 "bad string",
-                "let s<txt> = \"one\ntwo\";\n",
-                "main.kiru:1:14: error: bad string\nlet s<txt> = \"one\n             ^^^^\ntwo\";\n^^^^\n",
+                "let s: txt = \"one\ntwo\";\n",
+                "main.kiru:1:14: error: bad string\nlet s: txt = \"one\n             ^^^^\ntwo\";\n^^^^\n",
             ),
             (
                 "carets aligned after tabs",

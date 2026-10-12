@@ -1,7 +1,7 @@
 //! A recursive descent parser for the kiru grammar.
 //!
 //! This module owns the parser state, the cursor primitives, and the shared
-//! list machinery. The grammar layers live in the `declarations`,
+//! Vec machinery. The grammar layers live in the `declarations`,
 //! `statements`, and `expressions` submodules.
 
 mod declarations;
@@ -41,7 +41,7 @@ struct Parser {
 }
 
 impl Parser {
-    /// The deepest nesting the parser accepts. A deeper block or record would
+    /// The deepest nesting the parser accepts. A deeper block or map would
     /// exhaust the stack during the recursive descent.
     const MAX_NESTING: usize = 128;
 
@@ -174,6 +174,7 @@ impl Parser {
     fn parse_item(&mut self) -> Result<Item, ParseError> {
         match &self.current().kind {
             TokenKind::Import => Ok(Item::Import(self.parse_import()?)),
+            TokenKind::Use => Ok(Item::Use(self.parse_use()?)),
             TokenKind::Mod => Ok(Item::Module(self.parse_mod()?)),
             _ => Ok(Item::Declaration(self.parse_declaration()?)),
         }
@@ -216,19 +217,19 @@ impl Parser {
     }
 
     /// Parse a `{ ... }` record literal, returning its fields and covering span.
-    fn parse_record_fields(&mut self) -> Result<(Vec<Field>, Span), ParseError> {
+    fn parse_rec_fields(&mut self) -> Result<(Vec<Field>, Span), ParseError> {
         self.parse_delimited(
             &TokenKind::LBrace,
             &TokenKind::RBrace,
-            "to open a record",
-            "to close a record",
-            Self::parse_record_field,
+            "to open a map",
+            "to close a map",
+            Self::parse_rec_field,
         )
     }
 
-    /// Parse one `name = expression` record field.
-    fn parse_record_field(&mut self) -> Result<Field, ParseError> {
-        let (name, name_span) = self.expect_identifier("in a record field")?;
+    /// Parse one `name = expression` map field.
+    fn parse_rec_field(&mut self) -> Result<Field, ParseError> {
+        let (name, name_span) = self.expect_identifier("in a map field")?;
         self.expect(&TokenKind::Equals, "after the field name")?;
         let value = self.parse_expression()?;
         let span = name_span.merge(value.span());
@@ -240,14 +241,14 @@ impl Parser {
         })
     }
 
-    /// Parse a `[ ... ]` list literal, returning its elements and covering
+    /// Parse a `[ ... ]` Vec literal, returning its elements and covering
     /// span.
     fn parse_list_elements(&mut self) -> Result<(Vec<Expression>, Span), ParseError> {
         self.parse_delimited(
             &TokenKind::LBracket,
             &TokenKind::RBracket,
-            "to open a list",
-            "to close a list",
+            "to open a Vec",
+            "to close a Vec",
             Self::parse_expression,
         )
     }
@@ -263,7 +264,7 @@ impl Parser {
         )
     }
 
-    /// Parse a comma separated list between `open` and `close`, returning the
+    /// Parse a comma separated Vec between `open` and `close`, returning the
     /// items and the span from the opening to the closing token.
     fn parse_delimited<T>(
         &mut self,

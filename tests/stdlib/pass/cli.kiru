@@ -1,0 +1,67 @@
+# The command tree: the readers over a Context, and parse. `Flag`, `Context`,
+# and `Subcommand` are private to `std::cli`; a program builds a command with the
+# chained methods and reads a context through its methods, so a `Context` is
+# built by `parse` and never by a literal.
+
+use std;
+use std::cli;
+use std::text;
+use std::vec;
+
+fn check(name: txt, got: txt, want: txt) {
+  match got == want {
+    true => {};
+    false => { std::fail("@(name): expected `@(want)`, found `@(got)`"); };
+  };
+};
+
+fn jobs() -> std::cli::Flag {
+  return std::cli::value_flag("--jobs").short("-j").help("parallel jobs").fallback("1");
+};
+
+# The readers over the Context `parse` builds: `number`, `has`, and `args`.
+fn read_with_flag(context: std::cli::Context) -> int {
+  check("number reads a flag value", "@(context.number(jobs()))", "4");
+  check("contains sees a flag", "@(context.contains(jobs()))", "true");
+  check("args skips flags and values", "@(context.args().len())", "1");
+  check("args keeps the positional", context.args()[0], "file");
+  return 0;
+};
+
+fn read_bare(context: std::cli::Context) -> int {
+  check("number falls back", "@(context.number(jobs()))", "1");
+  check("contains is false when absent", "@(context.contains(jobs()))", "false");
+  check("args without flags", "@(context.args().len())", "1");
+  return 0;
+};
+
+fn build_action(context: std::cli::Context) -> int {
+  return 42;
+};
+
+fn root_action(context: std::cli::Context) -> int {
+  return 7;
+};
+
+fn tree() -> std::cli::Subcommand {
+  let build: std::cli::Subcommand = std::cli::command("build").about("build it")
+    .action(build_action);
+  let root: std::cli::Subcommand = std::cli::command("app").about("the app")
+    .action(root_action);
+  root = root.with(build);
+  return root;
+};
+
+fn main() -> int {
+  let flagged: std::cli::Subcommand = std::cli::command("app").flag(jobs()).action(read_with_flag);
+  check("parse runs the flag action", "@(flagged.parse(["--jobs", "4", "file"]))", "0");
+
+  let bare: std::cli::Subcommand = std::cli::command("app").action(read_bare);
+  check("parse runs the bare action", "@(bare.parse(["file"]))", "0");
+
+  check("parse runs the root", "@(tree().parse([]))", "7");
+  check("parse descends to a child", "@(tree().parse(["build"]))", "42");
+
+  std::print("cli: ok");
+  return 0;
+};

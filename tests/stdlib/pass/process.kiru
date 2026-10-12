@@ -1,0 +1,58 @@
+# The process helpers: quote, the builder, spawn, wait_for, signal.
+
+use std;
+use std::text;
+use std::vec;
+use std::process;
+
+fn check(name: txt, got: txt, want: txt) {
+  match got == want {
+    true => {};
+    false => { std::fail("@(name): expected `@(want)`, found `@(got)`"); };
+  };
+};
+
+fn main() {
+  check("quote escapes an embedded quote", std::quote("a'b"), "'a'\\''b'");
+
+  check("run returns the exit code", "@(std::command("exit 3").run())", "3");
+  check("run returns zero on success", "@(std::command("true").run())", "0");
+  check("a discarded stream accepts the command", "@(std::command("echo hidden; true").stream("stdout", "/dev/null").stream("stderr", "/dev/null").run())", "0");
+
+  let captured: std::Output = std::command("sh -c 'printf hello; printf oops >&2; exit 4'").capture();
+  check("capture returns stdout", captured.out, "hello");
+  check("capture returns stderr", captured.err, "oops");
+  check("capture returns the exit code", "@(captured.code)", "4");
+
+  let multi: std::Output = std::command("echo one; echo two >&2").capture();
+  check("capture captures every command of a line", "@(std::text::trim(multi.out)):@(std::text::trim(multi.err))", "one:two");
+
+  let pid: int = std::process::spawn(["true"]);
+  check("an argv exits zero", "@(std::process::wait_for(pid))", "0");
+  let failing: int = std::process::spawn(["false"]);
+  check("an argv exit code comes back", "@(std::process::wait_for(failing))", "1");
+
+  let sleeper: int = std::process::spawn(["sleep", "5"]);
+  std::process::signal(sleeper, "KILL");
+  check("a signal ends the process", "@(std::process::wait_for(sleeper))", "137");
+
+  let where: std::Output = std::command("pwd").dir("/tmp").capture();
+  check("the builder runs in its directory", "@(std::text::trim(where.out)):@(where.code)", "/tmp:0");
+
+  let quiet: bool = true;
+  let chosen: std::Command = std::command("echo conditional");
+  match quiet {
+    true => { chosen = chosen.stream("stdout", "/dev/null"); };
+    _ => {};
+  };
+  check("a named command configures conditionally", "@(chosen.run())", "0");
+
+  let made: std::Output = std::command("mktemp -d").capture();
+  let dir: txt = std::text::trim(made.out);
+  check("the builder runs a command in a directory", "@(std::command("touch made").dir(dir).run()):@(std::fs::exists("@(dir)/made"))", "0:true");
+  std::command("touch @(dir)/bare").run();
+  check("a bare command statement runs", "@(std::fs::exists("@(dir)/bare"))", "true");
+  std::command("rm -rf @(std::quote(dir))").run();
+
+  std::print("process: ok");
+};
