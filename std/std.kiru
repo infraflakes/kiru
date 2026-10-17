@@ -103,14 +103,3 @@ mod std {
   };
 
 };
-
-import "text.kiru";
-import "vec.kiru";
-import "map.kiru";
-import "set.kiru";
-import "env.kiru";
-import "fs.kiru";
-import "path.kiru";
-import "time.kiru";
-import "process.kiru";
-import "cli.kiru";
