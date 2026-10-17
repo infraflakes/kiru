@@ -203,8 +203,11 @@ impl Loader {
             }),
             Item::Module(module) => self.push_module(file, module),
             Item::Use(use_item) => self.uses.push(ScopedUse {
+                file,
+                declarations_before: self.items.len(),
                 namespace: Vec::new(),
                 path: use_item.path,
+                span: use_item.span,
             }),
             // Imports are expanded by `load`, which never routes one here.
             Item::Import(_) => {}
@@ -221,8 +224,11 @@ impl Loader {
         }
         for use_item in module.uses {
             self.uses.push(ScopedUse {
+                file,
+                declarations_before: self.items.len(),
                 namespace: module.path.clone(),
                 path: use_item.path,
+                span: use_item.span,
             });
         }
     }

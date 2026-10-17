@@ -108,8 +108,6 @@ pub(crate) fn validate_program_structure(program: &Program) -> Result<(), String
                     }
                 }
             }
-            // A built-in carries no program types: the runtime provides it.
-            TypeKind::Builtin(_) => {}
         }
     }
     Ok(())

@@ -48,12 +48,11 @@ impl Parser {
         let public = self.eat(&TokenKind::Pub);
         let mut declaration = match &self.current().kind {
             TokenKind::Fn => Declaration::Function(self.parse_function()?),
-            // At the top level, `rec` opens a nominal type declaration,
-            // `enum` opens an enum type declaration, and a bodyless `type`
-            // declares a built-in type the runtime provides.
+            // At the top level, `rec` opens a nominal type declaration and
+            // `enum` opens an enum type declaration. The runtime's types are
+            // intrinsics, so there is no bodyless `type` form.
             TokenKind::Rec => Declaration::Type(self.parse_type_declaration()?),
             TokenKind::Enum => Declaration::Type(self.parse_enum_declaration()?),
-            TokenKind::Type => Declaration::Type(self.parse_builtin_type_declaration()?),
             TokenKind::Let => Declaration::Binding(self.parse_let_binding()?),
             other => {
                 return Err(self.error_here(format!(
@@ -129,23 +128,6 @@ impl Parser {
             public: false,
             parameters,
             kind: TypeDeclarationKind::Enum(variants),
-            span,
-        })
-    }
-
-    /// Parse a bodyless `type Name<parameters>;` declaration: a built-in type
-    /// the runtime provides. The marker is the missing body.
-    fn parse_builtin_type_declaration(&mut self) -> Result<TypeDeclaration, ParseError> {
-        let start = self.advance().start;
-        let (name, name_span) = self.expect_identifier("in a type declaration")?;
-        let parameters = self.parse_type_parameters()?;
-        let span = self.span_through_semicolon(start, "after the type declaration")?;
-        Ok(TypeDeclaration {
-            name,
-            name_span,
-            public: false,
-            parameters,
-            kind: TypeDeclarationKind::Builtin,
             span,
         })
     }

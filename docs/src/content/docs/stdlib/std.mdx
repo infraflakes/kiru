@@ -34,14 +34,14 @@ std::print("hello");
 <summary><code>fail</code> — write an ERROR line and stop the run</summary>
 
 ```kiru
-std::fail(message: txt)
+std::eprint(message: txt)
 ```
 
 Writes an `ERROR:` line to stderr, red when stderr is a terminal, then stops the
 run. Because `fail` always stops the run, calling it never returns.
 
 ```kiru
-std::fail("missing token");
+std::eprint("missing token");
 ```
 
 Related: [Panic and Failure](/failure/panic/).

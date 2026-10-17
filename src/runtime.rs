@@ -24,7 +24,7 @@ pub(crate) fn program_name() -> String {
         .unwrap_or_else(|| "kiru".to_owned())
 }
 
-/// Report a runtime error the way `std::fail` does: a red `ERROR:` prefix on
+/// Report a runtime error the way `std::eprint` does: a red `ERROR:` prefix on
 /// a terminal, then the message on stderr. The caller then stops the run, so
 /// every failure a program can raise reads the same way.
 pub(crate) fn report_error(message: &str) {

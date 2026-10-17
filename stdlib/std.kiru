@@ -7,19 +7,9 @@
 
 mod std {
 
-  # The built-in type categories whose names this namespace writes bare.
-  use std::text;
-  use std::vec;
-
-  # The two types that belong to no category: a truth value and a whole number.
-  # A declaration with no body declares a built-in: the missing body is the
-  # marker that says the runtime, not the program, supplies the representation.
-  pub type bool;
-  pub type int;
-
   # Write a prefix and a message, coloring the prefix on a terminal. `color` is
   # an ANSI SGR code and `file_descriptor` is 1 for stdout or 2 for stderr.
-  pub fn emit(color: txt, prefix: txt, file_descriptor: int, message: txt) {
+  fn emit(color: txt, prefix: txt, file_descriptor: int, message: txt) {
     std::io::write(file_descriptor, match std::io::is_terminal(file_descriptor) {
       true => "\e[@(color)m@(prefix)\e[0m @(message)\n";
       _ => "@(prefix) @(message)\n";
@@ -32,12 +22,12 @@ mod std {
   };
 
   # Write an "INFO:" line to stdout, yellow on a terminal.
-  pub fn info(message: txt) {
+  pub fn log(message: txt) {
     emit("33", "INFO:", 1, message);
   };
 
   # Write an "ERROR:" line to stderr, red on a terminal, then stop the run.
-  pub fn fail(message: txt) {
+  pub fn eprint(message: txt) {
     emit("31", "ERROR:", 2, message);
     panic;
   };
@@ -58,29 +48,31 @@ mod std {
   # Split `text` into a vec of elements separated by `separator`. An empty
   # separator is an error: Rust's char-boundary split on `""` is library policy,
   # not the language. The scan is linear: each separator is one `find_byte` over
-  # the O(1) remainder `text.slice(index, count)`, so the native calls are
-  # O(the number of separators) and the whole split is linear in the text.
+  # the O(1) remainder `std::text::slice(text, index, count)`, so the native
+  # calls are O(the number of separators) and the whole split is linear in the
+  # text. The text kernel is called rooted, because `std` cannot `use std::text`
+  # before `text.kiru` is imported.
   pub fn split(text: txt, separator: txt) -> Vec<txt> {
-    match separator.len() {
-      0 => { std::fail("std::split: the separator must not be empty"); };
+    match std::text::len(separator) {
+      0 => { std::eprint("std::split: the separator must not be empty"); };
       _ => {};
     };
-    let count: int = text.len();
+    let count: int = std::text::len(text);
     let result: Vec<txt> = [];
     let at: int = 0;
     let index: int = 0;
     for {
       match index <= count { false => { break; }; true => {}; };
-      let rest: txt = text.slice(index, count);
+      let rest: txt = std::text::slice(text, index, count);
       let found: Option<int> = std::text::find_byte(rest, separator);
       match found {
         Option.some(offset) => {
-          result[at] = text.slice(index, index + offset);
+          result[at] = std::text::slice(text, index, index + offset);
           at = at + 1;
-          index = index + offset + separator.len();
+          index = index + offset + std::text::len(separator);
         };
         Option.none => {
-          result[at] = text.slice(index, count);
+          result[at] = std::text::slice(text, index, count);
           at = at + 1;
           break;
         };
@@ -88,8 +80,6 @@ mod std {
     };
     return result;
   };
-
-
 
   # A value that is either present (`some`) or absent (`none`).
   pub enum Option<T> { pub some(T), pub none };
@@ -111,10 +101,6 @@ mod std {
     };
     return present;
   };
-
-
-
-  use std::text;
 
 };
 

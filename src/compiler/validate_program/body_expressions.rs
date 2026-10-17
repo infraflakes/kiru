@@ -225,10 +225,6 @@ impl<'a> Checker<'a> {
                                 *name_span,
                                 format!("`{}` is an enum; match it", declaration.name),
                             )),
-                            TypeKind::Builtin(_) => Err(self.error(
-                                *name_span,
-                                format!("`{}` has no fields", declaration.name),
-                            )),
                         }
                     }
                     other => Err(self.error(
@@ -793,7 +789,7 @@ impl<'a> Checker<'a> {
         };
         match &self.program.type_decl(*id).kind {
             TypeKind::Enum(variants) => Some(vec![false; variants.len()]),
-            TypeKind::Rec(_) | TypeKind::Builtin(_) => None,
+            TypeKind::Rec(_) => None,
         }
     }
 

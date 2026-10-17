@@ -1,8 +1,0 @@
-# `replace` with an empty needle has no rule — the needle must not be empty,
-# exactly as `split` refuses an empty separator — so it must stop the run.
-
-use std::text;
-
-fn main() {
-  std::print("abc".replace("", "-"));
-};

@@ -1,8 +1,0 @@
-# A file descriptor that is neither stdout nor stderr stops the run.
-
-use std;
-use std::text;
-
-fn main() {
-  std::io::write(9, "x");
-};

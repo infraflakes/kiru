@@ -106,7 +106,7 @@ impl Program {
             TypeKind::Enum(variants) => variants
                 .iter()
                 .position(|variant| variant.payload.is_empty()),
-            TypeKind::Rec(_) | TypeKind::Builtin(_) => None,
+            TypeKind::Rec(_) => None,
         }
     }
 

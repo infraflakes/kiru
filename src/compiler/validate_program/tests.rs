@@ -124,7 +124,7 @@ fn entry_and_return_rules() {
         ),
         (
             "a value function that ends in a halting call",
-            "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nfn f() -> txt { std::fail(\"x\"); };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nfn f() -> txt { std::eprint(\"x\"); };\nfn main() {};",
         ),
         (
             "a value function that ends in a halting user function",
@@ -173,17 +173,17 @@ fn panic_and_no_value_rules() {
     expect_rejections(&[
         (
             "fail bound to text",
-            "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nfn main() { let x: txt = std::fail(\"x\"); };",
+            "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nfn main() { let x: txt = std::eprint(\"x\"); };",
             "expected text, found no value",
         ),
         (
             "fail passed as a text argument",
-            "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nfn take(x: txt) {};\nfn main() { take(std::fail(\"x\")); };",
+            "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nfn take(x: txt) {};\nfn main() { take(std::eprint(\"x\")); };",
             "expected text, found no value",
         ),
         (
             "fail in a record field",
-            "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nrec R { k: txt };\nfn main() { let r: R = { k = std::fail(\"x\") }; };",
+            "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nrec R { k: txt };\nfn main() { let r: R = { k = std::eprint(\"x\") }; };",
             "expected text, found no value",
         ),
     ]);
@@ -768,11 +768,11 @@ fn checks_the_shipped_library_types() {
     );
     assert_eq!(value_type(&program, print), None);
 
-    let eprint = declaration(&program, &["std"], "fail");
+    let eprint = declaration(&program, &["std"], "eprint");
     assert_eq!(value_type(&program, eprint), None);
     assert!(
         program.declaration(eprint).derived.halts,
-        "fail ends in `panic;`, so it stops the run"
+        "eprint ends in `panic;`, so it stops the run"
     );
 
     let read = declaration(&program, &[], "read");
@@ -1450,6 +1450,11 @@ fn rule_conformance_order_and_scope() {
     ]);
     expect_rejections(&[
         (
+            "a `use` of a namespace declared later",
+            "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nuse later;\nmod later { pub fn f() {}; };\nfn main() {};\n",
+            "`later` is declared in `main.kiru`, which is loaded after `main.kiru`",
+        ),
+        (
             "a forward reference",
             "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nfn main() { std::print(banner()); };\nfn banner() -> txt { return \"x\"; };\n",
             "`banner` is declared after this point",
@@ -1497,7 +1502,7 @@ fn rule_conformance_order_and_scope() {
     ]);
 }
 
-/// The audit's rule-conformance probes, declarations: A bodyless `type` names a runtime type in a `std` category; fields, variants, type parameters, and parameters are unique; a generic type is applied; and `main` has its one shape.
+/// The audit's rule-conformance probes, declarations: The intrinsic types are built in, not declared, so a bodyless `type` is not a form; fields, variants, type parameters, and parameters are unique; a generic type is applied; and `main` has its one shape.
 ///
 /// Each case is the smallest program for one stated rule. The sources are the
 /// audit probes under `/tmp/probes` made self-contained (each imports what it names),
@@ -1520,14 +1525,14 @@ fn rule_conformance_declarations() {
     ]);
     expect_rejections(&[
         (
-            "a bodyless declaration that is not a built-in",
-            "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\ntype Foo;\nfn main() {};\n",
-            "`Foo` is not a type the runtime provides; a declaration with no body must name a built-in type",
+            "a bodyless `type` declaration",
+            "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\ntype txt;\nfn main() {};\n",
+            "expected a declaration, found `type`",
         ),
         (
-            "a bodyless built-in outside a `std` category",
-            "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\ntype txt;\nfn main() {};\n",
-            "`txt` is a type the runtime provides; a declaration with no body must be in a `std` category",
+            "a bodyless declaration of an unknown name",
+            "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\ntype Foo;\nfn main() {};\n",
+            "expected a declaration, found `type`",
         ),
         (
             "a duplicate field in a declaration",

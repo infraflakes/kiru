@@ -168,7 +168,7 @@ fn command_for(argv: &[String]) -> ProcessCommand {
     command
 }
 
-/// Report a runtime failure the way `std::fail` does, then record it. The
+/// Report a runtime failure the way `std::eprint` does, then record it. The
 /// failure stops the run.
 pub(crate) fn failure(state: &RuntimeState, line: &str, reason: &str) -> Panic {
     state.fail_fast();

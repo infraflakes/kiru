@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 
 use crate::model::Origin;
-use crate::syntax::Declaration;
+use crate::syntax::{Declaration, Span};
 
 /// One loaded source file, kept for diagnostics.
 #[derive(Debug)]
@@ -27,12 +27,18 @@ pub(crate) struct ScopedDeclaration {
     pub(crate) declaration: Declaration,
 }
 
-/// One `use` in the joined stream: the namespace that wrote it and the path it
-/// names.
+/// One `use` in the joined stream: the file and namespace that wrote it, and
+/// the path it names.
 #[derive(Debug)]
 pub(crate) struct ScopedUse {
+    /// The file that wrote the `use`.
+    pub(crate) file: usize,
+    /// How many declarations preceded it in the joined stream: the position a
+    /// `use` may reach back to, so a namespace declared later is out of reach.
+    pub(crate) declarations_before: usize,
     pub(crate) namespace: Vec<String>,
     pub(crate) path: Vec<String>,
+    pub(crate) span: Span,
 }
 
 /// The whole program: every loaded file plus the joined item stream.

@@ -6,7 +6,6 @@
 //! form: its value is storage. A native is the one value the runtime provides
 //! rather than the program, so it carries a marker instead of an expression.
 
-use crate::model::BuiltinType;
 use crate::native_registry::Native;
 
 use super::body::{Expression, Function};
@@ -103,9 +102,6 @@ pub(crate) struct TypeDecl {
 pub(crate) enum TypeKind {
     Rec(Vec<TypeFieldDecl>),
     Enum(Vec<VariantDecl>),
-    /// A built-in type: declared with no body, represented by the runtime. The
-    /// marker is the one place the compiler reads to learn its representation.
-    Builtin(BuiltinType),
 }
 
 /// One field of a declared `rec` type.

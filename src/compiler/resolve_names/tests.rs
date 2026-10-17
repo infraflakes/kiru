@@ -207,6 +207,18 @@ fn entry_and_namespace_rules() {
             "main.kiru",
             "`std` is reserved and cannot be declared",
         ),
+        (
+            "a use of a namespace imported later",
+            &[
+                (
+                    "main.kiru",
+                    "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nuse later;\nimport \"later.kiru\";\nfn main() {};",
+                ),
+                ("later.kiru", "mod later { pub fn f() {}; };"),
+            ],
+            "main.kiru",
+            "`later` is declared in `later.kiru`, which is loaded after `main.kiru`",
+        ),
     ]);
 }
 
@@ -295,52 +307,6 @@ fn name_and_binding_rules() {
             "`x` is declared more than once",
         ),
     ]);
-}
-
-#[test]
-fn a_bodyless_declaration_must_name_a_runtime_type() {
-    expect_rejections(&[
-        (
-            "an unknown built-in",
-            &[(
-                "main.kiru",
-                "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\ntype Nope;\nfn main() {};",
-            )],
-            "main.kiru",
-            "`Nope` is not a type the runtime provides; a declaration with no body must name a built-in type",
-        ),
-        (
-            "the wrong number of type parameters",
-            &[(
-                "main.kiru",
-                "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\ntype Vec;\nfn main() {};",
-            )],
-            "main.kiru",
-            "`Vec` takes 1 type parameter(s), found 0",
-        ),
-    ]);
-}
-
-#[test]
-fn a_builtin_type_is_declared_in_its_category() {
-    let program = accept(
-        &[(
-            "main.kiru",
-            "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nfn main() {};",
-        )],
-        "main.kiru",
-    );
-    for category in ["text", "vec"] {
-        let path = vec!["std".to_owned(), category.to_owned()];
-        assert!(
-            program.namespace_at(&path).is_some(),
-            "`std::{category}` exists"
-        );
-    }
-    let text = program
-        .namespace_at(&["std".to_owned(), "text".to_owned()])
-        .expect("std::text exists");
-    assert!(program.namespace(text).type_id("txt").is_some());
 }
 
 #[test]

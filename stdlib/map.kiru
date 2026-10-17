@@ -66,7 +66,7 @@ mod std::map {
         _ => {};
       };
     };
-    std::fail("get: the map has no entry for the key");
+    std::eprint("get: the map has no entry for the key");
   };
 
   # The value stored for `key`, or `fallback` when it is missing.

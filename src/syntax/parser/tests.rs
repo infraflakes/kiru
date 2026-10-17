@@ -317,16 +317,17 @@ fn parses_a_type_declaration() {
 }
 
 #[test]
-fn parses_a_builtin_type_declaration() {
-    let file = parse("type txt;\ntype Vec<T>;\ntype pair<K, V>;");
-    for (index, (name, parameters)) in [("txt", 0), ("Vec", 1), ("pair", 2)].iter().enumerate() {
-        let Declaration::Type(declaration) = declaration(&file, index) else {
-            panic!("expected a type declaration");
-        };
-        assert_eq!(&declaration.name, name);
-        assert_eq!(declaration.parameters.len(), *parameters);
-        assert_eq!(declaration.kind, TypeDeclarationKind::Builtin);
-    }
+fn rejects_a_bodyless_type_declaration() {
+    // `type` is not a keyword: the intrinsics are built in, so a bodyless
+    // declaration has no form and the word is an ordinary identifier.
+    assert_eq!(
+        parse_error("type txt;"),
+        "expected a declaration, found `type`"
+    );
+    assert_eq!(
+        parse_error("type Vec<T>;"),
+        "expected a declaration, found `type`"
+    );
 }
 
 #[test]

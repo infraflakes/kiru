@@ -8,11 +8,9 @@
 
 mod std::vec {
 
-  # The sequence type, beside its methods, so `use std::vec;` brings in both.
-  pub type Vec<T>;
-
-  # `bool`/`int` live at the `std` root and `txt` in its own category; `vec`
-  # is declared in this namespace.
+  # `bool`/`int` live at the `std` root and `txt` in its own category. `Vec<T>`
+  # is the language's own type; its methods live in this namespace, so
+  # `use std::vec;` brings them in.
   use std;
   use std::text;
 
@@ -148,7 +146,7 @@ mod std::vec {
   # The first element. An empty vec has no first element, so it stops the run.
   pub fn first<T>(self: Vec<T>) -> T {
     match self.len() {
-      0 => { std::fail("first: the vec is empty"); };
+      0 => { std::eprint("first: the vec is empty"); };
       _ => {};
     };
     return self[0];
@@ -157,7 +155,7 @@ mod std::vec {
   # The last element. An empty vec has no last element, so it stops the run.
   pub fn last<T>(self: Vec<T>) -> T {
     match self.len() {
-      0 => { std::fail("last: the vec is empty"); };
+      0 => { std::eprint("last: the vec is empty"); };
       _ => {};
     };
     let result: T = self[0];

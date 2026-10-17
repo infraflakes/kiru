@@ -18,11 +18,11 @@ mod kiru {
 
   # Sequential step: stream the command's output; a non-zero exit stops the run.
   fn run(project: Project, line: txt) {
-    std::info("Running '@(line)'");
+    std::log("Running '@(line)'");
     let code: int = std::command(wrap(project, line)).dir(project.Dir).run();
     match code {
-      0 => { std::info("'@(line)' ran successfully"); };
-      _ => { std::fail("'@(line)' failed"); };
+      0 => { std::log("'@(line)' ran successfully"); };
+      _ => { std::eprint("'@(line)' failed"); };
     };
   };
 

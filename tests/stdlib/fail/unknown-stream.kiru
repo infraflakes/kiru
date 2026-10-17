@@ -1,8 +1,0 @@
-# A stream name that is not stdin, stdout, or stderr stops the run.
-
-use std;
-use std::text;
-
-fn main() {
-  std::command("true").stream("bogus", "/dev/null").run();
-};

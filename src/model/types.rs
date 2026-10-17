@@ -51,12 +51,12 @@ impl Type {
     }
 }
 
-/// The runtime representation a bodyless `type Name;` declaration marks.
+/// The runtime representation a built-in type name denotes.
 ///
-/// A built-in type is a declaration like any other; this marker is the one
-/// place the compiler reads to learn which representation the runtime provides
-/// and how many type parameters the name takes. `txt`, `Vec`, `bool`, and `int`
-/// are the types the runtime ships.
+/// `txt`, `Vec`, `bool`, and `int` are the types the runtime ships. They are
+/// the language's own types, not declarations: the compiler resolves the name
+/// directly to this marker, which says which representation the runtime
+/// provides and how many type parameters the name takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BuiltinType {
     Text,
@@ -66,8 +66,8 @@ pub(crate) enum BuiltinType {
 }
 
 impl BuiltinType {
-    /// The marker a declared name stands for, or `None` when the runtime
-    /// provides no type by that name.
+    /// The marker a written name denotes, or `None` when the runtime provides
+    /// no type by that name.
     pub(crate) fn from_name(name: &str) -> Option<Self> {
         match name {
             "txt" => Some(BuiltinType::Text),
@@ -78,7 +78,7 @@ impl BuiltinType {
         }
     }
 
-    /// The name a declaration writes for this marker. Production code names a
+    /// The name a written type uses for this marker. Production code names a
     /// runtime type through `Type::builtin_name`; this is the test-only
     /// inverse of `from_name`.
     #[cfg(test)]
@@ -100,8 +100,8 @@ impl BuiltinType {
     }
 
     /// The runtime type this marker denotes, given the applied type arguments.
-    /// The declaration's parameter count is checked before this is called, so
-    /// the arguments are present.
+    /// The marker's parameter count is checked before this is called, so the
+    /// arguments are present.
     pub(crate) fn runtime_type(self, arguments: &[Type]) -> Type {
         match self {
             BuiltinType::Text => Type::Text,

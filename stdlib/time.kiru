@@ -9,7 +9,7 @@ mod std::time {
   # Sleep for `seconds` whole seconds. A negative count stops the run.
   pub fn sleep(seconds: int) {
     match seconds < 0 {
-      true => { std::fail("`@(seconds)` is not a whole number of seconds"); };
+      true => { std::eprint("`@(seconds)` is not a whole number of seconds"); };
       false => {};
     };
     std::time::sleep_seconds(seconds);

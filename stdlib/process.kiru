@@ -43,7 +43,7 @@ mod std::process {
       "USR2" => { number = 12; };
       "STOP" => { number = 19; };
       "CONT" => { number = 18; };
-      _ => { std::fail("unknown signal `@(name)`"); };
+      _ => { std::eprint("unknown signal `@(name)`"); };
     };
     std::process::signal_group(pid, number);
   };
@@ -169,7 +169,7 @@ mod std {
       "stdin" => { copy.stdin = Option.some(target); };
       "stdout" => { copy.stdout = Option.some(target); };
       "stderr" => { copy.stderr = Option.some(target); };
-      _ => { std::fail("command: `@(stream)` is not a stream; use stdin, stdout, or stderr"); };
+      _ => { std::eprint("command: `@(stream)` is not a stream; use stdin, stdout, or stderr"); };
     };
     return copy;
   };

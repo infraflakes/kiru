@@ -7,15 +7,9 @@
 
 mod std::text {
 
-  # The text type. A declaration with no body declares a built-in: the missing
-  # body is the marker that says the runtime, not the program, supplies the
-  # representation.
-  pub type txt;
-
-  # `Option` and the text kernel's `split` live at the `std` root; `Vec<T>`
-  # lives in its own category.
+  # `Option` and the text kernel's `split` live at the `std` root. `txt` and
+  # `Vec<T>` are the language's own types, so neither needs a `use`.
   use std;
-  use std::vec;
 
   # The byte index of the first occurrence of `needle`, or `none` when it is
   # absent. The kernel native `find_byte` is the absence itself, not a `-1`
@@ -136,7 +130,7 @@ mod std::text {
   # `split` — a degenerate needle has one rule, not two.
   pub fn replace(self: txt, from: txt, to: txt) -> txt {
     match from.len() {
-      0 => { std::fail("std::text::replace: the needle must not be empty"); };
+      0 => { std::eprint("std::text::replace: the needle must not be empty"); };
       _ => {};
     };
     return std::join(split(self, from), to);

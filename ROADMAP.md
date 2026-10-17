@@ -72,11 +72,10 @@ tracked so they are settled before they block a phase.
 - **Operator spelling:** `&&`, `||`, `!` for logic; `+ - * / %` arithmetic;
   `< <= > >=` ordering; `== !=` equality. All left-associative; `!`/`-` prefix.
 - **Reserved words are the forms, not the type names.** The reserved words are
-  `mod`, `import`, `use`, `pub`, `fn`, `let`, `type`, `rec`, `enum`, `match`,
+  `mod`, `import`, `use`, `pub`, `fn`, `let`, `rec`, `enum`, `match`,
   `return`, `panic`, `async`, `wait`, `for`, `in`, `break`, `true`, and `false`.
-  The runtime type names (`txt`, `vec`, `bool`, `int`) are
-  ordinary names, each declared by a bodyless `type` declaration in a `std`
-  category — see the built-in-type decision below.
+  There is no `type` keyword: the runtime type names (`txt`, `Vec`, `bool`,
+  `int`) are built in, not declared — see the intrinsic-type decision below.
 
 ## Decisions locked
 
@@ -134,15 +133,22 @@ tracked so they are settled before they block a phase.
   `{ … }` with none is an error. (Supersedes the earlier decision that
   `map<K, V>` replaced the anonymous record: there is no anonymous record type
   at all, and `map` is a stdlib rec rather than a runtime intrinsic.)
-- **A type name is an ordinary name; a built-in type is a declaration.** Every
-  written type — `txt`, `vec<T>`, `bool`, `int`, a declared `rec`/`enum`, a type
-  parameter — parses as one `TypeExpr::Named` and resolves
-  through `Builder::resolve_named_type`. The runtime's types are ordinary
-  declarations with no body: `pub type Name<...>;` in a `std` category
-  (`stdlib/types.kiru`), marked `TypeDeclarationKind::Builtin` and lowered to
-  `TypeKind::Builtin(BuiltinType)`. Nothing is a keyword by virtue of being a
-  type. (Removed the `txt`/`bool`/`int` keyword table, the `vec` token, and the
-  contextual `map` lookahead: one grammar and one resolution path.)
+- **A type name is an ordinary name; the intrinsics are built in, not
+  declared.** Every written type — `txt`, `Vec<T>`, `bool`, `int`, a declared
+  `rec`/`enum`, a type parameter — parses as one `TypeExpr::Named` and resolves
+  through `Builder::resolve_named_type`. `resolve_named_type` checks
+  `BuiltinType::from_name` for a bare, non-rooted, single-segment name before it
+  looks up any declaration, checks the type-argument count with
+  `parameter_count()`, resolves the arguments, and returns
+  `builtin.runtime_type(&resolved)` directly: no declaration, no `TypeId`,
+  nothing to delete. The runtime's types cannot go missing because they are the
+  language's own. There is no `type` keyword and no bodyless declaration form;
+  both `type Foo;` and `type txt;` are parse errors. (Removed the
+  `txt`/`bool`/`int` keyword table, the `vec` token, the contextual `map`
+  lookahead, the `type` keyword, and the
+  `TypeDeclarationKind::Builtin`/`TypeKind::Builtin`/`builtin_kind`/
+  `is_std_category` machinery: one grammar and one resolution path, and the
+  intrinsic surface is not a declaration.)
 - **The intrinsics are visible in every namespace; everything else is
   imported.** `txt`, `bool`, `int` and `Vec<T>` are the language's own types, so
   a program writes them without a `use`. Every other name is reached exactly as
@@ -166,7 +172,7 @@ tracked so they are settled before they block a phase.
   -> int` — the returned `int` is the process status, clamped to `0..=255`; no
   return means `0`; any other parameter or return type is an error. (Replaced a
   numeric-text status: the exit code is an `int`, not a number smuggled through
-  text, and a failure is `std::fail`.)
+  text, and a failure is `std::eprint`.)
 - **Text is UTF-8, not raw bytes.** Orchestration reads text — configs, logs,
   manifests, source — so the boundary type is a UTF-8 string and `read` refuses
   a file whose bytes are not UTF-8; a binary artifact is a child process's job,
@@ -185,6 +191,17 @@ tracked so they are settled before they block a phase.
   extend a namespace another file declared — `mod std` beside `mod std::process`
   — which is how a later file adds to `std` without the earlier one importing it
   back. The inline `mod` block is a feature of the mechanism, not a wart.
+- **A `use` may only reach an earlier file.** A `use` obeys the same backwards
+  rule the resolver applies to a name, extended across files: it may only reach
+  a namespace whose declarations come before it in the joined stream — that is,
+  a namespace in a file loaded earlier than the `use`, or in the `use`'s own
+  file before the `use`. A file cannot reach a namespace from a file it never
+  imported, or imports later: `std.kiru` may not `use std::vec;` while
+  `vec.kiru` is imported below it. The check lives in
+  `Builder::reserve_items`, comparing the `use`'s position in the joined stream
+  to the position of the namespace's first declaration, and it names the
+  declaring and writing files when it rejects one. `ScopedUse` carries the
+  writing file for that diagnostic.
 - **A type may name itself, and any other type.** Every declaration is reserved
   before any field is resolved, so a type may be self-referential or mutually
   recursive: a command tree (`children: vec<Command>`), a document
@@ -232,7 +249,7 @@ tracked so they are settled before they block a phase.
 - **Logical operators are symbols:** `&&`, `||`, `!` (identifiers cannot hold
   special characters, so symbols stand out).
 - **No `Result`.** A fallible call is an ordinary value; the bad case is handled
-  by a wildcard match arm that errors (`std::fail`/`panic`). There is no `?`
+  by a wildcard match arm that errors (`std::eprint`/`panic`). There is no `?`
   and no error-propagation type.
 - **`Option` is not built in.** The language gains `enum` (with payloads) and
   variant patterns; `Option<T>` (`some`/`none`) is then defined as an ordinary

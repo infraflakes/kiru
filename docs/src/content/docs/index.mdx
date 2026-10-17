@@ -48,7 +48,7 @@ fn main() -> int {
   let build: std::Output = std::command("cargo build").capture();
   match build.code {
     0 => { std::print("build ok"); };
-    _ => { std::fail(build.err); };
+    _ => { std::eprint(build.err); };
   };
   return std::command("cargo test").run();
 };

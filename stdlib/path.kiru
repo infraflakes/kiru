@@ -34,7 +34,7 @@ mod std::path {
   # run.
   pub fn base(path: txt) -> txt {
     match path.len() {
-      0 => { std::fail("base: the path is empty"); };
+      0 => { std::eprint("base: the path is empty"); };
       _ => {};
     };
     return std::split(path, "/").last();

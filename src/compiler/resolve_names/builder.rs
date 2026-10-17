@@ -13,7 +13,7 @@ use crate::model::{BuiltinType, Type, TypeHead, TypeId};
 use crate::model::{
     Declaration, DeclarationId, Derived, File, FileId, MethodTable, NameTable, Namespace,
     NamespaceId, Program, TypeDecl, TypeFieldDecl, TypeKind, TypeTable, VariantDecl,
-    first_duplicate, namespace_at, namespace_path,
+    first_duplicate, namespace_at,
 };
 use crate::native_registry::Native;
 use crate::syntax::{Span, TypeDeclaration, TypeDeclarationKind, TypeExpr};
@@ -283,16 +283,9 @@ impl Builder {
             declaration.name_span,
             reported_path,
         )?;
-        // A bodyless declaration carries its marker from the start: the
-        // runtime representation is independent of any other type. A map or
-        // enum is filled by `fill_type`; the placeholder keeps every reserved
-        // id valid while the remaining types are reserved.
-        let kind = match &declaration.kind {
-            TypeDeclarationKind::Builtin => {
-                self.builtin_kind(declaration, namespace, reported_path)?
-            }
-            TypeDeclarationKind::Rec(_) | TypeDeclarationKind::Enum(_) => TypeKind::Rec(Vec::new()),
-        };
+        // A `rec` and an `enum` are filled by `fill_type`; the placeholder
+        // keeps every reserved id valid while the remaining types are reserved.
+        let kind = TypeKind::Rec(Vec::new());
         let id = TypeId(self.types.len());
         // The declared absence type is the `std` category's `Option`: the one
         // enum whose payloadless variant marks a missing value. A program may
@@ -325,61 +318,6 @@ impl Builder {
         Ok(id)
     }
 
-    /// The marker a bodyless declaration names, rejecting a name the runtime
-    /// does not provide, an incorrect type-parameter count, and a declaration
-    /// outside a `std` category. The runtime types are bodyless `type`
-    /// declarations in `std` categories, so a bodyless declaration elsewhere
-    /// would be a second declaration of a built-in outside `std`.
-    fn builtin_kind(
-        &self,
-        declaration: &TypeDeclaration,
-        namespace: NamespaceId,
-        reported_path: &std::path::Path,
-    ) -> Result<TypeKind, Diagnostic> {
-        let Some(builtin) = BuiltinType::from_name(&declaration.name) else {
-            return Err(Diagnostic::new(
-                reported_path,
-                declaration.name_span,
-                format!(
-                    "`{}` is not a type the runtime provides; a declaration with no body must name a built-in type",
-                    declaration.name
-                ),
-            ));
-        };
-        if declaration.parameters.len() != builtin.parameter_count() {
-            return Err(Diagnostic::new(
-                reported_path,
-                declaration.name_span,
-                format!(
-                    "`{}` takes {} type parameter(s), found {}",
-                    declaration.name,
-                    builtin.parameter_count(),
-                    declaration.parameters.len()
-                ),
-            ));
-        }
-        if !self.is_std_category(namespace) {
-            return Err(Diagnostic::new(
-                reported_path,
-                declaration.name_span,
-                format!(
-                    "`{}` is a type the runtime provides; a declaration with no body must be in a `std` category",
-                    declaration.name
-                ),
-            ));
-        }
-        Ok(TypeKind::Builtin(builtin))
-    }
-
-    /// Whether a namespace is a `std` category: the first path segment is
-    /// `std`. The runtime types are bodyless declarations in these categories.
-    fn is_std_category(&self, namespace: NamespaceId) -> bool {
-        namespace_path(&self.namespaces, namespace)
-            .first()
-            .map(String::as_str)
-            == Some("std")
-    }
-
     /// Fill a reserved declared type: resolve its field or variant types and
     /// record them.
     pub(super) fn fill_type(
@@ -391,9 +329,6 @@ impl Builder {
     ) -> Result<(), Diagnostic> {
         let parameters = declaration.parameters.clone();
         let kind = match &declaration.kind {
-            // A built-in has no body to fill: its marker was set when it was
-            // reserved.
-            TypeDeclarationKind::Builtin => return Ok(()),
             TypeDeclarationKind::Rec(fields) => {
                 if let Some(index) = first_duplicate(fields.iter().map(|field| field.name.as_str()))
                 {
@@ -538,6 +473,38 @@ impl Builder {
         reported_path: &std::path::Path,
     ) -> Result<Type, Diagnostic> {
         let WrittenType { path, root, span } = written;
+        // The intrinsics are the language's own types, not declarations: a
+        // bare, non-rooted, single-segment name names one directly, before any
+        // declaration is looked up. Nothing can delete `txt` or `Vec` by
+        // deleting a declaration, because there is none.
+        if !root
+            && path.len() == 1
+            && let Some(builtin) = BuiltinType::from_name(&path[0])
+        {
+            let parameter_count = builtin.parameter_count();
+            if parameter_count != arguments.len() {
+                return Err(Diagnostic::new(
+                    reported_path,
+                    *span,
+                    format!(
+                        "`{}` takes {}, found {}",
+                        path[0],
+                        crate::compiler::diagnostics::count(parameter_count, "type argument"),
+                        arguments.len()
+                    ),
+                ));
+            }
+            let mut resolved = Vec::with_capacity(arguments.len());
+            for argument in arguments {
+                resolved.push(self.resolve_type_expr(
+                    argument,
+                    namespace,
+                    parameters,
+                    reported_path,
+                )?);
+            }
+            return Ok(builtin.runtime_type(&resolved));
+        }
         let Some(id) = self.find_type(namespace, path, root) else {
             return Err(Diagnostic::new(
                 reported_path,
@@ -568,10 +535,7 @@ impl Builder {
                 reported_path,
             )?);
         }
-        match &declared.kind {
-            TypeKind::Builtin(builtin) => Ok(builtin.runtime_type(&resolved)),
-            TypeKind::Rec(_) | TypeKind::Enum(_) => Ok(Type::Named(id, resolved)),
-        }
+        Ok(Type::Named(id, resolved))
     }
 
     /// Resolve a `Type::Variant` path to the enum's type and the variant's
@@ -669,11 +633,11 @@ impl Builder {
                     return Some(found);
                 }
             }
-            // A built-in type is an intrinsic, part of the language rather
-            // than the library, so it is visible in every namespace without a
-            // `use`. Every other bare name resolves only through this
+            // The intrinsics are the language's own types and are resolved
+            // before `find_type` is reached, so a bare name here is only a
+            // declaration. Every other bare name resolves through this
             // namespace's own types and the namespaces it `use`s.
-            return self.builtin_type(name);
+            return None;
         }
         let namespace = if namespace_segments.is_empty() {
             NamespaceId(0)
@@ -682,19 +646,6 @@ impl Builder {
         };
         let found = self.namespaces[namespace.0].type_id(name)?;
         (namespace == current || self.types[found.0].public).then_some(found)
-    }
-
-    /// The built-in type a name declares, wherever it is declared. The
-    /// intrinsics are the language's, not the library's: a bodyless declaration
-    /// is visible in every namespace without a `use`.
-    fn builtin_type(&self, name: &str) -> Option<TypeId> {
-        self.types
-            .iter()
-            .position(|declaration| {
-                declaration.name == name
-                    && matches!(declaration.kind, crate::model::TypeKind::Builtin(_))
-            })
-            .map(TypeId)
     }
 }
 

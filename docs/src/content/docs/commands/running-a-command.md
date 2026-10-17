@@ -72,7 +72,7 @@ fn run(line: txt) {
   let code: int = std::command(line).run();
   match code {
     0 => { std::print("@(line) passed"); };
-    _ => { std::fail("@(line) failed with code @(code)"); };
+    _ => { std::eprint("@(line) failed with code @(code)"); };
   };
 };
 
@@ -84,7 +84,7 @@ fn main() {
 
 A command's exit code is ordinary data. An unobserved code fails nothing; a
 program decides when a nonzero code means failure, as `run` does above by
-matching the code and reporting a failure with `std::fail`.
+matching the code and reporting a failure with `std::eprint`.
 
 `.capture()` runs the command and returns an `Output` with the exit code and both
 streams as fields `code`, `out`, and `err`. The line's stdout and stderr go to
@@ -99,7 +99,7 @@ fn main() {
   let result: std::Output = std::command("echo hello; echo oops >&2; exit 4").capture();
   match result.code {
     0 => { std::print(result.out); };
-    _ => { std::fail(result.err); };
+    _ => { std::eprint(result.err); };
   };
 };
 ```

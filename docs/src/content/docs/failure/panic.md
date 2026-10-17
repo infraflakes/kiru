@@ -1,6 +1,6 @@
 ---
 title: Panic and Failure
-description: panic, std::fail, the runtime errors, and the exit status.
+description: panic, std::eprint, the runtime errors, and the exit status.
 ---
 
 A program can fail on purpose, and the runtime can fail on its own. This
@@ -27,7 +27,7 @@ command a Kiru program started outlives the failure.
 
 ## Reporting with fail
 
-`std::fail(message)` writes an `ERROR:` line to stderr, red when stderr is a
+`std::eprint(message)` writes an `ERROR:` line to stderr, red when stderr is a
 terminal, then panics:
 
 ```kiru
@@ -35,7 +35,7 @@ use std;
 use std::text;
 
 fn report(reason: txt) {
-  std::fail("cannot continue: @(reason)");
+  std::eprint("cannot continue: @(reason)");
 };
 
 fn main() {
@@ -58,7 +58,7 @@ use std;
 use std::text;
 
 fn report(reason: txt) -> txt {
-  std::fail(reason);
+  std::eprint(reason);
 };
 
 fn main() {
@@ -69,7 +69,7 @@ fn main() {
 
 A command's exit code is ordinary data, and a nonzero code fails nothing by
 itself. [Running Commands](/commands/running-a-command/) shows how a program
-reports a failed command with a `match` on the code and `std::fail`.
+reports a failed command with a `match` on the code and `std::eprint`.
 
 ## Runtime errors
 

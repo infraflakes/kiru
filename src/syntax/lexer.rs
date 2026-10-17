@@ -222,7 +222,6 @@ impl<'a> Lexer<'a> {
             "fn" => TokenKind::Fn,
             "enum" => TokenKind::Enum,
             "let" => TokenKind::Let,
-            "type" => TokenKind::Type,
             "rec" => TokenKind::Rec,
             "match" => TokenKind::Match,
             "return" => TokenKind::Return,

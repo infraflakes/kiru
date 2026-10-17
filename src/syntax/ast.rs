@@ -73,16 +73,13 @@ pub(crate) struct TypeDeclaration {
     pub(crate) span: Span,
 }
 
-/// The body of a declared type: a fixed set of fields (`rec`), a set of
-/// variants (`enum`), or no body at all, which declares a built-in type the
-/// runtime provides.
+/// The body of a declared type: a fixed set of fields (`rec`) or a set of
+/// variants (`enum`). The runtime's own types are intrinsics, not declarations,
+/// so there is no bodyless form.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum TypeDeclarationKind {
     Rec(Vec<TypeField>),
     Enum(Vec<VariantDeclaration>),
-    /// A `type Name<...>;` declaration with no body: the marker that makes the
-    /// name a built-in type the runtime provides.
-    Builtin,
 }
 
 /// One `Name` or `Name(Type, ...)` variant of an `enum` declaration.

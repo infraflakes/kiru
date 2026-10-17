@@ -47,7 +47,7 @@ mod std::cli {
   # The action of a command that has none: report it and fail.
   fn no_action(context: Context) -> int {
     let line: txt = std::join(context.path, " ");
-    std::fail("no action for `@(line)`");
+    std::eprint("no action for `@(line)`");
     return 1;
   };
 
@@ -230,7 +230,7 @@ mod std::cli {
     let parsed: Option<int> = raw.number();
     match parsed.contains() {
       true => {};
-      _ => { std::fail("`@(flag.name)` needs a whole number, found `@(raw)`"); };
+      _ => { std::eprint("`@(flag.name)` needs a whole number, found `@(raw)`"); };
     };
     let number: int = match parsed {
       std::Option.some(value) => value;
@@ -320,7 +320,7 @@ mod std::cli {
       Option.none => {};
       Option.some(word) => {
         let line: txt = current.usage();
-        std::fail("unknown flag `@(word)`\n@(line)");
+        std::eprint("unknown flag `@(word)`\n@(line)");
       };
     };
     let context: Context = {

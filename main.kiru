@@ -44,7 +44,7 @@ fn run_all(context: std::cli::Context) -> int {
 };
 
 fn run_usage(context: std::cli::Context) -> int {
-  std::fail(kiru::usage);
+  std::eprint(kiru::usage);
   return 1;
 };
 

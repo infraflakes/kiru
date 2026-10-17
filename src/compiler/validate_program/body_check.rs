@@ -399,14 +399,6 @@ impl<'a> Checker<'a> {
                     TypeKind::Enum(_) => {
                         return Err(self.error(name_span, format!("`{name}` is an enum; match it")));
                     }
-                    // A built-in type has no fields, just as a primitive has
-                    // none.
-                    TypeKind::Builtin(_) => {
-                        return Err(self.error(
-                            name_span,
-                            format!("`{name}` is not a rec and has no fields"),
-                        ));
-                    }
                 }
                 match rec_field_decl(&self.program.types, id, field) {
                     Some(field_decl) => {

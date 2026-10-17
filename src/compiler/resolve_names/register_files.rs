@@ -1,5 +1,7 @@
 //! Registering the joined item stream.
 
+use std::collections::HashMap;
+
 use crate::compiler::Diagnostic;
 use crate::compiler::load_files::{LoadedProgram, ScopedDeclaration};
 use crate::model::{File, FileId, Origin};
@@ -32,10 +34,42 @@ impl Builder {
                 self.reserve_type(declaration, namespace, &loaded.files[scoped.file].path)?;
             }
         }
+        // The file that declares each namespace and the position of its first
+        // declaration in the joined stream. A `use` may only reach a namespace
+        // declared before it — the same backwards rule the resolver applies to
+        // a name, extended across files. The declaring file names the other
+        // file when a `use` reaches forward.
+        let mut declared: HashMap<&[String], (usize, usize)> = HashMap::new();
+        for (position, scoped) in loaded.items.iter().enumerate() {
+            if !scoped.namespace.is_empty() {
+                declared
+                    .entry(scoped.namespace.as_slice())
+                    .or_insert((scoped.file, position));
+            }
+        }
         // Record every `use` on the namespace that wrote it, before any field
         // is resolved: a field or a receiver type may name a type the
         // namespace only `use`s.
         for used in &loaded.uses {
+            // A use names a namespace, or one declaration inside it: the
+            // longest prefix that is a declared namespace is the one reached.
+            let reached = (1..=used.path.len())
+                .rev()
+                .find_map(|length| declared.get(&used.path[..length]).copied());
+            if let Some((declaring_file, position)) = reached
+                && position >= used.declarations_before
+            {
+                return Err(Diagnostic::new(
+                    &loaded.files[used.file].path,
+                    used.span,
+                    format!(
+                        "`{}` is declared in `{}`, which is loaded after `{}`",
+                        crate::model::join_path(&used.path, false),
+                        file_name(&loaded.files[declaring_file].path),
+                        file_name(&loaded.files[used.file].path),
+                    ),
+                ));
+            }
             let namespace = self.ensure_namespace(&used.namespace);
             self.namespaces[namespace.0].uses.push(used.path.clone());
         }
@@ -146,4 +180,12 @@ fn declaration_span(declaration: &ParsedDeclaration) -> Span {
         ParsedDeclaration::Binding(binding) => binding.name_span,
         ParsedDeclaration::Type(type_declaration) => type_declaration.name_span,
     }
+}
+
+/// The last path segment of a loaded file, for a diagnostic that names the
+/// declaring and writing files without their directories.
+fn file_name(path: &std::path::Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
 }

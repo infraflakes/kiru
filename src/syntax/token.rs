@@ -22,8 +22,6 @@ pub(crate) enum TokenKind {
     /// `enum`, which opens an enum type declaration.
     Enum,
     Let,
-    /// `type`, which opens a bodyless declaration of a built-in type.
-    Type,
     /// `rec`, which opens a nominal `rec` type declaration.
     Rec,
     Match,
@@ -91,7 +89,6 @@ impl TokenKind {
             TokenKind::Fn => "`fn`".to_owned(),
             TokenKind::Enum => "`enum`".to_owned(),
             TokenKind::Let => "`let`".to_owned(),
-            TokenKind::Type => "`type`".to_owned(),
             TokenKind::Rec => "`rec`".to_owned(),
             TokenKind::Match => "`match`".to_owned(),
             TokenKind::Return => "`return`".to_owned(),
