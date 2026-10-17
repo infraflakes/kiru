@@ -7,10 +7,8 @@ on:
     paths:
       - 'docs/**'
       - 'src/**'
-      - 'stdlib/**'
-      - '.kiru/**'
-      - 'entry.kiru'
-      - 'main.kiru'
+      - 'std/**'
+      - 'pipeline/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '**.nix'
@@ -20,10 +18,8 @@ on:
     paths:
       - 'docs/**'
       - 'src/**'
-      - 'stdlib/**'
-      - '.kiru/**'
-      - 'entry.kiru'
-      - 'main.kiru'
+      - 'std/**'
+      - 'pipeline/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '**.nix'
@@ -56,11 +52,11 @@ jobs:
         run: nix build .#default
 
       - name: Compile the pipeline
-        run: ./result/bin/kc main.kiru
+        run: ./result/bin/kc pipeline/main.kiru
 
       - name: Checking the codebase
         run: |
-          ./main docs build && ./main docs check
+          ./pipeline/main docs build && ./pipeline/main docs check
 
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5

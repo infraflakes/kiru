@@ -138,21 +138,6 @@ impl Parser {
         }
     }
 
-    /// Consume a string token, returning its text and span.
-    fn expect_text(&mut self, context: &str) -> Result<(String, Span), ParseError> {
-        match &self.current().kind {
-            TokenKind::Text(value) => {
-                let value = value.clone();
-                let span = self.advance();
-                Ok((value, span))
-            }
-            other => Err(self.error_here(format!(
-                "expected a string {context}, found {}",
-                other.describe()
-            ))),
-        }
-    }
-
     /// Build an error positioned at the cursor token.
     fn error_here(&self, message: impl Into<String>) -> ParseError {
         ParseError {
@@ -161,21 +146,29 @@ impl Parser {
         }
     }
 
-    /// Parse the token stream into a file: its top-level items in order.
+    /// Parse the token stream into a file: its top-level items in order. Every
+    /// `use` must come before the first declaration; a `use` after one is a
+    /// parse error, since a `use` reads at the top of its file.
     fn parse_file(mut self) -> Result<File, ParseError> {
         let mut items = Vec::new();
+        let mut declared = false;
         while !self.check(&TokenKind::Eof) {
+            if self.check(&TokenKind::Use) {
+                if declared {
+                    return Err(self.error_here("`use` must come before any declaration"));
+                }
+            } else {
+                declared = true;
+            }
             items.push(self.parse_item()?);
         }
         Ok(File { items })
     }
 
-    /// Parse one top-level item: an `import`, a `mod` block, or a declaration.
+    /// Parse one top-level item: a `use` or a declaration.
     fn parse_item(&mut self) -> Result<Item, ParseError> {
         match &self.current().kind {
-            TokenKind::Import => Ok(Item::Import(self.parse_import()?)),
             TokenKind::Use => Ok(Item::Use(self.parse_use()?)),
-            TokenKind::Mod => Ok(Item::Module(self.parse_mod()?)),
             _ => Ok(Item::Declaration(self.parse_declaration()?)),
         }
     }
@@ -188,6 +181,7 @@ impl Parser {
     }
 
     /// Parse a qualified `::` path, returning its segments and covering span.
+    /// A path begins with a name; a leading `::` is not a form.
     fn parse_path_segments(&mut self, context: &str) -> Result<(Vec<String>, Span), ParseError> {
         let (first, first_span) = self.expect_identifier(context)?;
         let mut segments = vec![first];
@@ -198,22 +192,6 @@ impl Parser {
             span = span.merge(segment_span);
         }
         Ok((segments, span))
-    }
-
-    /// Parse a qualified name that may open with `::`, returning whether the
-    /// path is rooted explicitly, its segments, and its covering span.
-    fn parse_rooted_path(
-        &mut self,
-        context: &str,
-    ) -> Result<(bool, Vec<String>, Span), ParseError> {
-        let root_span = if self.check(&TokenKind::PathSep) {
-            Some(self.advance())
-        } else {
-            None
-        };
-        let (segments, span) = self.parse_path_segments(context)?;
-        let span = root_span.map_or(span, |root| root.merge(span));
-        Ok((root_span.is_some(), segments, span))
     }
 
     /// Parse a `{ ... }` record literal, returning its fields and covering span.
@@ -239,18 +217,6 @@ impl Parser {
             value,
             span,
         })
-    }
-
-    /// Parse a `[ ... ]` Vec literal, returning its elements and covering
-    /// span.
-    fn parse_list_elements(&mut self) -> Result<(Vec<Expression>, Span), ParseError> {
-        self.parse_delimited(
-            &TokenKind::LBracket,
-            &TokenKind::RBracket,
-            "to open a Vec",
-            "to close a Vec",
-            Self::parse_expression,
-        )
     }
 
     /// Parse an argument list, returning the arguments and covering span.

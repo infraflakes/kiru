@@ -51,9 +51,6 @@ impl Parser {
             {
                 self.parse_field_assignment()
             }
-            TokenKind::Ident(_) if matches!(self.peek(1).kind, TokenKind::LBracket) => {
-                self.parse_index_assignment()
-            }
             _ => {
                 let expression = self.parse_expression()?;
                 self.expect(&TokenKind::Semi, "after the expression")?;
@@ -97,27 +94,12 @@ impl Parser {
         Ok(Statement::Wait { span })
     }
 
-    /// Parse a `for` statement: `for item in <Vec> { ... };` iterates a Vec,
-    /// and `for { ... };` repeats until a `break`.
+    /// Parse a `for { ... };` statement, which repeats until a `break`.
     fn parse_for(&mut self) -> Result<Statement, ParseError> {
         let start = self.advance().start;
-        if self.check(&TokenKind::LBrace) {
-            let body = self.parse_block()?;
-            let span = self.span_through_semicolon(start, "after the for body")?;
-            return Ok(Statement::Forever { body, span });
-        }
-        let (item, item_span) = self.expect_identifier("as the loop variable")?;
-        self.expect(&TokenKind::In, "after the loop variable")?;
-        let iterable = self.parse_expression()?;
         let body = self.parse_block()?;
         let span = self.span_through_semicolon(start, "after the for body")?;
-        Ok(Statement::ForEach {
-            item,
-            item_span,
-            iterable,
-            body,
-            span,
-        })
+        Ok(Statement::Forever { body, span })
     }
 
     /// Parse a `break;` statement.
@@ -156,25 +138,6 @@ impl Parser {
             name_span,
             field,
             field_span,
-            value,
-            span,
-        })
-    }
-
-    /// Parse a `name[index] = expression;` index assignment statement.
-    fn parse_index_assignment(&mut self) -> Result<Statement, ParseError> {
-        let (name, name_span) = self.expect_identifier("in an index assignment")?;
-        let start = name_span.start;
-        self.expect(&TokenKind::LBracket, "to open the index")?;
-        let index = self.parse_expression()?;
-        self.expect(&TokenKind::RBracket, "to close the index")?;
-        self.expect(&TokenKind::Equals, "after the index")?;
-        let value = self.parse_expression()?;
-        let span = self.span_through_semicolon(start, "after the index assignment")?;
-        Ok(Statement::IndexAssignment {
-            name,
-            name_span,
-            index,
             value,
             span,
         })

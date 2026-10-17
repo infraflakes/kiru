@@ -2,16 +2,30 @@
 //!
 //! Each expression allocates its result in a fresh register above the frame's
 //! parameters and locals. A function literal is lowered into its own code and
-//! called through a function value; a `match` becomes a compare-and-jump chain
-//! that keeps the first-match order, and a `for` becomes an index loop.
+//! called through a function value, a `match` becomes a compare-and-jump chain
+//! that keeps the first-match order, and the vec operations become the
+//! runtime's list instructions. This is the one stage that knows a `Named`
+//! with the runtime's `Vec` id has a list representation.
 
 use crate::bytecode::{Code, CompareOp, Instruction, NumberOp};
 use crate::model::{
-    DeclarationId, Expression, Function, MatchArm, MatchBody, Pattern, Statement, StringPart,
+    DeclarationId, Expression, Function, MatchArm, MatchBody, Pattern, Statement, StringPart, Type,
 };
 use crate::syntax::{BinaryOp, UnaryOp};
 
 use super::lower_bytecode::Lowerer;
+
+/// The runtime list operation a standard-library vec method performs. The
+/// lowering recognizes each by its declaration and emits the matching
+/// instruction.
+#[derive(Clone, Copy)]
+enum VecOperation {
+    New,
+    Len,
+    At,
+    Replace,
+    Push,
+}
 
 impl Lowerer<'_> {
     /// Lower one function body into a `Code`: its captures then its parameters
@@ -132,18 +146,6 @@ impl Lowerer<'_> {
                 self.instructions
                     .push(Instruction::SetField { map, key, value });
             }
-            Statement::IndexAssign {
-                declaration,
-                index,
-                value,
-                ..
-            } => {
-                let vec = self.slot(*declaration);
-                let index = self.expression(index);
-                let value = self.expression(value);
-                self.instructions
-                    .push(Instruction::SetIndex { vec, index, value });
-            }
             Statement::Expression(expression) => {
                 if let Expression::Match {
                     subject,
@@ -173,12 +175,6 @@ impl Lowerer<'_> {
             Statement::Panic { .. } => self.instructions.push(Instruction::Panic),
             Statement::Async { call, .. } => self.lower_async(call),
             Statement::Wait { .. } => self.instructions.push(Instruction::Wait),
-            Statement::ForEach {
-                item,
-                iterable,
-                body,
-                ..
-            } => self.lower_for_each(*item, iterable, body),
             Statement::Forever { body, .. } => self.lower_for(body),
             Statement::Break { .. } => {
                 let jump = self.instructions.len();
@@ -226,18 +222,6 @@ impl Lowerer<'_> {
                 });
                 dst
             }
-            Expression::Vec { elements, .. } => {
-                let lowered: Vec<u16> = elements
-                    .iter()
-                    .map(|element| self.expression(element))
-                    .collect();
-                let dst = self.fresh();
-                self.instructions.push(Instruction::BuildVec {
-                    dst,
-                    elements: lowered,
-                });
-                dst
-            }
             Expression::Interpolated { parts, .. } => self.lower_interpolated(parts),
             Expression::Match {
                 subject,
@@ -264,14 +248,6 @@ impl Lowerer<'_> {
                 let dst = self.fresh();
                 self.instructions
                     .push(Instruction::GetField { dst, map, key });
-                dst
-            }
-            Expression::Index { target, index, .. } => {
-                let vec = self.expression(target);
-                let index = self.expression(index);
-                let dst = self.fresh();
-                self.instructions
-                    .push(Instruction::VecIndex { dst, vec, index });
                 dst
             }
             Expression::Variant {
@@ -476,19 +452,24 @@ impl Lowerer<'_> {
     }
 
     /// Lower an application. A native is the one callable with no value form,
-    /// so it is dispatched by index; every other callee is an expression whose
-    /// value is called.
+    /// so it is dispatched by index; a vec operation is the one function whose
+    /// result is a runtime list, so it becomes a list instruction; every other
+    /// callee is an expression whose value is called.
     fn lower_call(&mut self, callee: &Expression, arguments: &[Expression], dst: u16) {
-        if let Expression::Reference { declaration, .. } = callee
-            && let Some(native) = self.program.declaration(*declaration).native
-        {
-            let arguments = self.lower_arguments(arguments);
-            self.instructions.push(Instruction::CallNative {
-                dst,
-                native,
-                arguments,
-            });
-            return;
+        if let Expression::Reference { declaration, .. } = callee {
+            if let Some(native) = self.program.declaration(*declaration).native {
+                let arguments = self.lower_arguments(arguments);
+                self.instructions.push(Instruction::CallNative {
+                    dst,
+                    native,
+                    arguments,
+                });
+                return;
+            }
+            if let Some(operation) = self.vec_operation(*declaration) {
+                self.lower_vec_operation(operation, arguments, dst);
+                return;
+            }
         }
         let callee = self.expression(callee);
         let arguments = self.lower_arguments(arguments);
@@ -497,6 +478,80 @@ impl Lowerer<'_> {
             callee,
             arguments,
         });
+    }
+
+    /// The vec operation a call to `declaration` performs, when the declaration
+    /// is one of the standard library's own vec methods. The declaration must
+    /// live in `std::dynamic` and its receiver or result must be the runtime's
+    /// `Vec` type; a user declaration of the same name is an ordinary call.
+    fn vec_operation(&self, declaration: DeclarationId) -> Option<VecOperation> {
+        let node = self.program.declaration(declaration);
+        if Some(node.namespace) != self.vec_namespace {
+            return None;
+        }
+        let vec_type = self.vec_type?;
+        let is_vec = |ty: &Type| matches!(ty, Type::Named(id, _) if *id == vec_type);
+        let Type::Function {
+            parameters,
+            returns,
+        } = &node.ty
+        else {
+            return None;
+        };
+        match node.name.as_str() {
+            "new" if parameters.is_empty() && returns.as_deref().is_some_and(is_vec) => {
+                Some(VecOperation::New)
+            }
+            "len" if parameters.len() == 1 && is_vec(&parameters[0]) => Some(VecOperation::Len),
+            "at" if parameters.len() == 2 && is_vec(&parameters[0]) => Some(VecOperation::At),
+            "replace" if parameters.len() == 3 && is_vec(&parameters[0]) => {
+                Some(VecOperation::Replace)
+            }
+            "push" if parameters.len() == 2 && is_vec(&parameters[0]) => Some(VecOperation::Push),
+            _ => None,
+        }
+    }
+
+    /// Lower one vec operation to the runtime's list instruction. The receiver
+    /// is the first argument; a constructor has none.
+    fn lower_vec_operation(&mut self, operation: VecOperation, arguments: &[Expression], dst: u16) {
+        match operation {
+            VecOperation::New => self.instructions.push(Instruction::VecNew { dst }),
+            VecOperation::Len => {
+                let vec = self.expression(&arguments[0]);
+                self.instructions.push(Instruction::VecLen { dst, vec });
+            }
+            VecOperation::At => {
+                let vec = self.expression(&arguments[0]);
+                let index = self.expression(&arguments[1]);
+                self.instructions
+                    .push(Instruction::VecAt { dst, vec, index });
+            }
+            VecOperation::Replace => {
+                let vec = self.expression(&arguments[0]);
+                let index = self.expression(&arguments[1]);
+                let value = self.expression(&arguments[2]);
+                self.instructions
+                    .push(Instruction::VecReplace { vec, index, value });
+                // The instruction rewrites the receiver's register in place;
+                // the call's result is that same vec.
+                self.instructions.push(Instruction::StoreLocal {
+                    slot: dst,
+                    src: vec,
+                });
+            }
+            VecOperation::Push => {
+                let vec = self.expression(&arguments[0]);
+                let item = self.expression(&arguments[1]);
+                self.instructions.push(Instruction::VecPush { vec, item });
+                // The instruction rewrites the receiver's register in place;
+                // the call's result is that same vec.
+                self.instructions.push(Instruction::StoreLocal {
+                    slot: dst,
+                    src: vec,
+                });
+            }
+        }
     }
 
     fn lower_async(&mut self, call: &Expression) {
@@ -651,49 +706,6 @@ impl Lowerer<'_> {
                 }
             }
             MatchBody::Block(statements) => self.statements(statements),
-        }
-    }
-
-    /// Lower `for item in <Vec> { body }` to an index loop. The counter lives
-    /// in a register as an `int`; `break` jumps past the loop.
-    fn lower_for_each(&mut self, item: DeclarationId, iterable: &Expression, body: &[Statement]) {
-        let vec = self.expression(iterable);
-        let index = self.fresh();
-        self.instructions.push(Instruction::LoadNumber {
-            dst: index,
-            value: 0,
-        });
-
-        let head = self.instructions.len() as u32;
-        let end_jump = self.instructions.len();
-        self.instructions.push(Instruction::JumpIfIndexAtEnd {
-            target: 0,
-            index,
-            vec,
-        });
-
-        let item_slot = self.slot(item);
-        self.instructions.push(Instruction::VecIndex {
-            dst: item_slot,
-            vec,
-            index,
-        });
-
-        self.loop_breaks.push(Vec::new());
-        self.statements(body);
-        let breaks = self.loop_breaks.pop().expect("a loop is open");
-        self.instructions
-            .push(Instruction::IncrementNumber { reg: index });
-        self.instructions.push(Instruction::Jump { target: head });
-
-        let end = self.instructions.len() as u32;
-        if let Instruction::JumpIfIndexAtEnd { target, .. } = &mut self.instructions[end_jump] {
-            *target = end;
-        }
-        for jump in breaks {
-            if let Instruction::Jump { target } = &mut self.instructions[jump] {
-                *target = end;
-            }
         }
     }
 

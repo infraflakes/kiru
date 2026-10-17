@@ -1,21 +1,19 @@
-import "entry.kiru";
-
 # `Project` is declared in the `kiru` namespace alongside the build scripts.
-use kiru;
+use root::kiru;
 
 # The built-in type categories this file's signatures write bare.
 use std;
 use std::cli;
-use std::text;
-use std::vec;
+use std::dynamic;
+use std::dynamic::Vec;
 
-let kiru: Project = {
+let kiru: kiru::Project = {
   name = "kiru",
   Dir = ".",
   Nix = true,
 };
 
-let docs: Project = {
+let docs: kiru::Project = {
   name = "docs",
   Dir = "docs",
   Nix = true,
@@ -24,7 +22,7 @@ let docs: Project = {
 # The words after the subcommand, the first being the flag the shell runs.
 fn flag_of(context: std::cli::Context) -> txt {
   let words: Vec<txt> = context.args();
-  let flag: txt = match words.len() { 0 => ""; _ => words[0]; };
+  let flag: txt = match words.len() { 0 => ""; _ => words.at(0); };
   return flag;
 };
 
@@ -44,7 +42,7 @@ fn run_all(context: std::cli::Context) -> int {
 };
 
 fn run_usage(context: std::cli::Context) -> int {
-  std::eprint(kiru::usage);
+  std::eprint(kiru::usage());
   return 1;
 };
 

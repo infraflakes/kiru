@@ -16,7 +16,9 @@ pub(crate) fn checked_program(source: &str) -> Program {
 pub(crate) fn checked_files(files: &[(&str, &str)], entry: &str) -> Result<Program, String> {
     let directory = tempfile::tempdir().expect("temp dir");
     for (name, source) in files {
-        std::fs::write(directory.path().join(name), source).expect("write file");
+        let path = directory.path().join(name);
+        std::fs::create_dir_all(path.parent().expect("has a parent")).expect("create directory");
+        std::fs::write(&path, source).expect("write file");
     }
     let loaded = load_files(&directory.path().join(entry)).map_err(|error| error.message)?;
     let mut program = resolve_names(&loaded).map_err(|diagnostic| diagnostic.message)?;

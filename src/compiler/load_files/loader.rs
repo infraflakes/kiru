@@ -1,246 +1,242 @@
-//! Reading the entry file and every file it imports.
+//! Reading the standard library and the program tree.
 //!
-//! Loading joins every file into one ordered item stream: a file's items in
-//! order, with each `import` replaced by the imported file's items. A file is
-//! loaded once; importing it a second time, or importing in a cycle, is an
-//! error. The standard library is loaded by the same rule, from text compiled
-//! into the binary rather than from disk, so its own `import`s state its shape.
+//! A file belongs to its directory's namespace: the path from the tree root,
+//! with the tree's name as the first segment. The standard library's files come
+//! from a table compiled into the binary; the program tree is every `.kiru`
+//! file under the entry file's directory, walked recursively. There is no
+//! import: a file is in the tree because it is on disk, and resolution is
+//! order-free.
 
-use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::model::Origin;
 use crate::syntax;
-use crate::syntax::{Item, Module, Span};
+use crate::syntax::Item;
 
 use super::load_error::LoadError;
 use super::loaded_program::{LoadedFile, LoadedProgram, ScopedDeclaration, ScopedUse};
-use super::resolve_import_paths::resolve_import;
+
+/// The program tree's name: the first namespace segment of every program file.
+pub(crate) const PROGRAM_TREE: &str = "root";
+
+/// The standard library's tree name: the first namespace segment of every
+/// embedded file.
+const STD_TREE: &str = "std";
+
+/// The embedded path prefix the standard library's files are keyed under.
+const STD_PREFIX: &str = "<std>/";
 
 /// The standard library's files, compiled into every program.
 ///
-/// This is a content table, not a graph: it says which files exist and what is
-/// in them. The order and the dependencies come from the `import`s inside the
-/// files, exactly as they do for a program's own files. `<std>/std.kiru` is
-/// the root and every other file is reached from it.
+/// This is a content table, not a graph: it mirrors `std/**` exactly, and each
+/// file's directory under `std/` is its namespace. A file added to the tree
+/// must be added here.
 pub(crate) const EMBEDDED: &[(&str, &str)] = &[
-    ("<std>/std.kiru", include_str!("../../../stdlib/std.kiru")),
-    ("<std>/text.kiru", include_str!("../../../stdlib/text.kiru")),
-    ("<std>/vec.kiru", include_str!("../../../stdlib/vec.kiru")),
-    ("<std>/map.kiru", include_str!("../../../stdlib/map.kiru")),
-    ("<std>/set.kiru", include_str!("../../../stdlib/set.kiru")),
-    ("<std>/env.kiru", include_str!("../../../stdlib/env.kiru")),
-    ("<std>/fs.kiru", include_str!("../../../stdlib/fs.kiru")),
-    ("<std>/path.kiru", include_str!("../../../stdlib/path.kiru")),
-    ("<std>/time.kiru", include_str!("../../../stdlib/time.kiru")),
+    ("<std>/std.kiru", include_str!("../../../std/std.kiru")),
     (
-        "<std>/process.kiru",
-        include_str!("../../../stdlib/process.kiru"),
+        "<std>/cli/cli.kiru",
+        include_str!("../../../std/cli/cli.kiru"),
     ),
-    ("<std>/cli.kiru", include_str!("../../../stdlib/cli.kiru")),
+    (
+        "<std>/dynamic/map.kiru",
+        include_str!("../../../std/dynamic/map.kiru"),
+    ),
+    (
+        "<std>/dynamic/set.kiru",
+        include_str!("../../../std/dynamic/set.kiru"),
+    ),
+    (
+        "<std>/dynamic/vec.kiru",
+        include_str!("../../../std/dynamic/vec.kiru"),
+    ),
+    ("<std>/fs/fs.kiru", include_str!("../../../std/fs/fs.kiru")),
+    (
+        "<std>/fs/path.kiru",
+        include_str!("../../../std/fs/path.kiru"),
+    ),
+    (
+        "<std>/process/env.kiru",
+        include_str!("../../../std/process/env.kiru"),
+    ),
+    (
+        "<std>/process/process.kiru",
+        include_str!("../../../std/process/process.kiru"),
+    ),
+    (
+        "<std>/process/time.kiru",
+        include_str!("../../../std/process/time.kiru"),
+    ),
+    (
+        "<std>/text/text.kiru",
+        include_str!("../../../std/text/text.kiru"),
+    ),
 ];
 
-/// The standard library's root: the one embedded file seeded before the entry.
-const STD_ROOT: &str = "<std>/std.kiru";
-
-/// The text of an embedded file, when `path` names one.
-fn embedded_source(path: &Path) -> Option<&'static str> {
-    let path = path.to_str()?;
-    EMBEDDED
-        .iter()
-        .find(|(name, _)| *name == path)
-        .map(|(_, source)| *source)
-}
-
-/// Resolve an import inside an embedded file: joined to the importing file's
-/// directory, and accepted only when the embed table knows the result, which
-/// also rules out climbing out of the standard library.
-fn embedded_import(directory: &Path, import_path: &str) -> Option<PathBuf> {
-    let path = Path::new(import_path);
-    let candidate = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        directory.join(path)
-    };
-    embedded_source(&candidate).map(|_| candidate)
-}
-
-/// Load the standard library and the entry file, and everything they import.
+/// Load the standard library and the entry file's whole directory tree.
 pub(crate) fn load_files(entry: &Path) -> Result<LoadedProgram, LoadError> {
     let entry_path = entry.canonicalize().map_err(|_| LoadError {
         path: entry.to_path_buf(),
-        span: Span::new(0, 0),
+        span: crate::syntax::Span::new(0, 0),
         message: format!("cannot find {}", entry.display()),
         source: String::new(),
     })?;
+    let tree_root = entry_path.parent().unwrap_or(Path::new(".")).to_path_buf();
 
     let mut loader = Loader {
         files: Vec::new(),
         items: Vec::new(),
         uses: Vec::new(),
-        loaded: HashMap::new(),
-        loading: HashSet::new(),
+        entry: None,
     };
-    let root = PathBuf::from(STD_ROOT);
-    loader.load(&root, Span::new(0, 0), &root)?;
-    let entry_index = loader.load(&entry_path, Span::new(0, 0), entry)?;
+
+    for (path, source) in EMBEDDED {
+        let namespace = namespace_of(path, STD_PREFIX, STD_TREE);
+        loader.add(
+            PathBuf::from(path),
+            (*source).to_owned(),
+            Origin::Embedded,
+            namespace,
+        )?;
+    }
+
+    let mut program_files = Vec::new();
+    collect_kiru_files(&tree_root, &mut program_files)?;
+    program_files.sort();
+    for path in program_files {
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+        let namespace = program_namespace(&tree_root, &canonical);
+        let source = std::fs::read_to_string(&canonical).map_err(|error| LoadError {
+            path: canonical.clone(),
+            span: crate::syntax::Span::new(0, 0),
+            message: format!("cannot read {}: {error}", canonical.display()),
+            source: String::new(),
+        })?;
+        let index = loader.add(canonical.clone(), source, Origin::File, namespace)?;
+        if canonical == entry_path {
+            loader.entry = Some(index);
+        }
+    }
+
+    let entry = loader.entry.ok_or_else(|| LoadError {
+        path: entry_path.clone(),
+        span: crate::syntax::Span::new(0, 0),
+        message: format!("cannot find {}", entry_path.display()),
+        source: String::new(),
+    })?;
     Ok(LoadedProgram {
-        entry: entry_index,
+        entry,
         files: loader.files,
         items: loader.items,
         uses: loader.uses,
     })
 }
 
+/// The namespace a file's directory names, relative to a tree root: the tree's
+/// name, then every directory between the root and the file.
+fn namespace_of(path: &str, prefix: &str, tree: &str) -> Vec<String> {
+    let relative = path.strip_prefix(prefix).unwrap_or(path);
+    let mut segments = vec![tree.to_owned()];
+    let mut components: Vec<&str> = relative.split('/').collect();
+    components.pop();
+    for component in components {
+        if !component.is_empty() {
+            segments.push(component.to_owned());
+        }
+    }
+    segments
+}
+
+/// The namespace of one program file: `root`, then its directories under the
+/// tree root.
+fn program_namespace(tree_root: &Path, path: &Path) -> Vec<String> {
+    let mut segments = vec![PROGRAM_TREE.to_owned()];
+    if let Ok(relative) = path.strip_prefix(tree_root) {
+        let mut components: Vec<&std::ffi::OsStr> = relative.iter().collect();
+        components.pop();
+        for component in components {
+            segments.push(component.to_string_lossy().into_owned());
+        }
+    }
+    segments
+}
+
+/// Every `.kiru` file under `directory`, recursively.
+fn collect_kiru_files(directory: &Path, out: &mut Vec<PathBuf>) -> Result<(), LoadError> {
+    let entries = std::fs::read_dir(directory).map_err(|error| LoadError {
+        path: directory.to_path_buf(),
+        span: crate::syntax::Span::new(0, 0),
+        message: format!("cannot read {}: {error}", directory.display()),
+        source: String::new(),
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|error| LoadError {
+            path: directory.to_path_buf(),
+            span: crate::syntax::Span::new(0, 0),
+            message: format!("cannot read {}: {error}", directory.display()),
+            source: String::new(),
+        })?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_kiru_files(&path, out)?;
+        } else if path
+            .extension()
+            .is_some_and(|extension| extension == "kiru")
+        {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
 struct Loader {
     files: Vec<LoadedFile>,
     items: Vec<ScopedDeclaration>,
     uses: Vec<ScopedUse>,
-    /// The index of every file already loaded, for the duplicate-import check.
-    loaded: HashMap<PathBuf, usize>,
-    /// The files being loaded, for the cycle check.
-    loading: HashSet<PathBuf>,
+    /// The index of the entry file once the walk reaches it.
+    entry: Option<usize>,
 }
 
 impl Loader {
-    /// Load one file and splice its items into the stream, replacing each
-    /// `import` with the imported file's items in place. The text comes from
-    /// the embed table when the path names a standard library file, and from
-    /// the filesystem otherwise.
-    fn load(&mut self, path: &Path, span: Span, reported: &Path) -> Result<usize, LoadError> {
-        if self.loaded.contains_key(path) {
-            return Err(load_error(
-                reported,
-                span,
-                format!("`{}` is imported more than once", path.display()),
-            ));
-        }
-        if self.loading.contains(path) {
-            return Err(load_error(
-                reported,
-                span,
-                format!("import cycle through {}", path.display()),
-            ));
-        }
-
-        let embedded = embedded_source(path);
-        let (source, origin) = match embedded {
-            Some(source) => (source.to_owned(), Origin::Embedded),
-            None => {
-                let source = std::fs::read_to_string(path).map_err(|error| {
-                    load_error(
-                        reported,
-                        span,
-                        format!("cannot read {}: {error}", path.display()),
-                    )
-                })?;
-                (source, Origin::File)
-            }
-        };
+    /// Parse one file and record its declarations and uses in its namespace.
+    fn add(
+        &mut self,
+        path: PathBuf,
+        source: String,
+        origin: Origin,
+        namespace: Vec<String>,
+    ) -> Result<usize, LoadError> {
         let file = match syntax::parse_file(&source) {
             Ok(file) => file,
             Err(error) => {
                 return Err(LoadError {
-                    path: path.to_path_buf(),
+                    path,
                     span: error.span,
                     message: error.message,
                     source,
                 });
             }
         };
-
-        let directory = path.parent().unwrap_or(Path::new(".")).to_path_buf();
         let index = self.files.len();
         self.files.push(LoadedFile {
-            path: path.to_path_buf(),
+            path,
             source,
             origin,
         });
-        self.loading.insert(path.to_path_buf());
         for item in file.items {
             match item {
-                Item::Import(import) => {
-                    let target = match embedded {
-                        Some(_) => embedded_import(&directory, &import.path),
-                        None => resolve_import(&directory, &import.path),
-                    };
-                    let Some(target) = target else {
-                        return Err(load_error(
-                            path,
-                            import.span,
-                            format!("cannot find import {}", import.path),
-                        ));
-                    };
-                    match self.load(&target, import.span, path) {
-                        Ok(_) => {}
-                        Err(error) if error.source.is_empty() => {
-                            return Err(LoadError {
-                                path: error.path,
-                                span: error.span,
-                                message: error.message,
-                                source: self.files[index].source.clone(),
-                            });
-                        }
-                        Err(error) => return Err(error),
-                    }
-                }
-                other => self.push_item(index, other),
+                Item::Declaration(declaration) => self.items.push(ScopedDeclaration {
+                    file: index,
+                    namespace: namespace.clone(),
+                    declaration,
+                }),
+                Item::Use(use_item) => self.uses.push(ScopedUse {
+                    file: index,
+                    namespace: namespace.clone(),
+                    path: use_item.path,
+                    span: use_item.span,
+                }),
             }
         }
-        self.loading.remove(path);
-        self.loaded.insert(path.to_path_buf(), index);
         Ok(index)
-    }
-
-    /// Append one non-import item to the joined stream: a declaration at the
-    /// root, or a `mod` block's declarations in its namespace.
-    fn push_item(&mut self, file: usize, item: Item) {
-        match item {
-            Item::Declaration(declaration) => self.items.push(ScopedDeclaration {
-                file,
-                namespace: Vec::new(),
-                declaration,
-            }),
-            Item::Module(module) => self.push_module(file, module),
-            Item::Use(use_item) => self.uses.push(ScopedUse {
-                file,
-                declarations_before: self.items.len(),
-                namespace: Vec::new(),
-                path: use_item.path,
-                span: use_item.span,
-            }),
-            // Imports are expanded by `load`, which never routes one here.
-            Item::Import(_) => {}
-        }
-    }
-
-    fn push_module(&mut self, file: usize, module: Module) {
-        for declaration in module.declarations {
-            self.items.push(ScopedDeclaration {
-                file,
-                namespace: module.path.clone(),
-                declaration,
-            });
-        }
-        for use_item in module.uses {
-            self.uses.push(ScopedUse {
-                file,
-                declarations_before: self.items.len(),
-                namespace: module.path.clone(),
-                path: use_item.path,
-                span: use_item.span,
-            });
-        }
-    }
-}
-
-/// A load failure with no source text attached; the caller fills it in from
-/// the file it is reading, so the diagnostic points at the right file.
-fn load_error(path: &Path, span: Span, message: String) -> LoadError {
-    LoadError {
-        path: path.to_path_buf(),
-        span,
-        message,
-        source: String::new(),
     }
 }

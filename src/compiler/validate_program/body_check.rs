@@ -6,7 +6,7 @@
 //! declared, so a return is checked against it rather than accumulated, and a
 //! call that produces no value may only stand as a statement.
 
-use crate::compiler::{Diagnostic, expected_instead, private_member};
+use crate::compiler::{Diagnostic, private_member};
 use crate::model::Type;
 use crate::model::{
     DeclarationId, Expression, FileId, Function, MatchArm, MatchBody, NamespaceId, Program,
@@ -86,8 +86,8 @@ impl<'a> Checker<'a> {
         Diagnostic::new(&self.program.file(self.file).path, span, message)
     }
 
-    /// The type of a binding or a module value. A `for` item and a variant
-    /// pattern binding take the type in `overrides`.
+    /// The type of a binding or a module value. A variant pattern binding
+    /// takes the type in `overrides`.
     pub(super) fn kind_of(&self, id: DeclarationId) -> Type {
         if let Some((_, ty)) = self.overrides.iter().rev().find(|(item, _)| *item == id) {
             return ty.clone();
@@ -145,7 +145,7 @@ impl<'a> Checker<'a> {
         if path.is_empty() {
             "the root namespace".to_owned()
         } else {
-            crate::model::join_path(&path, false)
+            crate::model::join_path(&path)
         }
     }
 
@@ -199,16 +199,6 @@ impl<'a> Checker<'a> {
                 self.field_assign(*declaration, *name_span, field, value)?;
                 Ok(Flow::FALLS)
             }
-            Statement::IndexAssign {
-                declaration,
-                name_span,
-                index,
-                value,
-                ..
-            } => {
-                self.index_assign(*declaration, *name_span, index, value)?;
-                Ok(Flow::FALLS)
-            }
             Statement::Expression(expression) => match expression {
                 // A bare call runs for its effect; a call that halts ends the
                 // path.
@@ -239,40 +229,6 @@ impl<'a> Checker<'a> {
                 Ok(Flow::FALLS)
             }
             Statement::Wait { .. } => Ok(Flow::FALLS),
-            Statement::ForEach {
-                item,
-                iterable,
-                body,
-                ..
-            } => {
-                let Some(iterable_type) = self.expression(iterable, None)? else {
-                    return Err(self.error(iterable.span(), expected_instead("Vec", "no value")));
-                };
-                let element = match iterable_type {
-                    Type::Vec(element) => *element,
-                    other => {
-                        return Err(self.error(
-                            iterable.span(),
-                            expected_instead("Vec", &self.type_name(&other)),
-                        ));
-                    }
-                };
-                let was_in_loop = self.in_loop;
-                self.in_loop = true;
-                self.overrides.push((*item, element));
-                let body_flow = self.statements(body);
-                self.overrides.pop();
-                self.in_loop = was_in_loop;
-                let body_flow = body_flow?;
-                // A Vec `for` may run zero times, so it always falls through; a
-                // returning path in the body still returns. Its own `break`
-                // exits the loop and then falls through, so it is absorbed.
-                Ok(Flow {
-                    returns: body_flow.returns,
-                    falls: true,
-                    breaks: false,
-                })
-            }
             Statement::Forever { body, .. } => {
                 let was_in_loop = self.in_loop;
                 self.in_loop = true;
@@ -416,24 +372,6 @@ impl<'a> Checker<'a> {
                 format!("`{name}` is not a rec and has no fields"),
             )),
         }
-    }
-
-    /// Enforce an index assignment `name[index] = value;`: the target must be a
-    /// Vec, the index an `int`, and the value of the element type.
-    fn index_assign(
-        &mut self,
-        declaration: DeclarationId,
-        name_span: Span,
-        index: &Expression,
-        value: &Expression,
-    ) -> Result<(), Diagnostic> {
-        let name = self.program.declaration(declaration).name.clone();
-        let Type::Vec(element) = self.assignment_target(declaration, name_span)? else {
-            return Err(self.error(name_span, format!("`{name}` is not a Vec")));
-        };
-        self.require(index, &Type::Int)?;
-        self.require(value, &element)?;
-        Ok(())
     }
 
     /// Enforce the return rules of the enclosing function. A value return is

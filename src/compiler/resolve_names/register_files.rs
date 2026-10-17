@@ -1,10 +1,8 @@
 //! Registering the joined item stream.
 
-use std::collections::HashMap;
-
 use crate::compiler::Diagnostic;
 use crate::compiler::load_files::{LoadedProgram, ScopedDeclaration};
-use crate::model::{File, FileId, Origin};
+use crate::model::{File, FileId, Origin, join_path, namespace_at};
 use crate::native_registry::BUILTIN_NAMESPACE;
 use crate::syntax::Declaration as ParsedDeclaration;
 use crate::syntax::Span;
@@ -34,42 +32,12 @@ impl Builder {
                 self.reserve_type(declaration, namespace, &loaded.files[scoped.file].path)?;
             }
         }
-        // The file that declares each namespace and the position of its first
-        // declaration in the joined stream. A `use` may only reach a namespace
-        // declared before it — the same backwards rule the resolver applies to
-        // a name, extended across files. The declaring file names the other
-        // file when a `use` reaches forward.
-        let mut declared: HashMap<&[String], (usize, usize)> = HashMap::new();
-        for (position, scoped) in loaded.items.iter().enumerate() {
-            if !scoped.namespace.is_empty() {
-                declared
-                    .entry(scoped.namespace.as_slice())
-                    .or_insert((scoped.file, position));
-            }
-        }
         // Record every `use` on the namespace that wrote it, before any field
-        // is resolved: a field or a receiver type may name a type the
-        // namespace only `use`s.
+        // is resolved: a field or a receiver type may name a type the namespace
+        // only `use`s. A `use` is namespace-scoped, so it covers every
+        // declaration of the namespace, and resolution is order-free, so there
+        // is no position to check.
         for used in &loaded.uses {
-            // A use names a namespace, or one declaration inside it: the
-            // longest prefix that is a declared namespace is the one reached.
-            let reached = (1..=used.path.len())
-                .rev()
-                .find_map(|length| declared.get(&used.path[..length]).copied());
-            if let Some((declaring_file, position)) = reached
-                && position >= used.declarations_before
-            {
-                return Err(Diagnostic::new(
-                    &loaded.files[used.file].path,
-                    used.span,
-                    format!(
-                        "`{}` is declared in `{}`, which is loaded after `{}`",
-                        crate::model::join_path(&used.path, false),
-                        file_name(&loaded.files[declaring_file].path),
-                        file_name(&loaded.files[used.file].path),
-                    ),
-                ));
-            }
             let namespace = self.ensure_namespace(&used.namespace);
             self.namespaces[namespace.0].uses.push(used.path.clone());
         }
@@ -85,6 +53,49 @@ impl Builder {
             self.register_scoped(loaded, item, scoped)?;
         }
         Ok(())
+    }
+
+    /// Reject a `use` whose path reaches neither a declared namespace nor a
+    /// declaration: such a path names nothing, so what it claims to bring into
+    /// scope can never resolve. Every namespace and declaration is registered
+    /// by the time this runs.
+    pub(in crate::compiler::resolve_names) fn check_uses(
+        &self,
+        loaded: &LoadedProgram,
+    ) -> Result<(), Diagnostic> {
+        for used in &loaded.uses {
+            if self.use_reaches(&used.path) {
+                continue;
+            }
+            return Err(Diagnostic::new(
+                &loaded.files[used.file].path,
+                used.span,
+                format!(
+                    "`{}` names neither a namespace nor a declaration",
+                    join_path(&used.path)
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Whether a `use` path reaches a declared namespace, or a declaration (or
+    /// declared type) its last segment names in the namespace its prefix
+    /// names.
+    fn use_reaches(&self, path: &[String]) -> bool {
+        if namespace_at(&self.namespaces, path).is_some() {
+            return true;
+        }
+        let Some((name, prefix)) = path.split_last() else {
+            return false;
+        };
+        if prefix.is_empty() {
+            return false;
+        }
+        namespace_at(&self.namespaces, prefix).is_some_and(|base| {
+            self.namespaces[base.0].names.contains(name)
+                || self.namespaces[base.0].types.get(name).is_some()
+        })
     }
 
     /// Register one declaration in its namespace. `item` is its index in the
@@ -121,21 +132,31 @@ impl Builder {
                 (&function.name, function.name_span, function.public)
             }
             ParsedDeclaration::Binding(binding) => {
+                // A module value is private to its namespace: a value is
+                // evaluated at startup, so it has no cross-namespace form.
+                if binding.public {
+                    return Err(Diagnostic::new(
+                        &loaded_file.path,
+                        binding.name_span,
+                        "a module value cannot be `pub`; it is private to its namespace",
+                    ));
+                }
                 (&binding.name, binding.name_span, binding.public)
             }
             ParsedDeclaration::Type(_) => unreachable!("a type is handled above"),
         };
         // A function's first parameter is the receiver a method call matches:
-        // resolve its head now, before any body is linked, so a forward
-        // reference can still dispatch on it and be rejected for order.
-        let first_parameter_head = match &scoped.declaration {
+        // resolve its head now, before any body is linked. A function with no
+        // parameters is a constructor reachable through the type it returns,
+        // so resolve the result's head too.
+        let (first_parameter_head, constructor_head) = match &scoped.declaration {
             ParsedDeclaration::Function(function) => {
                 self.check_type_parameters(
                     &function.type_parameters,
                     function.name_span,
                     &loaded_file.path,
                 )?;
-                match function.parameters.first() {
+                let receiver = match function.parameters.first() {
                     Some(parameter) => Some(
                         self.resolve_type_expr(
                             &parameter.ty,
@@ -146,9 +167,22 @@ impl Builder {
                         .head(),
                     ),
                     None => None,
-                }
+                };
+                let constructor = match (&function.return_type, receiver) {
+                    (Some(return_type), None) => Some(
+                        self.resolve_type_expr(
+                            return_type,
+                            namespace,
+                            &function.type_parameters,
+                            &loaded_file.path,
+                        )?
+                        .head(),
+                    ),
+                    _ => None,
+                };
+                (receiver, constructor)
             }
-            ParsedDeclaration::Binding(_) => None,
+            ParsedDeclaration::Binding(_) => (None, None),
             ParsedDeclaration::Type(_) => unreachable!("a type is handled above"),
         };
         let file = FileId(scoped.file);
@@ -158,6 +192,7 @@ impl Builder {
             name_span,
             public,
             first_parameter_head,
+            constructor_head,
             file: Some(file),
             syntax_index: Some(item),
             reported_path: &loaded_file.path,
@@ -180,12 +215,4 @@ fn declaration_span(declaration: &ParsedDeclaration) -> Span {
         ParsedDeclaration::Binding(binding) => binding.name_span,
         ParsedDeclaration::Type(type_declaration) => type_declaration.name_span,
     }
-}
-
-/// The last path segment of a loaded file, for a diagnostic that names the
-/// declaring and writing files without their directories.
-fn file_name(path: &std::path::Path) -> String {
-    path.file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.display().to_string())
 }

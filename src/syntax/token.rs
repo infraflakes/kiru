@@ -12,9 +12,8 @@ pub(crate) enum TokenKind {
     InterpolationStart,
     /// The `)` that closes an interpolation inside a string.
     InterpolationEnd,
-    Mod,
-    Import,
-    /// `use`, which brings a namespace's public names into scope.
+    /// `use`, which brings a namespace's qualifier and methods, or one name,
+    /// into scope.
     Use,
     /// `pub`, which lets a declaration be seen outside its namespace.
     Pub,
@@ -30,14 +29,11 @@ pub(crate) enum TokenKind {
     Async,
     Wait,
     For,
-    In,
     Break,
     True,
     False,
     PathSep,
     Dot,
-    /// `..`, the half-open range in `xs[a..b]`.
-    DotDot,
     Colon,
     Comma,
     Semi,
@@ -62,8 +58,6 @@ pub(crate) enum TokenKind {
     RBrace,
     LParen,
     RParen,
-    LBracket,
-    RBracket,
     Eof,
 }
 
@@ -82,8 +76,6 @@ impl TokenKind {
             TokenKind::Int(value) => format!("`{value}`"),
             TokenKind::InterpolationStart => "`@(`".to_owned(),
             TokenKind::InterpolationEnd => "`)`".to_owned(),
-            TokenKind::Mod => "`mod`".to_owned(),
-            TokenKind::Import => "`import`".to_owned(),
             TokenKind::Use => "`use`".to_owned(),
             TokenKind::Pub => "`pub`".to_owned(),
             TokenKind::Fn => "`fn`".to_owned(),
@@ -96,13 +88,11 @@ impl TokenKind {
             TokenKind::Async => "`async`".to_owned(),
             TokenKind::Wait => "`wait`".to_owned(),
             TokenKind::For => "`for`".to_owned(),
-            TokenKind::In => "`in`".to_owned(),
             TokenKind::Break => "`break`".to_owned(),
             TokenKind::True => "`true`".to_owned(),
             TokenKind::False => "`false`".to_owned(),
             TokenKind::PathSep => "`::`".to_owned(),
             TokenKind::Dot => "`.`".to_owned(),
-            TokenKind::DotDot => "`..`".to_owned(),
             TokenKind::Colon => "`:`".to_owned(),
             TokenKind::Comma => "`,`".to_owned(),
             TokenKind::Semi => "`;`".to_owned(),
@@ -127,8 +117,6 @@ impl TokenKind {
             TokenKind::RBrace => "`}`".to_owned(),
             TokenKind::LParen => "`(`".to_owned(),
             TokenKind::RParen => "`)`".to_owned(),
-            TokenKind::LBracket => "`[`".to_owned(),
-            TokenKind::RBracket => "`]`".to_owned(),
             TokenKind::Eof => "the end of the file".to_owned(),
         }
     }

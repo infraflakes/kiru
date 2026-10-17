@@ -43,12 +43,13 @@ impl Runtime {
 fn root_symbols(program: &Program) -> HashMap<String, u32> {
     let mut code_id = 0;
     let mut symbols = HashMap::new();
+    let root = program.declaration(program.entry).namespace;
     for declaration in &program.declarations {
         let has_code = declaration.value.is_some();
         if !has_code {
             continue;
         }
-        if declaration.namespace == program.root()
+        if declaration.namespace == root
             && declaration.owner.is_none()
             && declaration.function().is_some()
         {

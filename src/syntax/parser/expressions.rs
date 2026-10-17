@@ -98,7 +98,8 @@ impl Parser {
         })
     }
 
-    /// Parse a primary expression followed by any field accesses or indexings.
+    /// Parse a primary expression followed by any field accesses or method
+    /// calls.
     fn parse_postfix(&mut self) -> Result<Expression, ParseError> {
         let mut expression = self.parse_primary()?;
         loop {
@@ -123,15 +124,6 @@ impl Parser {
                         span,
                     };
                 }
-            } else if self.eat(&TokenKind::LBracket) {
-                let first = self.parse_expression()?;
-                let close = self.expect(&TokenKind::RBracket, "to close an index")?;
-                let span = expression.span().merge(close);
-                expression = Expression::Index {
-                    target: Box::new(expression),
-                    index: Box::new(first),
-                    span,
-                };
             } else {
                 break;
             }
@@ -139,7 +131,7 @@ impl Parser {
         Ok(expression)
     }
 
-    /// Parse a literal, a map, a Vec, a name, or a call.
+    /// Parse a literal, a map, a name, or a call.
     fn parse_primary(&mut self) -> Result<Expression, ParseError> {
         if let TokenKind::Int(value) = self.current().kind {
             let span = self.advance();
@@ -161,10 +153,6 @@ impl Parser {
                 let (fields, span) = self.parse_rec_fields()?;
                 Ok(Expression::Map { fields, span })
             }
-            TokenKind::LBracket => {
-                let (elements, span) = self.parse_list_elements()?;
-                Ok(Expression::Vec { elements, span })
-            }
             TokenKind::LParen => {
                 // A grouped expression carries no node: the parens only steer
                 // precedence, which the tree already records.
@@ -175,12 +163,11 @@ impl Parser {
                 self.leave_nesting();
                 Ok(inner)
             }
-            TokenKind::Ident(_) | TokenKind::PathSep => {
-                let (root, path, callee_span) = self.parse_rooted_path("in an expression")?;
+            TokenKind::Ident(_) => {
+                let (path, callee_span) = self.parse_path_segments("in an expression")?;
                 if self.check(&TokenKind::LParen) {
                     let (arguments, arguments_span) = self.parse_arguments()?;
                     Ok(Expression::Call {
-                        root,
                         callee: path,
                         callee_span,
                         arguments,
@@ -188,7 +175,6 @@ impl Parser {
                     })
                 } else {
                     Ok(Expression::Name {
-                        root,
                         path,
                         span: callee_span,
                     })

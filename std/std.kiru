@@ -1,105 +1,105 @@
 # std.kiru
 #
 # The standard library's root: the `std` namespace, and the tree of categories
-# below it. This file's own declarations come first, then the imports that
-# reach every other stdlib file, in this order, the same way a program's own
-# files reach each other.
+# below it. This file's declarations join `std`; every other stdlib file joins
+# the namespace its directory names, and this file reaches them through `use`.
 
-mod std {
+use std::process;
+use std::text;
+use std::dynamic;
+use std::dynamic::Vec;
 
-  # Write a prefix and a message, coloring the prefix on a terminal. `color` is
-  # an ANSI SGR code and `file_descriptor` is 1 for stdout or 2 for stderr.
-  fn emit(color: txt, prefix: txt, file_descriptor: int, message: txt) {
-    std::io::write(file_descriptor, match std::io::is_terminal(file_descriptor) {
-      true => "\e[@(color)m@(prefix)\e[0m @(message)\n";
-      _ => "@(prefix) @(message)\n";
-    });
+# Write a prefix and a message, coloring the prefix on a terminal. `color` is
+# an ANSI SGR code and `file_descriptor` is 1 for stdout or 2 for stderr.
+fn emit(color: txt, prefix: txt, file_descriptor: int, message: txt) {
+  process::write(file_descriptor, match process::is_terminal(file_descriptor) {
+    true => "\e[@(color)m@(prefix)\e[0m @(message)\n";
+    _ => "@(prefix) @(message)\n";
+  });
+};
+
+# Write a line to stdout.
+pub fn print(message: txt) {
+  process::write(1, "@(message)\n");
+};
+
+# Write an "INFO:" line to stdout, yellow on a terminal.
+pub fn log(message: txt) {
+  emit("33", "INFO:", 1, message);
+};
+
+# Write an "ERROR:" line to stderr, red on a terminal, then stop the run.
+pub fn eprint(message: txt) {
+  emit("31", "ERROR:", 2, message);
+  panic;
+};
+
+# Join a vec of parts into one text with `separator` between each pair.
+pub fn join(parts: Vec<txt>, separator: txt) -> txt {
+  let result: txt = "";
+  let first: bool = true;
+  let index: int = 0;
+  let count: int = parts.len();
+  for {
+    match index < count { false => { break; }; true => {}; };
+    let part: txt = parts.at(index);
+    match first {
+      true => { result = part; first = false; };
+      _ => { result = "@(result)@(separator)@(part)"; };
+    };
+    index = index + 1;
   };
+  return result;
+};
 
-  # Write a line to stdout.
-  pub fn print(message: txt) {
-    std::io::write(1, "@(message)\n");
+# Split `text` into a vec of elements separated by `separator`. An empty
+# separator is an error: Rust's char-boundary split on `""` is library policy,
+# not the language. The scan is linear: each separator is one `find_byte` over
+# the O(1) remainder `text::slice(text, index, count)`, so the native calls are
+# O(the number of separators) and the whole split is linear in the text.
+pub fn split(text: txt, separator: txt) -> Vec<txt> {
+  match text::len(separator) {
+    0 => { eprint("std::split: the separator must not be empty"); };
+    _ => {};
   };
-
-  # Write an "INFO:" line to stdout, yellow on a terminal.
-  pub fn log(message: txt) {
-    emit("33", "INFO:", 1, message);
-  };
-
-  # Write an "ERROR:" line to stderr, red on a terminal, then stop the run.
-  pub fn eprint(message: txt) {
-    emit("31", "ERROR:", 2, message);
-    panic;
-  };
-
-  # Join a vec of parts into one text with `separator` between each pair.
-  pub fn join(parts: Vec<txt>, separator: txt) -> txt {
-    let result: txt = "";
-    let first: bool = true;
-    for part in parts {
-      match first {
-        true => { result = part; first = false; };
-        _ => { result = "@(result)@(separator)@(part)"; };
+  let count: int = text::len(text);
+  let result: Vec<txt> = Vec.new();
+  let index: int = 0;
+  for {
+    match index <= count { false => { break; }; true => {}; };
+    let rest: txt = text::slice(text, index, count);
+    let found: Option<int> = text::find_byte(rest, separator);
+    match found {
+      Option.some(offset) => {
+        result = result.push(text::slice(text, index, index + offset));
+        index = index + offset + text::len(separator);
+      };
+      Option.none => {
+        result = result.push(text::slice(text, index, count));
+        break;
       };
     };
-    return result;
   };
+  return result;
+};
 
-  # Split `text` into a vec of elements separated by `separator`. An empty
-  # separator is an error: Rust's char-boundary split on `""` is library policy,
-  # not the language. The scan is linear: each separator is one `find_byte` over
-  # the O(1) remainder `std::text::slice(text, index, count)`, so the native
-  # calls are O(the number of separators) and the whole split is linear in the
-  # text. The text kernel is called rooted, because `std` cannot `use std::text`
-  # before `text.kiru` is imported.
-  pub fn split(text: txt, separator: txt) -> Vec<txt> {
-    match std::text::len(separator) {
-      0 => { std::eprint("std::split: the separator must not be empty"); };
-      _ => {};
-    };
-    let count: int = std::text::len(text);
-    let result: Vec<txt> = [];
-    let at: int = 0;
-    let index: int = 0;
-    for {
-      match index <= count { false => { break; }; true => {}; };
-      let rest: txt = std::text::slice(text, index, count);
-      let found: Option<int> = std::text::find_byte(rest, separator);
-      match found {
-        Option.some(offset) => {
-          result[at] = std::text::slice(text, index, index + offset);
-          at = at + 1;
-          index = index + offset + std::text::len(separator);
-        };
-        Option.none => {
-          result[at] = std::text::slice(text, index, count);
-          at = at + 1;
-          break;
-        };
-      };
-    };
-    return result;
+# A value that is either present (`some`) or absent (`none`).
+pub enum Option<T> { pub some(T), pub none };
+
+# The value inside `self`, or `fallback` when it is `none`.
+pub fn or<T>(self: Option<T>, fallback: T) -> T {
+  let inner: T = match self {
+    Option.some(value) => value;
+    Option.none => fallback;
   };
+  return inner;
+};
 
-  # A value that is either present (`some`) or absent (`none`).
-  pub enum Option<T> { pub some(T), pub none };
-
-  # The value inside `self`, or `fallback` when it is `none`.
-  pub fn or<T>(self: Option<T>, fallback: T) -> T {
-    let inner: T = match self {
-      Option.some(value) => value;
-      Option.none => fallback;
-    };
-    return inner;
+# Whether `self` holds a value.
+pub fn contains<T>(self: Option<T>) -> bool {
+  let present: bool = match self {
+    Option.some(_) => true;
+    Option.none => false;
   };
-
-  # Whether `self` holds a value.
-  pub fn contains<T>(self: Option<T>) -> bool {
-    let present: bool = match self {
-      Option.some(_) => true;
-      Option.none => false;
-    };
-    return present;
-  };
-
+  return present;
 };

@@ -1,11 +1,11 @@
 //! The language's type set.
 //!
-//! A type is a runtime representation (`txt`, `Vec<T>`, `bool`, `int`), a
-//! declared type applied to arguments (`Name<T1, ...>`), a `fn(...)` value
-//! type, or a type parameter of the enclosing declaration. Types are exact: a
-//! value fits a position only when the two types are equal. There is no
-//! no-value type: a function with no return type has a function type whose
-//! `returns` is `None`, and a call to it produces no value at all.
+//! A type is a runtime scalar (`txt`, `bool`, `int`), a declared type applied
+//! to arguments (`Name<T1, ...>`, which includes the runtime's `Vec<T>`), a
+//! `fn(...)` value type, or a type parameter of the enclosing declaration.
+//! Types are exact: a value fits a position only when the two types are equal.
+//! There is no no-value type: a function with no return type has a function
+//! type whose `returns` is `None`, and a call to it produces no value at all.
 
 /// The identity of a declared type, indexing the program's type table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -15,12 +15,11 @@ pub(crate) struct TypeId(pub(crate) usize);
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Type {
     Text,
-    /// `Vec<T>`.
-    Vec(Box<Type>),
     Bool,
     Int,
     /// A declared type applied to arguments: `Name<T1, ...>`. A declaration
-    /// with no parameters is applied to no arguments.
+    /// with no parameters is applied to no arguments. The runtime's `Vec<T>`
+    /// is one such declaration, registered by the compiler.
     Named(TypeId, Vec<Type>),
     /// A type parameter of the enclosing declaration, by name (for example `T`
     /// in `enum Option<T>`).
@@ -41,7 +40,6 @@ impl Type {
     pub(crate) fn builtin_name(&self) -> &'static str {
         match self {
             Type::Text => "text",
-            Type::Vec(_) => "Vec",
             Type::Bool => "bool",
             Type::Int => "int",
             Type::Named(..) | Type::Parameter(_) | Type::Function { .. } => {
@@ -53,14 +51,14 @@ impl Type {
 
 /// The runtime representation a built-in type name denotes.
 ///
-/// `txt`, `Vec`, `bool`, and `int` are the types the runtime ships. They are
-/// the language's own types, not declarations: the compiler resolves the name
+/// `txt`, `bool`, and `int` are the scalars the runtime ships. They are the
+/// language's own types, not declarations: the compiler resolves the name
 /// directly to this marker, which says which representation the runtime
-/// provides and how many type parameters the name takes.
+/// provides and how many type parameters the name takes. `Vec<T>` is not here:
+/// it is an ordinary declared type in the `std::dynamic` namespace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BuiltinType {
     Text,
-    Vec,
     Bool,
     Int,
 }
@@ -71,7 +69,6 @@ impl BuiltinType {
     pub(crate) fn from_name(name: &str) -> Option<Self> {
         match name {
             "txt" => Some(BuiltinType::Text),
-            "Vec" => Some(BuiltinType::Vec),
             "bool" => Some(BuiltinType::Bool),
             "int" => Some(BuiltinType::Int),
             _ => None,
@@ -85,7 +82,6 @@ impl BuiltinType {
     pub(crate) fn name(self) -> &'static str {
         match self {
             BuiltinType::Text => "txt",
-            BuiltinType::Vec => "Vec",
             BuiltinType::Bool => "bool",
             BuiltinType::Int => "int",
         }
@@ -94,18 +90,15 @@ impl BuiltinType {
     /// How many type parameters the declaration must take.
     pub(crate) fn parameter_count(self) -> usize {
         match self {
-            BuiltinType::Vec => 1,
             BuiltinType::Text | BuiltinType::Bool | BuiltinType::Int => 0,
         }
     }
 
-    /// The runtime type this marker denotes, given the applied type arguments.
-    /// The marker's parameter count is checked before this is called, so the
-    /// arguments are present.
-    pub(crate) fn runtime_type(self, arguments: &[Type]) -> Type {
+    /// The runtime type this marker denotes. The marker's parameter count is
+    /// checked before this is called, so a scalar has no arguments.
+    pub(crate) fn runtime_type(self) -> Type {
         match self {
             BuiltinType::Text => Type::Text,
-            BuiltinType::Vec => Type::Vec(Box::new(arguments[0].clone())),
             BuiltinType::Bool => Type::Bool,
             BuiltinType::Int => Type::Int,
         }
@@ -123,7 +116,6 @@ pub(crate) fn substitute(ty: &Type, parameters: &[String], arguments: &[Type]) -
                 .expect("a type parameter is declared");
             arguments[index].clone()
         }
-        Type::Vec(element) => Type::Vec(Box::new(substitute(element, parameters, arguments))),
         Type::Named(id, args) => Type::Named(
             *id,
             args.iter()
@@ -166,9 +158,6 @@ pub(crate) fn substitute_optional(
                 None => ty.clone(),
             }
         }
-        Type::Vec(element) => {
-            Type::Vec(Box::new(substitute_optional(element, parameters, solution)))
-        }
         Type::Named(id, args) => Type::Named(
             *id,
             args.iter()
@@ -201,13 +190,13 @@ pub(crate) fn fits(actual: &Type, required: &Type) -> bool {
 
 /// The type constructor of a value's type, used for method dispatch: a method
 /// declared for `Vec<T>` answers a `Vec<int>` receiver, so lookup keys on the
-/// head and ignores the arguments.
+/// head and ignores the arguments. A constructor is keyed the same way, by the
+/// head of the type it returns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum TypeHead {
     Text,
     Int,
     Bool,
-    Vec,
     Named(TypeId),
     Function,
     /// A bare type parameter; it has no methods and matches no impl.
@@ -221,7 +210,6 @@ impl Type {
             Type::Text => TypeHead::Text,
             Type::Int => TypeHead::Int,
             Type::Bool => TypeHead::Bool,
-            Type::Vec(_) => TypeHead::Vec,
             Type::Named(id, _) => TypeHead::Named(*id),
             Type::Function { .. } => TypeHead::Function,
             Type::Parameter(_) => TypeHead::Parameter,
@@ -241,7 +229,6 @@ impl Type {
 pub(crate) fn has_parameter(ty: &Type) -> bool {
     match ty {
         Type::Parameter(_) => true,
-        Type::Vec(element) => has_parameter(element),
         Type::Named(_, arguments) => arguments.iter().any(has_parameter),
         Type::Function {
             parameters,
@@ -283,10 +270,6 @@ pub(crate) fn unify(
                 }
             }
         }
-        Type::Vec(element) => match actual {
-            Type::Vec(other) => unify(element, other, parameters, solution),
-            _ => false,
-        },
         Type::Named(id, arguments) => match actual {
             Type::Named(other, other_arguments) => {
                 id == other
@@ -331,24 +314,20 @@ mod tests {
 
     #[test]
     fn every_builtin_has_a_name() {
-        for ty in [
-            Type::Text,
-            Type::Vec(Box::new(Type::Text)),
-            Type::Bool,
-            Type::Int,
-        ] {
+        for ty in [Type::Text, Type::Bool, Type::Int] {
             assert!(!ty.builtin_name().is_empty(), "{ty:?} has no name");
         }
     }
 
     #[test]
     fn builtin_names_and_arity_round_trip() {
-        for (name, parameters) in [("txt", 0), ("Vec", 1), ("bool", 0), ("int", 0)] {
+        for (name, parameters) in [("txt", 0), ("bool", 0), ("int", 0)] {
             let builtin = BuiltinType::from_name(name).expect("a built-in name");
             assert_eq!(builtin.name(), name);
             assert_eq!(builtin.parameter_count(), parameters);
         }
         assert_eq!(BuiltinType::from_name("Missing"), None);
+        assert_eq!(BuiltinType::from_name("Vec"), None);
     }
 
     #[test]
@@ -357,8 +336,8 @@ mod tests {
             Type::Text,
             Type::Bool,
             Type::Int,
-            Type::Vec(Box::new(Type::Text)),
-            Type::Vec(Box::new(Type::Int)),
+            Type::Named(TypeId(3), vec![Type::Text]),
+            Type::Named(TypeId(3), vec![Type::Int]),
         ];
         for actual in &types {
             for required in &types {
@@ -370,10 +349,10 @@ mod tests {
     #[test]
     fn substitute_replaces_parameters() {
         let parameters = vec!["T".to_owned()];
-        let ty = Type::Vec(Box::new(Type::Parameter("T".to_owned())));
+        let ty = Type::Named(TypeId(7), vec![Type::Parameter("T".to_owned())]);
         assert_eq!(
             substitute(&ty, &parameters, &[Type::Int]),
-            Type::Vec(Box::new(Type::Int))
+            Type::Named(TypeId(7), vec![Type::Int])
         );
     }
 }

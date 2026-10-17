@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 
 use crate::bytecode::{Bytecode, Code, Instruction};
-use crate::model::{DeclarationId, Expression, Program};
+use crate::model::{DeclarationId, Expression, NamespaceId, Program, TypeId};
 
 /// Lower a validated, pruned program to bytecode.
 pub(crate) fn lower_bytecode(program: &Program) -> Bytecode {
@@ -26,6 +26,8 @@ pub(crate) fn lower_bytecode(program: &Program) -> Bytecode {
         instructions: Vec::new(),
         loop_breaks: Vec::new(),
         next: 0,
+        vec_type: program.vec_type,
+        vec_namespace: program.namespace_at(&["std".to_owned(), "dynamic".to_owned()]),
     };
     lowerer.assign_codes();
     lowerer.lower_all();
@@ -53,17 +55,24 @@ pub(super) struct Lowerer<'a> {
     pub(super) loop_breaks: Vec<Vec<usize>>,
     /// The next free register of the current function.
     pub(super) next: u16,
+    /// The runtime's `Vec` type. A `Named` with this id is a list, and this is
+    /// the one stage that knows it: the lowering turns the vec operations into
+    /// the runtime's list instructions.
+    pub(super) vec_type: Option<TypeId>,
+    /// The `std::dynamic` namespace, where the vec operations are declared.
+    pub(super) vec_namespace: Option<NamespaceId>,
 }
 
 impl Lowerer<'_> {
     /// Give every declaration with a value a code id, in declaration order. The
     /// entry and every call can then name a code before any body is lowered. A
-    /// module value also gets a global, so it is evaluated once at startup.
+    /// module value also gets a global, so it is evaluated once at startup, in
+    /// the dependency order the resolver computed.
     fn assign_codes(&mut self) {
         for (index, declaration) in self.program.declarations.iter().enumerate() {
-            let Some(value) = &declaration.value else {
+            if declaration.value.is_none() {
                 continue;
-            };
+            }
             let code_id = self.codes.len() as u32;
             self.declaration_codes[index] = Some(code_id);
             self.codes.push(Code {
@@ -71,10 +80,11 @@ impl Lowerer<'_> {
                 registers: 0,
                 arity: 0,
             });
-            if !matches!(value, Expression::Function(_)) {
-                self.declaration_globals[index] = Some(self.module_values.len() as u32);
-                self.module_values.push(code_id);
-            }
+        }
+        for id in &self.program.module_values {
+            let code_id = self.declaration_codes[id.0].expect("a module value has a code");
+            self.declaration_globals[id.0] = Some(self.module_values.len() as u32);
+            self.module_values.push(code_id);
         }
     }
 

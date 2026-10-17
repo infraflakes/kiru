@@ -59,15 +59,15 @@
             CARGO_BUILD_RUSTFLAGS = "-C target-feature=+crt-static";
           };
 
-          # The compiler embeds `stdlib/io.kiru` with `include_str!`, so the
-          # build source has to carry it even though cargo does not.
+          # The compiler embeds the standard library with `include_str!`, so the
+          # build source has to carry `std/` even though cargo does not.
           src = lib.fileset.toSource {
             root = ./.;
             fileset = lib.fileset.unions [
               ./Cargo.toml
               ./Cargo.lock
               ./src
-              ./stdlib
+              ./std
               (lib.fileset.maybeMissing ./.cargo)
             ];
           };

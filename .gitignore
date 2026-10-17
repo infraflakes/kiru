@@ -3,6 +3,7 @@
 bin/
 out/
 /main
+/pipeline/main
 /kc.tar.gz
 result
 /target

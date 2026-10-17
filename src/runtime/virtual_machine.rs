@@ -4,8 +4,9 @@
 //! startup into the globals table, then the entry runs. A function call builds
 //! a fresh frame. The `async`
 //! keyword starts an OS thread; `wait` joins the threads the calling thread
-//! spawned. Native calls dispatch in `native_dispatch`, and the test-only entry
-//! points live in `testing`.
+//! spawned. The vec instructions read and write the runtime's list
+//! representation; a native call dispatches in `native_dispatch`, and the
+//! test-only entry points live in `testing`.
 
 mod native_dispatch;
 #[cfg(test)]
@@ -164,21 +165,17 @@ impl Runtime {
                     }
                     frame.registers[*dst as usize] = Value::Map(map);
                 }
-                Instruction::BuildVec { dst, elements } => {
-                    let mut vec = Vec::with_capacity(elements.len());
-                    for element in elements {
-                        vec.push(frame.registers[*element as usize].clone());
-                    }
-                    frame.registers[*dst as usize] = Value::Vec(Arc::new(vec));
+                Instruction::VecNew { dst } => {
+                    frame.registers[*dst as usize] = Value::Vec(Arc::new(Vec::new()));
                 }
-                Instruction::VecIndex { dst, vec, index } => {
+                Instruction::VecAt { dst, vec, index } => {
                     let element = match (
                         &frame.registers[*vec as usize],
                         &frame.registers[*index as usize],
                     ) {
                         (Value::Vec(vec), Value::Int(index)) => {
                             let Some(element) = vec.get(*index as usize) else {
-                                return Err(self.index_failure(*index, vec.len()));
+                                return Err(self.index_failure("xs.at(index)", *index, vec.len()));
                             };
                             element.clone()
                         }
@@ -186,6 +183,38 @@ impl Runtime {
                     };
                     frame.registers[*dst as usize] = element;
                 }
+                Instruction::VecReplace { vec, index, value } => {
+                    let at = match &frame.registers[*index as usize] {
+                        Value::Int(at) => *at,
+                        _ => return Err(self.fail()),
+                    };
+                    let value = frame.registers[*value as usize].clone();
+                    let Value::Vec(items) = &mut frame.registers[*vec as usize] else {
+                        return Err(self.fail());
+                    };
+                    // Unshare before writing, so the copy a clone made is real.
+                    let items = Arc::make_mut(items);
+                    let length = items.len();
+                    if at >= 0 && (at as usize) < length {
+                        items[at as usize] = value;
+                    } else {
+                        return Err(self.index_failure("xs.replace(index, item)", at, length));
+                    }
+                }
+                Instruction::VecPush { vec, item } => {
+                    let item = frame.registers[*item as usize].clone();
+                    let Value::Vec(items) = &mut frame.registers[*vec as usize] else {
+                        return Err(self.fail());
+                    };
+                    // Unshare before writing, so the copy a clone made is real.
+                    Arc::make_mut(items).push(item);
+                }
+                Instruction::VecLen { dst, vec } => match &frame.registers[*vec as usize] {
+                    Value::Vec(items) => {
+                        frame.registers[*dst as usize] = Value::Int(items.len() as i64);
+                    }
+                    _ => return Err(self.fail()),
+                },
                 Instruction::MakeVariant { dst, tag, payload } => {
                     let mut values = Vec::with_capacity(payload.len());
                     for element in payload {
@@ -235,26 +264,6 @@ impl Runtime {
                     };
                     frame.registers[*dst as usize] = value;
                 }
-                Instruction::SetIndex { vec, index, value } => {
-                    let at = match &frame.registers[*index as usize] {
-                        Value::Int(at) => *at,
-                        _ => return Err(self.fail()),
-                    };
-                    let value = frame.registers[*value as usize].clone();
-                    let Value::Vec(items) = &mut frame.registers[*vec as usize] else {
-                        return Err(self.fail());
-                    };
-                    // Unshare before writing, so the copy a clone made is real.
-                    let items = Arc::make_mut(items);
-                    let length = items.len();
-                    if at == length as i64 {
-                        items.push(value);
-                    } else if at >= 0 && (at as usize) < length {
-                        items[at as usize] = value;
-                    } else {
-                        return Err(self.index_failure(at, length));
-                    }
-                }
                 Instruction::MakeFunction {
                     dst,
                     code,
@@ -284,23 +293,6 @@ impl Runtime {
                     let value = self.run_code(code, arguments)?;
                     frame.registers[*dst as usize] = value;
                 }
-                Instruction::JumpIfIndexAtEnd { target, index, vec } => {
-                    let at_end = match (
-                        &frame.registers[*index as usize],
-                        &frame.registers[*vec as usize],
-                    ) {
-                        (Value::Int(index), Value::Vec(vec)) => *index >= vec.len() as i64,
-                        _ => return Err(self.fail()),
-                    };
-                    if at_end {
-                        pc = *target as usize;
-                        continue;
-                    }
-                }
-                Instruction::IncrementNumber { reg } => match &mut frame.registers[*reg as usize] {
-                    Value::Int(number) => *number += 1,
-                    _ => return Err(self.fail()),
-                },
                 Instruction::LoadNumber { dst, value } => {
                     frame.registers[*dst as usize] = Value::Int(*value);
                 }
@@ -535,12 +527,13 @@ impl Runtime {
         Panic
     }
 
-    /// The failure for an index outside a Vec. It names the index and the
-    /// length, so an out-of-bounds `xs[i]` reports what went wrong.
-    fn index_failure(&self, index: i64, length: usize) -> Panic {
+    /// The failure for an index outside a Vec. It names the operation, the
+    /// index, and the length, so an out-of-bounds `at` or `replace` reports
+    /// what went wrong.
+    fn index_failure(&self, operation: &str, index: i64, length: usize) -> Panic {
         process::failure(
             &self.state,
-            "xs[i]",
+            operation,
             &format!("index {index} is outside a Vec of {length} element(s)"),
         )
     }

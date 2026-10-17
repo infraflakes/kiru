@@ -1,7 +1,7 @@
 //! Match arms: an arm is an atom, and two equal arms are a duplicate.
 //!
 //! A match arm references the value it compares; it does not compute one. So an
-//! arm is an atom — a text, map, or Vec literal, a name, or a field path —
+//! arm is an atom — a text or map literal, a name, or a field path —
 //! never a call, a concatenation, or an interpolation. That keeps matching free
 //! of side effects and makes duplicate detection a comparison of atoms.
 
@@ -46,7 +46,7 @@ pub(super) fn covers_booleans(subject_type: &Type, cases: &[MatchArm]) -> bool {
 }
 
 /// Whether an expression is an atom: a literal, a name, or a field path. A
-/// map or Vec literal is an atom when every field or element is one.
+/// map literal is an atom when every field value is one.
 pub(super) fn is_atom(expression: &Expression) -> bool {
     match expression {
         Expression::Text { .. }
@@ -55,7 +55,6 @@ pub(super) fn is_atom(expression: &Expression) -> bool {
         | Expression::Reference { .. } => true,
         Expression::Field { target, .. } => is_atom(target),
         Expression::Map { fields, .. } => fields.iter().all(|field| is_atom(&field.value)),
-        Expression::Vec { elements, .. } => elements.iter().all(is_atom),
         Expression::Unary { .. } => negative_int(expression).is_some(),
         _ => false,
     }
@@ -93,9 +92,6 @@ pub(super) fn atoms_equal(left: &Expression, right: &Expression) -> bool {
                         other.name == field.name && atoms_equal(&field.value, &other.value)
                     })
                 })
-        }
-        (Expression::Vec { elements: a, .. }, Expression::Vec { elements: b, .. }) => {
-            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| atoms_equal(a, b))
         }
         (Expression::Unary { .. }, Expression::Unary { .. }) => {
             negative_int(left) == negative_int(right)

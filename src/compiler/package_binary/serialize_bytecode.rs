@@ -19,7 +19,7 @@ mod tests {
     #[test]
     fn bytecode_round_trips_through_bytes() {
         let program = checked_program(
-            "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\n\
+            "use std;\nuse std::text;\nuse std::dynamic;\n\
              rec P { dir: txt };\n\
              let p: P = { dir = \"~/x\" };\n\
              let title: txt = \"kiru\";\n\

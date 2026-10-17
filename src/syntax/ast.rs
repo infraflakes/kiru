@@ -1,8 +1,9 @@
 //! The syntax tree produced by the parser.
 //!
 //! A `File` is one loaded source file: its top-level items in order. An `item`
-//! is a declaration, an inline `mod` block, or an `import`. Statements exist
-//! only inside function and `match` bodies.
+//! is a declaration or a `use`. A file belongs to its directory's namespace, so
+//! the file carries no namespace of its own. Statements exist only inside
+//! function and `match` bodies.
 
 use crate::syntax::Span;
 
@@ -12,41 +13,20 @@ pub(crate) struct File {
     pub(crate) items: Vec<Item>,
 }
 
-/// A top-level item: a declaration, an inline `mod` block, an `import`, or a
-/// `use` that brings another namespace's public names into scope.
+/// A top-level item: a declaration or a `use`.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Item {
     Declaration(Declaration),
-    Module(Module),
-    Import(Import),
     Use(Use),
 }
 
-/// One `use a::b;` item: the public names of the namespace it names (or the one
-/// declaration it names) become visible in the namespace that wrote it.
+/// One `use a::b;` item. What the path ends at decides what it brings into the
+/// namespace that wrote it: a namespace gives the qualifier its last segment
+/// spells and joins that namespace's methods to dispatch; a name gives that one
+/// name bare.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Use {
     pub(crate) path: Vec<String>,
-    pub(crate) span: Span,
-}
-
-/// A `mod a::b { declarations }` block: an inline namespace. A file may hold
-/// several, and reopening a path merges into the same namespace.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct Module {
-    pub(crate) path: Vec<String>,
-    pub(crate) declarations: Vec<Declaration>,
-    /// The `use` items inside the block, which bring another namespace's public
-    /// names into this one.
-    pub(crate) uses: Vec<Use>,
-    pub(crate) span: Span,
-}
-
-/// One `import "path";` item. An import is global-level only and is never
-/// written inside a `mod` block.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct Import {
-    pub(crate) path: String,
     pub(crate) span: Span,
 }
 
@@ -74,8 +54,9 @@ pub(crate) struct TypeDeclaration {
 }
 
 /// The body of a declared type: a fixed set of fields (`rec`) or a set of
-/// variants (`enum`). The runtime's own types are intrinsics, not declarations,
-/// so there is no bodyless form.
+/// variants (`enum`). The runtime's scalar types are intrinsics, not
+/// declarations, and the compiler registers the runtime's `Vec` type itself,
+/// so the parser has no bodyless form.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum TypeDeclarationKind {
     Rec(Vec<TypeField>),
@@ -112,7 +93,6 @@ pub(crate) enum TypeExpr {
     /// A named type, resolved through its declaration, optionally applied to
     /// type arguments: `txt`, `Vec<T>`, `Name<A, B>`.
     Named {
-        root: bool,
         path: Vec<String>,
         arguments: Vec<TypeExpr>,
         span: Span,
@@ -205,14 +185,6 @@ pub(crate) enum Statement {
         value: Expression,
         span: Span,
     },
-    /// `name[index] = expression;` replaces or appends one element of a Vec.
-    IndexAssignment {
-        name: String,
-        name_span: Span,
-        index: Expression,
-        value: Expression,
-        span: Span,
-    },
     Expression(Expression),
     /// An early exit. A value return carries the function's declared type; a
     /// valueless return ends a function that declares no return type.
@@ -233,15 +205,6 @@ pub(crate) enum Statement {
     /// The keyword statement `wait;`, which joins the asyncs the calling
     /// thread spawned.
     Wait {
-        span: Span,
-    },
-    /// `for item in <Vec> { ... };` runs the body once per element, binding
-    /// `item` to each text element in turn.
-    ForEach {
-        item: String,
-        item_span: Span,
-        iterable: Expression,
-        body: Vec<Statement>,
         span: Span,
     },
     /// `for { ... };` runs the body over and over until a `break;`.
@@ -283,11 +246,6 @@ pub(crate) enum Expression {
         fields: Vec<Field>,
         span: Span,
     },
-    /// A `[a, b, c]` Vec literal of text elements.
-    Vec {
-        elements: Vec<Expression>,
-        span: Span,
-    },
     /// A `true` or `false` literal.
     Bool {
         value: bool,
@@ -305,16 +263,10 @@ pub(crate) enum Expression {
         span: Span,
     },
     Name {
-        /// An explicit leading `::`, which resolves against the root
-        /// namespace only.
-        root: bool,
         path: Vec<String>,
         span: Span,
     },
     Call {
-        /// An explicit leading `::`, which resolves against the root
-        /// namespace only.
-        root: bool,
         callee: Vec<String>,
         callee_span: Span,
         arguments: Vec<Expression>,
@@ -333,12 +285,6 @@ pub(crate) enum Expression {
         method: String,
         method_span: Span,
         arguments: Vec<Expression>,
-        span: Span,
-    },
-    /// `target[index]`: the element of a Vec at an integer index.
-    Index {
-        target: Box<Expression>,
-        index: Box<Expression>,
         span: Span,
     },
     /// A binary operator applied to two operands.
@@ -381,7 +327,6 @@ impl Expression {
         match self {
             Expression::Text { span, .. }
             | Expression::Map { span, .. }
-            | Expression::Vec { span, .. }
             | Expression::Bool { span, .. }
             | Expression::Int { span, .. }
             | Expression::Interpolated { span, .. }
@@ -389,7 +334,6 @@ impl Expression {
             | Expression::Call { span, .. }
             | Expression::Field { span, .. }
             | Expression::MethodCall { span, .. }
-            | Expression::Index { span, .. }
             | Expression::Binary { span, .. }
             | Expression::Unary { span, .. }
             | Expression::Match { span, .. } => *span,

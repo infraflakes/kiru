@@ -78,16 +78,24 @@ fn validate_instruction(
                 slot(*value)?;
             }
         }
-        Instruction::BuildVec { dst, elements } => {
-            slot(*dst)?;
-            for element in elements {
-                slot(*element)?;
-            }
-        }
-        Instruction::VecIndex { dst, vec, index } => {
+        Instruction::VecNew { dst } => slot(*dst)?,
+        Instruction::VecAt { dst, vec, index } => {
             slot(*dst)?;
             slot(*vec)?;
             slot(*index)?;
+        }
+        Instruction::VecReplace { vec, index, value } => {
+            slot(*vec)?;
+            slot(*index)?;
+            slot(*value)?;
+        }
+        Instruction::VecPush { vec, item } => {
+            slot(*vec)?;
+            slot(*item)?;
+        }
+        Instruction::VecLen { dst, vec } => {
+            slot(*dst)?;
+            slot(*vec)?;
         }
         Instruction::MakeVariant { dst, payload, .. } => {
             slot(*dst)?;
@@ -113,11 +121,6 @@ fn validate_instruction(
         Instruction::GetVariantField { dst, variant, .. } => {
             slot(*dst)?;
             slot(*variant)?;
-        }
-        Instruction::SetIndex { vec, index, value } => {
-            slot(*vec)?;
-            slot(*index)?;
-            slot(*value)?;
         }
         Instruction::MakeFunction {
             dst,
@@ -147,16 +150,6 @@ fn validate_instruction(
                 slot(*argument)?;
             }
         }
-        Instruction::JumpIfIndexAtEnd {
-            target: t,
-            index,
-            vec,
-        } => {
-            target(*t)?;
-            slot(*index)?;
-            slot(*vec)?;
-        }
-        Instruction::IncrementNumber { reg } => slot(*reg)?,
         Instruction::LoadNumber { dst, .. } => slot(*dst)?,
         Instruction::LoadBool { dst, .. } => slot(*dst)?,
         Instruction::NumberOp {

@@ -14,7 +14,7 @@ fn retained_names(program: &Program) -> Vec<&str> {
 #[test]
 fn drops_std_the_entry_never_reaches() {
     let mut program = checked_program(
-        "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nfn main() { std::print(\"x\"); };",
+        "use std;\nuse std::text;\nuse std::dynamic;\nfn main() { std::print(\"x\"); };",
     );
     prune_unreachable(&mut program);
     let names = retained_names(&program);
@@ -28,7 +28,7 @@ fn drops_std_the_entry_never_reaches() {
 #[test]
 fn drops_unreachable_user_declarations() {
     let mut program = checked_program(
-        "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nfn unused() -> txt { return \"\"; };\n\
+        "use std;\nuse std::text;\nuse std::dynamic;\nfn unused() -> txt { return \"\"; };\n\
          let dead: txt = \"x\";\n\
          rec Dead { key: txt };\n\
          let dead_record: Dead = { key = \"v\" };\n\
@@ -41,7 +41,7 @@ fn drops_unreachable_user_declarations() {
 #[test]
 fn retains_transitive_calls() {
     let mut program = checked_program(
-        "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nfn leaf() -> txt { return \"\"; };\n\
+        "use std;\nuse std::text;\nuse std::dynamic;\nfn leaf() -> txt { return \"\"; };\n\
          fn middle() -> txt { return leaf(); };\n\
          fn helper() { middle(); };\n\
          fn main() { helper(); };",
@@ -57,7 +57,7 @@ fn retains_transitive_calls() {
 #[test]
 fn retains_module_values_the_entry_reads() {
     let mut program = checked_program(
-        "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nlet greeting: txt = \"hi\";\n\
+        "use std;\nuse std::text;\nuse std::dynamic;\nlet greeting: txt = \"hi\";\n\
          rec Repo { dir: txt };\n\
          let backend: Repo = { dir = \"/x\" };\n\
          fn read(repo: Repo) -> txt { return repo.dir; };\n\
@@ -73,7 +73,7 @@ fn retains_module_values_the_entry_reads() {
 #[test]
 fn a_retained_program_still_checks() {
     let mut program = checked_program(
-        "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nrec Repo { dir: txt };\n\
+        "use std;\nuse std::text;\nuse std::dynamic;\nrec Repo { dir: txt };\n\
          let backend: Repo = { dir = \"/x\" };\n\
          fn read(repo: Repo) -> txt { return repo.dir; };\n\
          fn main() { std::print(read(backend)); };",
@@ -85,7 +85,7 @@ fn a_retained_program_still_checks() {
 #[test]
 fn retention_shrinks_the_payload() {
     let mut program = checked_program(
-        "use std;\nuse std::text;\nuse std::vec;\nuse std::map;\nfn main() { std::print(\"x\"); };",
+        "use std;\nuse std::text;\nuse std::dynamic;\nfn main() { std::print(\"x\"); };",
     );
     let before = postcard::to_allocvec(&lower_bytecode(&program))
         .expect("serializes")

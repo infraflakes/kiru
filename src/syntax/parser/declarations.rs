@@ -1,47 +1,15 @@
-//! Declaration level grammar: modules, imports, functions, variables, recs,
-//! and nominal type declarations.
+//! Declaration level grammar: functions, variables, recs, and nominal type
+//! declarations.
 
 use crate::syntax::ast::{
-    Binding, Closure, Declaration, Expression, Function, Import, Module, Parameter,
-    TypeDeclaration, TypeDeclarationKind, TypeExpr, TypeField, Use, VariantDeclaration,
+    Binding, Closure, Declaration, Expression, Function, Parameter, TypeDeclaration,
+    TypeDeclarationKind, TypeExpr, TypeField, Use, VariantDeclaration,
 };
 use crate::syntax::token::TokenKind;
 
 use super::{ParseError, Parser};
 
 impl Parser {
-    /// Parse a `mod a::b { declarations }` block: an inline namespace. A file
-    /// may hold several, and reopening a path merges into the same namespace.
-    pub(super) fn parse_mod(&mut self) -> Result<Module, ParseError> {
-        let start = self.advance().start;
-        let (path, _) = self.parse_path_segments("in a module path")?;
-        self.enter_nesting()?;
-        self.expect(&TokenKind::LBrace, "to open the module")?;
-        let mut declarations = Vec::new();
-        let mut uses = Vec::new();
-        while !self.check(&TokenKind::RBrace) {
-            if self.check(&TokenKind::Eof) {
-                return Err(
-                    self.error_here("expected `}` to close the module, found the end of the file")
-                );
-            }
-            if self.check(&TokenKind::Use) {
-                uses.push(self.parse_use()?);
-                continue;
-            }
-            declarations.push(self.parse_declaration()?);
-        }
-        self.expect(&TokenKind::RBrace, "to close the module")?;
-        self.leave_nesting();
-        let span = self.span_through_semicolon(start, "after the module")?;
-        Ok(Module {
-            path,
-            declarations,
-            uses,
-            span,
-        })
-    }
-
     /// Parse one declaration: a function, a module value, or a nominal type.
     pub(super) fn parse_declaration(&mut self) -> Result<Declaration, ParseError> {
         // `pub` marks a declaration another namespace may reach.
@@ -49,8 +17,9 @@ impl Parser {
         let mut declaration = match &self.current().kind {
             TokenKind::Fn => Declaration::Function(self.parse_function()?),
             // At the top level, `rec` opens a nominal type declaration and
-            // `enum` opens an enum type declaration. The runtime's types are
-            // intrinsics, so there is no bodyless `type` form.
+            // `enum` opens an enum type declaration. The runtime's scalar types
+            // are intrinsics and its `Vec` is registered by the compiler, so
+            // there is no bodyless `type` form.
             TokenKind::Rec => Declaration::Type(self.parse_type_declaration()?),
             TokenKind::Enum => Declaration::Type(self.parse_enum_declaration()?),
             TokenKind::Let => Declaration::Binding(self.parse_let_binding()?),
@@ -69,21 +38,13 @@ impl Parser {
         Ok(declaration)
     }
 
-    /// Parse a `use a::b;` item: the namespace path whose public names this
-    /// namespace gains.
+    /// Parse a `use a::b;` item. What the path ends at decides what it brings
+    /// into the namespace that wrote it: a namespace, or one name.
     pub(super) fn parse_use(&mut self) -> Result<Use, ParseError> {
         let start = self.advance().start;
         let (path, _) = self.parse_path_segments("in a use path")?;
         let span = self.span_through_semicolon(start, "after the use path")?;
         Ok(Use { path, span })
-    }
-
-    /// Parse an `import "path";` declaration.
-    pub(super) fn parse_import(&mut self) -> Result<Import, ParseError> {
-        let start = self.advance().start;
-        let (path, _) = self.expect_text("after `import`")?;
-        let span = self.span_through_semicolon(start, "after the import path")?;
-        Ok(Import { path, span })
     }
 
     /// Parse a `rec Name { field: Type, ... };` type declaration.
@@ -297,11 +258,8 @@ impl Parser {
         if self.check(&TokenKind::Fn) {
             return self.parse_function_type();
         }
-        if matches!(
-            self.current().kind,
-            TokenKind::Ident(_) | TokenKind::PathSep
-        ) {
-            let (root, path, path_span) = self.parse_rooted_path(context)?;
+        if let TokenKind::Ident(_) = self.current().kind {
+            let (path, path_span) = self.parse_path_segments(context)?;
             let mut span = path_span;
             let arguments = if self.check(&TokenKind::Less) {
                 let (arguments, arguments_span) = self.parse_delimited(
@@ -317,7 +275,6 @@ impl Parser {
                 Vec::new()
             };
             return Ok(TypeExpr::Named {
-                root,
                 path,
                 arguments,
                 span,

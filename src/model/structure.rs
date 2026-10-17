@@ -32,13 +32,19 @@ pub(crate) fn validate_program_structure(program: &Program) -> Result<(), String
     let type_count = program.types.len();
 
     // `resolve_entry` is the one place that decides the entry, and it selects
-    // the root namespace's `main` function; only its id is checked here.
+    // the program root's `main` function; only its id is checked here.
     check_id(program.entry.0, declaration_count, "the entry")?;
+    for id in &program.module_values {
+        check_id(id.0, declaration_count, "a module value")?;
+    }
     if program.namespace(program.root()).parent.is_some() {
         return Err("the root namespace has a parent".to_owned());
     }
     if program.namespace_at(&[]).is_none() {
         return Err("the root namespace is missing".to_owned());
+    }
+    if let Some(vec_type) = program.vec_type {
+        check_id(vec_type.0, type_count, "the Vec type")?;
     }
 
     for namespace in &program.namespaces {
@@ -81,10 +87,10 @@ pub(crate) fn validate_program_structure(program: &Program) -> Result<(), String
                 for capture in &function.captures {
                     check_id(capture.0, declaration_count, "a function capture")?;
                 }
-                check_statements(program, &function.body, declaration.order)?;
+                check_statements(program, &function.body)?;
             }
             Some(value) => {
-                check_expression(program, value, declaration.order)?;
+                check_expression(program, value)?;
             }
             None => {
                 if let Some(native) = declaration.native {
@@ -114,7 +120,7 @@ pub(crate) fn validate_program_structure(program: &Program) -> Result<(), String
 }
 
 /// Reject a `Named` type whose id points past the type table, and check its
-/// arguments (and a Vec's element) recursively.
+/// arguments recursively.
 fn check_type(ty: &Type, type_count: usize, what: &str) -> Result<(), String> {
     match ty {
         Type::Named(id, arguments) => {
@@ -123,7 +129,6 @@ fn check_type(ty: &Type, type_count: usize, what: &str) -> Result<(), String> {
                 check_type(argument, type_count, what)?;
             }
         }
-        Type::Vec(element) => check_type(element, type_count, what)?,
         Type::Function {
             parameters,
             returns,
@@ -161,28 +166,18 @@ fn verify_spans(program: &Program) {
 }
 
 /// Walk a body and check every reference and call edge against the model.
-fn check_statements(
-    program: &Program,
-    statements: &[Statement],
-    holder_order: usize,
-) -> Result<(), String> {
+fn check_statements(program: &Program, statements: &[Statement]) -> Result<(), String> {
     let mut check = EdgeCheck {
         program,
-        holder_order,
         error: None,
     };
     walk_statements(&mut check, statements);
     check.error.map_or(Ok(()), Err)
 }
 
-fn check_expression(
-    program: &Program,
-    expression: &Expression,
-    holder_order: usize,
-) -> Result<(), String> {
+fn check_expression(program: &Program, expression: &Expression) -> Result<(), String> {
     let mut check = EdgeCheck {
         program,
-        holder_order,
         error: None,
     };
     walk_expression(&mut check, expression);
@@ -216,25 +211,20 @@ impl Visitor for SpanCheck {
     fn statement(&mut self, statement: &Statement) {
         let span = statement.span();
         assert!(span.start <= span.end);
-        if let Statement::Assign { name_span, .. }
-        | Statement::FieldAssign { name_span, .. }
-        | Statement::IndexAssign { name_span, .. } = statement
+        if let Statement::Assign { name_span, .. } | Statement::FieldAssign { name_span, .. } =
+            statement
         {
             assert!(name_span.start <= name_span.end);
         }
     }
 }
 
-/// Checks every reference and call edge points at a declaration, and that the
-/// top-down rule holds: a call names a declaration made strictly earlier, and
-/// a reference names one made no later. A local binding and a parameter share
-/// their function's order, so a reference to one is no later by definition.
-/// This is what makes a decoded graph terminate: every call chain strictly
-/// decreases in order. Every node kind is listed, so a new edge-bearing kind
+/// Checks every reference and call edge points at a declaration. Resolution is
+/// order-free, so no edge is checked for position: any declaration in the
+/// program may be named. Every node kind is listed, so a new edge-bearing kind
 /// fails to compile.
 struct EdgeCheck<'a> {
     program: &'a Program,
-    holder_order: usize,
     error: Option<String>,
 }
 
@@ -245,39 +235,10 @@ impl EdgeCheck<'_> {
         }
     }
 
-    /// Check a call edge: the callee must be strictly earlier.
-    fn check_call(&mut self, callee: DeclarationId) {
-        self.check(callee, "a call");
-        self.check_order(callee, "a call", false);
-    }
-
-    /// Check a reference edge: the target must be no later.
-    fn check_reference(&mut self, target: DeclarationId) {
-        self.check(target, "a reference");
-        self.check_order(target, "a reference", true);
-    }
-
     /// Check a struct literal's declared type points into the type table.
     fn check_type(&mut self, ty: TypeId) {
         if self.error.is_none() && ty.0 >= self.program.types.len() {
             self.error = Some("a struct type points past the types".to_owned());
-        }
-    }
-
-    fn check_order(&mut self, target: DeclarationId, what: &str, allow_equal: bool) {
-        if self.error.is_some() {
-            return;
-        }
-        let target_order = self.program.declaration(target).order;
-        let ordered = if allow_equal {
-            target_order <= self.holder_order
-        } else {
-            target_order < self.holder_order
-        };
-        if !ordered {
-            self.error = Some(format!(
-                "{what} points at a declaration that is not earlier"
-            ));
         }
     }
 }
@@ -285,14 +246,14 @@ impl EdgeCheck<'_> {
 impl Visitor for EdgeCheck<'_> {
     fn expression(&mut self, expression: &Expression) {
         match expression {
-            Expression::Reference { declaration, .. } => self.check_reference(*declaration),
+            Expression::Reference { declaration, .. } => self.check(*declaration, "a reference"),
             Expression::Call { callee, .. } => {
                 // A direct call names a callable declaration; a call through a
                 // value is a reference like any other.
                 if let Expression::Reference { declaration, .. } = callee.as_ref()
                     && self.program.declaration(*declaration).is_callable()
                 {
-                    self.check_call(*declaration);
+                    self.check(*declaration, "a call");
                 }
             }
             Expression::Variant { ty, .. } => self.check_type(*ty),
@@ -302,16 +263,14 @@ impl Visitor for EdgeCheck<'_> {
                     self.check(*parameter, "a function parameter");
                 }
                 for capture in &function.captures {
-                    self.check_reference(*capture);
+                    self.check(*capture, "a reference");
                 }
             }
             Expression::Text { .. }
             | Expression::Map { .. }
-            | Expression::Vec { .. }
             | Expression::Bool { .. }
             | Expression::Int { .. }
             | Expression::Field { .. }
-            | Expression::Index { .. }
             | Expression::Binary { .. }
             | Expression::Unary { .. }
             | Expression::Interpolated { .. }
@@ -329,12 +288,8 @@ impl Visitor for EdgeCheck<'_> {
         match statement {
             Statement::Bind { declaration, .. }
             | Statement::Assign { declaration, .. }
-            | Statement::FieldAssign { declaration, .. }
-            | Statement::IndexAssign { declaration, .. } => {
+            | Statement::FieldAssign { declaration, .. } => {
                 self.check(*declaration, "a statement binding");
-            }
-            Statement::ForEach { item, .. } => {
-                self.check(*item, "a loop binding");
             }
             Statement::Expression(_)
             | Statement::Return { .. }
@@ -352,34 +307,5 @@ fn assert_field_spans(fields: &[Field]) {
     for field in fields {
         assert!(field.name_span.start <= field.name_span.end);
         assert!(field.span.start <= field.span.end);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::compiler::checked_program;
-
-    #[test]
-    fn rejects_a_call_that_is_not_earlier() {
-        let mut program = checked_program("fn a() {};\nfn b() { a(); };\nfn main() {};");
-        let b = program
-            .namespace_at(&[])
-            .and_then(|root| program.namespace(root).get("b").first().copied());
-        let b = b.expect("b is declared");
-        let declaration = program.declaration_mut(b);
-        let Some(Expression::Function(function)) = &mut declaration.value else {
-            panic!("b is a function");
-        };
-        let span = function.body[0].span();
-        let Statement::Expression(Expression::Call { callee, .. }) = &mut function.body[0] else {
-            panic!("b calls a");
-        };
-        **callee = Expression::Reference {
-            declaration: b,
-            span,
-        };
-        let violation = validate_program_structure(&program).expect_err("a self-call is rejected");
-        assert!(violation.contains("not earlier"), "{violation}");
     }
 }

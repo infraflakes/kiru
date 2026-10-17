@@ -44,13 +44,11 @@ impl Visitor for ReachableCollector {
             }
             Expression::Text { .. }
             | Expression::Map { .. }
-            | Expression::Vec { .. }
             | Expression::Bool { .. }
             | Expression::Int { .. }
             | Expression::Variant { .. }
             | Expression::Call { .. }
             | Expression::Field { .. }
-            | Expression::Index { .. }
             | Expression::Binary { .. }
             | Expression::Unary { .. }
             | Expression::Interpolated { .. }
@@ -70,11 +68,9 @@ impl Visitor for ReachableCollector {
         match statement {
             Statement::Bind { declaration, .. }
             | Statement::Assign { declaration, .. }
-            | Statement::FieldAssign { declaration, .. }
-            | Statement::IndexAssign { declaration, .. } => {
+            | Statement::FieldAssign { declaration, .. } => {
                 self.pending.push(*declaration);
             }
-            Statement::ForEach { item, .. } => self.pending.push(*item),
             Statement::Expression(_)
             | Statement::Return { .. }
             | Statement::Panic { .. }

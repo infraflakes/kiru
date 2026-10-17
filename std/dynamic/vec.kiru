@@ -1,231 +1,253 @@
-# std/vec.kiru
+# std/dynamic/vec.kiru
 #
-# List methods, written in kiru on a vec (`xs[i] = v` replaces, or appends at
-# `i == len(xs)`). A function whose first parameter is a `Vec<T>` is callable as
-# `xs.name(...)`, so these are the vec methods. `std::join` (a text-vec
+# The vec: an ordered list. `Vec<T>` is the runtime's list type; the compiler
+# registers its declaration in this namespace, and the lowering turns the five
+# operations the runtime provides (`new`, `len`, `at`, `replace`, `push`) into
+# the runtime's own list instructions. A function whose first parameter is a
+# `Vec<T>` is callable as `xs.name(...)`, so every other function here is a vec
+# method written in kiru on top of those five. `std::join` (a text-vec
 # convenience) stays in `std.kiru`, because it applies to `Vec<txt>` alone
 # rather than to every `Vec<T>`.
 
-mod std::vec {
+# `bool`/`int` live at the `std` root and `txt` in its own category. `Vec<T>`
+# is declared in this namespace, so it needs no `use` here.
+use std;
+use std::Option;
 
-  # `bool`/`int` live at the `std` root and `txt` in its own category. `Vec<T>`
-  # is the language's own type; its methods live in this namespace, so
-  # `use std::vec;` brings them in.
-  use std;
-  use std::text;
+# A new, empty vec. The runtime provides the list constructor, so the compiler
+# lowers every call to this function to a list instruction; the body below is
+# never reached. It is written as a constructor call so the checker sees a
+# value-returning path.
+pub fn new<T>() -> Vec<T> {
+  return Vec.new();
+};
 
-  # The number of elements.
-  pub fn len<T>(self: Vec<T>) -> int {
-    let count: int = 0;
-    for item in self { count = count + 1; };
-    return count;
+# The number of elements. The runtime provides the length, so the compiler
+# lowers every call to this function to a list instruction; the body below is
+# never reached.
+pub fn len<T>(self: Vec<T>) -> int {
+  return self.len();
+};
+
+# The element at `index`. An index outside the vec stops the run, exactly as
+# `first` on an empty vec does. The compiler lowers every call to this function
+# to a list instruction; the body below is never reached.
+pub fn at<T>(self: Vec<T>, index: int) -> T {
+  return self.at(index);
+};
+
+# A new vec with the element at `index` replaced. An index outside the vec
+# stops the run: this never appends. The compiler lowers every call to this
+# function to a list instruction; the body below is never reached.
+pub fn replace<T>(self: Vec<T>, index: int, item: T) -> Vec<T> {
+  return self.replace(index, item);
+};
+
+# A new vec with `item` appended. The compiler lowers every call to this
+# function to a list instruction; the body below is never reached.
+pub fn push<T>(self: Vec<T>, item: T) -> Vec<T> {
+  return self.push(item);
+};
+
+# A new vec with `item` inserted at the front.
+pub fn with_first<T>(self: Vec<T>, item: T) -> Vec<T> {
+  let out: Vec<T> = Vec.new();
+  out = out.push(item);
+  let index: int = 0;
+  let count: int = self.len();
+  for {
+    match index < count { false => { break; }; true => {}; };
+    out = out.push(self.at(index));
+    index = index + 1;
   };
+  return out;
+};
 
-  # A new vec with `item` added.
-  pub fn with<T>(self: Vec<T>, item: T) -> Vec<T> {
-    let out: Vec<T> = self;
-    out[out.len()] = item;
-    return out;
+# A new vec with every element of `other` after every element of `self`.
+pub fn concat<T>(self: Vec<T>, other: Vec<T>) -> Vec<T> {
+  let result: Vec<T> = self;
+  let index: int = 0;
+  let count: int = other.len();
+  for {
+    match index < count { false => { break; }; true => {}; };
+    result = result.push(other.at(index));
+    index = index + 1;
   };
+  return result;
+};
 
-  # A new vec with `item` inserted at the front.
-  pub fn with_first<T>(self: Vec<T>, item: T) -> Vec<T> {
-    let out: Vec<T> = [];
-    out[0] = item;
-    let index: int = 0;
-    for element in self {
-      index = index + 1;
-      out[index] = element;
+# A new vec with the elements reversed. It appends into a fresh vec while
+# reading `self` from the end.
+pub fn reversed<T>(self: Vec<T>) -> Vec<T> {
+  let result: Vec<T> = Vec.new();
+  let index: int = self.len();
+  for {
+    match index > 0 { false => { break; }; true => {}; };
+    index = index - 1;
+    result = result.push(self.at(index));
+  };
+  return result;
+};
+
+# Whether `item` is an element.
+pub fn contains<T>(self: Vec<T>, item: T) -> bool {
+  let found: bool = false;
+  let index: int = 0;
+  let count: int = self.len();
+  for {
+    match index < count { false => { break; }; true => {}; };
+    match self.at(index) == item {
+      true => { found = true; break; };
+      _ => {};
     };
-    return out;
+    index = index + 1;
   };
+  return found;
+};
 
-  # A new vec with every element of `other` after every element of `self`.
-  # The first write unshares `result` from `self`; every later write appends in
-  # place, so the build is one pass over `self` and `other`, not one per item.
-  pub fn concat<T>(self: Vec<T>, other: Vec<T>) -> Vec<T> {
-    let result: Vec<T> = self;
-    let at: int = result.len();
-    for item in other {
-      result[at] = item;
-      at = at + 1;
+# The first index of `item`, or the declared absence when it is not an
+# element. Equality is `==`.
+pub fn find<T>(self: Vec<T>, item: T) -> Option<int> {
+  let index: int = 0;
+  let count: int = self.len();
+  for {
+    match index < count { false => { break; }; true => {}; };
+    match self.at(index) == item {
+      true => { return Option.some(index); };
+      _ => {};
     };
-    return result;
+    index = index + 1;
   };
+  return Option.none;
+};
 
-  # A new vec with the elements reversed. It appends into a fresh vec while
-  # reading `self` from the end. `result` is only ever written, so each append
-  # stays in place; reading `self` cannot unshare it, because `self` is not
-  # written.
-  pub fn reversed<T>(self: Vec<T>) -> Vec<T> {
-    let result: Vec<T> = [];
-    let at: int = 0;
-    let index: int = self.len();
+# A new vec with adjacent duplicates dropped. `sorted_by` then `uniqued` keeps
+# one of each value, so a sorted vec becomes unique. Equality is `==`.
+pub fn uniqued<T>(self: Vec<T>) -> Vec<T> {
+  let out: Vec<T> = Vec.new();
+  let count: int = self.len();
+  match count {
+    0 => { return out; };
+    _ => {};
+  };
+  out = out.push(self.at(0));
+  let index: int = 1;
+  for {
+    match index < count { false => { break; }; true => {}; };
+    match self.at(index) == self.at(index - 1) {
+      true => {};
+      _ => { out = out.push(self.at(index)); };
+    };
+    index = index + 1;
+  };
+  return out;
+};
+
+# A new vec with `apply` called on every element.
+pub fn map<T, U>(self: Vec<T>, apply: fn(T) -> U) -> Vec<U> {
+  let out: Vec<U> = Vec.new();
+  let index: int = 0;
+  let count: int = self.len();
+  for {
+    match index < count { false => { break; }; true => {}; };
+    out = out.push(apply(self.at(index)));
+    index = index + 1;
+  };
+  return out;
+};
+
+# A new vec with the elements for which `keep` answers `true`.
+pub fn filter<T>(self: Vec<T>, keep: fn(T) -> bool) -> Vec<T> {
+  let out: Vec<T> = Vec.new();
+  let index: int = 0;
+  let count: int = self.len();
+  for {
+    match index < count { false => { break; }; true => {}; };
+    let item: T = self.at(index);
+    match keep(item) {
+      true => { out = out.push(item); };
+      _ => {};
+    };
+    index = index + 1;
+  };
+  return out;
+};
+
+# The first element. An empty vec has no first element, so it stops the run.
+pub fn first<T>(self: Vec<T>) -> T {
+  match self.len() {
+    0 => { std::eprint("first: the vec is empty"); };
+    _ => {};
+  };
+  return self.at(0);
+};
+
+# The last element. An empty vec has no last element, so it stops the run.
+pub fn last<T>(self: Vec<T>) -> T {
+  match self.len() {
+    0 => { std::eprint("last: the vec is empty"); };
+    _ => {};
+  };
+  return self.at(self.len() - 1);
+};
+
+# A new vec ordered by `less`: an iterative bottom-up merge sort. Each pass
+# merges runs of `width` (starting at one) into `merged`, then doubles
+# `width`, until one run covers the vec.
+pub fn sorted_by<T>(self: Vec<T>, less: fn(T, T) -> bool) -> Vec<T> {
+  let source: Vec<T> = self;
+  let count: int = source.len();
+  match count < 2 {
+    true => { return source; };
+    _ => {};
+  };
+  let width: int = 1;
+  for {
+    match width < count { false => { break; }; true => {}; };
+    let merged: Vec<T> = Vec.new();
+    let base: int = 0;
     for {
-      match index > 0 { false => { break; }; true => {}; };
-      index = index - 1;
-      result[at] = self[index];
-      at = at + 1;
-    };
-    return result;
-  };
-
-  # Whether `item` is an element.
-  pub fn contains<T>(self: Vec<T>, item: T) -> bool {
-    let found: bool = false;
-    for element in self {
-      match element == item {
-        true => { found = true; break; };
-        _ => {};
+      match base < count { false => { break; }; true => {}; };
+      let middle: int = match base + width < count {
+        true => base + width; false => count;
       };
-    };
-    return found;
-  };
-
-  # The first index of `item`, or the declared absence when it is not an
-  # element. Equality is `==`.
-  pub fn find<T>(self: Vec<T>, item: T) -> Option<int> {
-    let index: int = 0;
-    for element in self {
-      match element == item {
-        true => { return Option.some(index); };
-        _ => {};
+      let end: int = match base + width + width < count {
+        true => base + width + width; false => count;
       };
-      index = index + 1;
-    };
-    return Option.none;
-  };
-
-  # A new vec with adjacent duplicates dropped. `sort` then `unique` keeps one of
-  # each value, so a sorted vec becomes unique. Equality is `==`.
-  pub fn uniqued<T>(self: Vec<T>) -> Vec<T> {
-    let out: Vec<T> = [];
-    let count: int = self.len();
-    match count {
-      0 => { return out; };
-      _ => {};
-    };
-    out[0] = self[0];
-    let at: int = 1;
-    let index: int = 1;
-    for {
-      match index < count { false => { break; }; true => {}; };
-      match self[index] == self[index - 1] {
-        true => {};
-        _ => { out[at] = self[index]; at = at + 1; };
-      };
-      index = index + 1;
-    };
-    return out;
-  };
-
-  # A new vec with `apply` called on every element.
-  pub fn map<T, U>(self: Vec<T>, apply: fn(T) -> U) -> Vec<U> {
-    let out: Vec<U> = [];
-    let index: int = 0;
-    for item in self {
-      out[index] = apply(item);
-      index = index + 1;
-    };
-    return out;
-  };
-
-  # A new vec with the elements for which `keep` answers `true`.
-  pub fn filter<T>(self: Vec<T>, keep: fn(T) -> bool) -> Vec<T> {
-    let out: Vec<T> = [];
-    let index: int = 0;
-    for item in self {
-      match keep(item) {
-        true => { out[index] = item; index = index + 1; };
-        _ => {};
-      };
-    };
-    return out;
-  };
-
-  # The first element. An empty vec has no first element, so it stops the run.
-  pub fn first<T>(self: Vec<T>) -> T {
-    match self.len() {
-      0 => { std::eprint("first: the vec is empty"); };
-      _ => {};
-    };
-    return self[0];
-  };
-
-  # The last element. An empty vec has no last element, so it stops the run.
-  pub fn last<T>(self: Vec<T>) -> T {
-    match self.len() {
-      0 => { std::eprint("last: the vec is empty"); };
-      _ => {};
-    };
-    let result: T = self[0];
-    for item in self { result = item; };
-    return result;
-  };
-
-  # A new vec ordered by `less`: an iterative bottom-up merge sort. Each pass
-  # merges runs of `width` (starting at one) into `merged`, then doubles
-  # `width`, until one run covers the vec.
-  pub fn sorted_by<T>(self: Vec<T>, less: fn(T, T) -> bool) -> Vec<T> {
-    let source: Vec<T> = self;
-    let count: int = source.len();
-    match count < 2 {
-      true => { return source; };
-      _ => {};
-    };
-    let width: int = 1;
-    for {
-      match width < count { false => { break; }; true => {}; };
-      let merged: Vec<T> = [];
-      let base: int = 0;
+      let left: int = base;
+      let right: int = middle;
       for {
-        match base < count { false => { break; }; true => {}; };
-        let middle: int = match base + width < count {
-          true => base + width; false => count;
+        match left < middle && right < end { false => { break; }; true => {}; };
+        match less(source.at(right), source.at(left)) {
+          true => { merged = merged.push(source.at(right)); right = right + 1; };
+          false => { merged = merged.push(source.at(left)); left = left + 1; };
         };
-        let end: int = match base + width + width < count {
-          true => base + width + width; false => count;
-        };
-        let left: int = base;
-        let right: int = middle;
-        let at: int = base;
-        for {
-          match left < middle && right < end { false => { break; }; true => {}; };
-          match less(source[right], source[left]) {
-            true => { merged[at] = source[right]; right = right + 1; };
-            false => { merged[at] = source[left]; left = left + 1; };
-          };
-          at = at + 1;
-        };
-        for {
-          match left < middle { false => { break; }; true => {}; };
-          merged[at] = source[left];
-          left = left + 1;
-          at = at + 1;
-        };
-        for {
-          match right < end { false => { break; }; true => {}; };
-          merged[at] = source[right];
-          right = right + 1;
-          at = at + 1;
-        };
-        base = end;
       };
-      source = merged;
-      width = width + width;
+      for {
+        match left < middle { false => { break; }; true => {}; };
+        merged = merged.push(source.at(left));
+        left = left + 1;
+      };
+      for {
+        match right < end { false => { break; }; true => {}; };
+        merged = merged.push(source.at(right));
+        right = right + 1;
+      };
+      base = end;
     };
-    return source;
+    source = merged;
+    width = width + width;
   };
+  return source;
+};
 
-  # Whether `a` orders before `b`; the ordering the text `sort` uses.
-  pub fn text_less(a: txt, b: txt) -> bool {
-    return a < b;
-  };
+# Whether `a` orders before `b`; the ordering the text `sorted` uses.
+pub fn text_less(a: txt, b: txt) -> bool {
+  return a < b;
+};
 
-  # A new vec of text in byte-lexicographic order. It applies to `Vec<txt>`
-  # alone; a generic function cannot constrain its elements to text.
-  pub fn sorted(items: Vec<txt>) -> Vec<txt> {
-    return items.sorted_by(text_less);
-  };
-
+# A new vec of text in byte-lexicographic order. It applies to `Vec<txt>`
+# alone; a generic function cannot constrain its elements to text.
+pub fn sorted(items: Vec<txt>) -> Vec<txt> {
+  return items.sorted_by(text_less);
 };

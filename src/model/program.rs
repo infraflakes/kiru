@@ -21,8 +21,15 @@ pub(crate) struct Program {
     /// covers an unset environment variable, an absent search index, and a bare
     /// return.
     pub(crate) absence_type: Option<TypeId>,
+    /// The runtime's `Vec` type, registered by the compiler into the
+    /// `std::dynamic` namespace. Its representation is the runtime's, so the
+    /// lowering is the only compiler stage that reads this id.
+    pub(crate) vec_type: Option<TypeId>,
     /// The entry function: the entry file's own root `main`.
     pub(crate) entry: DeclarationId,
+    /// The module values in dependency order: each is evaluated once at
+    /// startup, after the values its initializer reads.
+    pub(crate) module_values: Vec<DeclarationId>,
 }
 
 impl Program {
@@ -40,8 +47,8 @@ impl Program {
     }
 
     /// The name of a type for a diagnostic: a declared type shows its declared
-    /// name and arguments, a Vec shows its element, a parameter shows its
-    /// name, and every other type shows its registry name.
+    /// name and arguments, a parameter shows its name, and every other type
+    /// shows its registry name.
     pub(crate) fn type_name(&self, ty: &Type) -> String {
         match ty {
             Type::Named(id, arguments) => {
@@ -56,7 +63,6 @@ impl Program {
                     format!("{name}<{}>", parts.join(", "))
                 }
             }
-            Type::Vec(element) => format!("Vec<{}>", self.type_name(element)),
             Type::Parameter(name) => name.clone(),
             Type::Function {
                 parameters,
@@ -130,7 +136,7 @@ impl Program {
 
     /// The display name of a declaration: a local binding shows its bare name,
     /// and a file declaration shows its namespace path and name joined with
-    /// `::`, with no leading `::`.
+    /// `::`.
     pub(crate) fn display(&self, id: DeclarationId) -> String {
         let declaration = self.declaration(id);
         if declaration.owner.is_some() {
@@ -138,7 +144,7 @@ impl Program {
         }
         let mut path = self.namespace_path(declaration.namespace);
         path.push(declaration.name.clone());
-        join_path(&path, false)
+        join_path(&path)
     }
 }
 
@@ -182,8 +188,8 @@ impl Namespace {
         self.names.get(name)
     }
 
-    /// The method declared here for a receiver head and a name, if any. A
-    /// method call resolves through this.
+    /// The method or constructor declared here for a head and a name, if any.
+    /// A method call and a constructor call both resolve through this.
     pub(crate) fn method(&self, head: TypeHead, name: &str) -> Option<DeclarationId> {
         self.methods.get(head, name)
     }
@@ -243,12 +249,14 @@ impl NameTable {
 }
 
 /// One namespace's method registry: the pool that makes a method family
-/// callable. A method is selected by its receiver's type head, so a name may
-/// repeat once per head. The table maps a receiver head and a name to the
-/// declaration whose first parameter has that head; a method with no receiver
-/// (a function with no parameters) has no head and lives only in the name
-/// pool. Unlike a `NameTable` it is not serialized: it is rebuilt from the
-/// names at compile time.
+/// callable and a type's constructors reachable. A method is selected by its
+/// receiver's type head and a constructor by the head of the type it returns,
+/// so a name may repeat once per head. The table maps a head and a name to the
+/// declaration: a method is a function whose first parameter has that head, and
+/// a constructor is a function with no parameters whose return type has that
+/// head. A function with neither (no parameters and no return type) has no head
+/// and lives only in the name pool. Unlike a `NameTable` it is not serialized:
+/// it is rebuilt from the names at compile time.
 #[derive(Debug, Default)]
 pub(crate) struct MethodTable {
     entries: HashMap<TypeHead, HashMap<String, DeclarationId>>,
@@ -340,12 +348,10 @@ pub(crate) fn namespace_path(namespaces: &[Namespace], id: NamespaceId) -> Vec<S
     segments
 }
 
-/// Join namespace segments with `::`, with an optional leading `::` for a
-/// rooted path. The program model and the linker both render names through
-/// this function.
-pub(crate) fn join_path(segments: &[String], root: bool) -> String {
-    let joined = segments.join("::");
-    if root { format!("::{joined}") } else { joined }
+/// Join namespace segments with `::`. The program model and the linker both
+/// render names through this function.
+pub(crate) fn join_path(segments: &[String]) -> String {
+    segments.join("::")
 }
 
 /// The namespace at a path, walked over a namespace table. The program model

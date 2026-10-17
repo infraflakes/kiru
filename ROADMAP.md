@@ -72,10 +72,12 @@ tracked so they are settled before they block a phase.
 - **Operator spelling:** `&&`, `||`, `!` for logic; `+ - * / %` arithmetic;
   `< <= > >=` ordering; `== !=` equality. All left-associative; `!`/`-` prefix.
 - **Reserved words are the forms, not the type names.** The reserved words are
-  `mod`, `import`, `use`, `pub`, `fn`, `let`, `rec`, `enum`, `match`,
-  `return`, `panic`, `async`, `wait`, `for`, `in`, `break`, `true`, and `false`.
-  There is no `type` keyword: the runtime type names (`txt`, `Vec`, `bool`,
-  `int`) are built in, not declared — see the intrinsic-type decision below.
+  `use`, `pub`, `fn`, `let`, `rec`, `enum`, `match`, `return`, `panic`, `async`,
+  `wait`, `for`, `in`, `break`, `true`, and `false`. There is no `type` keyword:
+  the runtime type names (`txt`, `Vec`, `bool`, `int`) are built in, not
+  declared — see the intrinsic-type decision below. (`mod` and `import` are
+  deleted: a directory is a namespace, and a file is in the program because it
+  is under the entry's directory.)
 
 ## Decisions locked
 
@@ -100,8 +102,8 @@ tracked so they are settled before they block a phase.
   by the leading words, accumulates the ancestors' flags into a `Context`, and
   runs the leaf's action. `usage` is a method too. A command's description is
   `about` and a flag's is `help`: different concepts, different words. A method
-  name may now repeat once per receiver head, so `Command.about` and
-  `Flag.about` could coexist, but a description and a help line are different
+  name may repeat once per receiver head and parameter count, so `Command.about`
+  and `Flag.about` could coexist, but a description and a help line are different
   things and keep different names. The readers take a `Flag`
   *value*, not a string, so a flag is declared once. `main` takes the words, so
   argv is no longer a flat record.
@@ -115,17 +117,17 @@ tracked so they are settled before they block a phase.
   table and no separate `stdin`/`stdout`/`stderr`/`quiet` methods. Every method
   says one thing and takes the type it means — a timeout, an exit code, and a
   pid are `int`s, not text. A `rec` plus chained methods is how anything is
-  configured; a `Map<K, V>` (in `std::map`) is how data is passed and returned.
+  configured; a `Map<K, V>` (in `std::dynamic`) is how data is passed and returned.
 - **`( ... )` groups an expression.** `(a + b) * c`. The parentheses carry no
   node: they only steer precedence, which the tree already records. (Added:
   without them the expression grammar had no way to group at all.)
 - **The type system closes at the intrinsics and the two formers.** The
   intrinsic types are `int`, `bool`, `txt`, and `vec<T>`; the two type formers
   are `rec` and `enum`. `map<K, V>` is **not** a built-in: it is an ordinary
-  declared type in the `std::map` category (`stdlib/map.kiru`), a `rec` over a
-  `vec` of `Entry<K, V>`, so `use std::map;` brings the type and its methods
-  (`get`/`set`/`has`/`keys`/`values`/`len`, plus `from`/`empty`) exactly as
-  `use std::vec;` brings `vec`. Nothing about it needs a native — the runtime
+  declared type in the `std::dynamic` category (`std/dynamic/map.kiru`), a `rec`
+  over a `vec` of `Entry<K, V>`, so `use std::dynamic;` brings the type and its
+  methods (`get`/`set`/`has`/`keys`/`values`/`len`, plus `of`/`empty`) exactly as
+  `use std::dynamic;` brings `vec`. Nothing about it needs a native — the runtime
   represents a `Map` like any other rec. A field read `r.field` is only for a
   field of a declared `rec`; the second rule — `m.k` on a map, yielding
   `Option<V>` — is gone, and a map lookup is `m.get(k)`. A `{ k = v }` literal
@@ -149,25 +151,23 @@ tracked so they are settled before they block a phase.
   `TypeDeclarationKind::Builtin`/`TypeKind::Builtin`/`builtin_kind`/
   `is_std_category` machinery: one grammar and one resolution path, and the
   intrinsic surface is not a declaration.)
-- **The intrinsics are visible in every namespace; everything else is
-  imported.** `txt`, `bool`, `int` and `Vec<T>` are the language's own types, so
-  a program writes them without a `use`. Every other name is reached exactly as
-  any other name is: a bare name sees its own namespace plus what it `use`s, and
-  a method needs its category in scope (`xs.len()` needs `use std::vec;`),
-  because dispatch is a separate rule from naming a type. `fn(T)` with no arrow
-  is a structural function type (`TypeExpr::Function { returns: None }`), so
-  writing a function type needs no `use`. (Reversed the earlier "no prelude"
-  decision, which made a built-in reachable only through a `use`.)
-- **A bare name sees its own namespace plus the namespaces it `use`s; nothing
-  climbs to a parent.** A declaration reached across namespaces must be `pub`; a
-  qualified path or a rooted `::` path names a namespace directly and reaches
-  only `pub` declarations. The rule is the same for a `rec` field and an `enum`
-  variant: **every declaration, field, and variant is private by default** —
-  reachable in its declaring namespace and across namespaces only when marked
-  `pub`. `pub` precedes a field (`pub field: T`) and a variant (`pub Variant(T)`)
-  exactly as it precedes a declaration. (Closed a gap: the check covered
-  declarations only, so `m.entries[0].key` read and `hidden::Colour.red`
-  constructed across namespaces without a `pub`.)
+- **The intrinsics are visible in every namespace; everything else is reached
+  through a `use`.** `txt`, `bool`, `int` and `Vec<T>` are the language's own
+  types, so a program writes them without a `use`. Every other name is reached
+  exactly as any other name is: a bare name sees its own namespace only, a
+  qualified name starts at a `use`d namespace, and a method needs its namespace
+  in scope (`xs.len()` needs `use std::dynamic;`), because dispatch is a
+  separate rule from naming a type. `fn(T)` with no arrow is a structural
+  function type (`TypeExpr::Function { returns: None }`), so writing a function
+  type needs no `use`.
+- **A bare name sees its own namespace only; a `use` reaches another
+  namespace.** A declaration reached across namespaces must be `pub`; a
+  qualified path names a `use`d namespace directly and reaches only `pub`
+  declarations. Nothing climbs to a parent. The rule is the same for a `rec`
+  field and an `enum` variant: **every declaration, field, and variant is
+  private by default** — reachable in its declaring namespace and across
+  namespaces only when marked `pub`. `pub` precedes a field (`pub field: T`) and
+  a variant (`pub Variant(T)`) exactly as it precedes a declaration.
 - **`main` takes the words and returns the exit code.** `fn main(words: vec<txt>)
   -> int` — the returned `int` is the process status, clamped to `0..=255`; no
   return means `0`; any other parameter or return type is an error. (Replaced a
@@ -180,28 +180,31 @@ tracked so they are settled before they block a phase.
   (Considered `Arc<[u8]>`: it would delete the char-boundary rule and let kiru
   read a tarball, but no orchestration program needs that, and byte text would
   push UTF-8 validation into every consumer.)
-- **`import` and `mod` are the coherence mechanism.** A file's `import`s say
-  which files are in the program and in what order, and an import cycle is an
-  error; a `mod` block says which namespace a file's declarations join. Together
-  they fix the declaration order — a file's own declarations, then the files it
-  imports, in the order written — and a reference may only point backwards in
-  that order. A circular *reference* is therefore a circular *import*, which is
-  already rejected; that is how circular dependencies are disallowed, not by a
-  rule of their own, and no separate call-graph check is needed. A file may also
-  extend a namespace another file declared — `mod std` beside `mod std::process`
-  — which is how a later file adds to `std` without the earlier one importing it
-  back. The inline `mod` block is a feature of the mechanism, not a wart.
-- **A `use` may only reach an earlier file.** A `use` obeys the same backwards
-  rule the resolver applies to a name, extended across files: it may only reach
-  a namespace whose declarations come before it in the joined stream — that is,
-  a namespace in a file loaded earlier than the `use`, or in the `use`'s own
-  file before the `use`. A file cannot reach a namespace from a file it never
-  imported, or imports later: `std.kiru` may not `use std::vec;` while
-  `vec.kiru` is imported below it. The check lives in
-  `Builder::reserve_items`, comparing the `use`'s position in the joined stream
-  to the position of the namespace's first declaration, and it names the
-  declaring and writing files when it rejects one. `ScopedUse` carries the
-  writing file for that diagnostic.
+- **A directory is a namespace.** A file belongs to its directory's namespace
+  and its filename is arbitrary; nesting nests. The standard library is the
+  `std` tree and a program is the `root` tree, so `std/dynamic/vec.kiru` is
+  `std::dynamic` and `pipeline/kiru/cli.kiru` is `root::kiru`. A file is in the
+  program because it is under the entry file's directory, walked recursively;
+  there is no `import`. Files inside a directory may be renamed, split, or
+  merged freely, because only the directory names the namespace.
+- **A `use` names a namespace or a name; it is namespace-scoped, and resolution
+  is order-free.** `use <absolute path>;` is one grammar rule, and what the path
+  ends at decides what it brings in: a namespace gives the qualifier its last
+  segment spells (`use std::dynamic;` then `dynamic::len`) and joins that
+  namespace's public methods to dispatch; a name gives that one name bare
+  (`use std::dynamic::len;` then `len`). There is no alias and no `as`. A `use`
+  sits at the top of its file, ahead of any declaration, and covers every
+  declaration of the namespace that wrote it, whichever file declared it. It
+  does not reach sub-namespaces and does not chain. Resolution is order-free:
+  every declaration is collected into its namespace first, so a name may be
+  declared after the point that names it and a function may call itself.
+  (Deleted the file-position `use` gate, `Builder::check_earlier`, and the
+  structural order rule.)
+- **`pub let` is an error; module values are private and dependency-ordered.**
+  A module value is evaluated once at startup and is never reachable across a
+  namespace, so `pub` on a `let` is rejected. Within a namespace, module values
+  are ordered by their initializers — a value is evaluated before the values
+  that read it — and a cycle among them is an error.
 - **A type may name itself, and any other type.** Every declaration is reserved
   before any field is resolved, so a type may be self-referential or mutually
   recursive: a command tree (`children: vec<Command>`), a document
@@ -219,7 +222,8 @@ tracked so they are settled before they block a phase.
   arbitrary callee adds no orchestration and reads badly.)
 - **The sequence type is `vec<T>`, and its element type is always written.** No
   bare `vec`, and no implicit `vec<txt>`. The type and its helpers share the
-  `std::vec` namespace (`stdlib/vec.kiru`), so `use std::vec;` brings in both.
+  `std::dynamic` namespace (`std/dynamic/vec.kiru`), so `use std::dynamic;`
+  brings in both.
   (Renamed from `list`; the namespace was `std::vecs` while `vec` was a
   keyword.)
 - **Generic type declarations:** `rec Name<A, B> { first: A, second: B };`
@@ -237,7 +241,7 @@ tracked so they are settled before they block a phase.
 - **`.` reads a member of a value or a type; `::` reads a module.** Field access
   (`r.a`), a method call (`xs.len()`), and variant construction and patterns
   (`Option.some`, `Shape.Circle(2)`) all use `.`; a module path
-  (`std::vec::sort`) uses `::`. A variant is told from a field by the root: a
+  (`std::dynamic::sorted`) uses `::`. A variant is told from a field by the root: a
   type name is a variant, a value is a field. (Dropped `Name::Variant`: one
   separator for "a member of something", so `Option.some` mirrors `r.field`.)
 - **Duplicate record fields always error**, Rust-like: a repeated field name is
@@ -260,12 +264,15 @@ tracked so they are settled before they block a phase.
   parameter's type is the dispatch target and its name is irrelevant. A method
   is an ordinary declaration in a namespace; a call `receiver.name(args)`
   resolves `name` among the namespaces in scope, selects the function whose
-  first parameter has the receiver's type head, and desugars to a call with the
-  receiver as the first argument. A name may repeat once per receiver head in a
-  namespace: a method family shares one name, and the receiver's type head
-  selects within the namespace as well as among them. Every other declaration
+  first parameter has the receiver's type head and whose parameter count matches
+  the call, and desugars to a call with the receiver as the first argument. A
+  name may repeat once per receiver head and parameter count in a namespace: a
+  method family shares one name, and the receiver's type head plus the call's
+  argument count select within the namespace as well as among them. (The
+  parameter count is what tells `Map.of(entries)` from `Set.of(items, less)`,
+  which share a `Vec` receiver head in `std::dynamic`.) Every other declaration
   still makes a name unique, so a genuine duplicate is an error. First user: the
-  `std::command` builder (`std::command(line).dir(...).run()`). Next: the
+  `std::process` command builder (`command(line).dir(...).run()`). Next: the
   vec/text helpers. (Dropped the `impl` block: it was only the grouping device
   that supplied the target type, which the first parameter supplies directly.)
 
@@ -368,10 +375,10 @@ orchestration programs smaller and clearer?
    fallible helpers onto it (`std::text::find` returns `Option<int>`). A generic
    `len` in kiru replaced the monomorphic `std::vec::len` native.
 2. **Methods ✅, and the stdlib is migrated.** A method is a function whose first
-   parameter accepts the receiver (its name is irrelevant; top-level or inside a
-   `mod`); `receiver.name(args)` dispatches at link time on the receiver's
+   parameter accepts the receiver (its name is irrelevant; any file in a
+   namespace); `receiver.name(args)` dispatches at link time on the receiver's
    declared type head. The stdlib now
-   uses methods: `std::command` is a builder; `vec<T>` has `len`/`append`/`prepend`/
+   uses methods: `std::process::command` is a builder; `vec<T>` has `len`/`append`/`prepend`/
    `concat`/`reverse`/`contains`/`last`/`map`/`filter`/`sort_by`; `txt` has
    `len`/`byte`/`trim`/`find`/`contains`/`starts_with`/`ends_with`/`replace`/`lines`;
    `Option<T>` has `unwrap_or`/`is_some`. `std::join` (a text convenience) and
@@ -392,7 +399,7 @@ orchestration programs smaller and clearer?
    (a) ✅ The literal never names its type: `Expression::Struct` (`Name { … }`)
    is gone, so a `{ … }` shape is typed by its annotation and the brace
    ambiguity is gone with it. (b) ✅ `rec` only declares; there is no anonymous
-   record type, and the key-valued container is the ordinary `std::map::Map`.
+   record type, and the key-valued container is the ordinary `std::dynamic::Map`.
    (c) ✅ A generic
    literal cannot carry type arguments, which no longer arises: the literal
    carries no type at all.
@@ -418,7 +425,7 @@ orchestration programs smaller and clearer?
 - ✅ A record literal works as a `match` subject or a `for` iterable (Rust needs
   parens), and no literal names its type.
 - ✅ `rec` declares a nominal shape; the key-valued container is the ordinary
-  `std::map::Map`, a `rec` over a `vec` of entries.
+  `std::dynamic::Map`, a `rec` over a `vec` of entries.
 
 ## Intrinsic-surface budget
 

@@ -10,17 +10,22 @@ fn write(directory: &Path, name: &str, contents: &str) -> PathBuf {
     path
 }
 
-/// The declaration names in the joined item stream, in order.
-fn names(program: &super::LoadedProgram) -> Vec<&str> {
+/// The namespace of the declaration named `name` in the joined item stream.
+fn namespace_of(program: &super::LoadedProgram, name: &str) -> Vec<String> {
     program
         .items
         .iter()
-        .map(|item| match &item.declaration {
-            Declaration::Function(function) => function.name.as_str(),
-            Declaration::Binding(binding) => binding.name.as_str(),
-            Declaration::Type(type_declaration) => type_declaration.name.as_str(),
+        .find_map(|item| match &item.declaration {
+            Declaration::Function(function) if function.name == name => {
+                Some(item.namespace.clone())
+            }
+            Declaration::Binding(binding) if binding.name == name => Some(item.namespace.clone()),
+            Declaration::Type(type_declaration) if type_declaration.name == name => {
+                Some(item.namespace.clone())
+            }
+            _ => None,
         })
-        .collect()
+        .unwrap_or_else(|| panic!("`{name}` is declared"))
 }
 
 #[test]
@@ -31,12 +36,11 @@ fn embedded_standard_library_parses() {
     }
 }
 
-/// Every embedded file is reached from the root by an `import`, so a file added
-/// to the table but never imported is a mistake rather than a silent no-op.
+/// The embedded table mirrors `std/**`, and the loader reads every file in it.
 #[test]
-fn every_embedded_file_is_reachable_from_the_root() {
+fn every_embedded_file_is_loaded() {
     let directory = tempfile::tempdir().expect("temp dir");
-    let entry = write(directory.path(), "entry.kiru", "fn main() {};\n");
+    let entry = write(directory.path(), "main.kiru", "fn main() {};\n");
     let program = load_files(&entry).expect("loads");
     let loaded: Vec<&str> = program
         .files
@@ -50,83 +54,47 @@ fn every_embedded_file_is_reachable_from_the_root() {
     loaded.sort();
     assert_eq!(
         loaded, expected,
-        "an embedded file is not imported from the root"
+        "the embedded table does not mirror `std/**`"
     );
 }
 
 #[test]
-fn joins_imports_in_position_order() {
+fn a_file_belongs_to_its_directory_namespace() {
     let directory = tempfile::tempdir().expect("temp dir");
-    let entry = write(
-        directory.path(),
-        "entry.kiru",
-        "import \"a.kiru\";\nimport \"b.kiru\";\n",
-    );
-    write(
-        directory.path(),
-        "a.kiru",
-        "import \"c.kiru\";\nmod m { fn a_fn() {}; };\n",
-    );
-    write(directory.path(), "c.kiru", "mod m { fn c_fn() {}; };\n");
-    write(directory.path(), "b.kiru", "mod m { fn b_fn() {}; };\n");
+    let entry = write(directory.path(), "main.kiru", "fn main() {};\n");
+    write(directory.path(), "task.kiru", "fn task() {};\n");
+    write(directory.path(), "sub/worker.kiru", "fn worker() {};\n");
 
     let program = load_files(&entry).expect("loads");
-    let names = names(&program);
-    assert_eq!(&names[names.len() - 3..], &["c_fn", "a_fn", "b_fn"]);
-}
-
-#[test]
-fn reports_missing_import() {
-    let directory = tempfile::tempdir().expect("temp dir");
-    let entry = write(directory.path(), "entry.kiru", "import \"gone.kiru\";\n");
-    let error = load_files(&entry).expect_err("missing import fails");
-    assert!(
-        error.message.contains("cannot find import gone.kiru"),
-        "{}",
-        error.message
-    );
-    assert!(
-        error.render().contains("entry.kiru:1:1"),
-        "{}",
-        error.render()
+    assert_eq!(namespace_of(&program, "main"), vec!["root".to_owned()]);
+    // A sibling file shares the root namespace; a file in a directory nests.
+    assert_eq!(namespace_of(&program, "task"), vec!["root".to_owned()]);
+    assert_eq!(
+        namespace_of(&program, "worker"),
+        vec!["root".to_owned(), "sub".to_owned()]
     );
 }
 
 #[test]
-fn reports_import_cycle() {
+fn walks_the_entry_directory_recursively() {
     let directory = tempfile::tempdir().expect("temp dir");
-    let entry = write(directory.path(), "entry.kiru", "import \"a.kiru\";\n");
-    write(directory.path(), "a.kiru", "import \"entry.kiru\";\n");
-    let error = load_files(&entry).expect_err("cycle fails");
-    assert!(error.message.contains("import cycle"), "{}", error.message);
-}
+    let entry = write(directory.path(), "main.kiru", "fn main() {};\n");
+    write(directory.path(), "a/b/deep.kiru", "fn deep() {};\n");
 
-#[test]
-fn reports_a_duplicate_import() {
-    let directory = tempfile::tempdir().expect("temp dir");
-    let entry = write(
-        directory.path(),
-        "entry.kiru",
-        "import \"a.kiru\";\nimport \"b.kiru\";\n",
-    );
-    write(directory.path(), "a.kiru", "import \"d.kiru\";\n");
-    write(directory.path(), "b.kiru", "import \"d.kiru\";\n");
-    write(directory.path(), "d.kiru", "mod m { fn d_fn() {}; };\n");
-    let error = load_files(&entry).expect_err("a diamond fails");
-    assert!(
-        error.message.contains("imported more than once"),
-        "{}",
-        error.message
+    let program = load_files(&entry).expect("loads");
+    assert_eq!(
+        namespace_of(&program, "deep"),
+        vec!["root".to_owned(), "a".to_owned(), "b".to_owned()]
     );
 }
 
 #[test]
 fn reports_parse_error_with_file_and_position() {
     let directory = tempfile::tempdir().expect("temp dir");
-    let entry = write(directory.path(), "entry.kiru", "fn f( {\n");
+    let entry = write(directory.path(), "main.kiru", "fn f( {\n");
     let error = load_files(&entry).expect_err("parse error fails");
     assert!(
-        error.render().contains("entry.kiru:1:7"),
+        error.render().contains("main.kiru:1:7"),
         "{}",
         error.render()
     );

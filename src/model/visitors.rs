@@ -81,10 +81,6 @@ fn walk_statement(visitor: &mut impl Visitor, statement: &Statement) {
         | Statement::Assign { value, .. }
         | Statement::FieldAssign { value, .. }
         | Statement::Expression(value) => walk_expression(visitor, value),
-        Statement::IndexAssign { index, value, .. } => {
-            walk_expression(visitor, index);
-            walk_expression(visitor, value);
-        }
         Statement::Return { value, .. } => {
             if let Some(value) = value {
                 walk_expression(visitor, value);
@@ -93,10 +89,6 @@ fn walk_statement(visitor: &mut impl Visitor, statement: &Statement) {
         Statement::Panic { .. } => {}
         Statement::Async { call, .. } => walk_expression(visitor, call),
         Statement::Wait { .. } => {}
-        Statement::ForEach { iterable, body, .. } => {
-            walk_expression(visitor, iterable);
-            walk_statements(visitor, body);
-        }
         Statement::Forever { body, .. } => walk_statements(visitor, body),
         Statement::Break { .. } => {}
     }
@@ -109,10 +101,6 @@ fn walk_statement_mut(visitor: &mut impl VisitorMut, statement: &mut Statement) 
         | Statement::Assign { value, .. }
         | Statement::FieldAssign { value, .. }
         | Statement::Expression(value) => walk_expression_mut(visitor, value),
-        Statement::IndexAssign { index, value, .. } => {
-            walk_expression_mut(visitor, index);
-            walk_expression_mut(visitor, value);
-        }
         Statement::Return { value, .. } => {
             if let Some(value) = value {
                 walk_expression_mut(visitor, value);
@@ -121,10 +109,6 @@ fn walk_statement_mut(visitor: &mut impl VisitorMut, statement: &mut Statement) 
         Statement::Panic { .. } => {}
         Statement::Async { call, .. } => walk_expression_mut(visitor, call),
         Statement::Wait { .. } => {}
-        Statement::ForEach { iterable, body, .. } => {
-            walk_expression_mut(visitor, iterable);
-            walk_statements_mut(visitor, body);
-        }
         Statement::Forever { body, .. } => walk_statements_mut(visitor, body),
         Statement::Break { .. } => {}
     }
@@ -141,11 +125,6 @@ fn walk_expression_children(visitor: &mut impl Visitor, expression: &Expression)
         Expression::Map { fields, .. } => {
             for field in fields {
                 walk_expression(visitor, &field.value);
-            }
-        }
-        Expression::Vec { elements, .. } => {
-            for element in elements {
-                walk_expression(visitor, element);
             }
         }
         Expression::Interpolated { parts, .. } => {
@@ -168,10 +147,6 @@ fn walk_expression_children(visitor: &mut impl Visitor, expression: &Expression)
             for element in payload {
                 walk_expression(visitor, element);
             }
-        }
-        Expression::Index { target, index, .. } => {
-            walk_expression(visitor, target);
-            walk_expression(visitor, index);
         }
         Expression::Binary { left, right, .. } => {
             walk_expression(visitor, left);
@@ -215,11 +190,6 @@ fn walk_expression_children_mut(visitor: &mut impl VisitorMut, expression: &mut 
                 walk_expression_mut(visitor, &mut field.value);
             }
         }
-        Expression::Vec { elements, .. } => {
-            for element in elements {
-                walk_expression_mut(visitor, element);
-            }
-        }
         Expression::Interpolated { parts, .. } => {
             for part in parts {
                 if let StringPart::Expression(expression) = part {
@@ -240,10 +210,6 @@ fn walk_expression_children_mut(visitor: &mut impl VisitorMut, expression: &mut 
             for element in payload {
                 walk_expression_mut(visitor, element);
             }
-        }
-        Expression::Index { target, index, .. } => {
-            walk_expression_mut(visitor, target);
-            walk_expression_mut(visitor, index);
         }
         Expression::Binary { left, right, .. } => {
             walk_expression_mut(visitor, left);

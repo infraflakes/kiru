@@ -36,6 +36,15 @@ fn option_of(absence: Option<TypeId>, element: Type) -> Type {
     )
 }
 
+/// The runtime's `Vec` type applied to `element`. The compiler registers the
+/// declaration, whose id is known only once it is registered.
+fn vec_of(vec: Option<TypeId>, element: Type) -> Type {
+    Type::Named(
+        vec.expect("the compiler registers the Vec type"),
+        vec![element],
+    )
+}
+
 /// One native row: its path, name, parameter types, and result type. A native
 /// with no result type produces no value; its calls are statements, exactly as
 /// a kiru function with no return type. Its types are `Type`s, so a row
@@ -89,11 +98,12 @@ macro_rules! count {
 /// exhaustive over the variants, a native cannot exist without a row and a
 /// handler.
 ///
-/// The first argument names the absence identifier. The generated
-/// `native_rows` binds it to the program's absence type id, and a row writes
-/// an option type as `option_of(absence, element)`.
+/// The first two arguments name the absence and `Vec` identifiers. The
+/// generated `native_rows` binds them to the program's absence type id and the
+/// compiler's `Vec` type id, and a row writes those types as
+/// `option_of(absence, element)` and `vec_of(vec, element)`.
 macro_rules! native_registry {
-    ($absence:ident, $( $variant:ident { [$($segment:literal),* $(,)?], $name:literal, [$($parameter:expr),* $(,)?] $(-> $returns:expr)? } ),* $(,)?) => {
+    ($absence:ident, $vec:ident, $( $variant:ident { [$($segment:literal),* $(,)?], $name:literal, [$($parameter:expr),* $(,)?] $(-> $returns:expr)? } ),* $(,)?) => {
         /// A native provided by the runtime.
         #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
         pub(crate) enum Native {
@@ -122,8 +132,9 @@ macro_rules! native_registry {
 
         /// Every native with its typed row, built once per program because a
         /// `Type` is not `const`-constructible. `absence` is the program's
-        /// absence type id, which an option row names.
-        pub(crate) fn native_rows($absence: Option<TypeId>) -> Vec<(Native, NativeRow)> {
+        /// absence type id, which an option row names, and `vec` is the
+        /// compiler's `Vec` type id, which a row over a vec names.
+        pub(crate) fn native_rows($absence: Option<TypeId>, $vec: Option<TypeId>) -> Vec<(Native, NativeRow)> {
             vec![
                 $( (
                     Native::$variant,
@@ -141,25 +152,26 @@ macro_rules! native_registry {
 
 native_registry! {
     absence,
-    Spawn { ["std", "process"], "spawn", [Type::Vec(Box::new(Type::Text))] -> Type::Int },
+    vec,
+    Spawn { ["std", "process"], "spawn", [vec_of(vec, Type::Text)] -> Type::Int },
     Reap { ["std", "process"], "reap", [Type::Int] -> Type::Int },
     SignalGroup { ["std", "process"], "signal_group", [Type::Int, Type::Int] },
-    Write { ["std", "io"], "write", [Type::Int, Type::Text] },
-    IsTerminal { ["std", "io"], "is_terminal", [Type::Int] -> Type::Bool },
-    ReadStdin { ["std", "io"], "read_stdin", [] -> Type::Text },
+    Write { ["std", "process"], "write", [Type::Int, Type::Text] },
+    IsTerminal { ["std", "process"], "is_terminal", [Type::Int] -> Type::Bool },
+    ReadStdin { ["std", "process"], "read_stdin", [] -> Type::Text },
     Read { ["std", "fs"], "read", [Type::Text] -> Type::Text },
     WriteFile { ["std", "fs"], "write", [Type::Text, Type::Text] },
     Remove { ["std", "fs"], "remove", [Type::Text] },
     Exists { ["std", "fs"], "exists", [Type::Text] -> Type::Bool },
     Mkstemp { ["std", "fs"], "mkstemp", [Type::Text] -> Type::Text },
-    List { ["std", "fs"], "list", [Type::Text] -> Type::Vec(Box::new(Type::Text)) },
+    List { ["std", "fs"], "list", [Type::Text] -> vec_of(vec, Type::Text) },
     Length { ["std", "text"], "len", [Type::Text] -> Type::Int },
     Find { ["std", "text"], "find_byte", [Type::Text, Type::Text] -> option_of(absence, Type::Int) },
     Byte { ["std", "text"], "byte", [Type::Text, Type::Int] -> Type::Int },
     Slice { ["std", "text"], "slice", [Type::Text, Type::Int, Type::Int] -> Type::Text },
-    SleepSeconds { ["std", "time"], "sleep_seconds", [Type::Int] },
-    EnvVar { ["std", "env"], "var", [Type::Text] -> option_of(absence, Type::Text) },
-    CurrentDir { ["std", "env"], "current_dir", [] -> Type::Text },
+    SleepSeconds { ["std", "process"], "sleep_seconds", [Type::Int] },
+    EnvVar { ["std", "process"], "var", [Type::Text] -> option_of(absence, Type::Text) },
+    CurrentDir { ["std", "process"], "current_dir", [] -> Type::Text },
 }
 
 /// The shape of a native: its path, name, and parameter count.
@@ -212,6 +224,22 @@ mod tests {
             assert!(
                 row.path.first().copied() == Some(BUILTIN_NAMESPACE[0]),
                 "native {native:?} is outside the builtin namespace"
+            );
+        }
+    }
+
+    #[test]
+    fn every_native_lives_in_a_directory_under_std() {
+        let std_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
+        for (native, row) in NATIVE_SHAPES {
+            let mut directory = std_root.clone();
+            for segment in &row.path[1..] {
+                directory.push(segment);
+            }
+            assert!(
+                directory.is_dir(),
+                "native {native:?} lives in `{}`, which is not a directory under `std/`",
+                row.path.join("::")
             );
         }
     }

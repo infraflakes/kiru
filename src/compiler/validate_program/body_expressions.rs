@@ -74,8 +74,8 @@ impl<'a> Checker<'a> {
     /// `expected`, when the position names one. An expression with an intrinsic
     /// type — a literal, a name, a call, a field, an operator — yields that type
     /// and is then compared with the expected one by `fits`. A shape literal has
-    /// no type of its own: a map, a Vec, an enum variant, and a match take
-    /// their type from the expected type; a Vec or a match is inferred from its
+    /// no type of its own: a map, an enum variant, and a match take
+    /// their type from the expected type; a match is inferred from its
     /// parts only where no type is asked for. Every value position names its
     /// requirement as a type, so a shape is checked against its type wherever it
     /// appears.
@@ -89,9 +89,12 @@ impl<'a> Checker<'a> {
             Expression::Bool { .. } => Ok(Some(Type::Bool)),
             Expression::Int { .. } => Ok(Some(Type::Int)),
             // A `{ … }` literal is a declared shape; the expected type must be
-            // a declared rec, and with no expected type it has none.
+            // a declared rec that takes a literal, and with no expected type it
+            // has none. The runtime's `Vec` is a declaration with no fields,
+            // but its representation is the runtime's list, so it has no
+            // literal form.
             Expression::Map { fields, span } => match expected {
-                Some(Type::Named(id, arguments)) => {
+                Some(Type::Named(id, arguments)) if self.program.vec_type != Some(*id) => {
                     self.map_against(*id, arguments, fields, *span)?;
                     Ok(Some(Type::Named(*id, arguments.clone())))
                 }
@@ -130,37 +133,6 @@ impl<'a> Checker<'a> {
                     }
                     self.variant_against(*ty, *index, &[], payload, *span)?;
                     Ok(Some(Type::Named(*ty, Vec::new())))
-                }
-            }
-            // A Vec literal takes its element type from the expected type, or
-            // from its first element when none is asked for.
-            Expression::Vec { elements, .. } => {
-                if let Some(Type::Vec(element)) = expected {
-                    for item in elements {
-                        self.require(item, element)?;
-                    }
-                    Ok(Some(Type::Vec(element.clone())))
-                } else {
-                    let mut element_type: Option<Type> = None;
-                    for element in elements {
-                        let Some(ty) = self.expression(element, None)? else {
-                            return Err(
-                                self.error(element.span(), "a Vec element must have a value")
-                            );
-                        };
-                        if let Some(previous) = &element_type
-                            && previous != &ty
-                        {
-                            return Err(self.error(
-                                element.span(),
-                                expected_instead(&self.type_name(previous), &self.type_name(&ty)),
-                            ));
-                        }
-                        element_type = Some(ty);
-                    }
-                    Ok(Some(Type::Vec(Box::new(
-                        element_type.unwrap_or(Type::Text),
-                    ))))
                 }
             }
             Expression::Reference { declaration, span } => {
@@ -232,22 +204,6 @@ impl<'a> Checker<'a> {
                         expected_instead("a rec", &self.type_name(&other)),
                     )),
                 }
-            }
-            Expression::Index { target, index, .. } => {
-                let Some(target_type) = self.expression(target, None)? else {
-                    return Err(self.error(target.span(), expected_instead("Vec", "no value")));
-                };
-                let element = match target_type {
-                    Type::Vec(element) => *element,
-                    other => {
-                        return Err(self.error(
-                            target.span(),
-                            expected_instead("Vec", &self.type_name(&other)),
-                        ));
-                    }
-                };
-                self.require(index, &Type::Int)?;
-                Ok(Some(element))
             }
             Expression::Binary {
                 op, left, right, ..
@@ -702,7 +658,7 @@ impl<'a> Checker<'a> {
     }
 
     /// The type a match compares. Its subject must produce a value: text, a
-    /// map, or a Vec, never a call that produces none.
+    /// map, or any other value, never a call that produces none.
     pub(super) fn match_subject(&mut self, subject: &Expression) -> Result<Type, Diagnostic> {
         let Some(ty) = self.expression(subject, None)? else {
             return Err(self.error(subject.span(), "a match subject must have a value"));

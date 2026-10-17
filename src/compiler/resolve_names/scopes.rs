@@ -5,13 +5,12 @@ use std::collections::HashMap;
 use crate::model::{DeclarationId, FileId, NamespaceId};
 
 /// The context a body is linked in: the open scopes, the namespace and
-/// declaration being linked, and the top-down rule they enforce.
+/// declaration being linked.
 pub(super) struct Context<'a> {
     pub(super) scopes: &'a mut Scopes,
     pub(super) namespace: NamespaceId,
     pub(super) file: FileId,
     pub(super) current: DeclarationId,
-    pub(super) order: usize,
     /// The type parameters of the enclosing function, in scope for its
     /// signature and body annotations.
     pub(super) type_parameters: &'a [String],

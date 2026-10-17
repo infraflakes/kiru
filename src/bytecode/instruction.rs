@@ -51,16 +51,38 @@ pub(crate) enum Instruction {
         dst: u16,
         fields: Vec<(u32, u16)>,
     },
-    BuildVec {
+    /// Construct an empty Vec in `dst`: the runtime's list constructor, which
+    /// `Vec.new()` lowers to.
+    VecNew {
         dst: u16,
-        elements: Vec<u16>,
     },
-    /// Read the element at `index` of the Vec in `Vec` into `dst`. The index
-    /// register holds an `int`.
-    VecIndex {
+    /// Read the element at `index` of the Vec in `vec` into `dst`: the runtime
+    /// of `xs.at(index)`. The index register holds an `int`; an index outside
+    /// the Vec is a run failure.
+    VecAt {
         dst: u16,
         vec: u16,
         index: u16,
+    },
+    /// Replace the element at `index` of the Vec in `vec`: the runtime of
+    /// `xs.replace(index, item)`. The index must be inside the Vec; it never
+    /// appends.
+    VecReplace {
+        vec: u16,
+        index: u16,
+        value: u16,
+    },
+    /// Append the value in `item` to the Vec in `vec`: the runtime of
+    /// `xs.push(item)`.
+    VecPush {
+        vec: u16,
+        item: u16,
+    },
+    /// The number of elements of the Vec in `vec` into `dst`: the runtime of
+    /// `xs.len()`.
+    VecLen {
+        dst: u16,
+        vec: u16,
     },
     /// Construct an enum variant: `dst = Variant(tag, payload...)`.
     MakeVariant {
@@ -96,13 +118,6 @@ pub(crate) enum Instruction {
         variant: u16,
         index: u16,
     },
-    /// `Vec[index] = value`: replace the element at `index`, or append when
-    /// `index` equals the Vec's length.
-    SetIndex {
-        vec: u16,
-        index: u16,
-        value: u16,
-    },
     /// Make a function value: `dst = <function code>`. A closure also carries
     /// the values of the locals it captured, in `captures`.
     MakeFunction {
@@ -115,17 +130,6 @@ pub(crate) enum Instruction {
         dst: u16,
         callee: u16,
         arguments: Vec<u16>,
-    },
-    /// Jump when the number in `index` has reached the length of the Vec in
-    /// `Vec`, ending a `for` loop.
-    JumpIfIndexAtEnd {
-        target: u32,
-        index: u16,
-        vec: u16,
-    },
-    /// Add one to the number in `reg`.
-    IncrementNumber {
-        reg: u16,
     },
     /// Load an integer literal.
     LoadNumber {

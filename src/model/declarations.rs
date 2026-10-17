@@ -19,8 +19,6 @@ pub(crate) struct Declaration {
     /// The file that declared it; natives and locals have none.
     pub(crate) file: Option<FileId>,
     pub(crate) namespace: NamespaceId,
-    /// Registration order, for the top-down reference rule.
-    pub(crate) order: usize,
     /// The function that owns a parameter or local binding.
     pub(crate) owner: Option<DeclarationId>,
     /// The declared type of the name. A callable's type is a function type.

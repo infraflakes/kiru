@@ -36,11 +36,6 @@ pub(crate) enum Expression {
         fields: Vec<Field>,
         span: Span,
     },
-    /// A `[a, b, c]` Vec literal of text elements.
-    Vec {
-        elements: Vec<Expression>,
-        span: Span,
-    },
     /// A `true` or `false` literal.
     Bool {
         value: bool,
@@ -85,12 +80,6 @@ pub(crate) enum Expression {
         name_span: Span,
         span: Span,
     },
-    /// `target[index]`: the element of a Vec at an integer index.
-    Index {
-        target: Box<Expression>,
-        index: Box<Expression>,
-        span: Span,
-    },
     Binary {
         op: BinaryOp,
         left: Box<Expression>,
@@ -120,7 +109,6 @@ impl Expression {
         match self {
             Expression::Text { span, .. }
             | Expression::Map { span, .. }
-            | Expression::Vec { span, .. }
             | Expression::Bool { span, .. }
             | Expression::Int { span, .. }
             | Expression::Variant { span, .. }
@@ -128,7 +116,6 @@ impl Expression {
             | Expression::Reference { span, .. }
             | Expression::Call { span, .. }
             | Expression::Field { span, .. }
-            | Expression::Index { span, .. }
             | Expression::Binary { span, .. }
             | Expression::Unary { span, .. }
             | Expression::Match { span, .. } => *span,
@@ -178,14 +165,6 @@ pub(crate) enum Statement {
         value: Expression,
         span: Span,
     },
-    /// `name[index] = expression;` replaces or appends one element of a Vec.
-    IndexAssign {
-        declaration: DeclarationId,
-        name_span: Span,
-        index: Expression,
-        value: Expression,
-        span: Span,
-    },
     Expression(Expression),
     /// An early exit. A value return carries the function's declared type; a
     /// valueless return ends a function that declares no return type.
@@ -204,14 +183,6 @@ pub(crate) enum Statement {
     },
     /// The keyword statement `wait;`, which joins the calling thread's asyncs.
     Wait {
-        span: Span,
-    },
-    /// `for item in <Vec> { ... };` runs the body once per element, with the
-    /// loop binding `item` bound to each text element in turn.
-    ForEach {
-        item: DeclarationId,
-        iterable: Expression,
-        body: Vec<Statement>,
         span: Span,
     },
     /// `for { ... };` runs the body over and over until a `break;`.
@@ -234,12 +205,10 @@ impl Statement {
             Statement::Bind { span, .. }
             | Statement::Assign { span, .. }
             | Statement::FieldAssign { span, .. }
-            | Statement::IndexAssign { span, .. }
             | Statement::Return { span, .. }
             | Statement::Panic { span }
             | Statement::Async { span, .. }
             | Statement::Wait { span }
-            | Statement::ForEach { span, .. }
             | Statement::Forever { span, .. }
             | Statement::Break { span } => *span,
         }

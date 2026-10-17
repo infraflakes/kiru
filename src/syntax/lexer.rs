@@ -108,7 +108,6 @@ impl<'a> Lexer<'a> {
             ('|', Some('|')) => Some(TokenKind::OrOr),
             ('-', Some('>')) => Some(TokenKind::Arrow),
             (':', Some(':')) => Some(TokenKind::PathSep),
-            ('.', Some('.')) => Some(TokenKind::DotDot),
             _ => None,
         };
         if let Some(kind) = two_character_token {
@@ -138,8 +137,6 @@ impl<'a> Lexer<'a> {
             '}' => Some(TokenKind::RBrace),
             '(' => Some(TokenKind::LParen),
             ')' => Some(TokenKind::RParen),
-            '[' => Some(TokenKind::LBracket),
-            ']' => Some(TokenKind::RBracket),
             _ => None,
         };
         if let Some(kind) = single_character_token {
@@ -215,8 +212,6 @@ impl<'a> Lexer<'a> {
         }
         let text = &self.source[start..self.offset()];
         let kind = match text {
-            "mod" => TokenKind::Mod,
-            "import" => TokenKind::Import,
             "use" => TokenKind::Use,
             "pub" => TokenKind::Pub,
             "fn" => TokenKind::Fn,
@@ -229,7 +224,6 @@ impl<'a> Lexer<'a> {
             "async" => TokenKind::Async,
             "wait" => TokenKind::Wait,
             "for" => TokenKind::For,
-            "in" => TokenKind::In,
             "break" => TokenKind::Break,
             "true" => TokenKind::True,
             "false" => TokenKind::False,
@@ -476,24 +470,6 @@ mod tests {
                 TokenKind::PathSep,
                 TokenKind::Ident("run".to_owned()),
                 TokenKind::LParen,
-                TokenKind::RParen,
-                TokenKind::Semi,
-                TokenKind::Eof,
-            ]
-        );
-    }
-
-    #[test]
-    fn lexes_a_leading_path_separator() {
-        assert_eq!(
-            kinds("::std::print(\"x\");"),
-            vec![
-                TokenKind::PathSep,
-                TokenKind::Ident("std".to_owned()),
-                TokenKind::PathSep,
-                TokenKind::Ident("print".to_owned()),
-                TokenKind::LParen,
-                TokenKind::Text("x".to_owned()),
                 TokenKind::RParen,
                 TokenKind::Semi,
                 TokenKind::Eof,

@@ -39,6 +39,10 @@ fn compact(
 /// names and file entries that point at dropped declarations.
 fn remap(program: &mut Program, mapping: &[Option<DeclarationId>]) {
     program.entry = mapped(mapping, program.entry);
+    program.module_values.retain(|id| mapping[id.0].is_some());
+    for id in &mut program.module_values {
+        *id = mapped(mapping, *id);
+    }
     for declaration in &mut program.declarations {
         remap_declaration(declaration, mapping);
     }
@@ -90,13 +94,11 @@ impl VisitorMut for EdgeRemapper<'_> {
             }
             Expression::Text { .. }
             | Expression::Map { .. }
-            | Expression::Vec { .. }
             | Expression::Bool { .. }
             | Expression::Int { .. }
             | Expression::Variant { .. }
             | Expression::Call { .. }
             | Expression::Field { .. }
-            | Expression::Index { .. }
             | Expression::Binary { .. }
             | Expression::Unary { .. }
             | Expression::Interpolated { .. }
@@ -116,12 +118,8 @@ impl VisitorMut for EdgeRemapper<'_> {
         match statement {
             Statement::Bind { declaration, .. }
             | Statement::Assign { declaration, .. }
-            | Statement::FieldAssign { declaration, .. }
-            | Statement::IndexAssign { declaration, .. } => {
+            | Statement::FieldAssign { declaration, .. } => {
                 *declaration = mapped(self.mapping, *declaration);
-            }
-            Statement::ForEach { item, .. } => {
-                *item = mapped(self.mapping, *item);
             }
             Statement::Expression(_)
             | Statement::Return { .. }

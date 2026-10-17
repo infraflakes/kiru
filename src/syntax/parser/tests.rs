@@ -14,10 +14,7 @@ fn parse(source: &str) -> File {
 fn written_name(expr: &TypeExpr) -> &str {
     match expr {
         TypeExpr::Named {
-            root: false,
-            path,
-            arguments,
-            ..
+            path, arguments, ..
         } if arguments.is_empty() && path.len() == 1 => &path[0],
         other => panic!("expected a bare named type, found {other:?}"),
     }
@@ -27,10 +24,7 @@ fn written_name(expr: &TypeExpr) -> &str {
 /// spelled `Vec`.
 fn vec_element(ty: &TypeExpr) -> &TypeExpr {
     let TypeExpr::Named {
-        root: false,
-        path,
-        arguments,
-        ..
+        path, arguments, ..
     } = ty
     else {
         panic!("expected a named type, found {ty:?}");
@@ -71,34 +65,31 @@ fn expect_rejections(cases: &[(&str, &str, &str)]) {
 }
 
 #[test]
-fn parses_index_assignment() {
-    let file = parse("fn main() { let xs: Vec<int> = []; xs[0] = 1; };");
-    let Declaration::Function(function) = declaration(&file, 0) else {
-        panic!("expected a function");
-    };
-    assert!(matches!(
-        function.body[1],
-        Statement::IndexAssignment { .. }
-    ));
+fn rejects_index_assignment() {
+    // Brackets are deleted from the language: `xs[i] = v` is not a form.
+    let message = parse_error("fn main() { let xs: Vec<int> = Vec.new(); xs[0] = 1; };");
+    assert_eq!(message, "unexpected character `[`");
 }
 
 #[test]
-fn parses_index_expressions() {
-    let file = parse("fn f(xs: Vec<int>) -> int { return xs[0]; };");
-    let Declaration::Function(function) = declaration(&file, 0) else {
-        panic!("expected a function");
-    };
-    let Some(Statement::Return {
-        value: Some(value), ..
-    }) = function.body.first()
-    else {
-        panic!("expected a return");
-    };
-    let Expression::Index { target, index, .. } = value else {
-        panic!("expected an index expression");
-    };
-    assert!(matches!(target.as_ref(), Expression::Name { .. }));
-    assert!(matches!(index.as_ref(), Expression::Int { value: 0, .. }));
+fn rejects_index_expressions() {
+    let message = parse_error("fn f(xs: Vec<int>) -> int { return xs[0]; };");
+    assert_eq!(message, "unexpected character `[`");
+}
+
+#[test]
+fn rejects_list_literals() {
+    let message = parse_error("fn main() { let xs: Vec<int> = [1, 2]; };");
+    assert_eq!(message, "unexpected character `[`");
+    let message = parse_error("fn main() { let xs: Vec<int> = []; };");
+    assert_eq!(message, "unexpected character `[`");
+}
+
+#[test]
+fn rejects_for_in() {
+    // `for` has one form left: the bare `for { ... };`.
+    let message = parse_error("fn main() { for x in xs { break; }; };");
+    assert_eq!(message, "expected `{` to open a block, found `x`");
 }
 
 #[test]
@@ -134,26 +125,25 @@ fn parses_parameterized_vec_types() {
 }
 
 #[test]
-fn parses_a_mod_block() {
-    let file = parse("mod a::b { fn f() {}; };");
-    let Item::Module(module) = &file.items[0] else {
-        panic!("expected a module");
+fn parses_a_use_of_a_namespace() {
+    let file = parse("use std::dynamic;");
+    let Item::Use(use_item) = &file.items[0] else {
+        panic!("expected a use");
     };
-    assert_eq!(module.path, vec!["a".to_owned(), "b".to_owned()]);
-    assert_eq!(module.declarations.len(), 1);
+    assert_eq!(use_item.path, vec!["std".to_owned(), "dynamic".to_owned()]);
 }
 
 #[test]
-fn parses_mod_and_import() {
-    let file = parse("import \"std/repo.kiru\";\nmod tasks::build { fn f() {}; };");
-    let Item::Import(import) = &file.items[0] else {
-        panic!("expected an import");
+fn parses_a_use_of_a_name() {
+    let file = parse("use std::dynamic::Vec;\nfn f() {};");
+    let Item::Use(use_item) = &file.items[0] else {
+        panic!("expected a use");
     };
-    assert_eq!(import.path, "std/repo.kiru");
-    let Item::Module(module) = &file.items[1] else {
-        panic!("expected a module");
-    };
-    assert_eq!(module.path, vec!["tasks".to_owned(), "build".to_owned()]);
+    assert_eq!(
+        use_item.path,
+        vec!["std".to_owned(), "dynamic".to_owned(), "Vec".to_owned()]
+    );
+    assert!(matches!(file.items[1], Item::Declaration(_)));
 }
 
 #[test]
@@ -402,21 +392,12 @@ fn rejects_nested_async() {
 }
 
 #[test]
-fn parses_a_rooted_path() {
-    let file = parse("fn main() { std::print(::value); };");
-    let Declaration::Function(function) = declaration(&file, 0) else {
-        panic!("expected a function");
-    };
-    let Statement::Expression(crate::syntax::Expression::Call { arguments, .. }) =
-        &function.body[0]
-    else {
-        panic!("expected a call");
-    };
-    let crate::syntax::Expression::Name { root, path, .. } = &arguments[0] else {
-        panic!("expected a name");
-    };
-    assert!(*root);
-    assert_eq!(path, &vec!["value".to_owned()]);
+fn rejects_a_leading_path_separator() {
+    // A path begins with a name; the leading-`::` form does not exist.
+    let message = parse_error("fn main() { std::print(::value); };");
+    assert_eq!(message, "expected an expression, found `::`");
+    let message = parse_error("fn f(x: ::std::T) {};");
+    assert_eq!(message, "expected a type in the parameter list, found `::`");
 }
 
 #[test]
@@ -482,8 +463,13 @@ fn parser_errors() {
             "expected a declaration, found `foo`",
         ),
         (
-            "import inside a mod",
-            "mod a { import \"b.kiru\"; };",
+            "a use after a declaration",
+            "fn f() {};\nuse std;\n",
+            "`use` must come before any declaration",
+        ),
+        (
+            "a bare import is not a form",
+            "import \"b.kiru\";\n",
             "expected a declaration, found `import`",
         ),
         (

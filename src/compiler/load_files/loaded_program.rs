@@ -1,9 +1,9 @@
 //! The loaded program: its files and the joined item stream.
 //!
-//! Loading expands every `import` in place, depth first, so the items of a
-//! program are one ordered sequence: each file's items in order, with an
-//! imported file's items spliced where the import sits. A file is loaded once;
-//! a second import of it, or an import cycle, is an error.
+//! Loading records every file's declarations and `use`s in the namespace its
+//! directory names. There is no import and no order to preserve: resolution is
+//! order-free, so the stream is just every declaration, each with the file it
+//! came from and the namespace it joins.
 
 use std::path::PathBuf;
 
@@ -19,7 +19,7 @@ pub(crate) struct LoadedFile {
 }
 
 /// One declaration in the joined stream, with the file it came from and the
-/// namespace a `mod` block placed it in.
+/// namespace its directory placed it in.
 #[derive(Debug)]
 pub(crate) struct ScopedDeclaration {
     pub(crate) file: usize,
@@ -27,17 +27,15 @@ pub(crate) struct ScopedDeclaration {
     pub(crate) declaration: Declaration,
 }
 
-/// One `use` in the joined stream: the file and namespace that wrote it, and
-/// the path it names.
+/// One `use` written in a namespace. What its path ends at decides what it
+/// brings into that namespace.
 #[derive(Debug)]
 pub(crate) struct ScopedUse {
-    /// The file that wrote the `use`.
+    /// The file that wrote the `use`, for diagnostics.
     pub(crate) file: usize,
-    /// How many declarations preceded it in the joined stream: the position a
-    /// `use` may reach back to, so a namespace declared later is out of reach.
-    pub(crate) declarations_before: usize,
     pub(crate) namespace: Vec<String>,
     pub(crate) path: Vec<String>,
+    /// The span of the `use` item, for diagnostics.
     pub(crate) span: Span,
 }
 

@@ -29,24 +29,63 @@ pub(crate) fn resolve_names(loaded: &LoadedProgram) -> Result<Program, Diagnosti
     builder.reserve_items(loaded)?;
     builder.register_builtins();
     builder.register_declarations(loaded)?;
+    builder.check_uses(loaded)?;
     let entry = builder.resolve_entry(loaded)?;
     builder.link_declarations(loaded)?;
-    let program = builder.finish(entry);
+    let module_values = builder.order_module_values()?;
+    let program = builder.finish(entry, module_values);
     crate::model::verify_program(&program);
     Ok(program)
 }
 
 impl Builder {
+    /// Link every declaration in two passes. The first pass settles every
+    /// declaration's type, so a body in the second pass can read any callee's
+    /// signature whatever the declaration order: resolution is order-free.
     fn link_declarations(&mut self, loaded: &LoadedProgram) -> Result<(), Diagnostic> {
-        for pending in std::mem::take(&mut self.pending) {
-            let skeleton = &self.skeletons[pending.declaration.0];
+        let pending: Vec<(DeclarationId, FileId, usize, NamespaceId)> = self
+            .pending
+            .iter()
+            .map(|pending| {
+                (
+                    pending.declaration,
+                    pending.file,
+                    pending.syntax_index,
+                    pending.namespace,
+                )
+            })
+            .collect();
+        for &(declaration_id, file, syntax_index, namespace) in &pending {
+            let skeleton = &self.skeletons[declaration_id.0];
             let name = skeleton.name.clone();
-            let order = skeleton.order;
+            let declaration = &loaded.items[syntax_index].declaration;
+            let ty = match declaration {
+                ParsedDeclaration::Function(function) => {
+                    self.function_signature(function, namespace, file)?
+                }
+                ParsedDeclaration::Binding(binding) => {
+                    self.resolve_type(&binding.ty, namespace, file, &[])?
+                }
+                ParsedDeclaration::Type(_) => {
+                    unreachable!("a type declaration has no body to link")
+                }
+            };
+            self.declarations[declaration_id.0] = Some(Declaration {
+                name,
+                file: Some(file),
+                namespace,
+                owner: None,
+                ty,
+                value: None,
+                native: None,
+                derived: Derived { halts: false },
+            });
+        }
+        for pending in std::mem::take(&mut self.pending) {
             let file = pending.file;
             let namespace = pending.namespace;
             let declaration = &loaded.items[pending.syntax_index].declaration;
-
-            let (value, ty) = match declaration {
+            let value = match declaration {
                 ParsedDeclaration::Function(function) => {
                     let mut scopes = Scopes::default();
                     scopes.push();
@@ -56,15 +95,12 @@ impl Builder {
                         namespace,
                         file,
                         current: pending.declaration,
-                        order,
                         type_parameters: &type_parameters,
                     };
                     let mut parameters = Vec::new();
-                    let mut parameter_types = Vec::new();
                     for parameter in &function.parameters {
                         let ty =
                             self.resolve_type(&parameter.ty, namespace, file, &type_parameters)?;
-                        parameter_types.push(ty.clone());
                         let id = self.declare_local(
                             context.scopes,
                             LocalDeclaration {
@@ -80,32 +116,19 @@ impl Builder {
                         parameters.push(id);
                     }
                     let body = self.link_statements(&function.body, &mut context)?;
-                    // No return type means the function's calls produce no
-                    // value: its function type has no return type.
-                    let returns = match &function.return_type {
-                        Some(expr) => Some(Box::new(self.resolve_type(
-                            expr,
-                            namespace,
-                            file,
-                            &type_parameters,
-                        )?)),
-                        None => None,
-                    };
-                    let ty = Type::Function {
-                        parameters: parameter_types,
-                        returns,
-                    };
-                    (
-                        Expression::Function(Function {
-                            ty: ty.clone(),
-                            parameters,
-                            body,
-                            type_parameters,
-                            captures: Vec::new(),
-                            span: function.span,
-                        }),
+                    let ty = self.declarations[pending.declaration.0]
+                        .as_ref()
+                        .expect("the first pass settled every declaration's type")
+                        .ty
+                        .clone();
+                    Expression::Function(Function {
                         ty,
-                    )
+                        parameters,
+                        body,
+                        type_parameters,
+                        captures: Vec::new(),
+                        span: function.span,
+                    })
                 }
                 ParsedDeclaration::Binding(binding) => {
                     let mut scopes = Scopes::default();
@@ -114,30 +137,53 @@ impl Builder {
                         namespace,
                         file,
                         current: pending.declaration,
-                        order,
                         type_parameters: &[],
                     };
-                    let expression = self.link_expression(&binding.value, &mut context)?;
-                    let ty = self.resolve_type(&binding.ty, namespace, file, &[])?;
-                    (expression, ty)
+                    self.link_expression(&binding.value, &mut context)?
                 }
                 ParsedDeclaration::Type(_) => {
                     unreachable!("a type declaration has no body to link")
                 }
             };
-            self.declarations[pending.declaration.0] = Some(Declaration {
-                name,
-                file: Some(file),
-                namespace,
-                order,
-                owner: None,
-                ty,
-                value: Some(value),
-                native: None,
-                derived: Derived { halts: false },
-            });
+            self.declarations[pending.declaration.0]
+                .as_mut()
+                .expect("the first pass settled every declaration")
+                .value = Some(value);
         }
         Ok(())
+    }
+
+    /// Resolve a function's declared type: its parameter types and its return
+    /// type. No return type means the function's calls produce no value, so the
+    /// function type has no return type.
+    fn function_signature(
+        &self,
+        function: &crate::syntax::Function,
+        namespace: NamespaceId,
+        file: FileId,
+    ) -> Result<Type, Diagnostic> {
+        let mut parameters = Vec::new();
+        for parameter in &function.parameters {
+            parameters.push(self.resolve_type(
+                &parameter.ty,
+                namespace,
+                file,
+                &function.type_parameters,
+            )?);
+        }
+        let returns = match &function.return_type {
+            Some(expr) => Some(Box::new(self.resolve_type(
+                expr,
+                namespace,
+                file,
+                &function.type_parameters,
+            )?)),
+            None => None,
+        };
+        Ok(Type::Function {
+            parameters,
+            returns,
+        })
     }
 
     /// Resolve a written type in a declaration's namespace and file.
@@ -190,7 +236,7 @@ impl Builder {
                     span,
                 } => {
                     let declaration =
-                        self.resolve(context, std::slice::from_ref(name), false, *name_span)?;
+                        self.resolve(context, std::slice::from_ref(name), *name_span)?;
                     let value = self.link_expression(value, context)?;
                     linked.push(Statement::Assign {
                         declaration,
@@ -208,31 +254,12 @@ impl Builder {
                     ..
                 } => {
                     let declaration =
-                        self.resolve(context, std::slice::from_ref(name), false, *name_span)?;
+                        self.resolve(context, std::slice::from_ref(name), *name_span)?;
                     let value = self.link_expression(value, context)?;
                     linked.push(Statement::FieldAssign {
                         declaration,
                         name_span: *name_span,
                         field: field.clone(),
-                        value,
-                        span: *span,
-                    });
-                }
-                ParsedStatement::IndexAssignment {
-                    name,
-                    name_span,
-                    index,
-                    value,
-                    span,
-                } => {
-                    let declaration =
-                        self.resolve(context, std::slice::from_ref(name), false, *name_span)?;
-                    let index = self.link_expression(index, context)?;
-                    let value = self.link_expression(value, context)?;
-                    linked.push(Statement::IndexAssign {
-                        declaration,
-                        name_span: *name_span,
-                        index,
                         value,
                         span: *span,
                     });
@@ -260,44 +287,6 @@ impl Builder {
                 }
                 ParsedStatement::Wait { span } => {
                     linked.push(Statement::Wait { span: *span });
-                }
-                ParsedStatement::ForEach {
-                    item,
-                    item_span,
-                    iterable,
-                    body,
-                    span,
-                } => {
-                    let iterable = self.link_expression(iterable, context)?;
-                    // The item's type is the iterable's element type, so a
-                    // method call on it dispatches on the real receiver. An
-                    // iterable whose type is not known here falls back to text,
-                    // and the checker re-verifies the body either way.
-                    let element = match self.receiver_type(&iterable) {
-                        Some(Type::Vec(element)) => *element,
-                        _ => Type::Text,
-                    };
-                    context.scopes.push();
-                    let declaration = self.declare_local(
-                        context.scopes,
-                        LocalDeclaration {
-                            file: context.file,
-                            namespace: context.namespace,
-                            name: item,
-                            name_span: *item_span,
-                            owner: context.current,
-                            ty: element,
-                        },
-                    )?;
-                    context.scopes.declare(item, declaration);
-                    let body = self.link_statements(body, context)?;
-                    context.scopes.pop();
-                    linked.push(Statement::ForEach {
-                        item: declaration,
-                        iterable,
-                        body,
-                        span: *span,
-                    });
                 }
                 ParsedStatement::Forever { body, span } => {
                     context.scopes.push();
@@ -344,16 +333,6 @@ impl Builder {
                 fields: self.link_fields(fields, context)?,
                 span: *span,
             },
-            ParsedExpression::Vec { elements, span } => {
-                let mut linked_elements = Vec::new();
-                for element in elements {
-                    linked_elements.push(self.link_expression(element, context)?);
-                }
-                Expression::Vec {
-                    elements: linked_elements,
-                    span: *span,
-                }
-            }
             ParsedExpression::Interpolated { parts, span } => {
                 let mut linked_parts = Vec::new();
                 for part in parts {
@@ -432,6 +411,24 @@ impl Builder {
                         span: *span,
                     });
                 }
+                // A type name as the receiver reaches a constructor: the
+                // function with no parameters whose result has the type's head.
+                // The type is not a value, so it is not an argument.
+                if let Some(declaration) = self.constructor_member(context, receiver, method)? {
+                    let mut linked_arguments = Vec::new();
+                    for argument in arguments {
+                        linked_arguments.push(self.link_expression(argument, context)?);
+                    }
+                    return Ok(Expression::Call {
+                        callee: Box::new(Expression::Reference {
+                            declaration,
+                            span: *method_span,
+                        }),
+                        callee_span: *method_span,
+                        arguments: linked_arguments,
+                        span: *span,
+                    });
+                }
                 let linked = self.link_expression(receiver, context)?;
                 let receiver_head = self.receiver_type(&linked).map(|ty| ty.head());
                 // A `receiver.name(args)` call is a call to a function named
@@ -450,9 +447,6 @@ impl Builder {
                         *method_span,
                     ));
                 };
-                // A method call is an ordinary call to a declaration made
-                // earlier; there is no method category to exempt.
-                self.check_earlier(context, declaration, method, *method_span)?;
                 let mut linked_arguments = vec![linked];
                 for argument in arguments {
                     linked_arguments.push(self.link_expression(argument, context)?);
@@ -467,15 +461,14 @@ impl Builder {
                     span: *span,
                 }
             }
-            ParsedExpression::Name { root, path, span } => {
-                let declaration = self.resolve(context, path, *root, *span)?;
+            ParsedExpression::Name { path, span } => {
+                let declaration = self.resolve(context, path, *span)?;
                 Expression::Reference {
                     declaration,
                     span: *span,
                 }
             }
             ParsedExpression::Call {
-                root,
                 callee,
                 callee_span,
                 arguments,
@@ -493,7 +486,7 @@ impl Builder {
                     .first()
                     .and_then(|argument| self.receiver_type(argument))
                     .map(|ty| ty.head());
-                let declaration = self.resolve_call(context, callee, *root, head, *callee_span)?;
+                let declaration = self.resolve_call(context, callee, head, *callee_span)?;
                 Expression::Call {
                     callee: Box::new(Expression::Reference {
                         declaration,
@@ -525,15 +518,6 @@ impl Builder {
                     span: *span,
                 }
             }
-            ParsedExpression::Index {
-                target,
-                index,
-                span,
-            } => Expression::Index {
-                target: Box::new(self.link_expression(target, context)?),
-                index: Box::new(self.link_expression(index, context)?),
-                span: *span,
-            },
             ParsedExpression::Bool { value, span } => Expression::Bool {
                 value: *value,
                 span: *span,
@@ -646,16 +630,16 @@ impl Builder {
 
     /// The type of a method receiver, from declared types alone. kiru annotates
     /// every binding, parameter, and return, so this is exact for a name and a
-    /// declared field; elsewhere it gives the head (a Vec literal is `Vec`,
-    /// and so on), which is all method dispatch keys on. The checker then
-    /// re-verifies the desugared call, so an approximation can never be unsound.
+    /// declared field; elsewhere it gives the head (a `Vec.new()` call is
+    /// `Vec`, and so on), which is all method dispatch keys on. The checker
+    /// then re-verifies the desugared call, so an approximation can never be
+    /// unsound.
     fn receiver_type(&self, expression: &Expression) -> Option<Type> {
         match expression {
             Expression::Text { .. } | Expression::Interpolated { .. } => Some(Type::Text),
             Expression::Int { .. } => Some(Type::Int),
             Expression::Bool { .. } => Some(Type::Bool),
             Expression::Map { .. } => None,
-            Expression::Vec { .. } => Some(Type::Vec(Box::new(Type::Text))),
             Expression::Variant { ty, .. } => Some(Type::Named(*ty, Vec::new())),
             Expression::Reference { declaration, .. } => self.declared_type(*declaration),
             Expression::Call { callee, .. } => self.receiver_type(callee)?.return_type(),
@@ -663,10 +647,6 @@ impl Builder {
                 let target = self.receiver_type(target)?;
                 self.field_type(&target, name)
             }
-            Expression::Index { target, .. } => match self.receiver_type(target)? {
-                Type::Vec(element) => Some(*element),
-                _ => None,
-            },
             Expression::Binary { op, .. } => Some(match op {
                 BinaryOp::Add
                 | BinaryOp::Subtract
@@ -741,12 +721,8 @@ impl crate::model::Visitor for LocalCollector {
             Statement::Bind { declaration, .. } => {
                 self.locals.insert(*declaration);
             }
-            Statement::ForEach { item, .. } => {
-                self.locals.insert(*item);
-            }
             Statement::Assign { .. }
             | Statement::FieldAssign { .. }
-            | Statement::IndexAssign { .. }
             | Statement::Expression(_)
             | Statement::Return { .. }
             | Statement::Panic { .. }

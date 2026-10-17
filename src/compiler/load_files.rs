@@ -1,15 +1,16 @@
-//! Loading source files and resolving their imports.
+//! Loading source files.
 //!
-//! The entry file comes from the command line; every `import` loads one more
-//! file, depth first and once per canonical path. Importing a file that is
-//! already being loaded is an import cycle.
+//! The entry file names the program tree: every `.kiru` file under its
+//! directory is loaded, recursively, and a file's namespace is its directory
+//! relative to that root. The standard library is loaded from the table
+//! compiled into the binary. A file's declarations join its directory's
+//! namespace; resolution is order-free.
 
 mod load_error;
 mod loaded_program;
 mod loader;
-mod resolve_import_paths;
 #[cfg(test)]
 mod tests;
 
 pub(crate) use loaded_program::{LoadedProgram, ScopedDeclaration};
-pub(crate) use loader::load_files;
+pub(crate) use loader::{PROGRAM_TREE, load_files};
