@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 
 use crate::bytecode::{Bytecode, Code, Instruction};
-use crate::model::{DeclarationId, Expression, NamespaceId, Program, TypeId};
+use crate::model::{DeclarationId, Expression, Program};
 
 /// Lower a validated, pruned program to bytecode.
 pub(crate) fn lower_bytecode(program: &Program) -> Bytecode {
@@ -26,8 +26,6 @@ pub(crate) fn lower_bytecode(program: &Program) -> Bytecode {
         instructions: Vec::new(),
         loop_breaks: Vec::new(),
         next: 0,
-        vec_type: program.vec_type,
-        vec_namespace: program.namespace_at(&["std".to_owned(), "dynamic".to_owned()]),
     };
     lowerer.assign_codes();
     lowerer.lower_all();
@@ -55,12 +53,6 @@ pub(super) struct Lowerer<'a> {
     pub(super) loop_breaks: Vec<Vec<usize>>,
     /// The next free register of the current function.
     pub(super) next: u16,
-    /// The runtime's `Vec` type. A `Named` with this id is a list, and this is
-    /// the one stage that knows it: the lowering turns the vec operations into
-    /// the runtime's list instructions.
-    pub(super) vec_type: Option<TypeId>,
-    /// The `std::dynamic` namespace, where the vec operations are declared.
-    pub(super) vec_namespace: Option<NamespaceId>,
 }
 
 impl Lowerer<'_> {

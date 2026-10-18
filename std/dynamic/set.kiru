@@ -19,6 +19,12 @@
 # duplicates. Both fields are private; the methods are the API.
 pub rec Set<K> { entries: Vec<K>, less: fn(K, K) -> bool };
 
+# A new, empty set ordered by `less`. The caller passes a named comparator,
+# exactly as `sorted_by` takes one.
+pub fn new<K>(less: fn(K, K) -> bool) -> Set<K> {
+  return { entries = Vec.new(), less = less };
+};
+
 # The first index at which `item` belongs in the sorted `entries`: every key
 # before it orders before `item`, every key at or after it does not. The
 # binary search the three O(log n) methods share; `less` decides the order.

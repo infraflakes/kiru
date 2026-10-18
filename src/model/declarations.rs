@@ -69,6 +69,17 @@ impl Declaration {
     pub(crate) fn return_type(&self) -> Option<Type> {
         self.ty.return_type()
     }
+
+    /// The type parameters a call binds: a function's declared ones, or the
+    /// parameters a native's row mentions, in order of first appearance. A
+    /// native has no function node, so its row's function type is the
+    /// declaration.
+    pub(crate) fn type_parameters(&self) -> Vec<String> {
+        match self.function() {
+            Some(function) => function.type_parameters.clone(),
+            None => crate::model::type_parameters_of(&self.ty),
+        }
+    }
 }
 
 /// What a phase has learned about a node.

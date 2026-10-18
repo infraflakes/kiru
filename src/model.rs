@@ -29,7 +29,7 @@ pub(crate) use program::{
 pub(crate) use structure::verify_program;
 pub(crate) use types::{
     BuiltinType, Type, TypeHead, TypeId, fits, has_parameter, substitute, substitute_optional,
-    unify,
+    type_parameters_of, unify,
 };
 pub(crate) use visitors::{
     Visitor, VisitorMut, walk_expression, walk_expression_mut, walk_statements,

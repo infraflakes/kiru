@@ -3,29 +3,15 @@
 //! Each expression allocates its result in a fresh register above the frame's
 //! parameters and locals. A function literal is lowered into its own code and
 //! called through a function value, a `match` becomes a compare-and-jump chain
-//! that keeps the first-match order, and the vec operations become the
-//! runtime's list instructions. This is the one stage that knows a `Named`
-//! with the runtime's `Vec` id has a list representation.
+//! that keeps the first-match order, and a native call is dispatched by index.
 
 use crate::bytecode::{Code, CompareOp, Instruction, NumberOp};
 use crate::model::{
-    DeclarationId, Expression, Function, MatchArm, MatchBody, Pattern, Statement, StringPart, Type,
+    DeclarationId, Expression, Function, MatchArm, MatchBody, Pattern, Statement, StringPart,
 };
 use crate::syntax::{BinaryOp, UnaryOp};
 
 use super::lower_bytecode::Lowerer;
-
-/// The runtime list operation a standard-library vec method performs. The
-/// lowering recognizes each by its declaration and emits the matching
-/// instruction.
-#[derive(Clone, Copy)]
-enum VecOperation {
-    New,
-    Len,
-    At,
-    Replace,
-    Push,
-}
 
 impl Lowerer<'_> {
     /// Lower one function body into a `Code`: its captures then its parameters
@@ -452,24 +438,19 @@ impl Lowerer<'_> {
     }
 
     /// Lower an application. A native is the one callable with no value form,
-    /// so it is dispatched by index; a vec operation is the one function whose
-    /// result is a runtime list, so it becomes a list instruction; every other
-    /// callee is an expression whose value is called.
+    /// so it is dispatched by index; every other callee is an expression whose
+    /// value is called.
     fn lower_call(&mut self, callee: &Expression, arguments: &[Expression], dst: u16) {
-        if let Expression::Reference { declaration, .. } = callee {
-            if let Some(native) = self.program.declaration(*declaration).native {
-                let arguments = self.lower_arguments(arguments);
-                self.instructions.push(Instruction::CallNative {
-                    dst,
-                    native,
-                    arguments,
-                });
-                return;
-            }
-            if let Some(operation) = self.vec_operation(*declaration) {
-                self.lower_vec_operation(operation, arguments, dst);
-                return;
-            }
+        if let Expression::Reference { declaration, .. } = callee
+            && let Some(native) = self.program.declaration(*declaration).native
+        {
+            let arguments = self.lower_arguments(arguments);
+            self.instructions.push(Instruction::CallNative {
+                dst,
+                native,
+                arguments,
+            });
+            return;
         }
         let callee = self.expression(callee);
         let arguments = self.lower_arguments(arguments);
@@ -478,80 +459,6 @@ impl Lowerer<'_> {
             callee,
             arguments,
         });
-    }
-
-    /// The vec operation a call to `declaration` performs, when the declaration
-    /// is one of the standard library's own vec methods. The declaration must
-    /// live in `std::dynamic` and its receiver or result must be the runtime's
-    /// `Vec` type; a user declaration of the same name is an ordinary call.
-    fn vec_operation(&self, declaration: DeclarationId) -> Option<VecOperation> {
-        let node = self.program.declaration(declaration);
-        if Some(node.namespace) != self.vec_namespace {
-            return None;
-        }
-        let vec_type = self.vec_type?;
-        let is_vec = |ty: &Type| matches!(ty, Type::Named(id, _) if *id == vec_type);
-        let Type::Function {
-            parameters,
-            returns,
-        } = &node.ty
-        else {
-            return None;
-        };
-        match node.name.as_str() {
-            "new" if parameters.is_empty() && returns.as_deref().is_some_and(is_vec) => {
-                Some(VecOperation::New)
-            }
-            "len" if parameters.len() == 1 && is_vec(&parameters[0]) => Some(VecOperation::Len),
-            "at" if parameters.len() == 2 && is_vec(&parameters[0]) => Some(VecOperation::At),
-            "replace" if parameters.len() == 3 && is_vec(&parameters[0]) => {
-                Some(VecOperation::Replace)
-            }
-            "push" if parameters.len() == 2 && is_vec(&parameters[0]) => Some(VecOperation::Push),
-            _ => None,
-        }
-    }
-
-    /// Lower one vec operation to the runtime's list instruction. The receiver
-    /// is the first argument; a constructor has none.
-    fn lower_vec_operation(&mut self, operation: VecOperation, arguments: &[Expression], dst: u16) {
-        match operation {
-            VecOperation::New => self.instructions.push(Instruction::VecNew { dst }),
-            VecOperation::Len => {
-                let vec = self.expression(&arguments[0]);
-                self.instructions.push(Instruction::VecLen { dst, vec });
-            }
-            VecOperation::At => {
-                let vec = self.expression(&arguments[0]);
-                let index = self.expression(&arguments[1]);
-                self.instructions
-                    .push(Instruction::VecAt { dst, vec, index });
-            }
-            VecOperation::Replace => {
-                let vec = self.expression(&arguments[0]);
-                let index = self.expression(&arguments[1]);
-                let value = self.expression(&arguments[2]);
-                self.instructions
-                    .push(Instruction::VecReplace { vec, index, value });
-                // The instruction rewrites the receiver's register in place;
-                // the call's result is that same vec.
-                self.instructions.push(Instruction::StoreLocal {
-                    slot: dst,
-                    src: vec,
-                });
-            }
-            VecOperation::Push => {
-                let vec = self.expression(&arguments[0]);
-                let item = self.expression(&arguments[1]);
-                self.instructions.push(Instruction::VecPush { vec, item });
-                // The instruction rewrites the receiver's register in place;
-                // the call's result is that same vec.
-                self.instructions.push(Instruction::StoreLocal {
-                    slot: dst,
-                    src: vec,
-                });
-            }
-        }
     }
 
     fn lower_async(&mut self, call: &Expression) {

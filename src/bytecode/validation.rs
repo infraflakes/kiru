@@ -78,25 +78,6 @@ fn validate_instruction(
                 slot(*value)?;
             }
         }
-        Instruction::VecNew { dst } => slot(*dst)?,
-        Instruction::VecAt { dst, vec, index } => {
-            slot(*dst)?;
-            slot(*vec)?;
-            slot(*index)?;
-        }
-        Instruction::VecReplace { vec, index, value } => {
-            slot(*vec)?;
-            slot(*index)?;
-            slot(*value)?;
-        }
-        Instruction::VecPush { vec, item } => {
-            slot(*vec)?;
-            slot(*item)?;
-        }
-        Instruction::VecLen { dst, vec } => {
-            slot(*dst)?;
-            slot(*vec)?;
-        }
         Instruction::MakeVariant { dst, payload, .. } => {
             slot(*dst)?;
             for element in payload {

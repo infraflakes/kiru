@@ -1,53 +1,17 @@
 # std/dynamic/vec.kiru
 #
 # The vec: an ordered list. `Vec<T>` is the runtime's list type; the compiler
-# registers its declaration in this namespace, and the lowering turns the five
-# operations the runtime provides (`new`, `len`, `at`, `replace`, `push`) into
-# the runtime's own list instructions. A function whose first parameter is a
-# `Vec<T>` is callable as `xs.name(...)`, so every other function here is a vec
-# method written in kiru on top of those five. `std::join` (a text-vec
-# convenience) stays in `std.kiru`, because it applies to `Vec<txt>` alone
-# rather than to every `Vec<T>`.
+# registers its declaration in this namespace, and the runtime provides its
+# five operations (`new`, `len`, `at`, `replace`, `push`) as natives, listed in
+# `natives.md`. A function whose first parameter is a `Vec<T>` is callable as
+# `xs.name(...)`, so every function here is a vec method written in kiru on top
+# of those five. `std::join` (a text-vec convenience) stays in `std.kiru`,
+# because it applies to `Vec<txt>` alone rather than to every `Vec<T>`.
 
 # `bool`/`int` live at the `std` root and `txt` in its own category. `Vec<T>`
 # is declared in this namespace, so it needs no `use` here.
 use std;
 use std::Option;
-
-# A new, empty vec. The runtime provides the list constructor, so the compiler
-# lowers every call to this function to a list instruction; the body below is
-# never reached. It is written as a constructor call so the checker sees a
-# value-returning path.
-pub fn new<T>() -> Vec<T> {
-  return Vec.new();
-};
-
-# The number of elements. The runtime provides the length, so the compiler
-# lowers every call to this function to a list instruction; the body below is
-# never reached.
-pub fn len<T>(self: Vec<T>) -> int {
-  return self.len();
-};
-
-# The element at `index`. An index outside the vec stops the run, exactly as
-# `first` on an empty vec does. The compiler lowers every call to this function
-# to a list instruction; the body below is never reached.
-pub fn at<T>(self: Vec<T>, index: int) -> T {
-  return self.at(index);
-};
-
-# A new vec with the element at `index` replaced. An index outside the vec
-# stops the run: this never appends. The compiler lowers every call to this
-# function to a list instruction; the body below is never reached.
-pub fn replace<T>(self: Vec<T>, index: int, item: T) -> Vec<T> {
-  return self.replace(index, item);
-};
-
-# A new vec with `item` appended. The compiler lowers every call to this
-# function to a list instruction; the body below is never reached.
-pub fn push<T>(self: Vec<T>, item: T) -> Vec<T> {
-  return self.push(item);
-};
 
 # A new vec with `item` inserted at the front.
 pub fn with_first<T>(self: Vec<T>, item: T) -> Vec<T> {

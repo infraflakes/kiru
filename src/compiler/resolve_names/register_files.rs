@@ -146,9 +146,11 @@ impl Builder {
             ParsedDeclaration::Type(_) => unreachable!("a type is handled above"),
         };
         // A function's first parameter is the receiver a method call matches:
-        // resolve its head now, before any body is linked. A function with no
-        // parameters is a constructor reachable through the type it returns,
-        // so resolve the result's head too.
+        // resolve its head now, before any body is linked. A function is also
+        // a constructor reachable through the type it returns, so resolve the
+        // result's head too: a function whose first parameter is the receiver
+        // of its own result is a method only, and every other function with a
+        // result head answers a `Type.name(...)` call by that head.
         let (first_parameter_head, constructor_head) = match &scoped.declaration {
             ParsedDeclaration::Function(function) => {
                 self.check_type_parameters(
@@ -168,17 +170,23 @@ impl Builder {
                     ),
                     None => None,
                 };
-                let constructor = match (&function.return_type, receiver) {
-                    (Some(return_type), None) => Some(
-                        self.resolve_type_expr(
-                            return_type,
-                            namespace,
-                            &function.type_parameters,
-                            &loaded_file.path,
-                        )?
-                        .head(),
-                    ),
-                    _ => None,
+                let constructor = match &function.return_type {
+                    Some(return_type) => {
+                        let head = self
+                            .resolve_type_expr(
+                                return_type,
+                                namespace,
+                                &function.type_parameters,
+                                &loaded_file.path,
+                            )?
+                            .head();
+                        // A function whose first parameter is the receiver of
+                        // its own result is a method only: `with(self: Set, …)`
+                        // is reached as `s.with(…)`, never as `Set.with(s, …)`,
+                        // so a constructor of the same name stays unambiguous.
+                        (receiver != Some(head)).then_some(head)
+                    }
+                    None => None,
                 };
                 (receiver, constructor)
             }

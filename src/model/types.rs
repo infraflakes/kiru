@@ -243,6 +243,42 @@ pub(crate) fn has_parameter(ty: &Type) -> bool {
     }
 }
 
+/// Every type parameter `ty` mentions, in order of first appearance. A
+/// native's row is a function type that names the parameters a call binds, and
+/// a declaration without a function node reads them from here.
+pub(crate) fn type_parameters_of(ty: &Type) -> Vec<String> {
+    let mut found = Vec::new();
+    collect_type_parameters(ty, &mut found);
+    found
+}
+
+fn collect_type_parameters(ty: &Type, found: &mut Vec<String>) {
+    match ty {
+        Type::Parameter(name) => {
+            if !found.iter().any(|found| found == name) {
+                found.push(name.clone());
+            }
+        }
+        Type::Named(_, arguments) => {
+            for argument in arguments {
+                collect_type_parameters(argument, found);
+            }
+        }
+        Type::Function {
+            parameters,
+            returns,
+        } => {
+            for parameter in parameters {
+                collect_type_parameters(parameter, found);
+            }
+            if let Some(returns) = returns {
+                collect_type_parameters(returns, found);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// The one relation over two types: match a `declared` type (which may contain
 /// type parameters) against an `actual` type, recording each parameter's
 /// binding in `solution` (indexed by the parameter's position in `parameters`).

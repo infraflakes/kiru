@@ -382,10 +382,7 @@ impl<'a> Checker<'a> {
         let (returns, type_parameters, declared) = {
             let node = self.program.declaration(callee);
             let returns = node.return_type();
-            let type_parameters = node
-                .function()
-                .map(|function| function.type_parameters.clone())
-                .unwrap_or_default();
+            let type_parameters = node.type_parameters();
             let declared = match &node.ty {
                 Type::Function { parameters, .. } => parameters.clone(),
                 _ => unreachable!("a callable has a function type"),
@@ -408,11 +405,13 @@ impl<'a> Checker<'a> {
             expected_bindings = vec![None; type_parameters.len()];
         }
         // Infer each type parameter the expected type left open from its
-        // argument's type. A compound parameter the bindings already settle is
-        // passed to the argument as its expected type, so a literal argument
-        // takes its shape — that is how `from([{ key = …, value = … }])` reads.
-        // A bare parameter is typed on its own, so a conflicting argument still
-        // reports against the argument.
+        // argument's type. A parameter the bindings already settle is passed
+        // to the argument as its expected type, so a literal argument takes
+        // its shape: that is how `xs.push({ key = …, value = … })` reads once
+        // the receiver bound the element. A bare type parameter reaches only
+        // a `{ … }` literal, whose type comes from the position alone; an
+        // argument with a type of its own is typed on its own, so a
+        // conflicting one still reports against the argument.
         for (argument, parameter) in arguments.iter().zip(&declared) {
             if has_parameter(parameter) {
                 let mut hint_solution = solution.clone();
@@ -423,7 +422,7 @@ impl<'a> Checker<'a> {
                 }
                 let hint_bound = substitute_optional(parameter, &type_parameters, &hint_solution);
                 let hint = (!has_parameter(&hint_bound)
-                    && !matches!(parameter, Type::Parameter(_)))
+                    && (!matches!(parameter, Type::Parameter(_)) || is_map_literal(argument)))
                 .then_some(&hint_bound);
                 let Some(actual) = self.expression(argument, hint)? else {
                     return Err(self.error(

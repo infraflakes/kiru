@@ -51,39 +51,6 @@ pub(crate) enum Instruction {
         dst: u16,
         fields: Vec<(u32, u16)>,
     },
-    /// Construct an empty Vec in `dst`: the runtime's list constructor, which
-    /// `Vec.new()` lowers to.
-    VecNew {
-        dst: u16,
-    },
-    /// Read the element at `index` of the Vec in `vec` into `dst`: the runtime
-    /// of `xs.at(index)`. The index register holds an `int`; an index outside
-    /// the Vec is a run failure.
-    VecAt {
-        dst: u16,
-        vec: u16,
-        index: u16,
-    },
-    /// Replace the element at `index` of the Vec in `vec`: the runtime of
-    /// `xs.replace(index, item)`. The index must be inside the Vec; it never
-    /// appends.
-    VecReplace {
-        vec: u16,
-        index: u16,
-        value: u16,
-    },
-    /// Append the value in `item` to the Vec in `vec`: the runtime of
-    /// `xs.push(item)`.
-    VecPush {
-        vec: u16,
-        item: u16,
-    },
-    /// The number of elements of the Vec in `vec` into `dst`: the runtime of
-    /// `xs.len()`.
-    VecLen {
-        dst: u16,
-        vec: u16,
-    },
     /// Construct an enum variant: `dst = Variant(tag, payload...)`.
     MakeVariant {
         dst: u16,

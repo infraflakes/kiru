@@ -8,12 +8,15 @@
 //! compile.
 //!
 //! A row's types are `Type`s, the same type every other declaration uses, so a
-//! native names any type the language has. A `Type` is not
-//! `const`-constructible, so the typed rows are built once per program by
-//! `native_rows`, which the macro generates from the same declaration as the
-//! variant and the static shape. The shape — a native's path, name, and
-//! parameter count — needs no absence type and stays `const`, so the runtime
-//! can check a handler's arity and name a failure without a program.
+//! native names any type the language has. A row may be generic in the vec's
+//! element: it writes `Type::Parameter`, and a call binds the parameter through
+//! `unify`, exactly as a declared generic function's parameters are bound.
+//! A `Type` is not `const`-constructible, so the typed rows are built once per
+//! program by `native_rows`, which the macro generates from the same
+//! declaration as the variant and the static shape. The shape — a native's
+//! path, name, and parameter count — needs no absence type and stays `const`,
+//! so the runtime can check a handler's arity and name a failure without a
+//! program.
 //!
 //! To add a native, add one entry to `native_registry!` and one arm to
 //! `Runtime::call_native`. There is no other way: the macro generates the
@@ -43,6 +46,13 @@ fn vec_of(vec: Option<TypeId>, element: Type) -> Type {
         vec.expect("the compiler registers the Vec type"),
         vec![element],
     )
+}
+
+/// The element type parameter a vec row writes: the `T` of `Vec<T>`. A call
+/// binds it through the receiver, the same `unify` every declaration uses, so
+/// the row spells it as the `Type::Parameter` any other declaration writes.
+fn element() -> Type {
+    Type::Parameter("T".to_owned())
 }
 
 /// One native row: its path, name, parameter types, and result type. A native
@@ -153,6 +163,11 @@ macro_rules! native_registry {
 native_registry! {
     absence,
     vec,
+    VecNew { ["std", "dynamic"], "new", [] -> vec_of(vec, element()) },
+    VecPush { ["std", "dynamic"], "push", [vec_of(vec, element()), element()] -> vec_of(vec, element()) },
+    VecReplace { ["std", "dynamic"], "replace", [vec_of(vec, element()), Type::Int, element()] -> vec_of(vec, element()) },
+    VecAt { ["std", "dynamic"], "at", [vec_of(vec, element()), Type::Int] -> element() },
+    VecLen { ["std", "dynamic"], "len", [vec_of(vec, element())] -> Type::Int },
     Spawn { ["std", "process"], "spawn", [vec_of(vec, Type::Text)] -> Type::Int },
     Reap { ["std", "process"], "reap", [Type::Int] -> Type::Int },
     SignalGroup { ["std", "process"], "signal_group", [Type::Int, Type::Int] },

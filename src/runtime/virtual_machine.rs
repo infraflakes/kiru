@@ -4,9 +4,8 @@
 //! startup into the globals table, then the entry runs. A function call builds
 //! a fresh frame. The `async`
 //! keyword starts an OS thread; `wait` joins the threads the calling thread
-//! spawned. The vec instructions read and write the runtime's list
-//! representation; a native call dispatches in `native_dispatch`, and the
-//! test-only entry points live in `testing`.
+//! spawned. A native call dispatches in `native_dispatch`, and the test-only
+//! entry points live in `testing`.
 
 mod native_dispatch;
 #[cfg(test)]
@@ -165,56 +164,6 @@ impl Runtime {
                     }
                     frame.registers[*dst as usize] = Value::Map(map);
                 }
-                Instruction::VecNew { dst } => {
-                    frame.registers[*dst as usize] = Value::Vec(Arc::new(Vec::new()));
-                }
-                Instruction::VecAt { dst, vec, index } => {
-                    let element = match (
-                        &frame.registers[*vec as usize],
-                        &frame.registers[*index as usize],
-                    ) {
-                        (Value::Vec(vec), Value::Int(index)) => {
-                            let Some(element) = vec.get(*index as usize) else {
-                                return Err(self.index_failure("xs.at(index)", *index, vec.len()));
-                            };
-                            element.clone()
-                        }
-                        _ => return Err(self.fail()),
-                    };
-                    frame.registers[*dst as usize] = element;
-                }
-                Instruction::VecReplace { vec, index, value } => {
-                    let at = match &frame.registers[*index as usize] {
-                        Value::Int(at) => *at,
-                        _ => return Err(self.fail()),
-                    };
-                    let value = frame.registers[*value as usize].clone();
-                    let Value::Vec(items) = &mut frame.registers[*vec as usize] else {
-                        return Err(self.fail());
-                    };
-                    // Unshare before writing, so the copy a clone made is real.
-                    let items = Arc::make_mut(items);
-                    let length = items.len();
-                    if at >= 0 && (at as usize) < length {
-                        items[at as usize] = value;
-                    } else {
-                        return Err(self.index_failure("xs.replace(index, item)", at, length));
-                    }
-                }
-                Instruction::VecPush { vec, item } => {
-                    let item = frame.registers[*item as usize].clone();
-                    let Value::Vec(items) = &mut frame.registers[*vec as usize] else {
-                        return Err(self.fail());
-                    };
-                    // Unshare before writing, so the copy a clone made is real.
-                    Arc::make_mut(items).push(item);
-                }
-                Instruction::VecLen { dst, vec } => match &frame.registers[*vec as usize] {
-                    Value::Vec(items) => {
-                        frame.registers[*dst as usize] = Value::Int(items.len() as i64);
-                    }
-                    _ => return Err(self.fail()),
-                },
                 Instruction::MakeVariant { dst, tag, payload } => {
                     let mut values = Vec::with_capacity(payload.len());
                     for element in payload {

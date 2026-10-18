@@ -5,6 +5,8 @@
 //! the native kernel, and answers a value or a reason the VM reports under the
 //! native's own name.
 
+use std::sync::Arc;
+
 use crate::native_registry::{Native, native_shape};
 use crate::runtime::Panic;
 use crate::runtime::natives::{environment, file_system, terminal_output, text_operations};
@@ -24,6 +26,43 @@ impl Runtime {
             return Err(self.fail());
         }
         match native {
+            Native::VecNew => Ok(Value::Vec(Arc::new(Vec::new()))),
+            Native::VecPush => {
+                let Some(item) = values.pop() else {
+                    return Err(self.fail());
+                };
+                let mut vec = self.pop_vec(&mut values)?;
+                // Unshare before writing, so the copy a clone made is real.
+                Arc::make_mut(&mut vec).push(item);
+                Ok(Value::Vec(vec))
+            }
+            Native::VecReplace => {
+                let Some(item) = values.pop() else {
+                    return Err(self.fail());
+                };
+                let index = self.pop_int(&mut values)?;
+                let mut vec = self.pop_vec(&mut values)?;
+                let length = vec.len();
+                if index >= 0 && (index as usize) < length {
+                    // Unshare before writing, so the copy a clone made is real.
+                    Arc::make_mut(&mut vec)[index as usize] = item;
+                } else {
+                    return Err(self.index_failure("xs.replace(index, item)", index, length));
+                }
+                Ok(Value::Vec(vec))
+            }
+            Native::VecAt => {
+                let index = self.pop_int(&mut values)?;
+                let vec = self.pop_vec(&mut values)?;
+                let Some(element) = vec.get(index as usize) else {
+                    return Err(self.index_failure("xs.at(index)", index, vec.len()));
+                };
+                Ok(element.clone())
+            }
+            Native::VecLen => {
+                let vec = self.pop_vec(&mut values)?;
+                Ok(Value::Int(vec.len() as i64))
+            }
             Native::Spawn => {
                 let argv = self.pop_list(&mut values)?;
                 let argv = argv
@@ -166,6 +205,19 @@ impl Runtime {
         };
         match value {
             Value::Vec(vec) => Ok((*vec).clone()),
+            _ => Err(self.fail()),
+        }
+    }
+
+    /// Pop the last evaluated argument and require it to be a Vec, keeping the
+    /// value shared. A writer unshares it before changing it, so the copy a
+    /// clone made stays a copy.
+    fn pop_vec(&self, values: &mut Vec<Value>) -> Result<Arc<Vec<Value>>, Panic> {
+        let Some(value) = values.pop() else {
+            return Err(self.fail());
+        };
+        match value {
+            Value::Vec(vec) => Ok(vec),
             _ => Err(self.fail()),
         }
     }
