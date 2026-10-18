@@ -54,7 +54,9 @@ declaration ends with a `;`.
 The line inside the body calls a function:
 
 ```kiru
+fn main() {
   std::print("hello, world");
+};
 ```
 
 `std::print` writes a line to stdout. `std` is the standard library namespace,
@@ -66,9 +68,9 @@ argument is a string literal in double quotes.
 `main` takes no parameter or one parameter, and returns nothing or an `int`:
 
 - with no parameter, the program reads no arguments;
-- with one parameter, it must be declared `Vec<txt>`, and the runtime passes the
-  words after the program name. [A First
-  Program](/getting-started/a-first-program/) uses this form;
+- with one parameter, it must be declared `Vec<txt>` (reached with
+  `use std::dynamic::Vec;`), and the runtime passes the words after the program
+  name. [A First Program](/getting-started/a-first-program/) uses this form;
 - a return type must be `int`, and the returned value becomes the program's exit
   status. [Panic and Failure](/failure/panic/) defines the status.
 
@@ -85,8 +87,9 @@ $ kc help
 $ kc version
 ```
 
-`kc <path>` checks the entry file and everything it imports, then writes a
-standalone executable next to the entry path with the `.kiru` suffix removed:
+`kc <path>` checks the entry file and the whole tree under its directory, then
+writes a standalone executable next to the entry path with the `.kiru` suffix
+removed:
 
 ```console
 $ kc tools/release.kiru
@@ -109,10 +112,9 @@ install. The compiler refuses to overwrite the entry file.
 A program that compiles has been checked for:
 
 - syntax and lexical rules (an invalid escape, a missing `;`);
-- modules and imports (a malformed `mod` block, a missing file, an import cycle,
-  a file imported more than once);
-- names (an unknown name, a forward reference, a duplicate declaration, a
-  function that references itself);
+- namespaces (a `use` that reaches nothing, a `use` of a module value or a bound
+  function, a declaration reached across a namespace without `pub`);
+- names (an unknown name, a duplicate declaration in a namespace);
 - arity (the wrong number of arguments);
 - parameters (a parameter without a type, a `main` parameter that is not
   `Vec<txt>`);
@@ -121,8 +123,8 @@ A program that compiles has been checked for:
   passed);
 - returns (a function with a return type that can reach the end without
   returning a value);
-- match arms (a pattern that is not a literal, a name, or a field path; two
-  equal patterns);
+- match arms (a pattern that is not a literal, a name, a field path, or a
+  variant; two equal patterns);
 - loops (`break` outside a loop);
 - threads (an `async` nested inside another `async`).
 

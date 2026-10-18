@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use crate::model::Origin;
+use crate::compiler::model::Origin;
 use crate::syntax::{Declaration, Span};
 
 /// One loaded source file, kept for diagnostics.
@@ -25,6 +25,18 @@ pub(crate) struct ScopedDeclaration {
     pub(crate) file: usize,
     pub(crate) namespace: Vec<String>,
     pub(crate) declaration: Declaration,
+    /// The type an `impl` block files this function under, when it came from
+    /// one. The block is flattened into its functions when loaded, so every
+    /// function carries its block's target.
+    pub(crate) impl_target: Option<ImplTarget>,
+}
+
+/// The type an `impl` block files its functions under: its name and the span
+/// the name was written at.
+#[derive(Debug)]
+pub(crate) struct ImplTarget {
+    pub(crate) name: String,
+    pub(crate) span: Span,
 }
 
 /// One `use` written in a namespace. What its path ends at decides what it

@@ -8,6 +8,7 @@ A function is a value whose type is a function type. The type is written
 
 ```kiru
 use std;
+
 fn double(x: int) -> int {
   return x * 2;
 };
@@ -23,9 +24,9 @@ fn main() {
 ```
 
 A function value is called with `f(arg, ...)`, and the argument count must match
-its type. A generic function has no single type, so it cannot be used as a value.
-A function where a non-function is expected is an ordinary type mismatch, not a
-special rule about functions.
+its type. A generic function has no single type, so it cannot be used as a
+value. A function where a non-function is expected is an ordinary type mismatch,
+not a special rule about functions.
 
 A call's callee is a name or a method receiver, not an expression, so
 `fs[0](x)` and `make()(y)` do not exist. Bind the value first and call it by
@@ -33,11 +34,14 @@ name:
 
 ```kiru
 use std;
-use std::vec;
+use std::dynamic::Vec;
+
 fn triple(x: int) -> int { return x * 3; };
+
 fn main() {
-  let fs: Vec<fn(int) -> int> = [triple];
-  let f: fn(int) -> int = fs[0];
+  let fs: Vec<fn(int) -> int> = Vec.new();
+  fs = fs.push(triple);
+  let f: fn(int) -> int = fs.at(0);
   let n: int = f(3);
   std::print("@(n)");   # 9
 };
@@ -50,12 +54,16 @@ the enclosing locals by value at the point it is created, so it can use them:
 
 ```kiru
 use std;
-use std::vec;
+use std::dynamic::Vec;
+
 fn main() {
   let factor: int = 10;
-  let xs: Vec<int> = [1, 2, 3];
+  let xs: Vec<int> = Vec.new();
+  xs = xs.push(1);
+  xs = xs.push(2);
+  xs = xs.push(3);
   let scaled: Vec<int> = xs.map(fn(x: int) -> int { return x * factor; });
-  std::print("@(scaled[2])");    # 30
+  std::print("@(scaled.at(2))");    # 30
 };
 ```
 
@@ -76,23 +84,30 @@ closure still sees the locals of the function that created it.
 
 ## The vec helpers
 
-Three generic vec methods take a function value: `map` transforms each element,
-`filter` keeps the elements a predicate accepts, and `sorted_by` orders with a
-comparator. Each returns a new vec, so a call chains with the next
-([Vecs](/concepts/vecs/) covers the vec methods):
+The generic vec methods that take a function value are `map`, which transforms
+each element; `filter`, which keeps the elements a predicate accepts; `fold`,
+which accumulates from the left; `each`, which calls on every element; `count`,
+which counts the matches; and `sort_by`, which orders with a comparator. Each
+returns a new vec (except `each`, which returns nothing), so a call chains with
+the next ([Vecs](/concepts/vecs/) covers the vec methods):
 
 ```kiru
 use std;
-use std::vec;
+use std::dynamic::Vec;
+
 fn main() {
-  let xs: Vec<int> = [1, 2, 3, 4];
+  let xs: Vec<int> = Vec.new();
+  xs = xs.push(1);
+  xs = xs.push(2);
+  xs = xs.push(3);
+  xs = xs.push(4);
   let doubled: Vec<int> = xs.map(fn(x: int) -> int { return x * 2; });
   let evens: Vec<int> = xs.filter(fn(x: int) -> bool { return x % 2 == 0; });
-  let desc: Vec<int> = xs.sorted_by(fn(a: int, b: int) -> bool { return a > b; });
-  std::print("@(doubled[0]) @(evens[0]) @(desc[0])");   # 2 2 4
+  let desc: Vec<int> = xs.sort_by(fn(a: int, b: int) -> bool { return a > b; });
+  std::print("@(doubled.at(0)) @(evens.at(0)) @(desc.at(0))");   # 2 2 4
 };
 ```
 
-`sorted_by` takes `fn(T, T) -> bool` and answers `true` when its first argument
-orders before its second. For a `Vec<txt>` in byte order, `std::vec::sort` is the
-ready-made free function.
+`sort_by` takes `fn(T, T) -> bool` and answers `true` when its first argument
+orders before its second. For a `Vec<txt>` in byte order, `Vec.sort` is the
+ready-made method: `items.sort()`.

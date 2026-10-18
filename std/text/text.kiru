@@ -1,169 +1,202 @@
 # std/text.kiru
 #
-# Text methods. The byte kernel (`len`, `byte`, `find_byte`, `slice`) is a
-# native; a function whose first parameter is a `txt` is callable as
-# `text.name(...)`, so the kernel natives are the methods directly and the rest
-# build on them.
+# Text methods. The byte kernel (`strlen`, `byte_at`, `memchr`, `substr`) is a
+# native in `std::text`; the kernel natives' own signatures name `txt`, and
+# every function in the `impl` block below has a `txt` first parameter, so all
+# of them are text methods written in kiru on top of the kernel.
+#
+# This file writes full paths: it uses no `use`, and every bound function is
+# reached through its absolute path.
 
-# `Option` and the text kernel's `split` live at the `std` root. `txt` is the
-# language's own type and `Vec<T>` is declared in `std::dynamic`.
-use std;
-use std::dynamic;
-use std::dynamic::Vec;
-use std::Option;
+impl txt {
+  # The byte index of the first occurrence of `needle`, or `none` when it is
+  # absent. The kernel native `std::text::memchr` is the absence itself,
+  # not a `-1` sentinel, so this is the kernel under the method's name.
+  pub fn find(self: txt, needle: txt) -> std::Option<int> {
+    return std::text::memchr(self, needle);
+  };
 
-# The byte index of the first occurrence of `needle`, or `none` when it is
-# absent. The kernel native `find_byte` is the absence itself, not a `-1`
-# sentinel, so this is the kernel under the method's name.
-pub fn find(self: txt, needle: txt) -> Option<int> {
-  return find_byte(self, needle);
+  # Whether `self` contains `needle`.
+  pub fn contains(self: txt, needle: txt) -> bool {
+    return std::contains(std::text::find(self, needle));
+  };
+
+  # `self` without leading and trailing ASCII whitespace: space, tab, line
+  # feed, carriage return, vertical tab, or form feed. ASCII is deliberate:
+  # text at the OS boundary is bytes, so Unicode whitespace (a Rust library
+  # policy) is not stripped. Each end walks `std::text::byte_at` while it
+  # is whitespace, then one `std::text::substr` views the trimmed run —
+  # O(the trimmed run) native calls, usually a handful.
+  pub fn trim(self: txt) -> txt {
+    let count: int = std::text::strlen(self);
+    let start: int = 0;
+    for {
+      match start < count { false => { break; }; true => {}; };
+      match std::text::is_ascii_space(self, start) {
+        true => { start = start + 1; };
+        false => { break; };
+      };
+    };
+    let end: int = count;
+    for {
+      match end > start { false => { break; }; true => {}; };
+      match std::text::is_ascii_space(self, end - 1) {
+        true => { end = end - 1; };
+        false => { break; };
+      };
+    };
+    return std::text::substr(self, start, end);
+  };
+
+  # The whole number `self` writes, or `none` when it is not one. A leading `-`
+  # negates, and the first byte that is not a digit stops the read.
+  pub fn number(self: txt) -> std::Option<int> {
+    let count: int = std::text::strlen(self);
+    match count {
+      0 => { return std::Option.none; };
+      _ => {};
+    };
+    # 45 is `-`.
+    let negative: bool = std::text::byte_at(self, 0) == 45;
+    let start: int = match negative { true => 1; false => 0; };
+    match start == count {
+      true => { return std::Option.none; };
+      _ => {};
+    };
+    let value: int = 0;
+    let index: int = start;
+    for {
+      match index < count { false => { break; }; true => {}; };
+      # 48 is `0` and 57 is `9`.
+      let digit: int = std::text::byte_at(self, index);
+      match digit >= 48 && digit <= 57 {
+        true => {};
+        false => { return std::Option.none; };
+      };
+      value = value * 10 + (digit - 48);
+      index = index + 1;
+    };
+    match negative {
+      true => { return std::Option.some(-value); };
+      _ => { return std::Option.some(value); };
+    };
+  };
+
+  # Whether `self` starts with `prefix`: the first occurrence is at index zero.
+  pub fn starts_with(self: txt, prefix: txt) -> bool {
+    let starts: bool = match std::text::find(self, prefix) {
+      std::Option.some(index) => index == 0;
+      std::Option.none => false;
+    };
+    return starts;
+  };
+
+  # Whether `self` ends with `suffix`. The empty suffix ends every text, and an
+  # empty `self` ends only the empty suffix; both are checked first, because
+  # `std::text::split` rejects an empty separator. Otherwise splitting on
+  # `suffix` leaves a final empty piece exactly when the suffix matches at the
+  # end.
+  pub fn ends_with(self: txt, suffix: txt) -> bool {
+    match suffix {
+      "" => { return true; };
+      _ => {};
+    };
+    match self {
+      "" => { return false; };
+      _ => {};
+    };
+    let last: txt = "";
+    let parts: std::dynamic::Vec<txt> = std::text::split(self, suffix);
+    let index: int = 0;
+    let count: int = std::dynamic::len(parts);
+    for {
+      match index < count { false => { break; }; true => {}; };
+      last = std::dynamic::at(parts, index);
+      index = index + 1;
+    };
+    let ends: bool = match last {
+      "" => true;
+      _ => false;
+    };
+    return ends;
+  };
+
+  # Replace every occurrence of `from` with `to`: split on `from` and join with
+  # `to`. An empty needle is an error, exactly as an empty separator is in
+  # `std::text::split` — a degenerate needle has one rule, not two.
+  pub fn replace(self: txt, from: txt, to: txt) -> txt {
+    match std::text::strlen(from) {
+      0 => { std::eprint("std::text::replace: the needle must not be empty"); };
+      _ => {};
+    };
+    return std::dynamic::join(std::text::split(self, from), to);
+  };
+
+  # Split `self` into a vec of lines. A trailing newline does not produce a
+  # trailing empty element.
+  pub fn lines(self: txt) -> std::dynamic::Vec<txt> {
+    let result: std::dynamic::Vec<txt> = std::dynamic::Vec.new();
+    let pending: txt = "";
+    let first: bool = true;
+    let parts: std::dynamic::Vec<txt> = std::text::split(self, "\n");
+    let index: int = 0;
+    let count: int = std::dynamic::len(parts);
+    for {
+      match index < count { false => { break; }; true => {}; };
+      let part: txt = std::dynamic::at(parts, index);
+      match first {
+        true => { first = false; };
+        _ => { result = std::dynamic::push(result, pending); };
+      };
+      pending = part;
+      index = index + 1;
+    };
+    match pending {
+      "" => {};
+      _ => { result = std::dynamic::push(result, pending); };
+    };
+    return result;
+  };
+
+  # Split `self` into a vec of elements separated by `separator`. An empty
+  # separator is an error: Rust's char-boundary split on `""` is library
+  # policy, not the language. The scan is linear: each separator is one
+  # `std::text::memchr` over the O(1) remainder
+  # `std::text::substr(self, index, count)`, so the native calls are O(the
+  # number of separators) and the whole split is linear in the text.
+  pub fn split(self: txt, separator: txt) -> std::dynamic::Vec<txt> {
+    match std::text::strlen(separator) {
+      0 => { std::eprint("std::split: the separator must not be empty"); };
+      _ => {};
+    };
+    let count: int = std::text::strlen(self);
+    let result: std::dynamic::Vec<txt> = std::dynamic::Vec.new();
+    let index: int = 0;
+    for {
+      match index <= count { false => { break; }; true => {}; };
+      let rest: txt = std::text::substr(self, index, count);
+      let found: std::Option<int> = std::text::memchr(rest, separator);
+      match found {
+        std::Option.some(offset) => {
+          result = std::dynamic::push(result, std::text::substr(self, index, index + offset));
+          index = index + offset + std::text::strlen(separator);
+        };
+        std::Option.none => {
+          result = std::dynamic::push(result, std::text::substr(self, index, count));
+          break;
+        };
+      };
+    };
+    return result;
+  };
 };
 
-# Whether `self` contains `needle`.
-pub fn contains(self: txt, needle: txt) -> bool {
-  return self.find(needle).contains();
-};
-
-# Whether the byte at `index` is ASCII whitespace.
-fn is_ascii_space(self: txt, index: int) -> bool {
-  let code: int = self.byte(index);
+# Whether the byte at `index` is ASCII whitespace. It takes a text and an
+# index, belongs to no type, and is a helper for `trim`, so it is a plain
+# function.
+fn is_ascii_space(text: txt, index: int) -> bool {
+  let code: int = std::text::byte_at(text, index);
   let head: bool = code == 32 || code == 9 || code == 10;
   let tail: bool = code == 13 || code == 11 || code == 12;
   return head || tail;
-};
-
-# `self` without leading and trailing ASCII whitespace: space, tab, line
-# feed, carriage return, vertical tab, or form feed. ASCII is deliberate:
-# text at the OS boundary is bytes, so Unicode whitespace (a Rust library
-# policy) is not stripped. Each end walks `byte` while it is whitespace, then
-# one `slice` views the trimmed run — O(the trimmed run) native calls, usually
-# a handful.
-pub fn trim(self: txt) -> txt {
-  let count: int = self.len();
-  let start: int = 0;
-  for {
-    match start < count { false => { break; }; true => {}; };
-    match self.is_ascii_space(start) {
-      true => { start = start + 1; };
-      false => { break; };
-    };
-  };
-  let end: int = count;
-  for {
-    match end > start { false => { break; }; true => {}; };
-    match self.is_ascii_space(end - 1) {
-      true => { end = end - 1; };
-      false => { break; };
-    };
-  };
-  return self.slice(start, end);
-};
-
-# The whole number `self` writes, or `none` when it is not one. A leading `-`
-# negates, and the first byte that is not a digit stops the read.
-pub fn number(self: txt) -> Option<int> {
-  let count: int = self.len();
-  match count {
-    0 => { return Option.none; };
-    _ => {};
-  };
-  # 45 is `-`.
-  let negative: bool = self.byte(0) == 45;
-  let start: int = match negative { true => 1; false => 0; };
-  match start == count {
-    true => { return Option.none; };
-    _ => {};
-  };
-  let value: int = 0;
-  let index: int = start;
-  for {
-    match index < count { false => { break; }; true => {}; };
-    # 48 is `0` and 57 is `9`.
-    let digit: int = self.byte(index);
-    match digit >= 48 && digit <= 57 {
-      true => {};
-      false => { return Option.none; };
-    };
-    value = value * 10 + (digit - 48);
-    index = index + 1;
-  };
-  match negative {
-    true => { return Option.some(-value); };
-    _ => { return Option.some(value); };
-  };
-};
-
-# Whether `self` starts with `prefix`: the first occurrence is at index zero.
-pub fn starts_with(self: txt, prefix: txt) -> bool {
-  let starts: bool = match self.find(prefix) {
-    Option.some(index) => index == 0;
-    Option.none => false;
-  };
-  return starts;
-};
-
-# Whether `self` ends with `suffix`. The empty suffix ends every text, and an
-# empty `self` ends only the empty suffix; both are checked first, because
-# `split` rejects an empty separator. Otherwise splitting on `suffix` leaves
-# a final empty piece exactly when the suffix matches at the end.
-pub fn ends_with(self: txt, suffix: txt) -> bool {
-  match suffix {
-    "" => { return true; };
-    _ => {};
-  };
-  match self {
-    "" => { return false; };
-    _ => {};
-  };
-  let last: txt = "";
-  let parts: Vec<txt> = split(self, suffix);
-  let index: int = 0;
-  let count: int = parts.len();
-  for {
-    match index < count { false => { break; }; true => {}; };
-    last = parts.at(index);
-    index = index + 1;
-  };
-  let ends: bool = match last {
-    "" => true;
-    _ => false;
-  };
-  return ends;
-};
-
-# Replace every occurrence of `from` with `to`: split on `from` and join with
-# `to`. An empty needle is an error, exactly as an empty separator is in
-# `split` — a degenerate needle has one rule, not two.
-pub fn replace(self: txt, from: txt, to: txt) -> txt {
-  match from.len() {
-    0 => { std::eprint("std::text::replace: the needle must not be empty"); };
-    _ => {};
-  };
-  return std::join(split(self, from), to);
-};
-
-# Split `self` into a vec of lines. A trailing newline does not produce a
-# trailing empty element.
-pub fn lines(self: txt) -> Vec<txt> {
-  let result: Vec<txt> = Vec.new();
-  let pending: txt = "";
-  let first: bool = true;
-  let parts: Vec<txt> = split(self, "\n");
-  let index: int = 0;
-  let count: int = parts.len();
-  for {
-    match index < count { false => { break; }; true => {}; };
-    let part: txt = parts.at(index);
-    match first {
-      true => { first = false; };
-      _ => { result = result.push(pending); };
-    };
-    pending = part;
-    index = index + 1;
-  };
-  match pending {
-    "" => {};
-    _ => { result = result.push(pending); };
-  };
-  return result;
 };

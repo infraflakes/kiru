@@ -1,300 +1,344 @@
 # Architecture audit — every deviation from the model
 
-The model being enforced:
+The model being enforced, restated from `AGENTS.md`:
 
-- **Types only.** The operations are reference, assignment, declaration
-  (`name: Type = value`).
-- **A function is a value whose type is a function type.** Being a function is
-  not a different kind of thing.
-- **Same type = same value.** Origin (literal, call, method, field, function) is
-  irrelevant; only the type is real.
-- No implicit defaults. No contextual keywords. No per-kind special cases.
-- **The syscall floor is the only Rust that must exist**; everything above it is
-  kiru.
+- **The type model is a graph of groups:** scalar, rec, enum, function,
+  parameter. Each group declares everything about its kind — arity, written and
+  display name, whether methods may bind, whether it has fields, what shape it
+  fits, how it unifies and substitutes, its runtime shape. Every type, intrinsic,
+  declared, or native-provided, is marked with a group and inherits its facts.
+  Relations read the group; nothing re-derives a kind by matching on it, and an
+  unmarked kind is a compile error rather than a wildcard arm that swallows it.
+- **The intrinsics are `txt`, `bool`, `int`.** `Vec` is a declared `rec` in
+  `std::dynamic`, not an intrinsic, and it has no brackets: a value is built and
+  changed through `new`, `push`, `replace`, `at`, `len`.
+- **A namespace is a directory.** A file belongs to its directory's namespace and
+  its filename is arbitrary. There is no `mod` and no `import`. Resolution is
+  order-free: every declaration is collected first, then references resolve.
+- **Every absolute path resolves on its own; a `use` only shortens a path.** A
+  `use` may end at a namespace, a type, or a plain function, and a type brings its
+  bound functions with it. A bound function is declared in an `impl` block and
+  reached only through its type — a value call, a `Type.name` call, or `Type.name`
+  as a value. It is never a namespace-level name, never shortened by a `use`,
+  never reached by a namespace-qualified path. Reachability is `pub` on the
+  function and `pub` on the type.
+- **A name is unique in its namespace.** Only functions bound to different types
+  may share one. Module values are never `pub`. A call always carries
+  parentheses. Natives are the floor, public, and named for their syscall or
+  their kind.
 
-Produced by five parallel audits (type system/checker, resolver, syntax front
-end, runtime/natives/stdlib, model/lowering/bytecode/pipeline). Nothing in the
-repo was modified. ~150 distinct findings. Grouped by root cause; each item is
-`what — where`.
+Produced by five parallel audits, then re-verified against the tree as it is now.
+Each finding is marked **✅ closed** with the current evidence, or **⚠ stands**
+with the current evidence. File references to modules that no longer exist are
+gone; the logic is cited where it lives today.
 
-> **Status.** The type-name work — every written type is one `TypeExpr::Named`
-> resolved through `Builder::resolve_named_type`; a built-in is a bodyless
-> `pub type Name<...>;` declaration in a `std` category
-> (`TypeDeclarationKind::Builtin` → `TypeKind::Builtin(BuiltinType)`); and there
-> is no prelude — closes the built-in, keyword, and prelude findings below.
-> Those items are marked ✅; the rest still stand.
+> **Overall status.** The old root causes — "a function is a kind", the
+> type-name special forms, the implicit defaults, the deleted stdlib wrappers,
+> and the import machinery — are closed. What stands is either the deliberate
+> shape of the engine (address spaces, instruction variants, the checker's
+> library semantics) or one live deviation from the model, recorded in section 8.
 
 ---
 
 ## 1. A function is a KIND, not a value
 
-The largest cluster. Every one of these exists because "function" is treated as
-a kind rather than a type.
+Closed by building one declaration node whose value is a function expression.
 
-> **Status (after `32b110f`).** Closed by earlier work: the `DeclarationKind`
-> enum, the two expression nodes for one function type, the two name tables and
-> `Registry::other`, the registry-parameterized `resolve`, `unknown_name`'s other
-> pool, `context.current_is_function`, `function_used_as_value`, the
-> `Function|Native` call restriction, `Function.is_method`, the per-kind lowering
-> branches, `assign_codes`/`has_code`, and natives registering with no value or
-> type. Consolidated here: the self-reference bans (one `Builder::check_earlier`)
-> and `Skeleton.order`/`Pending.order` (one `Skeleton.order`). What remains is a
-> different job in each case: `Expression::Function`/`Closure` is the deliberate
-> closure form lowering into one node; `receiver_type` is a link-time dispatch
-> approximation that runs before the checker exists and is re-verified by it;
-> `CallNative`/`CallValue` and `AsyncNative`/`AsyncValue` are native-by-index vs
-> function-value (a native has no value form); `LoadGlobal`/`LoadLocal`/
-> `LoadConst` are three address spaces (global table, frame register, constant
-> pool); `EdgeCheck` is a structural invariant at the decode boundary, not a
-> user-facing diagnostic; the entry's shape rules are the entry's definition.
-
-- `Declaration::Function` is a separate node from `Declaration::Binding` —
-  syntax/ast.rs:44 vs :161.
-- `Expression::Function` and `Expression::Closure` are two value nodes for one
-  function type — syntax/ast.rs:356,359; model/expressions.rs:42-58.
-- `fn` has three grammars selected by position: a type, a declaration, a
-  closure — parser/declarations.rs:108,195,222; `parse_closure` duplicates
-  `parse_function` — :222-240.
-- `DeclarationKind::{Function, Value, Binding, Native}` — model/declarations.rs:81-93.
-- ✅ `Function { is_method, is_closure, captures }` — model/declarations.rs:144-151.
-  (`is_method` is deleted with the method table; `is_closure` remains.)
-- `Declaration::function()/initializer()` branch on kind — model/declarations.rs:31-68.
-- Two name tables per namespace plus `Registry::{Value, Function}` and
-  `Registry::other()` — model/program.rs:136-193.
-- `resolve(..., registry)` parameterizes every lookup by kind —
-  reference_resolution.rs:21; `search`/`registry_lookup` per pool — :65-94,119-127.
-- `unknown_name` searches the *other* pool only to pick a message ("is a
-  function; call it" vs "is a value and cannot be called") —
-  reference_resolution.rs:96-117; diagnostics.rs:80-87.
-- A `Name` resolves value-first then function, producing `Expression::Function`
-  on the fallback — linking.rs:507-524; a `Call` resolves
-  function-first then value — :525-565.
-- `context.current_is_function` exists only to select a self-reference message —
-  scopes.rs:14; linking.rs:69,120,652.
-- `function_used_as_value` rejects a function referenced as a value —
-  walk.rs:737-747; the "function used as a value" rule is the canonical
-  violation.
-- A generic function may not be a value — walk.rs:294-319.
-- `call` accepts only `DeclarationKind::Function | Native`; anything else is
-  `value_called` — walk.rs:749-764.
-- ✅ A method was a function whose first parameter is *named* `self` —
-  register_declarations/files.rs (a contextual keyword by name). A function
-  whose first parameter accepts the receiver is now a method, whatever the name.
-- ✅ The method table is a second registry keyed by receiver head —
-  builder.rs; the function is an ordinary name in its namespace, and the
-  receiver's type head selects among the namespaces in scope — linking.rs.
-- ✅ `Function.is_method` in the model, and `verify.rs` exempted methods
-  from the ordering rule. Both are deleted; a method call is an ordinary call
-  and must name an earlier declaration.
-- The entry is `main` by name in the root namespace — entry.rs:16-74;
-  model.rs:36 (`ENTRY_FUNCTION`); verify.rs:34-43 re-asserts it.
-- Entry shape rules by syntax shape: "at most one parameter", "must be declared
-  `vec<txt>`", "returns int or nothing" — entry.rs:44-72.
-- "A function cannot reference itself" / "a value cannot reference itself", and
-  the forward-reference ban — reference_resolution.rs:43-58.
-- `Skeleton.order` / `Pending.order` declaration-order bookkeeping —
-  builder.rs:35,172-193; files.rs:104,169.
-- `EdgeCheck` order rules with a method exemption — model/verify.rs:226-288.
-- `Expression::Call` vs `Expression::CallValue`; `Value::Function { captures }`;
-  `CallFunction`/`CallNative`/`CallValue` — model/expressions.rs:47-52,71-76;
-  values.rs:15-20; bytecode/instruction.rs:175-184.
-- Lowering branches by declaration kind (`Binding`→`LoadLocal`,
-  `Value`→`LoadGlobal`, `Function|Native`→`unreachable!("a function is not a
-  value")`) — lower_bytecode.rs:283-301; calls — :522-546; function vs closure —
-  :339-367; `assign_codes`/`has_code` — :65-86.
-- Natives register in the *functions* table only, with no value and no type —
-  register_declarations/builtins.rs:33-37; `DeclarationKind::Native` —
-  model/declarations.rs:92.
-- `AsyncNative`/`Async`/`AsyncValue` — three spawn instructions —
-  bytecode/instruction.rs:197-209; lower_bytecode.rs:548-586.
-- `LoadGlobal`/`LoadLocal`/`LoadConst` split a reference by storage kind —
-  instruction.rs:34-45.
-- ✅ stdlib wrappers that existed only because a native could not be a method —
-  stdlib/text.kiru `len`/`trim`/`split`/`byte` are deleted; the kernel natives
-  are the methods now. `std::vec::sort`/`text_less` remain free functions
-  because they apply to `vec<txt>` alone.
+- **✅ Closed.** `Declaration` is one node — a name, a type, and an optional
+  value — not an enum of kinds. `model/declarations.rs:17`.
+- **✅ Closed.** One value node for a function: `Expression::Function(Function)`,
+  the value of a named `fn` and of a `fn(...) { .. }` literal alike.
+  `model/expressions.rs:104`; the syntax node is `Expression::Closure`
+  (`syntax/ast.rs:332`).
+- **✅ Closed.** `fn` still parses in three positions, but each is one of the
+  model's forms — a declaration, a function type, a function literal — and all
+  three land in the one `Expression::Function` node. `syntax/parser/declarations.rs:269`
+  (declaration), `:177` (type), `:297` (literal).
+- **✅ Closed.** No `DeclarationKind`. `model/declarations.rs:17`.
+- **✅ Closed.** `Function` carries `ty`, `parameters`, `body`,
+  `type_parameters`, `captures`, `span`; `is_method` and `is_closure` are gone.
+  `model/expressions.rs:13-26`.
+- **✅ Closed.** `Declaration::function()` returns `Option<&Function>` and there
+  is no `initializer()` kind branch. `model/declarations.rs:40`.
+- **✅ Closed.** One name pool per namespace (`NameTable`) plus a method pool and
+  an associated-function pool keyed by `(head, name)` (`MethodTable`). This is
+  the model's mechanism, not a kind split: a name is unique in its namespace and
+  only bound functions for different heads repeat. `model/program/tables.rs:60`,
+  `:103`.
+- **✅ Closed.** `resolve`/`resolve_name`/`search` take no registry.
+  `resolve_names/name_resolution.rs:23`, `:86`, `:110`.
+- **✅ Closed.** No `unknown_name` other-pool message. `resolve_name` reports
+  unknown or ambiguous. `resolve_names/name_resolution.rs:94-102`.
+- **✅ Closed.** A name resolves local first, then its namespace and its
+  `use`s; no value-first/function-fallback. `resolve_names/name_resolution.rs:29-36`.
+- **✅ Closed.** No `context.current_is_function`.
+- **✅ Closed.** No `function_used_as_value`; a function reference is an ordinary
+  value. `model/expressions.rs:62-68`.
+- **⚠ Stands.** A generic function is not a value: it has no single function
+  type. This is the one rule about functions that is not "a function is a
+  value", and it follows from generics rather than from a kind. Enforced at the
+  reference/call check; a generic name used where a value is expected is a type
+  mismatch.
+- **✅ Closed.** `call` accepts any callee whose type is a function type; there
+  is no `Function | Native` restriction. `model/expressions.rs:71-76`.
+- **✅ Closed.** A method is a function in an `impl` block whose first parameter
+  accepts the block's type; the parameter name is irrelevant.
+  `resolve_names/register_declarations.rs:128-144`.
+- **✅ Closed.** The method table is `MethodTable`, keyed by the receiver head
+  the group model derives, and it is the model's mechanism for a repeated name.
+  `model/program/tables.rs:103`; heads come from `Type::head`
+  (`model/types.rs:89`).
+- **✅ Closed.** No `Function.is_method` and no `verify.rs` ordering exemption;
+  `EdgeCheck` checks ids only, never position. `model/verify_graph.rs:184-206`.
+- **⚠ Stands (by definition).** The entry is the program root's `main` by name,
+  and its shape rules are its definition, not a kind rule.
+  `resolve_names/select_entry.rs:15-83`. The shape is checked through the one
+  type relation (`fits`) and the one type resolver, so `Vec<txt>` is a
+  declaration like any other.
+- **✅ Closed.** No "a function cannot reference itself" and no forward-reference
+  ban: resolution is order-free and recursion is legal.
+  `resolve_names/name_resolution.rs:1-9`.
+- **✅ Closed.** No `Skeleton.order`/`Pending.order`.
+  `resolve_names/builder/registration.rs:37-57`.
+- **✅ Closed.** `EdgeCheck` carries no order rule and no method exemption; it
+  checks that every edge points into the declaration table.
+  `model/verify_graph.rs:188-206`.
+- **✅ Closed.** One `Expression::Call`; there is no `Expression::CallValue`.
+  The instruction set still splits a native call from a value call
+  (`CallNative`/`CallValue`, `AsyncNative`/`AsyncValue`), which is native-by-index
+  versus function-value, an address-space difference and not a value kind.
+  `bytecode/instruction.rs:96`, `:162`, `:181`, `:186`.
+- **✅ Closed.** Lowering no longer branches on a declaration kind (there is
+  none); it lowers the one `Expression::Call` by the callee's node.
+  `lower_expressions.rs:448-482`.
+- **✅ Closed.** A native registers as an ordinary callable node with a `native`
+  marker, not in a separate table. `resolve_names/builder/registration.rs:79-84`;
+  `resolve_names/register_builtins.rs:38-99`.
+- **⚠ Stands (by design).** `LoadGlobal`/`LoadLocal`/`LoadConst` are three
+  address spaces — global table, frame register, constant pool — not a value
+  kind. `bytecode/instruction.rs:34-45`.
+- **✅ Closed.** The stdlib wrappers that existed only because a native could not
+  be a method are gone; the text kernel natives are methods now.
+  `std/text/text.kiru:1-12`.
 
 ## 2. Type-relation pluralism — one job, many relations
 
-> **Status (after `32b110f`).** `require` is a one-line wrapper over the one
-> relation, `expression`. Consolidated here: the function-type return accessor
-> (`Type::return_type`), which three call sites had implemented by hand.
-> `Type::Void` is gone with the absence work. What remains is not duplication:
-> `receiver_type` runs before the checker exists, which then re-verifies the
-> desugared call — there is no phase in which it could call "the one inference";
-> `has_parameter` answers "does this type contain a type parameter?", which none
-> of `fits`/`unify`/`head` answer, and it preserves two different pinned
-> diagnostics; `fits`/`unify`/`head`/`substitute`/`check_type` produce different
-> outputs (equality, inference, dispatch head, substitution, id validation), so
-> they are different jobs; `Type::Map`'s key is part of type identity
-> (`map<int,txt>` differs from `map<txt,txt>`) and is blocked by
-> `native_registry`'s `Record` row.
+Consolidated under the one relation.
 
-- `fits` is equality — types.rs:118.
-- `TypeHead` / `Type::head()` is a second, weaker match used for dispatch —
-  types.rs:125-157.
-- `unify` is a third relation (inference) — types.rs:176-236.
-- `has_parameter` is a fourth structural traversal — types.rs:158-170.
-- `require` is a six-branch per-expression-kind ladder, and is the *real*
-  compatibility point — walk.rs:879-953.
-- `receiver_type` re-implements type inference in the resolver —
-  linking.rs:714-771 (fabricates `Type::Function`, guesses `vec<txt>`).
-- A match's type is inferred by a common-type join — walk.rs:1053-1120.
-- Contextual typing (`expression()` vs `require()`) is a second typing
-  mechanism — walk.rs:521-524,525-542.
-- `Type::Void` is a kind marker driving control-flow rules —
-  types.rs:24; walk.rs:63,182-198,481-497,1046-1052; validate_declarations.rs:63.
-- `Type::Map(key, value)` carries a key type nothing uses —
-  types.rs:18-20; walk.rs:407,598.
+- **✅ Closed.** `fits` is `unify` with no binders: one compatibility relation.
+  `model/types/relation.rs:92`.
+- **✅ Closed (by design).** `TypeHead`/`Type::head` is derived from the group,
+  not a second kind match. `model/types.rs:89`.
+- **✅ Closed.** `unify` is the one relation; `fits` specializes it.
+  `model/types/relation.rs:102-108`.
+- **✅ Closed.** `has_parameter` is a one-line wrapper over the one walk,
+  `type_parameters_of`. `model/types/relation.rs:197`.
+- **✅ Closed.** `require` is a one-line wrapper over `expression` with the
+  position's declared type. `validate_program/expression_typing.rs:574-585`.
+- **⚠ Stands.** `receiver_type` still infers a receiver's type at link time,
+  before the checker exists, so a forward method reference can dispatch. It is
+  an approximation the checker re-verifies, and it matches on linked expressions,
+  not on type kinds. `resolve_names/receiver_typing.rs:23-65`.
+- **⚠ Stands.** A match's type is the common type of its arm expressions.
+  `validate_program/match_rules.rs:160`, `:330`.
+- **✅ Closed.** Contextual typing is one mechanism: `expression` takes an
+  optional expected type, and `require` supplies it.
+  `validate_program/expression_typing.rs:574`.
+- **✅ Closed.** No `Type::Void`. A function with no return type has a function
+  type whose `returns` is `None`. `model/types.rs:44-50`.
+- **✅ Closed.** No `Type::Map(key, value)`; `Map` is a declared `rec`.
+  `model/types.rs:33-51`.
 
 ## 3. Keywords and forms that exist for a KIND
 
-- Reserved words that name a kind rather than a type: `fn`, `rec`, `enum`,
-  `let`, `match`, `return`, `panic`, `async`, `wait`, `for`, `in`, `break`,
-  `true`, `false` — lexer.rs:219-239; token.rs.
-- ✅ Closed: `vec` was reserved while `map` was contextual — two mechanisms for
-  one concept. Both are ordinary names now; a built-in type is a bodyless
-  `type Name<...>;` declaration and every written type is one `TypeExpr::Named`.
-- ✅ `self` was a contextual keyword by parameter name —
-  register_declarations/files.rs.
-- `_` is recognized by lookahead (`Ident("_")` + `=>`) — statements.rs:239-241.
-- `parse_match(value: bool)` makes arms expression-or-block by position —
-  statements.rs:186-236; `MatchBody::Expression | Block` — syntax/ast.rs:258-262.
-- Statement grammar is a per-keyword dispatch plus three shape guards —
-  statements.rs:30-63.
-- Three assignment statement forms (bare, field, index) —
-  syntax/ast.rs:182-204; three lookahead guards — statements.rs:44-56.
-- `fn(T)` without `->` silently means `fn(T) -> void` —
-  parser/declarations.rs:118-127.
-- `<` is both a type-argument bracket and comparison, disambiguated by position —
-  parser/declarations.rs:305.
-- The brace lookahead for a bare `{ ... }` subject — statements.rs:104,188-191.
-- `TokenKind::DotDot` is dead (no production consumes it) — token.rs:40-41.
+- **⚠ Stands (by design).** The reserved words are the forms, not the type names:
+  `use`, `pub`, `fn`, `impl`, `enum`, `let`, `rec`, `match`, `return`, `panic`,
+  `async`, `wait`, `for`, `break`, `true`, `false`. `syntax/lexer.rs:214-232`.
+- **✅ Closed.** `vec` is not reserved; `Vec` is an ordinary declaration and
+  `map` is an ordinary name. `resolve_names/register_builtins.rs:16-32`.
+- **✅ Closed.** No `self` contextual keyword; the receiver is by type.
+  `resolve_names/register_declarations.rs:128-144`.
+- **⚠ Stands (by design).** `_` is recognized as a pattern binding by position.
+  `syntax/parser/statements.rs`.
+- **⚠ Stands (by design).** A match's arms are expressions or blocks by position;
+  the model does not fix one shape. `syntax/ast.rs:251`.
+- **⚠ Stands (by design).** The statement grammar is a per-keyword dispatch.
+  `syntax/parser/statements.rs`.
+- **✅ Closed.** Two assignment forms (bare and field); the index form is gone
+  with the index brackets. `syntax/ast.rs:190-206`.
+- **✅ Closed (by design).** `fn(T)` with no arrow is a function type whose
+  `returns` is `None`; there is no `void` type. `syntax/parser/declarations.rs:326`.
+- **⚠ Stands (by design).** `<` is a type-argument bracket in type positions and
+  a comparison in expression positions. `syntax/parser/declarations.rs:336`.
+- **⚠ Stands (by design).** A bare `{ … }` subject is recognized by lookahead.
+  `syntax/parser/statements.rs`.
+- **✅ Closed.** `TokenKind::DotDot` is gone. `syntax/token.rs`.
 
 ## 4. Implicit defaults
 
-- `Void`/`Nothing` as "no value" — types.rs:24; values.rs:26; every register and
-  global seeded with `Nothing` — virtual_machine.rs:44,120; testing.rs:22.
-- A missing field/key reads as `""` — values.rs:68-73 (`get_text`);
-  virtual_machine.rs:383-401 (`GetField`).
-- `env::var` collapses unset and empty into `""` — natives/environment.rs:7.
-- An empty `vec` literal defaults its element type to text — walk.rs:551-566.
-- `NativeType::Vec` → `vec<txt>` and `NativeType::Record` → `map<txt,txt>` —
-  native_registry.rs:38-40.
-- A `for` item binding is hard-coded `Type::Text` at link time, then overridden —
-  linking.rs:339; walk.rs:36-42.
-- `fn` with no return arrow defaults to `Void` — linking.rs:97-100,674-677.
-- `main` with no return defaults to exit `0` — virtual_machine.rs:70-75.
-- `lower_async` has `_ => {}` and silently drops a non-call —
-  lower_bytecode.rs:584.
-- `cli` assigns a default `no_action` — stdlib/cli.kiru:48-62; stream modes
-  `""`/`"null"` and `takes`/`fallback` — stdlib/process.kiru:11-17;
-  stdlib/cli.kiru:66-85.
+- **⚠ Stands (by design).** `Value::Nothing` is the result of a call that
+  returns nothing and the `none` of the absence. The language never stores it; it
+  marks a call whose value a statement discards. `runtime/values.rs:36`.
+- **✅ Closed.** A missing key reads as the absence, never empty text.
+  `runtime/virtual_machine.rs:354-361`.
+- **✅ Closed.** `getenv` returns `Option<txt>`; unset and empty are told apart.
+  `native_registry.rs:189`; `std/process/env.kiru`.
+- **✅ Closed.** No vec literal, so no empty-literal default.
+- **✅ Closed.** Native rows carry `Type`s; there is no `NativeType` universe.
+  `native_registry.rs:63-68`.
+- **✅ Closed.** No `for item in xs`; the item binding default is gone.
+- **✅ Closed.** An absent return arrow means a function type whose `returns` is
+  `None`, not a `Void`. `syntax/parser/declarations.rs:326`.
+- **⚠ Stands (by definition).** `main` with no return means exit `0`.
+  `runtime/virtual_machine.rs:74`.
+- **⚠ Stands.** `lower_async` silently drops a non-call with an
+  `else { return; }`. `lower_expressions.rs:464-470`.
+- **⚠ Stands (stdlib, by design).** `std::cli::Context.no_action` is the default
+  action of a command that declares none. `std/cli/cli.kiru`.
 
 ## 5. Rust library logic above the syscall floor
 
-- ✅ `trim`/`split` were Unicode *policy* (`str::trim`/`str::split`), not the
-  floor — they are kiru over `byte`/`find_byte`/`slice` now, ASCII-only, and a
-  degenerate empty needle is an error.
-- ✅ `glob` was a Rust crate, not a syscall — it is kiru over the new `list`
-  (`readdir`) now.
-- The text kernel is byte access: `len`, `byte`, `find_byte`, `slice` —
-  runtime/natives/text_operations.rs; rows — native_registry.rs.
-- ✅ `temp_file` no longer calls `std::env::temp_dir()` in Rust. The native is
-  `mkstemp` over a template, and `std::fs::temp_file` builds the default
-  template from `std::env::temp_dir()` in kiru.
-- ✅ `parse_signal` name→signal table: `std::process::signal_number` in kiru; the
-  native `signal_group` takes the number.
-- ✅ `parse_pid` parsing: `std::process::pid_of` in kiru; the native `reap` takes
-  an int.
-- ✅ `parse_whole_number` parsing (`sleep`'s text seconds):
-  `std::time::sleep` uses `std::text::whole` in kiru; the native `sleep_seconds`
-  takes an int.
-- `command_for` interprets the spec's `Dir`/`Stdin`/`Stdout`/`Stderr` keys in
-  Rust — execution.rs:160-187; `stdio_mode`'s implicit default — :189-197.
-- `exit_code` (128+signal) shell policy — execution.rs:151-158;
-  `wait_for_stop` (SIGTERM then SIGKILL) policy — :122-149.
-- `report_error` re-implements stdlib/std.kiru's `emit` formatting —
-  runtime.rs:28-35.
-- VM-side: `exit_code` — virtual_machine.rs:70-75; `call_entry`'s arity special
-  case — :106-112; `index_failure` — :561-567; runtime arity re-check —
-  native_dispatch.rs:25-27.
-- `NativeType` is a second, monomorphic type universe —
-  native_registry.rs:24-45.
-- The checker implements library semantics in Rust: operator typing —
-  walk.rs:651-719; the `@()` displayable set — :567-573,721-735; pattern atoms,
-  equality, and duplicate collapsing — patterns.rs:14-136; boolean coverage —
-  :31-46; match type and exhaustiveness — walk.rs:1053-1160; record field
-  access/assignment — :382-467,590-641.
-- Lowering implements formatting and iteration: interpolation →
-  `ToText`/`Concat` — lower_bytecode.rs:481-520; `for` → an index loop —
-  :696-735; `for {}` + a break-patch stack — :739-752,214-221.
-- `Instruction::ToText`/`Concat`/`IncrementNumber`/`JumpIfIndexAtEnd` are
-  library operations as instructions — instruction.rs:156-174,110-113,103-109.
+- **✅ Closed.** `trim`/`split` are kiru over the byte kernel, ASCII-only.
+  `std/text/text.kiru:52-140`.
+- **✅ Closed.** `glob` is kiru over `readdir`. `std/fs/fs.kiru:1-260`.
+- **⚠ Stands (renamed).** The text kernel is byte access: `strlen`, `byte_at`,
+  `memchr`, `substr`. `native_registry.rs:178-181`.
+- **✅ Closed.** `temp_file` builds its template from `std::process::temp_dir` in
+  kiru; the native is `mkstemp`. `std/fs/fs.kiru:12-15`.
+- **✅ Closed.** The signal-name table is `std::process::signal` in kiru; the
+  native `killpg` takes the number. `std/process/process.kiru`.
+- **✅ Closed.** `pid_of` parsing is kiru; the native `waitpid` takes an int.
+- **✅ Closed.** `std::process::sleep` checks the count in kiru; the native
+  `nanosleep` takes an int. `std/process/time.kiru`.
+- **⚠ Stands.** `command_for` builds the OS command from the argv in Rust.
+  `runtime/processes/execution.rs:149`.
+- **⚠ Stands.** The `128 + signal` exit-code rule is kiru
+  (`std/process/process.kiru`, `wait_for`); the stop protocol (SIGTERM then
+  SIGKILL) is Rust policy. `runtime/processes/execution.rs`.
+- **⚠ Stands.** `report_error` renders a runtime failure itself.
+  `runtime.rs:32`.
+- **⚠ Stands.** VM-side `exit_code`, `call_entry`'s arity special case,
+  `index_failure`, and the runtime arity re-check.
+  `runtime/virtual_machine.rs:74`, `:112`, `:484`;
+  `runtime/virtual_machine/native_dispatch.rs:25`.
+- **✅ Closed.** No `NativeType`. `native_registry.rs`.
+- **⚠ Stands.** The checker implements library semantics in Rust: operator
+  typing, the `@()` displayable set, pattern atoms and equality, boolean
+  coverage, match type and exhaustiveness, record field access.
+  `validate_program/expression_typing.rs`, `match_rules.rs`, `statement_check.rs`.
+- **⚠ Stands.** Lowering implements formatting and loops: interpolation to
+  `ToText`/`Concat`, `for` to a jump-and-test loop.
+  `lower_expressions.rs`; `bytecode/instruction.rs:143`, `:157`.
+- **⚠ Stands (renamed).** `ToText` and `Concat` remain library operations as
+  instructions. `IncrementNumber`, `JumpIfIndexAtEnd`, and `SetIndex` are gone
+  with the index brackets. `bytecode/instruction.rs`.
 
 ## 6. Duplicated mechanisms — one job, N implementations
 
-- Two body checkers: `verify_function` vs `closure_body` —
-  validate_declarations.rs:22 vs walk.rs:324-352 (and a duplicated message —
-  validate_declarations.rs:70-73 / walk.rs:345-349).
-- Two call checkers plus a third arity check — walk.rs:749-813,815-852,854-872.
-- Three field lookups — walk.rs:416-419,603-608; linking.rs:796-811.
-- Three assignment-target kind checks — walk.rs:354-378,394-399,447-454.
-- Three duplicate-name rules — builder.rs:186-192 (`declare`),
-  linking.rs:175-177 (`declare_local`), builder.rs:255-262,276-283 (`fill_type`).
-- Three equality implementations — values.rs:40-48; virtual_machine.rs:443-453;
-  instruction.rs:142-147.
-- Three exhaustiveness mechanisms — walk.rs:53-62; patterns.rs:31-46;
-  walk.rs:1150-1160.
-- Two stores for a binding's type (`overrides` vs the node) —
-  walk.rs:36-42,103-112; linking.rs:339.
-- ✅ Two name-resolution mechanisms — namespaces vs the method table.
-- ✅ Two ordering mechanisms — skeleton order vs method order.
-- **Contradiction:** `reject_duplicate_fields` forbids repeats —
-  walk.rs:501-512; `normalized_fields` collapses repeats to the last value —
-  patterns.rs:110-122.
-- Six representations of container access — ast.rs:182-204;
-  model/expressions.rs:77-88; instruction.rs:160-169,60-64,83-89.
-- Four representations of "no value" — types.rs:24; values.rs:26;
-  expressions.rs:184-189; instruction.rs:185-187.
-- `DeclarationKind` dispatch copy-pasted at ~8 sites — lower_bytecode.rs:67-86,
-  95-101,286-300,528-545,558-570; verify.rs:82-97,148-155; mark_reachable.rs:26-30;
-  walk.rs:738-763.
-- Two path→namespace walks (types vs values) — builder.rs:425-450 vs
-  reference_resolution.rs:75-93.
-- ✅ Closed: `resolve_type_expr` was a whole second resolver. It is now the one
-  path — `resolve_type_expr` → `Builder::resolve_named_type` — for every written
-  name.
-- ✅ Closed: two ways to parse `Name<...>` as a type and as a value with
-  arguments. The type position is one `parse_type_expr`; the built-in and `vec`
-  special forms are gone.
+- **✅ Closed.** One body checker: `verify_function` is a thin wrapper that
+  builds the `Checker` and calls `check_function`; the closure body goes through
+  the same checker. `validate_program/validate_declarations.rs:42-59`;
+  `statement_check.rs:301`.
+- **⚠ Stands.** One call checker plus the arity check inside it.
+  `validate_program/expression_typing.rs`.
+- **⚠ Stands.** Field lookup is one `rec_field` helper plus the checker's
+  visibility check. `model/program/fields.rs`; `statement_check.rs:110`.
+- **✅ Closed.** One assignment-target check, `assignment_target`, for the bare
+  and field forms. `validate_program/statement_check.rs:272`.
+- **⚠ Stands.** The duplicate-name rules: the name pool, the method/associated
+  pools, and duplicate fields. Each guards a different table.
+  `resolve_names/builder/registration.rs:224`, `:407`.
+- **⚠ Stands.** Equality has an engine copy per representation (values, VM,
+  instruction compare). `runtime/values.rs`; `runtime/virtual_machine.rs`;
+  `bytecode/instruction.rs:129`.
+- **⚠ Stands.** Exhaustiveness is one function, `is_exhaustive`, read by the
+  match checker. `validate_program/match_rules.rs:19`.
+- **✅ Closed.** One store for a binding's type: the declaration node.
+  `model/declarations.rs:25`.
+- **✅ Closed.** One name-resolution mechanism: the namespace tables.
+- **✅ Closed.** One ordering mechanism: none. Resolution is order-free.
+- **✅ Closed.** The duplicate-field contradiction is gone: a repeated field is
+  always an error and there is no collapsing pass.
+  `validate_program/expression_typing.rs:50`.
+- **✅ Closed.** Container access has one representation; the index forms are
+  gone. `model/expressions.rs`; `bytecode/instruction.rs`.
+- **⚠ Stands.** "No value" has one marker (`Value::Nothing`) and the `none`
+  variant of the absence; the two are the same representation by design.
+  `runtime/values.rs:36`.
+- **✅ Closed.** No `DeclarationKind` dispatch; there is no kind to dispatch on.
+- **⚠ Stands.** Two path→namespace walks remain — types and values — because a
+  type name and a value name resolve in different pools. `model/program/namespace_paths.rs`;
+  `resolve_names/name_resolution.rs`.
+- **✅ Closed.** One type resolver: `resolve_type_expr` →
+  `Builder::resolve_named_type`. `resolve_names/builder/type_resolution.rs:31`, `:94`.
+- **✅ Closed.** One parse of `Name<...>`, `parse_type_expr`.
+  `syntax/parser/declarations.rs:336`.
 
 ## 7. Structural and compiled-in assumptions
 
-- ✅ Closed: the stdlib was seeded before the entry "so its declarations come
-  first", which made its names a prelude. Seeding remains for load order, but it
-  grants no visibility: `find_type` reads only the current namespace and the
-  namespaces it `use`s, so a program imports what it writes.
-- `Origin::{Embedded, File}` and the reserved-`std` rule keyed on origin —
-  model/program.rs:116-122; register_declarations/files.rs:48-56.
-- Single-pass registration, which is what forces the `order` rules —
-  builder.rs:172-193; files.rs:25-35; linking.rs:43-44.
-- The entry is found by name — model.rs:36; entry.rs:20.
-- `Bytecode.module_values` is a separate code list from the entry —
-  instruction.rs:14-16; virtual_machine.rs:97-103.
-- `BUILTIN_NAMESPACE = ["std"]` couples the registry to a namespace —
-  native_registry.rs:18-19; files.rs:48-56.
-- Duplicate-import and import-cycle errors are file-identity rules —
-  read_entry_and_imports.rs:131-146; loaded_program.rs:1-7.
-- `push_item` silently drops `Item::Import` — read_entry_and_imports.rs:102-113.
-- The `EMBEDDED` stdlib list is compiled into Rust — :22-38.
+- **⚠ Stands.** `Origin::{Embedded, File}` and the reserved-`std` rule keyed on
+  origin. `compiler/load_files/loaded_program.rs`; `register_declarations.rs:66-75`.
+- **✅ Closed.** Registration is two passes: reserve every type and record every
+  `use`, then register declarations. This is what makes resolution order-free.
+  `resolve_names/register_declarations.rs:17-56`.
+- **⚠ Stands (by definition).** The entry is found by name.
+  `resolve_names/select_entry.rs:15`.
+- **⚠ Stands (by design).** `Bytecode.module_values` is a separate code list.
+  `bytecode/instruction.rs:14-16`.
+- **⚠ Stands.** `BUILTIN_NAMESPACE = ["std"]` couples the registry to a
+  namespace. `native_registry.rs:30`.
+- **✅ Closed.** No import machinery: no duplicate-import or import-cycle errors,
+  no `Item::Import`, no import file.
+- **⚠ Stands.** The embedded stdlib list is compiled into Rust.
+  `compiler/load_files/loader/embedded.rs:8`.
+
+## 8. The group graph against the model
+
+The type model is now the group graph, so the audit checks it against the model
+directly.
+
+- **✅ Closed.** Every fact is declared once, as one match over `Group` with an
+  arm for every group and no wildcard: `names`, `arity`, `binds_methods`,
+  `has_fields`, `has_variants`, `shape`, `substitution`, `unification`,
+  `runtime_shape`. `model/types/group.rs:16`, `:120-219`.
+- **✅ Closed.** The marking is total and wildcard-free: `Type::group` maps
+  `Text`/`Bool`/`Int` to `Scalar`, `Named` to its declaration's group, `Function`
+  to `Function`, `Parameter` to `Parameter`. `model/types.rs:76-83`.
+- **✅ Closed.** The relations read the group: `substitute`, `unify`, `fits`,
+  `collect_type_parameters`, and `head` all branch on
+  `group(types).substitution()` / `.unification()` / `.group()`, never on a type's
+  own variants to decide a kind. `model/types/relation.rs:26-240`;
+  `model/types.rs:89`.
+- **✅ Closed.** A declaration's kind becomes a group in exactly one place:
+  `TypeDecl::group`. `model/types/group.rs:225-231`.
+- **✅ Closed.** The scalar names live in one table, with the written word and
+  the displayed word together, and `scalar_from_name`/`display_name` read it.
+  `model/types/group.rs:38-54`, `:236-252`.
+- **⚠ Stands (one deviation).** A native is bound to a type by its **first
+  parameter** *or*, when it has none, by the head of its **return type**:
+  `register_builtins.rs:53-65` files a no-parameter native that returns a
+  `Named` type as an associated function of that type (this is what makes
+  `Vec.new()` reachable as `Vec.new`). The model says "a native is bound to a
+  type only when its first parameter marks it so"; the return-type binding is an
+  extension the model does not state.
+- **⚠ Stands (one deviation).** A bound function **is** reachable by a
+  namespace-qualified path. `resolve_call` reaches a method when a qualified
+  path's prefix names a namespace and the first argument's type head selects the
+  name: `std::dynamic::sort(xs)` resolves. `resolve_names/name_resolution.rs:57-78`.
+  The model says a bound function is "never reached by a namespace qualified
+  path"; the resolver and the stdlib both use the qualified form.
+- **⚠ Stands (minor).** The structural verifier `check_type` matches the `Type`
+  representation with a `_ => {}` wildcard, so a new type variant would be
+  silently skipped there rather than fail to compile. This is a recursion over
+  the representation, not a kind decision, but it is the one wildcard the model's
+  "no wildcard arm" rule would remove. `model/verify_graph.rs:132-154`.
 
 ## Clean under the model
 
-- `src/syntax/span.rs`, `src/model/ids.rs`, `src/compiler/load_files/load_error.rs`
-  — pure data, no rules.
-- `src/model/visitors.rs`, `src/bytecode/validation.rs`,
+- `src/syntax/span.rs`, `src/compiler/model/ids.rs`,
+  `src/compiler/load_files/load_error.rs` — pure data, no rules.
+- `src/compiler/model/visitors.rs`, `src/compiler/bytecode/validation.rs`,
   `src/compiler/prune_unreachable/tests.rs` — mechanical, no model logic.
-- `src/compiler/validate_program/validate_bodies/flow.rs` — a control-flow
-  outcome, not a type case.
-- `stdlib/path.kiru`, `stdlib/fs.kiru`, `stdlib/option.kiru` — clean kiru.
+- `src/compiler/validate_program/flow.rs` — a control-flow outcome, not a type
+  case.
+- `std/fs/path.kiru`, `std/fs/fs.kiru`, `std/std.kiru` — clean kiru.

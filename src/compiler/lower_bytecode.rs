@@ -9,8 +9,8 @@
 
 use std::collections::HashMap;
 
-use crate::bytecode::{Bytecode, Code, Instruction};
-use crate::model::{DeclarationId, Expression, Program};
+use crate::compiler::bytecode::{Bytecode, Code, Instruction};
+use crate::compiler::model::{DeclarationId, Program};
 
 /// Lower a validated, pruned program to bytecode.
 pub(crate) fn lower_bytecode(program: &Program) -> Bytecode {
@@ -62,7 +62,9 @@ impl Lowerer<'_> {
     /// the dependency order the resolver computed.
     fn assign_codes(&mut self) {
         for (index, declaration) in self.program.declarations.iter().enumerate() {
-            if declaration.value.is_none() {
+            let has_code = (declaration.kind.has_body() && declaration.kind.callable())
+                || (declaration.kind.has_value() && declaration.owner.is_none());
+            if !has_code {
                 continue;
             }
             let code_id = self.codes.len() as u32;
@@ -87,10 +89,16 @@ impl Lowerer<'_> {
                 continue;
             };
             let declaration = &program.declarations[index];
-            let code = match &declaration.value {
-                Some(Expression::Function(function)) => self.lower_function(function),
-                Some(expression) => self.lower_initializer(expression),
-                None => continue,
+            let code = if declaration.kind.callable() {
+                let function = declaration
+                    .function()
+                    .expect("a callable body is a function expression");
+                self.lower_function(function)
+            } else {
+                let value = declaration
+                    .value()
+                    .expect("a body that is not a function is an initializer");
+                self.lower_initializer(value)
             };
             self.codes[code_id as usize] = code;
         }

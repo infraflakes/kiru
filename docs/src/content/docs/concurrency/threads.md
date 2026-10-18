@@ -16,13 +16,13 @@ use std;
 use std::text;
 
 fn work() {
-  std::command("echo working").run();
+  std::process::command("echo working").run();
 };
 
 fn main() {
   async work();
   wait;
-  std::command("echo done").run();
+  std::process::command("echo done").run();
 };
 ```
 
@@ -49,7 +49,7 @@ main.kiru:4:16: error: expected text, found no value
 ```
 
 `async` takes one call: a user function, a native call such as
-`std::command("cargo build").run()`, or a call through a function value. It
+`std::process::command("cargo build").run()`, or a call through a function value. It
 cannot contain another `async`, because `async` is a statement, not a call:
 
 ```kiru
@@ -57,7 +57,7 @@ use std;
 use std::text;
 
 fn main() {
-  async std::command("echo parallel").run();
+  async std::process::command("echo parallel").run();
   wait;
 };
 ```
@@ -71,7 +71,7 @@ use std;
 use std::text;
 
 fn build(name: txt) {
-  std::command("echo building @(name)").run();
+  std::process::command("echo building @(name)").run();
 };
 
 fn main() {
@@ -101,7 +101,7 @@ use std;
 use std::text;
 
 fn check() {
-  std::command("echo noise").stream("stdout", "/dev/null").run();
+  std::process::command("echo noise").stream("stdout", "/dev/null").run();
 };
 
 fn main() {

@@ -18,7 +18,7 @@ use std::sync::{Arc, RwLock};
 #[cfg(test)]
 use std::collections::HashMap;
 
-use crate::bytecode::{Bytecode, CompareOp, Instruction, NumberOp};
+use crate::compiler::bytecode::{Bytecode, CompareOp, Instruction, NumberOp};
 use crate::lock_recovery::RwLockExt;
 use crate::runtime::Panic;
 use crate::runtime::{Map, Text, Value};
@@ -56,7 +56,7 @@ pub(crate) fn run(bytecode: Arc<Bytecode>, words: &[String]) -> i32 {
     };
     // Join every detached thread before deciding the exit code, so a failure in
     // a thread that outlived the entry still counts.
-    state.join_all_threads();
+    state.threads.join_all();
     if state.interrupted() != 0 {
         130
     } else if state.panicked() {
@@ -407,7 +407,7 @@ impl Runtime {
                     let values = self.argument_values(frame, arguments);
                     let runtime = self.detached();
                     let native = *native;
-                    self.state.spawn_thread(move || {
+                    self.state.threads.spawn(move || {
                         if runtime.call_native(native, values).is_err() {
                             runtime.state.record_failure();
                         }
@@ -421,14 +421,16 @@ impl Runtime {
                     };
                     values.extend(actual);
                     let runtime = self.detached();
-                    self.state.spawn_thread(move || {
+                    self.state.threads.spawn(move || {
                         if runtime.run_code(code, values).is_err() {
                             runtime.state.record_failure();
                         }
                     });
                 }
                 Instruction::Wait => {
-                    self.state.join_children(std::thread::current().id());
+                    self.state
+                        .threads
+                        .join_children(std::thread::current().id());
                 }
             }
             pc += 1;

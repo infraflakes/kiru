@@ -4,12 +4,14 @@
 //! arm body reads, and a `.member` that names an enum variant resolves to that
 //! variant rather than to a field.
 
+use crate::compiler::model::{
+    DeclarationId, DeclarationKind, NamespaceId, Pattern, TypeHead, TypeId, TypeKind,
+};
 use crate::compiler::{Diagnostic, duplicate_name};
-use crate::model::{DeclarationId, Pattern, TypeHead, TypeId, TypeKind};
 use crate::syntax::Expression as ParsedExpression;
 
+use super::body_linking::LocalDeclaration;
 use super::builder::{Builder, Skeleton, Slot};
-use super::linking::LocalDeclaration;
 use super::scopes::{Context, Scopes};
 
 impl Builder {
@@ -36,11 +38,12 @@ impl Builder {
         }
         let id = self.create_node(
             Skeleton {
+                kind: DeclarationKind::Let,
                 name: name.to_owned(),
                 name_span,
                 public: false,
-                first_parameter_head: None,
-                constructor_head: None,
+                receiver_head: None,
+                associated_head: None,
                 file: None,
                 namespace,
                 syntax_index: None,
@@ -65,7 +68,8 @@ impl Builder {
 
     /// The enum variant a `.member` names, when the receiver is a bare type path
     /// that no value shadows: `Option.some`, `std::Option.none`. A type that is
-    /// not an enum has no variants, so `None` lets the constructor lookup run.
+    /// not an enum has no variants, so `None` lets the associated-function
+    /// lookup run.
     pub(super) fn variant_member(
         &self,
         context: &Context,
@@ -95,18 +99,18 @@ impl Builder {
                 *span,
                 format!(
                     "unknown enum variant `{}.{member}`",
-                    crate::model::join_path(type_path)
+                    crate::compiler::model::join_path(type_path)
                 ),
             ));
         }
         Ok(None)
     }
 
-    /// The constructor a `.member` on a type name names: a visible function
-    /// with no parameters whose result has the type's head. `None` when the
-    /// receiver names a value or no type. A type receiver that names no such
-    /// constructor is an error, because a type is not a value.
-    pub(super) fn constructor_member(
+    /// The associated function a `.member` on a type name names: a function in
+    /// an `impl` block for the type whose first parameter is not the type.
+    /// `None` when the receiver names a value or no type. A type receiver that
+    /// names no such function is an error, because a type is not a value.
+    pub(super) fn associated_member(
         &self,
         context: &Context,
         receiver: &ParsedExpression,
@@ -123,60 +127,78 @@ impl Builder {
             return Ok(None);
         };
         let head = TypeHead::Named(id);
-        let mut selected = None;
-        for declaration in self.constructor_candidates(context, path, member) {
-            if self.skeletons[declaration.0].constructor_head != Some(head) {
-                continue;
-            }
-            if selected.is_some() {
-                return Err(Diagnostic::new(
-                    &self.files[context.file.0].path,
-                    *span,
-                    format!("`{member}` is ambiguous for this type"),
-                ));
-            }
-            selected = Some(declaration);
+        let found = self.visible_associates(context, member, head);
+        match found.as_slice() {
+            [] => Err(Diagnostic::new(
+                &self.files[context.file.0].path,
+                *span,
+                format!(
+                    "`{}` has no associated function `{member}`",
+                    crate::compiler::model::join_path(path)
+                ),
+            )),
+            [declaration] => Ok(Some(*declaration)),
+            _ => Err(Diagnostic::new(
+                &self.files[context.file.0].path,
+                *span,
+                format!("`{member}` is ambiguous for this type"),
+            )),
         }
-        if selected.is_some() {
-            return Ok(selected);
-        }
-        Err(Diagnostic::new(
-            &self.files[context.file.0].path,
-            *span,
-            format!(
-                "`{}` has no constructor `{member}`",
-                crate::model::join_path(path)
-            ),
-        ))
     }
 
-    /// The declarations a constructor lookup sees under `member`: for a bare
-    /// type name, the current namespace and the namespaces it `use`s; for a
-    /// qualified one, the namespace its prefix names.
-    fn constructor_candidates(
+    /// Every associated function for `head` named `member` that `context` may
+    /// reach. A bound function is gated by `pub` alone, never by a `use`, so
+    /// the whole program is searched.
+    fn visible_associates(
         &self,
         context: &Context,
-        type_path: &[String],
         member: &str,
+        head: TypeHead,
     ) -> Vec<DeclarationId> {
-        if type_path.len() == 1 {
-            return self.visible_declarations(context.namespace, member);
+        let mut found = Vec::new();
+        for (index, namespace) in self.namespaces.iter().enumerate() {
+            if let Some(declaration) = namespace.associate(head, member)
+                && self.bound_reachable(context.namespace, NamespaceId(index), declaration)
+            {
+                found.push(declaration);
+            }
         }
-        let prefix = &type_path[..type_path.len() - 1];
-        let Some(base) = self.used_namespace(context.namespace, &prefix[0]) else {
-            return Vec::new();
+        found
+    }
+
+    /// The bound function a `.member` on a type name names, as a value: a
+    /// method or an associated function filed under that type. Methods come
+    /// bundled with their type, so `Type.name` is the function value and
+    /// `Type.name(...)` is the call. `None` when the receiver names a value or
+    /// no type, or when the type carries no such function.
+    pub(super) fn bound_member(
+        &self,
+        context: &Context,
+        receiver: &ParsedExpression,
+        member: &str,
+    ) -> Result<Option<DeclarationId>, Diagnostic> {
+        let ParsedExpression::Name { path, span } = receiver else {
+            return Ok(None);
         };
-        let Some(namespace) = self.namespace_at_from(base, &prefix[1..]) else {
-            return Vec::new();
+        // A receiver that names a value is an ordinary field access.
+        if self.resolve(context, path, *span).is_ok() {
+            return Ok(None);
+        }
+        let Some(id) = self.find_type(context.namespace, path) else {
+            return Ok(None);
         };
-        self.namespaces[namespace.0]
-            .get(member)
-            .iter()
-            .copied()
-            .filter(|declaration| {
-                namespace == context.namespace || self.skeletons[declaration.0].public
-            })
-            .collect()
+        let head = TypeHead::Named(id);
+        let mut found = self.visible_associates(context, member, head);
+        found.extend(self.visible_methods(context, member, head));
+        match found.as_slice() {
+            [] => Ok(None),
+            [declaration] => Ok(Some(*declaration)),
+            _ => Err(Diagnostic::new(
+                &self.files[context.file.0].path,
+                *span,
+                format!("`{member}` is ambiguous for this type"),
+            )),
+        }
     }
 
     /// Link a `Name.variant(bind, ...)` pattern into a variant pattern, creating

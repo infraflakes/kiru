@@ -5,6 +5,7 @@
 //! the file carries no namespace of its own. Statements exist only inside
 //! function and `match` bodies.
 
+use crate::compiler::model::DeclarationKind;
 use crate::syntax::Span;
 
 /// One parsed source file: its top-level items in order.
@@ -16,27 +17,114 @@ pub(crate) struct File {
 /// A top-level item: a declaration or a `use`.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Item {
-    Declaration(Declaration),
+    Declaration(Box<Declaration>),
     Use(Use),
 }
 
-/// One `use a::b;` item. What the path ends at decides what it brings into the
-/// namespace that wrote it: a namespace gives the qualifier its last segment
-/// spells and joins that namespace's methods to dispatch; a name gives that one
-/// name bare.
+/// One `use a::b;` item, or one `use a::{b, c};` group. What each path ends at
+/// decides what it brings into the namespace that wrote it: a namespace gives
+/// the qualifier its last segment spells; a type gives that type bare; a plain
+/// function gives that one name bare.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Use {
-    pub(crate) path: Vec<String>,
+    /// The paths the item brings in: one for a plain `use`, one per name for a
+    /// one-level `use prefix::{name, name};` group.
+    pub(crate) paths: Vec<Vec<String>>,
     pub(crate) span: Span,
 }
 
-/// A top-level declaration.
+/// A top-level declaration: its kind, its visibility, the name it introduces,
+/// and the form that carries its body.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Declaration {
+pub(crate) struct Declaration {
+    /// The kind this declaration is. The parser marks it from the form it
+    /// reads, and every later pass reads it instead of matching the form.
+    pub(crate) kind: DeclarationKind,
+    /// Whether the declaration is `pub`, so another namespace may reach it. A
+    /// kind that does not take visibility is never marked `pub` by the parser.
+    pub(crate) public: bool,
+    pub(crate) name: String,
+    pub(crate) name_span: Span,
+    pub(crate) form: DeclarationForm,
+}
+
+/// The body of a declaration: the one payload its kind carries.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum DeclarationForm {
     Function(Function),
     Binding(Binding),
-    /// A `rec Name { field: Type, ... };` nominal type declaration.
     Type(TypeDeclaration),
+    Impl(ImplBlock),
+}
+
+impl Declaration {
+    /// The function payload when the form carries one.
+    pub(crate) fn function(&self) -> Option<&Function> {
+        match &self.form {
+            DeclarationForm::Function(function) => Some(function),
+            DeclarationForm::Binding(_) | DeclarationForm::Type(_) | DeclarationForm::Impl(_) => {
+                None
+            }
+        }
+    }
+
+    /// The binding payload when the form carries one.
+    pub(crate) fn binding(&self) -> Option<&Binding> {
+        match &self.form {
+            DeclarationForm::Binding(binding) => Some(binding),
+            DeclarationForm::Function(_) | DeclarationForm::Type(_) | DeclarationForm::Impl(_) => {
+                None
+            }
+        }
+    }
+
+    /// The declared type payload when the form carries one.
+    pub(crate) fn type_declaration(&self) -> Option<&TypeDeclaration> {
+        match &self.form {
+            DeclarationForm::Type(declaration) => Some(declaration),
+            DeclarationForm::Function(_)
+            | DeclarationForm::Binding(_)
+            | DeclarationForm::Impl(_) => None,
+        }
+    }
+
+    /// The `impl` block when the form carries one.
+    #[cfg(test)]
+    pub(crate) fn impl_block(&self) -> Option<&ImplBlock> {
+        match &self.form {
+            DeclarationForm::Impl(block) => Some(block),
+            DeclarationForm::Function(_)
+            | DeclarationForm::Binding(_)
+            | DeclarationForm::Type(_) => None,
+        }
+    }
+
+    /// Take the `impl` block the form carries. Only an `impl` declaration has
+    /// one.
+    pub(crate) fn into_impl(self) -> Option<ImplBlock> {
+        match self.form {
+            DeclarationForm::Impl(block) => Some(block),
+            DeclarationForm::Function(_)
+            | DeclarationForm::Binding(_)
+            | DeclarationForm::Type(_) => None,
+        }
+    }
+}
+
+/// An `impl Type { fn ...; };` block. Every function in the block is filed
+/// under the block's type: one whose first parameter's type is the block's type
+/// is a method, reached as `receiver.name(...)`; every other one is an
+/// associated function, reached as `Type.name(...)`.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ImplBlock {
+    /// The name of the type the block's functions are filed under, resolved in
+    /// the file's directory namespace.
+    pub(crate) name: String,
+    pub(crate) name_span: Span,
+    /// The functions the block files under its type. Each is already marked
+    /// with the impl kind, so a pass never re-derives its kind.
+    pub(crate) functions: Vec<Declaration>,
+    pub(crate) span: Span,
 }
 
 /// A `rec Name { field: Type, ... };` or `enum Name { ... };` declaration.
@@ -44,13 +132,29 @@ pub(crate) enum Declaration {
 pub(crate) struct TypeDeclaration {
     pub(crate) name: String,
     pub(crate) name_span: Span,
-    /// Whether the declaration is `pub`, so another namespace may reach it.
-    pub(crate) public: bool,
     /// The type parameters in `Name<A, B>`, in order; empty when there are
     /// none.
     pub(crate) parameters: Vec<String>,
     pub(crate) kind: TypeDeclarationKind,
     pub(crate) span: Span,
+}
+
+impl TypeDeclaration {
+    /// The fields of a `rec` body, or `None` for an `enum`.
+    pub(crate) fn fields(&self) -> Option<&[TypeField]> {
+        match &self.kind {
+            TypeDeclarationKind::Rec(fields) => Some(fields),
+            TypeDeclarationKind::Enum(_) => None,
+        }
+    }
+
+    /// The variants of an `enum` body, or `None` for a `rec`.
+    pub(crate) fn variants(&self) -> Option<&[VariantDeclaration]> {
+        match &self.kind {
+            TypeDeclarationKind::Enum(variants) => Some(variants),
+            TypeDeclarationKind::Rec(_) => None,
+        }
+    }
 }
 
 /// The body of a declared type: a fixed set of fields (`rec`) or a set of
@@ -115,15 +219,14 @@ impl TypeExpr {
 }
 
 /// A `fn name(parameters) -> type? { body };` declaration. An absent return
-/// type means the function returns no value. A function whose first parameter
-/// accepts a receiver's type may be called as `receiver.name(...)`, whatever the
-/// parameter is named.
+/// type means the function returns no value. Inside an `impl` block, a function
+/// whose first parameter accepts the block's type is a method, called as
+/// `receiver.name(...)`; every other function in the block is an associated
+/// function, called as `Type.name(...)`.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Function {
     pub(crate) name: String,
     pub(crate) name_span: Span,
-    /// Whether the declaration is `pub`, so another namespace may reach it.
-    pub(crate) public: bool,
     /// The type parameters in `fn name<T, U>(...)`, in order; empty when there
     /// are none.
     pub(crate) type_parameters: Vec<String>,
@@ -151,8 +254,6 @@ pub(crate) struct Binding {
     pub(crate) ty: TypeExpr,
     pub(crate) name: String,
     pub(crate) name_span: Span,
-    /// Whether the declaration is `pub`, so another namespace may reach it.
-    pub(crate) public: bool,
     pub(crate) value: Expression,
     pub(crate) span: Span,
 }

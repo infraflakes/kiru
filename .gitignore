@@ -13,5 +13,4 @@ docs/dist/
 docs/.astro/
 test
 test.kiru
-AGENTS.md
 rust-book/

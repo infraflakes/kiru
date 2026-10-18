@@ -1,0 +1,319 @@
+---
+title: std::syscalls
+description: The operating-system natives, each named for its syscall.
+---
+
+`std::syscalls` is the runtime's floor: every native that touches the operating
+system lives here, under its syscall or C library name. Each is public and is
+reached by its absolute path. The higher-level wrappers over them — the command
+builder, the signal-name table, the path helpers — are ordinary kiru in
+`std::process` and `std::fs`; [Running
+Commands](/commands/running-a-command/) shows how they fit together.
+
+A file descriptor is an `int`: `0` for stdin, `1` for stdout, `2` for stderr.
+
+<details>
+<summary><code>write</code> — write to a stream</summary>
+
+```text
+std::syscalls::write(file_descriptor: int, text: txt)
+```
+
+Writes `text` to one stream exactly, with no added newline.
+
+- `file_descriptor` — `1` for stdout or `2` for stderr.
+- `text` — the bytes to write.
+
+```kiru
+use std;
+fn main() {
+  std::syscalls::write(1, "no newline\n");
+};
+```
+
+</details>
+
+<details>
+<summary><code>isatty</code> — whether a stream is a terminal</summary>
+
+```text
+std::syscalls::isatty(file_descriptor: int) -> bool
+```
+
+Tells whether a stream is connected to a terminal.
+
+- `file_descriptor` — `1` for stdout or `2` for stderr.
+- Returns `true` or `false`.
+
+```kiru
+use std;
+fn main() {
+  match std::syscalls::isatty(1) {
+    true => { std::print("interactive"); };
+    _ => { std::print("redirected"); };
+  };
+};
+```
+
+</details>
+
+<details>
+<summary><code>read_stdin</code> — read all of standard input</summary>
+
+```text
+std::syscalls::read_stdin() -> txt
+```
+
+Reads standard input to the end, so a program can be a filter.
+
+- Returns everything read as text.
+
+```kiru
+use std;
+use std::text;
+use std::dynamic::Vec;
+fn main() {
+  let lines: Vec<txt> = std::syscalls::read_stdin().lines();
+  std::print("@(lines.len())");
+};
+```
+
+</details>
+
+<details>
+<summary><code>unlink</code> — remove a file</summary>
+
+```text
+std::syscalls::unlink(path: txt)
+```
+
+Removes the file named by `path`.
+
+- `path` — the file to remove.
+
+```kiru
+use std;
+fn main() {
+  let path: txt = std::fs::temp_file();
+  std::syscalls::unlink(path);
+  std::print("removed");
+};
+```
+
+</details>
+
+<details>
+<summary><code>access</code> — whether a path exists</summary>
+
+```text
+std::syscalls::access(path: txt) -> bool
+```
+
+Tests whether a path exists. It returns `false` instead of failing when the
+path is absent.
+
+- `path` — the path to test.
+- Returns `true` or `false`.
+
+```kiru
+use std;
+fn main() {
+  match std::syscalls::access("/") {
+    true => { std::print("found"); };
+    _ => { std::print("missing"); };
+  };
+};
+```
+
+</details>
+
+<details>
+<summary><code>mkstemp</code> — create a unique empty file</summary>
+
+```text
+std::syscalls::mkstemp(template: txt) -> txt
+```
+
+Creates an exclusive, owner-only empty file from a template whose last six
+characters are `XXXXXX`, and returns its path.
+
+- `template` — the path pattern.
+- Returns the path of the created file. The caller owns the file and must
+  remove it.
+
+```kiru
+use std;
+fn main() {
+  let path: txt = std::syscalls::mkstemp("/tmp/kiru-XXXXXX");
+  std::print(path);
+  std::syscalls::unlink(path);
+};
+```
+
+</details>
+
+<details>
+<summary><code>readdir</code> — the entry names of a directory</summary>
+
+```text
+std::syscalls::readdir(path: txt) -> Vec<txt>
+```
+
+Lists the entry names in a directory, without `.` or `..`.
+
+- `path` — the directory to list.
+- Returns the names as a `Vec<txt>`.
+
+```kiru
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let names: Vec<txt> = std::syscalls::readdir(".");
+  std::print("@(names.len())");
+};
+```
+
+</details>
+
+<details>
+<summary><code>getenv</code> — read an environment variable</summary>
+
+```text
+std::syscalls::getenv(name: txt) -> std::Option<txt>
+```
+
+- `name` — the variable to read.
+- Returns its value as `Option.some`, or `Option.none` when it is unset.
+  [Absence](/concepts/absence/) covers the optional value.
+
+```kiru
+use std;
+fn main() {
+  std::print(match std::syscalls::getenv("HOME") {
+    std::Option.some(home) => home;
+    std::Option.none => "(unset)";
+  });
+};
+```
+
+</details>
+
+<details>
+<summary><code>getcwd</code> — the working directory</summary>
+
+```text
+std::syscalls::getcwd() -> txt
+```
+
+- Returns the process's working directory as text.
+
+```kiru
+use std;
+fn main() {
+  std::print(std::syscalls::getcwd());
+};
+```
+
+</details>
+
+<details>
+<summary><code>posix_spawn</code> — run an argv and return its pid</summary>
+
+```text
+std::syscalls::posix_spawn(argv: Vec<txt>) -> int
+```
+
+Runs `argv` without a shell, in its own process group, and returns the pid as an
+`int`.
+
+- `argv` — the program and its arguments, each an element of the vec.
+- Every stream is inherited.
+
+```kiru
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let argv: Vec<txt> = Vec.new();
+  argv = argv.push("/bin/true");
+  let pid: int = std::syscalls::posix_spawn(argv);
+  std::print("@(std::syscalls::waitpid(pid))");
+};
+```
+
+</details>
+
+<details>
+<summary><code>waitpid</code> — reap a process and return its raw status</summary>
+
+```text
+std::syscalls::waitpid(pid: int) -> int
+```
+
+Waits for the process named by `pid` and reaps it.
+
+- `pid` — a pid returned by `posix_spawn`.
+- Returns the raw `wait` status. `std::process::wait_for` decodes it into an
+  exit code.
+
+```kiru
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let argv: Vec<txt> = Vec.new();
+  argv = argv.push("/bin/true");
+  let pid: int = std::syscalls::posix_spawn(argv);
+  std::print("@(std::process::wait_for(pid))");
+};
+```
+
+</details>
+
+<details>
+<summary><code>killpg</code> — send a signal to a process group</summary>
+
+```text
+std::syscalls::killpg(pid: int, signal: int)
+```
+
+Sends the numbered signal to the process group led by `pid`.
+
+- `pid` — a pid returned by `posix_spawn`.
+- `signal` — the signal number. `std::process::signal` maps a name to it.
+
+```kiru
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let argv: Vec<txt> = Vec.new();
+  argv = argv.push("sleep");
+  argv = argv.push("5");
+  let pid: int = std::syscalls::posix_spawn(argv);
+  std::syscalls::killpg(pid, 9);
+  std::syscalls::waitpid(pid);
+  std::print("stopped");
+};
+```
+
+</details>
+
+<details>
+<summary><code>nanosleep</code> — wait whole seconds</summary>
+
+```text
+std::syscalls::nanosleep(seconds: int)
+```
+
+Waits for `seconds` whole seconds. `std::process::sleep` checks the count and
+calls it.
+
+- `seconds` — the number of whole seconds.
+
+```kiru
+use std;
+fn main() {
+  std::syscalls::nanosleep(0);
+  std::print("waited");
+};
+```
+
+</details>

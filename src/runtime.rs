@@ -7,6 +7,8 @@ mod values;
 mod virtual_machine;
 
 pub(crate) use values::{Map, Text, Value};
+#[cfg(test)]
+pub(crate) use virtual_machine::Runtime;
 pub(crate) use virtual_machine::run;
 
 /// The name this program reports under: the invoked binary's file name, or

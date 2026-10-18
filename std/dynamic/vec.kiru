@@ -1,217 +1,368 @@
 # std/dynamic/vec.kiru
 #
-# The vec: an ordered list. `Vec<T>` is the runtime's list type; the compiler
-# registers its declaration in this namespace, and the runtime provides its
-# five operations (`new`, `len`, `at`, `replace`, `push`) as natives, listed in
-# `natives.md`. A function whose first parameter is a `Vec<T>` is callable as
-# `xs.name(...)`, so every function here is a vec method written in kiru on top
-# of those five. `std::join` (a text-vec convenience) stays in `std.kiru`,
-# because it applies to `Vec<txt>` alone rather than to every `Vec<T>`.
+# The vec: an ordered list. `std::dynamic::Vec<T>` is the runtime's list type;
+# the compiler registers its declaration in this namespace, and the runtime
+# provides its five operations (`new`, `len`, `at`, `replace`, `push`) as
+# natives, listed in `natives.md`. The natives' own signatures name `Vec`, and
+# every function in the `impl` block below has a `Vec<T>` first parameter, so
+# all of them are vec methods written in kiru on top of those five.
+#
+# This file writes full paths: it uses no `use`, and every bound function is
+# reached through its absolute path.
 
-# `bool`/`int` live at the `std` root and `txt` in its own category. `Vec<T>`
-# is declared in this namespace, so it needs no `use` here.
-use std;
-use std::Option;
-
-# A new vec with `item` inserted at the front.
-pub fn with_first<T>(self: Vec<T>, item: T) -> Vec<T> {
-  let out: Vec<T> = Vec.new();
-  out = out.push(item);
-  let index: int = 0;
-  let count: int = self.len();
-  for {
-    match index < count { false => { break; }; true => {}; };
-    out = out.push(self.at(index));
-    index = index + 1;
-  };
-  return out;
-};
-
-# A new vec with every element of `other` after every element of `self`.
-pub fn concat<T>(self: Vec<T>, other: Vec<T>) -> Vec<T> {
-  let result: Vec<T> = self;
-  let index: int = 0;
-  let count: int = other.len();
-  for {
-    match index < count { false => { break; }; true => {}; };
-    result = result.push(other.at(index));
-    index = index + 1;
-  };
-  return result;
-};
-
-# A new vec with the elements reversed. It appends into a fresh vec while
-# reading `self` from the end.
-pub fn reversed<T>(self: Vec<T>) -> Vec<T> {
-  let result: Vec<T> = Vec.new();
-  let index: int = self.len();
-  for {
-    match index > 0 { false => { break; }; true => {}; };
-    index = index - 1;
-    result = result.push(self.at(index));
-  };
-  return result;
-};
-
-# Whether `item` is an element.
-pub fn contains<T>(self: Vec<T>, item: T) -> bool {
-  let found: bool = false;
-  let index: int = 0;
-  let count: int = self.len();
-  for {
-    match index < count { false => { break; }; true => {}; };
-    match self.at(index) == item {
-      true => { found = true; break; };
-      _ => {};
-    };
-    index = index + 1;
-  };
-  return found;
-};
-
-# The first index of `item`, or the declared absence when it is not an
-# element. Equality is `==`.
-pub fn find<T>(self: Vec<T>, item: T) -> Option<int> {
-  let index: int = 0;
-  let count: int = self.len();
-  for {
-    match index < count { false => { break; }; true => {}; };
-    match self.at(index) == item {
-      true => { return Option.some(index); };
-      _ => {};
-    };
-    index = index + 1;
-  };
-  return Option.none;
-};
-
-# A new vec with adjacent duplicates dropped. `sorted_by` then `uniqued` keeps
-# one of each value, so a sorted vec becomes unique. Equality is `==`.
-pub fn uniqued<T>(self: Vec<T>) -> Vec<T> {
-  let out: Vec<T> = Vec.new();
-  let count: int = self.len();
-  match count {
-    0 => { return out; };
-    _ => {};
-  };
-  out = out.push(self.at(0));
-  let index: int = 1;
-  for {
-    match index < count { false => { break; }; true => {}; };
-    match self.at(index) == self.at(index - 1) {
-      true => {};
-      _ => { out = out.push(self.at(index)); };
-    };
-    index = index + 1;
-  };
-  return out;
-};
-
-# A new vec with `apply` called on every element.
-pub fn map<T, U>(self: Vec<T>, apply: fn(T) -> U) -> Vec<U> {
-  let out: Vec<U> = Vec.new();
-  let index: int = 0;
-  let count: int = self.len();
-  for {
-    match index < count { false => { break; }; true => {}; };
-    out = out.push(apply(self.at(index)));
-    index = index + 1;
-  };
-  return out;
-};
-
-# A new vec with the elements for which `keep` answers `true`.
-pub fn filter<T>(self: Vec<T>, keep: fn(T) -> bool) -> Vec<T> {
-  let out: Vec<T> = Vec.new();
-  let index: int = 0;
-  let count: int = self.len();
-  for {
-    match index < count { false => { break; }; true => {}; };
-    let item: T = self.at(index);
-    match keep(item) {
-      true => { out = out.push(item); };
-      _ => {};
-    };
-    index = index + 1;
-  };
-  return out;
-};
-
-# The first element. An empty vec has no first element, so it stops the run.
-pub fn first<T>(self: Vec<T>) -> T {
-  match self.len() {
-    0 => { std::eprint("first: the vec is empty"); };
-    _ => {};
-  };
-  return self.at(0);
-};
-
-# The last element. An empty vec has no last element, so it stops the run.
-pub fn last<T>(self: Vec<T>) -> T {
-  match self.len() {
-    0 => { std::eprint("last: the vec is empty"); };
-    _ => {};
-  };
-  return self.at(self.len() - 1);
-};
-
-# A new vec ordered by `less`: an iterative bottom-up merge sort. Each pass
-# merges runs of `width` (starting at one) into `merged`, then doubles
-# `width`, until one run covers the vec.
-pub fn sorted_by<T>(self: Vec<T>, less: fn(T, T) -> bool) -> Vec<T> {
-  let source: Vec<T> = self;
-  let count: int = source.len();
-  match count < 2 {
-    true => { return source; };
-    _ => {};
-  };
-  let width: int = 1;
-  for {
-    match width < count { false => { break; }; true => {}; };
-    let merged: Vec<T> = Vec.new();
-    let base: int = 0;
+impl Vec {
+  # A new vec with every element of `other` after every element of `self`.
+  pub fn concat<T>(self: std::dynamic::Vec<T>, other: std::dynamic::Vec<T>) -> std::dynamic::Vec<T> {
+    let result: std::dynamic::Vec<T> = self;
+    let index: int = 0;
+    let count: int = std::dynamic::len(other);
     for {
-      match base < count { false => { break; }; true => {}; };
-      let middle: int = match base + width < count {
-        true => base + width; false => count;
-      };
-      let end: int = match base + width + width < count {
-        true => base + width + width; false => count;
-      };
-      let left: int = base;
-      let right: int = middle;
-      for {
-        match left < middle && right < end { false => { break; }; true => {}; };
-        match less(source.at(right), source.at(left)) {
-          true => { merged = merged.push(source.at(right)); right = right + 1; };
-          false => { merged = merged.push(source.at(left)); left = left + 1; };
-        };
-      };
-      for {
-        match left < middle { false => { break; }; true => {}; };
-        merged = merged.push(source.at(left));
-        left = left + 1;
-      };
-      for {
-        match right < end { false => { break; }; true => {}; };
-        merged = merged.push(source.at(right));
-        right = right + 1;
-      };
-      base = end;
+      match index < count { false => { break; }; true => {}; };
+      result = std::dynamic::push(result, std::dynamic::at(other, index));
+      index = index + 1;
     };
-    source = merged;
-    width = width + width;
+    return result;
   };
-  return source;
+
+  # A new vec with the elements reversed. It appends into a fresh vec while
+  # reading `self` from the end.
+  pub fn reverse<T>(self: std::dynamic::Vec<T>) -> std::dynamic::Vec<T> {
+    let result: std::dynamic::Vec<T> = std::dynamic::Vec.new();
+    let index: int = std::dynamic::len(self);
+    for {
+      match index > 0 { false => { break; }; true => {}; };
+      index = index - 1;
+      result = std::dynamic::push(result, std::dynamic::at(self, index));
+    };
+    return result;
+  };
+
+  # Whether `item` is an element.
+  pub fn contains<T>(self: std::dynamic::Vec<T>, item: T) -> bool {
+    let found: bool = false;
+    let index: int = 0;
+    let count: int = std::dynamic::len(self);
+    for {
+      match index < count { false => { break; }; true => {}; };
+      match std::dynamic::at(self, index) == item {
+        true => { found = true; break; };
+        _ => {};
+      };
+      index = index + 1;
+    };
+    return found;
+  };
+
+  # The first index of `item`, or the declared absence when it is not an
+  # element. Equality is `==`.
+  pub fn index_of<T>(self: std::dynamic::Vec<T>, item: T) -> std::Option<int> {
+    let index: int = 0;
+    let count: int = std::dynamic::len(self);
+    for {
+      match index < count { false => { break; }; true => {}; };
+      match std::dynamic::at(self, index) == item {
+        true => { return std::Option.some(index); };
+        _ => {};
+      };
+      index = index + 1;
+    };
+    return std::Option.none;
+  };
+
+  # A new vec with adjacent duplicates dropped. `std::dynamic::sort_by` then
+  # `std::dynamic::dedup` keeps one of each value, so a sorted vec becomes
+  # unique. Equality is `==`.
+  pub fn dedup<T>(self: std::dynamic::Vec<T>) -> std::dynamic::Vec<T> {
+    let out: std::dynamic::Vec<T> = std::dynamic::Vec.new();
+    let count: int = std::dynamic::len(self);
+    match count {
+      0 => { return out; };
+      _ => {};
+    };
+    out = std::dynamic::push(out, std::dynamic::at(self, 0));
+    let index: int = 1;
+    for {
+      match index < count { false => { break; }; true => {}; };
+      match std::dynamic::at(self, index) == std::dynamic::at(self, index - 1) {
+        true => {};
+        _ => { out = std::dynamic::push(out, std::dynamic::at(self, index)); };
+      };
+      index = index + 1;
+    };
+    return out;
+  };
+
+  # A new vec with `apply` called on every element.
+  pub fn map<T, U>(self: std::dynamic::Vec<T>, apply: fn(T) -> U) -> std::dynamic::Vec<U> {
+    let out: std::dynamic::Vec<U> = std::dynamic::Vec.new();
+    let index: int = 0;
+    let count: int = std::dynamic::len(self);
+    for {
+      match index < count { false => { break; }; true => {}; };
+      out = std::dynamic::push(out, apply(std::dynamic::at(self, index)));
+      index = index + 1;
+    };
+    return out;
+  };
+
+  # A new vec with the elements for which `keep` answers `true`.
+  pub fn filter<T>(self: std::dynamic::Vec<T>, keep: fn(T) -> bool) -> std::dynamic::Vec<T> {
+    let out: std::dynamic::Vec<T> = std::dynamic::Vec.new();
+    let index: int = 0;
+    let count: int = std::dynamic::len(self);
+    for {
+      match index < count { false => { break; }; true => {}; };
+      let item: T = std::dynamic::at(self, index);
+      match keep(item) {
+        true => { out = std::dynamic::push(out, item); };
+        _ => {};
+      };
+      index = index + 1;
+    };
+    return out;
+  };
+
+  # A new vec with `item` placed at `index`; every element from `index` on
+  # shifts up. `index` may be the length, which appends. An index outside the
+  # vec stops the run.
+  pub fn insert<T>(self: std::dynamic::Vec<T>, index: int, item: T) -> std::dynamic::Vec<T> {
+    let count: int = std::dynamic::len(self);
+    match index < 0 || index > count {
+      true => { std::eprint("insert: the index is outside the vec"); };
+      _ => {};
+    };
+    let out: std::dynamic::Vec<T> = std::dynamic::Vec.new();
+    let at: int = 0;
+    for {
+      match at < count { false => { break; }; true => {}; };
+      match at == index {
+        true => { out = std::dynamic::push(out, item); };
+        _ => {};
+      };
+      out = std::dynamic::push(out, std::dynamic::at(self, at));
+      at = at + 1;
+    };
+    match index == count {
+      true => { out = std::dynamic::push(out, item); };
+      _ => {};
+    };
+    return out;
+  };
+
+  # A new vec with the element at `index` dropped; every element after it
+  # shifts down. An index outside the vec stops the run.
+  pub fn remove<T>(self: std::dynamic::Vec<T>, index: int) -> std::dynamic::Vec<T> {
+    let count: int = std::dynamic::len(self);
+    match index < 0 || index >= count {
+      true => { std::eprint("remove: the index is outside the vec"); };
+      _ => {};
+    };
+    let out: std::dynamic::Vec<T> = std::dynamic::Vec.new();
+    let at: int = 0;
+    for {
+      match at < count { false => { break; }; true => {}; };
+      match at == index {
+        true => {};
+        _ => { out = std::dynamic::push(out, std::dynamic::at(self, at)); };
+      };
+      at = at + 1;
+    };
+    return out;
+  };
+
+  # Whether there are no elements.
+  pub fn is_empty<T>(self: std::dynamic::Vec<T>) -> bool {
+    return std::dynamic::len(self) == 0;
+  };
+
+  # The empty vec.
+  pub fn clear<T>(self: std::dynamic::Vec<T>) -> std::dynamic::Vec<T> {
+    return std::dynamic::Vec.new();
+  };
+
+  # A new vec of the elements in the half-open range `from` up to `to`. A
+  # range outside the vec stops the run.
+  pub fn slice<T>(self: std::dynamic::Vec<T>, from: int, to: int) -> std::dynamic::Vec<T> {
+    let count: int = std::dynamic::len(self);
+    match from < 0 || to < from || to > count {
+      true => { std::eprint("slice: the range is outside the vec"); };
+      _ => {};
+    };
+    let out: std::dynamic::Vec<T> = std::dynamic::Vec.new();
+    let at: int = from;
+    for {
+      match at < to { false => { break; }; true => {}; };
+      out = std::dynamic::push(out, std::dynamic::at(self, at));
+      at = at + 1;
+    };
+    return out;
+  };
+
+  # The first `count` elements, or all of them when `count` exceeds the length.
+  # A `count` below zero yields no elements.
+  pub fn take<T>(self: std::dynamic::Vec<T>, count: int) -> std::dynamic::Vec<T> {
+    let out: std::dynamic::Vec<T> = std::dynamic::Vec.new();
+    let total: int = std::dynamic::len(self);
+    let at: int = 0;
+    for {
+      match at < count && at < total { false => { break; }; true => {}; };
+      out = std::dynamic::push(out, std::dynamic::at(self, at));
+      at = at + 1;
+    };
+    return out;
+  };
+
+  # Everything after the first `count` elements. A `count` below zero skips
+  # nothing.
+  pub fn skip<T>(self: std::dynamic::Vec<T>, count: int) -> std::dynamic::Vec<T> {
+    let out: std::dynamic::Vec<T> = std::dynamic::Vec.new();
+    let total: int = std::dynamic::len(self);
+    let at: int = match count < 0 { true => 0; _ => count; };
+    for {
+      match at < total { false => { break; }; true => {}; };
+      out = std::dynamic::push(out, std::dynamic::at(self, at));
+      at = at + 1;
+    };
+    return out;
+  };
+
+  # Fold `self` from left to right: `combine` is called once per element with
+  # the accumulator first and the element second, starting from `initial`.
+  pub fn fold<T, U>(self: std::dynamic::Vec<T>, initial: U, combine: fn(U, T) -> U) -> U {
+    let accumulator: U = initial;
+    let total: int = std::dynamic::len(self);
+    let at: int = 0;
+    for {
+      match at < total { false => { break; }; true => {}; };
+      accumulator = combine(accumulator, std::dynamic::at(self, at));
+      at = at + 1;
+    };
+    return accumulator;
+  };
+
+  # Call `apply` on every element, left to right. It returns nothing.
+  pub fn each<T>(self: std::dynamic::Vec<T>, apply: fn(T)) {
+    let total: int = std::dynamic::len(self);
+    let at: int = 0;
+    for {
+      match at < total { false => { break; }; true => {}; };
+      apply(std::dynamic::at(self, at));
+      at = at + 1;
+    };
+  };
+
+  # How many elements satisfy `keep`.
+  pub fn count<T>(self: std::dynamic::Vec<T>, keep: fn(T) -> bool) -> int {
+    let total: int = 0;
+    let length: int = std::dynamic::len(self);
+    let at: int = 0;
+    for {
+      match at < length { false => { break; }; true => {}; };
+      match keep(std::dynamic::at(self, at)) {
+        true => { total = total + 1; };
+        _ => {};
+      };
+      at = at + 1;
+    };
+    return total;
+  };
+
+  # The first element. An empty vec has no first element, so it stops the run.
+  pub fn first<T>(self: std::dynamic::Vec<T>) -> T {
+    match std::dynamic::len(self) {
+      0 => { std::eprint("first: the vec is empty"); };
+      _ => {};
+    };
+    return std::dynamic::at(self, 0);
+  };
+
+  # The last element. An empty vec has no last element, so it stops the run.
+  pub fn last<T>(self: std::dynamic::Vec<T>) -> T {
+    match std::dynamic::len(self) {
+      0 => { std::eprint("last: the vec is empty"); };
+      _ => {};
+    };
+    return std::dynamic::at(self, std::dynamic::len(self) - 1);
+  };
+
+  # A new vec ordered by `less`: an iterative bottom-up merge sort. Each pass
+  # merges runs of `width` (starting at one) into `merged`, then doubles
+  # `width`, until one run covers the vec.
+  pub fn sort_by<T>(self: std::dynamic::Vec<T>, less: fn(T, T) -> bool) -> std::dynamic::Vec<T> {
+    let source: std::dynamic::Vec<T> = self;
+    let count: int = std::dynamic::len(source);
+    match count < 2 {
+      true => { return source; };
+      _ => {};
+    };
+    let width: int = 1;
+    for {
+      match width < count { false => { break; }; true => {}; };
+      let merged: std::dynamic::Vec<T> = std::dynamic::Vec.new();
+      let base: int = 0;
+      for {
+        match base < count { false => { break; }; true => {}; };
+        let middle: int = match base + width < count {
+          true => base + width; false => count;
+        };
+        let end: int = match base + width + width < count {
+          true => base + width + width; false => count;
+        };
+        let left: int = base;
+        let right: int = middle;
+        for {
+          match left < middle && right < end { false => { break; }; true => {}; };
+          match less(std::dynamic::at(source, right), std::dynamic::at(source, left)) {
+            true => { merged = std::dynamic::push(merged, std::dynamic::at(source, right)); right = right + 1; };
+            false => { merged = std::dynamic::push(merged, std::dynamic::at(source, left)); left = left + 1; };
+          };
+        };
+        for {
+          match left < middle { false => { break; }; true => {}; };
+          merged = std::dynamic::push(merged, std::dynamic::at(source, left));
+          left = left + 1;
+        };
+        for {
+          match right < end { false => { break; }; true => {}; };
+          merged = std::dynamic::push(merged, std::dynamic::at(source, right));
+          right = right + 1;
+        };
+        base = end;
+      };
+      source = merged;
+      width = width + width;
+    };
+    return source;
+  };
+
+  # A new vec of text in byte-lexicographic order. It applies to `Vec<txt>`
+  # alone; a generic function cannot constrain its elements to text.
+  pub fn sort(items: std::dynamic::Vec<txt>) -> std::dynamic::Vec<txt> {
+    return std::dynamic::sort_by(items, std::dynamic::text_order);
+  };
+
+  # Join a vec of parts into one text with `separator` between each pair. A
+  # `Vec<txt>` method: `join` applies to text elements alone.
+  pub fn join(parts: std::dynamic::Vec<txt>, separator: txt) -> txt {
+    let result: txt = "";
+    let first: bool = true;
+    let index: int = 0;
+    let count: int = std::dynamic::len(parts);
+    for {
+      match index < count { false => { break; }; true => {}; };
+      let part: txt = std::dynamic::at(parts, index);
+      match first {
+        true => { result = part; first = false; };
+        _ => { result = "@(result)@(separator)@(part)"; };
+      };
+      index = index + 1;
+    };
+    return result;
+  };
 };
 
-# Whether `a` orders before `b`; the ordering the text `sorted` uses.
-pub fn text_less(a: txt, b: txt) -> bool {
+# Whether `a` orders before `b`; the ordering the text `sort` uses. It takes
+# two texts and belongs to no type, so it is a plain function.
+pub fn text_order(a: txt, b: txt) -> bool {
   return a < b;
-};
-
-# A new vec of text in byte-lexicographic order. It applies to `Vec<txt>`
-# alone; a generic function cannot constrain its elements to text.
-pub fn sorted(items: Vec<txt>) -> Vec<txt> {
-  return items.sorted_by(text_less);
 };

@@ -169,7 +169,7 @@ impl Parser {
     fn parse_item(&mut self) -> Result<Item, ParseError> {
         match &self.current().kind {
             TokenKind::Use => Ok(Item::Use(self.parse_use()?)),
-            _ => Ok(Item::Declaration(self.parse_declaration()?)),
+            _ => Ok(Item::Declaration(Box::new(self.parse_declaration()?))),
         }
     }
 

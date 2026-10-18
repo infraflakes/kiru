@@ -2,8 +2,8 @@
 
 use std::collections::HashSet;
 
-use crate::model::{
-    DeclarationId, Expression, Pattern, Program, Statement, Visitor, walk_expression,
+use crate::compiler::model::{
+    DeclarationId, Expression, MatchBody, Pattern, Program, Statement, Visitor, walk_expression,
 };
 
 /// The declarations reachable from the entry: every function's parameters and
@@ -33,51 +33,74 @@ struct ReachableCollector {
     pending: Vec<DeclarationId>,
 }
 
+impl ReachableCollector {
+    /// The declaration a binding statement declares.
+    fn declared(&mut self, statement: &Statement) {
+        let (Statement::Bind { declaration, .. }
+        | Statement::Assign { declaration, .. }
+        | Statement::FieldAssign { declaration, .. }) = statement
+        else {
+            unreachable!("the walk names a binding statement");
+        };
+        self.pending.push(*declaration);
+    }
+}
+
 impl Visitor for ReachableCollector {
-    fn expression(&mut self, expression: &Expression) {
-        match expression {
-            Expression::Reference { declaration, .. } => self.pending.push(*declaration),
-            // A function value owns its parameters; an unused one still needs
-            // a register, so every parameter is retained.
-            Expression::Function(function) => {
-                self.pending.extend(function.parameters.iter().copied());
-            }
-            Expression::Text { .. }
-            | Expression::Map { .. }
-            | Expression::Bool { .. }
-            | Expression::Int { .. }
-            | Expression::Variant { .. }
-            | Expression::Call { .. }
-            | Expression::Field { .. }
-            | Expression::Binary { .. }
-            | Expression::Unary { .. }
-            | Expression::Interpolated { .. }
-            | Expression::Match { .. } => {}
+    fn reference(&mut self, expression: &Expression) {
+        let Expression::Reference { declaration, .. } = expression else {
+            unreachable!("the walk names a reference");
+        };
+        self.pending.push(*declaration);
+    }
+
+    // A function value owns its parameters; an unused one still needs a
+    // register, so every parameter is retained.
+    fn function(&mut self, expression: &Expression) {
+        let Expression::Function(function) = expression else {
+            unreachable!("the walk names a function");
+        };
+        self.pending.extend(function.parameters.iter().copied());
+    }
+
+    fn bind(&mut self, statement: &Statement) {
+        self.declared(statement);
+    }
+    fn assign(&mut self, statement: &Statement) {
+        self.declared(statement);
+    }
+    fn field_assign(&mut self, statement: &Statement) {
+        self.declared(statement);
+    }
+
+    fn variant_pattern(&mut self, pattern: &Pattern) {
+        let Pattern::Variant { bindings, .. } = pattern else {
+            unreachable!("the walk names a variant pattern");
+        };
+        for id in bindings.iter().flatten() {
+            self.pending.push(*id);
         }
     }
 
-    fn pattern(&mut self, pattern: &Pattern) {
-        if let Pattern::Variant { bindings, .. } = pattern {
-            for id in bindings.iter().flatten() {
-                self.pending.push(*id);
-            }
-        }
-    }
-
-    fn statement(&mut self, statement: &Statement) {
-        match statement {
-            Statement::Bind { declaration, .. }
-            | Statement::Assign { declaration, .. }
-            | Statement::FieldAssign { declaration, .. } => {
-                self.pending.push(*declaration);
-            }
-            Statement::Expression(_)
-            | Statement::Return { .. }
-            | Statement::Panic { .. }
-            | Statement::Async { .. }
-            | Statement::Wait { .. }
-            | Statement::Break { .. }
-            | Statement::Forever { .. } => {}
-        }
-    }
+    fn text(&mut self, _: &Expression) {}
+    fn map(&mut self, _: &Expression) {}
+    fn boolean(&mut self, _: &Expression) {}
+    fn integer(&mut self, _: &Expression) {}
+    fn variant(&mut self, _: &Expression) {}
+    fn interpolated(&mut self, _: &Expression) {}
+    fn call(&mut self, _: &Expression) {}
+    fn field(&mut self, _: &Expression) {}
+    fn binary(&mut self, _: &Expression) {}
+    fn unary(&mut self, _: &Expression) {}
+    fn match_expression(&mut self, _: &Expression) {}
+    fn expression_statement(&mut self, _: &Statement) {}
+    fn return_statement(&mut self, _: &Statement) {}
+    fn panic(&mut self, _: &Statement) {}
+    fn asynchronous(&mut self, _: &Statement) {}
+    fn wait(&mut self, _: &Statement) {}
+    fn forever(&mut self, _: &Statement) {}
+    fn break_statement(&mut self, _: &Statement) {}
+    fn value_pattern(&mut self, _: &Pattern) {}
+    fn expression_body(&mut self, _: &MatchBody) {}
+    fn block_body(&mut self, _: &MatchBody) {}
 }

@@ -12,12 +12,14 @@ pub(crate) enum TokenKind {
     InterpolationStart,
     /// The `)` that closes an interpolation inside a string.
     InterpolationEnd,
-    /// `use`, which brings a namespace's qualifier and methods, or one name,
-    /// into scope.
+    /// `use`, which shortens paths: it brings a namespace's qualifier, a type,
+    /// or a plain function into the namespace that wrote it.
     Use,
     /// `pub`, which lets a declaration be seen outside its namespace.
     Pub,
     Fn,
+    /// `impl`, which opens an `impl` block that files functions under a type.
+    Impl,
     /// `enum`, which opens an enum type declaration.
     Enum,
     Let,
@@ -79,6 +81,7 @@ impl TokenKind {
             TokenKind::Use => "`use`".to_owned(),
             TokenKind::Pub => "`pub`".to_owned(),
             TokenKind::Fn => "`fn`".to_owned(),
+            TokenKind::Impl => "`impl`".to_owned(),
             TokenKind::Enum => "`enum`".to_owned(),
             TokenKind::Let => "`let`".to_owned(),
             TokenKind::Rec => "`rec`".to_owned(),

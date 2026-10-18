@@ -1,7 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use super::loader::{EMBEDDED, load_files};
-use crate::syntax::{self, Declaration};
+use super::loader::embedded::EMBEDDED;
+use super::loader::load_files;
+use crate::syntax::{self};
 
 fn write(directory: &Path, name: &str, contents: &str) -> PathBuf {
     let path = directory.join(name);
@@ -15,16 +16,8 @@ fn namespace_of(program: &super::LoadedProgram, name: &str) -> Vec<String> {
     program
         .items
         .iter()
-        .find_map(|item| match &item.declaration {
-            Declaration::Function(function) if function.name == name => {
-                Some(item.namespace.clone())
-            }
-            Declaration::Binding(binding) if binding.name == name => Some(item.namespace.clone()),
-            Declaration::Type(type_declaration) if type_declaration.name == name => {
-                Some(item.namespace.clone())
-            }
-            _ => None,
-        })
+        .find(|item| item.declaration.name == name)
+        .map(|item| item.namespace.clone())
         .unwrap_or_else(|| panic!("`{name}` is declared"))
 }
 
@@ -45,7 +38,7 @@ fn every_embedded_file_is_loaded() {
     let loaded: Vec<&str> = program
         .files
         .iter()
-        .filter(|file| matches!(file.origin, crate::model::Origin::Embedded))
+        .filter(|file| matches!(file.origin, crate::compiler::model::Origin::Embedded))
         .map(|file| file.path.to_str().expect("a path"))
         .collect();
     let mut expected: Vec<&str> = EMBEDDED.iter().map(|(path, _)| *path).collect();

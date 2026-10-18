@@ -11,7 +11,8 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, killpg, sigaction};
 use nix::unistd::Pid;
 
-use super::state::{MAX_GROUPS, RuntimeState};
+use super::child_processes::MAX_GROUPS;
+use super::state::RuntimeState;
 
 static SIGNAL_HANDLER_TARGET: AtomicPtr<RuntimeState> = AtomicPtr::new(std::ptr::null_mut());
 
@@ -74,11 +75,11 @@ impl RuntimeState {
     /// one.
     pub(super) fn register(&self, pgid: i32) -> bool {
         for slot in 0..MAX_GROUPS {
-            if self.slots_in_use[slot]
+            if self.processes.slots_in_use[slot]
                 .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
                 .is_ok()
             {
-                self.group_ids[slot].store(pgid, Ordering::SeqCst);
+                self.processes.group_ids[slot].store(pgid, Ordering::SeqCst);
                 return true;
             }
         }
@@ -87,11 +88,11 @@ impl RuntimeState {
 
     pub(super) fn unregister(&self, pgid: i32) {
         for slot in 0..MAX_GROUPS {
-            if self.slots_in_use[slot].load(Ordering::SeqCst)
-                && self.group_ids[slot].load(Ordering::SeqCst) == pgid
+            if self.processes.slots_in_use[slot].load(Ordering::SeqCst)
+                && self.processes.group_ids[slot].load(Ordering::SeqCst) == pgid
             {
-                self.group_ids[slot].store(0, Ordering::SeqCst);
-                self.slots_in_use[slot].store(false, Ordering::SeqCst);
+                self.processes.group_ids[slot].store(0, Ordering::SeqCst);
+                self.processes.slots_in_use[slot].store(false, Ordering::SeqCst);
                 return;
             }
         }
@@ -99,8 +100,8 @@ impl RuntimeState {
 
     fn signal_all(&self, signal: Signal) {
         for slot in 0..MAX_GROUPS {
-            if self.slots_in_use[slot].load(Ordering::SeqCst) {
-                let pgid = self.group_ids[slot].load(Ordering::SeqCst);
+            if self.processes.slots_in_use[slot].load(Ordering::SeqCst) {
+                let pgid = self.processes.group_ids[slot].load(Ordering::SeqCst);
                 if pgid > 0 {
                     signal_group(pgid, signal);
                 }

@@ -215,6 +215,7 @@ impl<'a> Lexer<'a> {
             "use" => TokenKind::Use,
             "pub" => TokenKind::Pub,
             "fn" => TokenKind::Fn,
+            "impl" => TokenKind::Impl,
             "enum" => TokenKind::Enum,
             "let" => TokenKind::Let,
             "rec" => TokenKind::Rec,
@@ -380,6 +381,21 @@ mod tests {
                 TokenKind::Dot,
                 TokenKind::Ident("dir".to_owned()),
                 TokenKind::Semi,
+                TokenKind::RBrace,
+                TokenKind::Semi,
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn lexes_the_impl_keyword() {
+        assert_eq!(
+            kinds("impl Vec {};"),
+            vec![
+                TokenKind::Impl,
+                TokenKind::Ident("Vec".to_owned()),
+                TokenKind::LBrace,
                 TokenKind::RBrace,
                 TokenKind::Semi,
                 TokenKind::Eof,

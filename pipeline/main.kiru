@@ -49,8 +49,8 @@ fn run_usage(context: std::cli::Context) -> int {
 fn main(words: Vec<txt>) -> int {
   let root: std::cli::Subcommand = std::cli::command("kiru").about("build the project")
     .action(run_usage);
-  root = root.with(std::cli::command("kiru").about("build kiru").action(run_kiru));
-  root = root.with(std::cli::command("docs").about("build the docs").action(run_docs));
-  root = root.with(std::cli::command("all").about("build everything").action(run_all));
+  root = root.add_child(std::cli::command("kiru").about("build kiru").action(run_kiru));
+  root = root.add_child(std::cli::command("docs").about("build the docs").action(run_docs));
+  root = root.add_child(std::cli::command("all").about("build everything").action(run_all));
   return root.parse(words);
 };

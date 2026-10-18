@@ -14,17 +14,18 @@ command, and reports the result.
 
 ## Running a Command
 
-Running other programs is what Kiru is for. `std::command(line)` starts a
-command under construction, and `.run()` runs it through the shell
+Running other programs is what Kiru is for. `std::process::command(line)` starts
+a command under construction, and `.run()` runs it through the shell
 (`/bin/sh -c`) and returns the exit code as an `int`:
 
 <span class="filename">Filename: tasks.kiru</span>
 
 ```kiru
 use std;
+use std::process;
 
 fn main() -> int {
-  return std::command("cargo build").run();
+  return std::process::command("echo building").run();
 };
 ```
 
@@ -37,8 +38,7 @@ Compile and run it in a project directory:
 ```console
 $ kc tasks.kiru
 $ ./tasks
-   Compiling tasks v0.1.0 (/home/you/tasks)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.42s
+building
 $ echo $?
 0
 ```
@@ -52,7 +52,7 @@ with named fields:
 
 ```kiru
 use std;
-use std::text;
+use std::process;
 
 rec Task {
   name: txt,
@@ -61,7 +61,7 @@ rec Task {
 
 fn run(task: Task) -> int {
   std::print("== @(task.name)");
-  let code: int = std::command(task.line).run();
+  let code: int = std::process::command(task.line).run();
   match code {
     0 => { std::print("@(task.name): ok"); };
     _ => { std::print("@(task.name): failed (@(code))"); };
@@ -70,7 +70,7 @@ fn run(task: Task) -> int {
 };
 
 fn main() -> int {
-  let task: Task = { name = "build", line = "cargo build" };
+  let task: Task = { name = "build", line = "echo building" };
   return run(task);
 };
 ```
@@ -92,16 +92,12 @@ Three things are new here:
 `@(…)`: `@(task.name)` inserts the name and `@(code)` inserts the exit code as
 decimal text. [Text](/concepts/text/) covers interpolation.
 
-`run` is written above `main`. A name must be declared before the code that uses
-it, so helper functions go before the functions that call them.
-[Modules](/concepts/modules/) explains the rule.
-
 Run it:
 
 ```console
 $ ./tasks
 == build
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.42s
+building
 build: ok
 ```
 
@@ -115,8 +111,8 @@ build: ok
 ```kiru
 use std;
 use std::cli;
-use std::text;
-use std::vec;
+use std::process;
+use std::dynamic::Vec;
 
 rec Task {
   name: txt,
@@ -125,7 +121,7 @@ rec Task {
 
 fn run(task: Task) -> int {
   std::print("== @(task.name)");
-  let code: int = std::command(task.line).run();
+  let code: int = std::process::command(task.line).run();
   match code {
     0 => { std::print("@(task.name): ok"); };
     _ => { std::print("@(task.name): failed (@(code))"); };
@@ -134,26 +130,32 @@ fn run(task: Task) -> int {
 };
 
 fn build(context: std::cli::Context) -> int {
-  let task: Task = { name = "build", line = "cargo build" };
+  let task: Task = { name = "build", line = "echo building" };
   return run(task);
 };
 
 fn test(context: std::cli::Context) -> int {
-  let task: Task = { name = "test", line = "cargo test" };
+  let task: Task = { name = "test", line = "echo testing" };
   return run(task);
+};
+
+fn usage(context: std::cli::Context) -> int {
+  std::print("tasks: run a project task");
+  return 0;
 };
 
 fn main(words: Vec<txt>) -> int {
   let tasks: std::cli::Subcommand = std::cli::command("tasks")
     .about("run a project task")
-    .with(std::cli::command("build").about("build the project").action(build))
-    .with(std::cli::command("test").about("run the tests").action(test));
+    .action(usage)
+    .add_child(std::cli::command("build").about("build the project").action(build))
+    .add_child(std::cli::command("test").about("run the tests").action(test));
   return tasks.parse(words);
 };
 ```
 
 `std::cli::command(name)` starts a command named `name`, `.about(text)` sets its
-description, `.with(child)` links a child command, and `.action(handler)` sets
+description, `.add_child(child)` links a child command, and `.action(handler)` sets
 the function that runs when the command is selected. Each method returns the
 command, so the calls chain. `parse(words)` descends the tree by the leading
 words and calls the selected command's action. An action takes a
@@ -169,7 +171,7 @@ Run it:
 ```console
 $ ./tasks build
 == build
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.42s
+building
 build: ok
 $ echo $?
 0
@@ -182,16 +184,17 @@ tasks: run a project task
 ## Capturing Output
 
 A task runner often wants a command's output as data instead of printing it
-live. `.capture()` runs the command and returns a `std::Output`, a declared type
-with the fields `code`, `out`, and `err`:
+live. `.capture()` runs the command and returns a `std::process::Output`, a
+declared type with the fields `code`, `out`, and `err`:
 
 <span class="filename">Filename: tasks.kiru</span>
 
 ```kiru
 use std;
+use std::process;
 
 fn main() -> int {
-  let result: std::Output = std::command("cargo test").capture();
+  let result: std::process::Output = std::process::command("echo tests").capture();
   match result.code {
     0 => { std::print("tests passed"); };
     _ => {
@@ -207,15 +210,14 @@ fn main() -> int {
 `result.err` is the captured stderr as `txt`. `.run()` streams a command's
 output live and returns only the code; `.capture()` captures both streams and
 returns them. [Running Commands](/commands/running-a-command/) covers the
-choice. `std::Output` is a declared `rec`, so `result.code` and `result.err` are
-read as declared fields. [Declared Types](/concepts/declared-types/) covers
-`rec`.
+choice. `std::process::Output` is a declared `rec`, so `result.code` and
+`result.err` are read as declared fields. [Declared
+Types](/concepts/declared-types/) covers `rec`.
 
 Run it:
 
 ```console
 $ ./tasks
-... test output ...
 tests passed
 ```
 
@@ -226,7 +228,8 @@ its command, and reports the result. The rest of the book explains each piece in
 turn.
 
 - [Common Concepts](/concepts/text/) covers text, maps, functions, and loops.
-- [Modules](/concepts/modules/) covers splitting a program across files.
+- [Namespaces](/concepts/modules/) covers splitting a program across
+  directories.
 - [Commands](/commands/running-a-command/) goes deeper into running processes.
 - [Failure and Signals](/failure/panic/) covers what happens when a program
   fails.

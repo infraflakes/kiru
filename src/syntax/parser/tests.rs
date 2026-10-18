@@ -95,9 +95,9 @@ fn rejects_for_in() {
 #[test]
 fn parses_parameterized_vec_types() {
     let file = parse("fn f(xs: Vec<int>, nested: Vec<Vec<txt>>) -> Vec<txt> { return xs; };");
-    let Declaration::Function(function) = declaration(&file, 0) else {
-        panic!("expected a function");
-    };
+    let function = declaration(&file, 0)
+        .function()
+        .expect("expected a function");
     assert_eq!(written_name(vec_element(&function.parameters[0].ty)), "int");
 
     let nested = vec_element(&function.parameters[1].ty);
@@ -111,9 +111,9 @@ fn parses_parameterized_vec_types() {
     // A bare `Vec` parses as a name with no arguments; the resolver rejects it
     // for arity, because the element type is always written.
     let file = parse("fn f(xs: Vec) {};");
-    let Declaration::Function(function) = declaration(&file, 0) else {
-        panic!("expected a function");
-    };
+    let function = declaration(&file, 0)
+        .function()
+        .expect("expected a function");
     let TypeExpr::Named {
         path, arguments, ..
     } = &function.parameters[0].ty
@@ -130,7 +130,10 @@ fn parses_a_use_of_a_namespace() {
     let Item::Use(use_item) = &file.items[0] else {
         panic!("expected a use");
     };
-    assert_eq!(use_item.path, vec!["std".to_owned(), "dynamic".to_owned()]);
+    assert_eq!(
+        use_item.paths,
+        vec![vec!["std".to_owned(), "dynamic".to_owned()]]
+    );
 }
 
 #[test]
@@ -140,10 +143,68 @@ fn parses_a_use_of_a_name() {
         panic!("expected a use");
     };
     assert_eq!(
-        use_item.path,
-        vec!["std".to_owned(), "dynamic".to_owned(), "Vec".to_owned()]
+        use_item.paths,
+        vec![vec![
+            "std".to_owned(),
+            "dynamic".to_owned(),
+            "Vec".to_owned()
+        ]]
     );
     assert!(matches!(file.items[1], Item::Declaration(_)));
+}
+
+#[test]
+fn parses_a_use_group() {
+    // One level of braces names several things under one prefix: one `use`
+    // item expands to one path per name.
+    let file = parse("use std::dynamic::{Map, text_order};\nfn f() {};");
+    let Item::Use(use_item) = &file.items[0] else {
+        panic!("expected a use");
+    };
+    assert_eq!(
+        use_item.paths,
+        vec![
+            vec!["std".to_owned(), "dynamic".to_owned(), "Map".to_owned()],
+            vec![
+                "std".to_owned(),
+                "dynamic".to_owned(),
+                "text_order".to_owned()
+            ],
+        ]
+    );
+    assert!(matches!(file.items[1], Item::Declaration(_)));
+}
+
+#[test]
+fn rejects_a_use_group_that_is_not_one_level() {
+    assert_eq!(
+        parse_error("use std::dynamic::{Map, {Set}};"),
+        "expected a name in a use group, found `{`"
+    );
+    assert_eq!(
+        parse_error("use std::dynamic::{};"),
+        "a use group must name at least one thing"
+    );
+}
+
+#[test]
+fn bare_names_are_values_and_parentheses_are_calls() {
+    // A bare name is always a value; `name(...)` is always a call.
+    let file = parse("fn main() { let f: fn() = go; go(); };");
+    let function = declaration(&file, 0)
+        .function()
+        .expect("expected a function");
+    let Statement::Binding(binding) = &function.body[0] else {
+        panic!("expected a binding");
+    };
+    let Expression::Name { path, .. } = &binding.value else {
+        panic!("expected a bare name, found {:?}", binding.value);
+    };
+    assert_eq!(path, &["go".to_owned()]);
+    let Statement::Expression(Expression::Call { callee, .. }) = &function.body[1] else {
+        panic!("expected a call statement");
+    };
+    assert_eq!(callee, &["go".to_owned()]);
 }
 
 #[test]
@@ -160,9 +221,9 @@ fn parses_function_with_match_and_calls() {
            };\n\
          };",
     );
-    let Declaration::Function(function) = declaration(&file, 0) else {
-        panic!("expected a function");
-    };
+    let function = declaration(&file, 0)
+        .function()
+        .expect("expected a function");
     assert_eq!(function.name, "main");
     assert_eq!(function.parameters[0].name, "args");
     assert_eq!(written_name(&function.parameters[0].ty), "txt");
@@ -176,9 +237,9 @@ fn parses_function_with_match_and_calls() {
 #[test]
 fn parses_sums_left_associatively() {
     let file = parse("fn f() -> txt { return \"a\" + \"b\" + \"c\"; };");
-    let Declaration::Function(function) = declaration(&file, 0) else {
-        panic!("expected a function");
-    };
+    let function = declaration(&file, 0)
+        .function()
+        .expect("expected a function");
     let Statement::Return {
         value: Some(expression),
         ..
@@ -197,9 +258,9 @@ fn parses_sums_left_associatively() {
 #[test]
 fn parses_typed_parameters() {
     let file = parse("fn f(a: txt, b: bool) -> txt { return a; };");
-    let Declaration::Function(function) = declaration(&file, 0) else {
-        panic!("expected a function");
-    };
+    let function = declaration(&file, 0)
+        .function()
+        .expect("expected a function");
     assert_eq!(function.parameters[0].name, "a");
     assert_eq!(written_name(&function.parameters[0].ty), "txt");
     assert_eq!(function.parameters[1].name, "b");
@@ -214,32 +275,32 @@ fn parses_return_types() {
          fn bool_value() -> bool { return true; };\n\
          fn no_value() { return; };",
     );
-    let Declaration::Function(text_value) = declaration(&file, 0) else {
-        panic!("expected a function");
-    };
+    let text_value = declaration(&file, 0)
+        .function()
+        .expect("expected a function");
     assert_eq!(
         text_value.return_type.as_ref().map(written_name),
         Some("txt")
     );
-    let Declaration::Function(bool_value) = declaration(&file, 1) else {
-        panic!("expected a function");
-    };
+    let bool_value = declaration(&file, 1)
+        .function()
+        .expect("expected a function");
     assert_eq!(
         bool_value.return_type.as_ref().map(written_name),
         Some("bool")
     );
-    let Declaration::Function(no_value) = declaration(&file, 2) else {
-        panic!("expected a function");
-    };
+    let no_value = declaration(&file, 2)
+        .function()
+        .expect("expected a function");
     assert_eq!(no_value.return_type, None);
 }
 
 #[test]
 fn parses_generic_type_parameters() {
     let file = parse("rec Pair<A, B> { first: A, second: B };");
-    let Declaration::Type(type_decl) = declaration(&file, 0) else {
-        panic!("expected a type declaration");
-    };
+    let type_decl = declaration(&file, 0)
+        .type_declaration()
+        .expect("expected a type declaration");
     assert_eq!(type_decl.parameters, vec!["A".to_owned(), "B".to_owned()]);
     let TypeDeclarationKind::Rec(fields) = &type_decl.kind else {
         panic!("expected a `rec` declaration");
@@ -254,9 +315,9 @@ fn parses_generic_type_parameters() {
     assert!(arguments.is_empty());
 
     let file = parse("fn f(p: Pair<int, txt>) {};");
-    let Declaration::Function(function) = declaration(&file, 0) else {
-        panic!("expected a function");
-    };
+    let function = declaration(&file, 0)
+        .function()
+        .expect("expected a function");
     let TypeExpr::Named { arguments, .. } = &function.parameters[0].ty else {
         panic!("expected a named type");
     };
@@ -268,9 +329,9 @@ fn parses_generic_type_parameters() {
 #[test]
 fn parses_generic_function_parameters() {
     let file = parse("fn pair<A, B>(a: A, b: B) -> A { return a; };");
-    let Declaration::Function(function) = declaration(&file, 0) else {
-        panic!("expected a function");
-    };
+    let function = declaration(&file, 0)
+        .function()
+        .expect("expected a function");
     assert_eq!(
         function.type_parameters,
         vec!["A".to_owned(), "B".to_owned()]
@@ -280,9 +341,9 @@ fn parses_generic_function_parameters() {
 #[test]
 fn parses_a_function_type() {
     let file = parse("fn apply(f: fn(int) -> int, x: int) -> int { return x; };");
-    let Declaration::Function(function) = declaration(&file, 0) else {
-        panic!("expected a function");
-    };
+    let function = declaration(&file, 0)
+        .function()
+        .expect("expected a function");
     let TypeExpr::Function { parameters, .. } = &function.parameters[0].ty else {
         panic!("expected a function type");
     };
@@ -292,9 +353,9 @@ fn parses_a_function_type() {
 #[test]
 fn parses_a_type_declaration() {
     let file = parse("rec Project { name: txt, count: int };");
-    let Declaration::Type(declaration) = declaration(&file, 0) else {
-        panic!("expected a type declaration");
-    };
+    let declaration = declaration(&file, 0)
+        .type_declaration()
+        .expect("expected a type declaration");
     assert_eq!(declaration.name, "Project");
     let TypeDeclarationKind::Rec(fields) = &declaration.kind else {
         panic!("expected a `rec` declaration");
@@ -323,9 +384,9 @@ fn rejects_a_bodyless_type_declaration() {
 #[test]
 fn parses_an_enum_declaration() {
     let file = parse("enum Shape { Dot, Circle(int), Rect(int, int) };");
-    let Declaration::Type(declaration) = declaration(&file, 0) else {
-        panic!("expected a type declaration");
-    };
+    let declaration = declaration(&file, 0)
+        .type_declaration()
+        .expect("expected a type declaration");
     assert_eq!(declaration.name, "Shape");
     let TypeDeclarationKind::Enum(variants) = &declaration.kind else {
         panic!("expected an enum declaration");
@@ -342,9 +403,9 @@ fn parses_an_enum_declaration() {
 #[test]
 fn parses_a_record_literal() {
     let file = parse("fn main() { let p: Project = { name = \"x\" }; };");
-    let Declaration::Function(function) = declaration(&file, 0) else {
-        panic!("expected a function");
-    };
+    let function = declaration(&file, 0)
+        .function()
+        .expect("expected a function");
     let Statement::Binding(binding) = &function.body[0] else {
         panic!("expected a binding");
     };
@@ -378,9 +439,9 @@ fn parses_async_call_and_wait() {
            wait;\n\
          };",
     );
-    let Declaration::Function(function) = declaration(&file, 0) else {
-        panic!("expected a function");
-    };
+    let function = declaration(&file, 0)
+        .function()
+        .expect("expected a function");
     assert!(matches!(function.body[0], Statement::Async { .. }));
     assert!(matches!(function.body[1], Statement::Wait { .. }));
 }
@@ -403,23 +464,23 @@ fn rejects_a_leading_path_separator() {
 #[test]
 fn parses_value_no_value_and_panic_returns() {
     let file = parse("fn f(a: txt) -> txt { return a; };\nfn g() { return; };\nfn h() { panic; };");
-    let Declaration::Function(value) = declaration(&file, 0) else {
-        panic!("expected a function");
-    };
+    let value = declaration(&file, 0)
+        .function()
+        .expect("expected a function");
     assert!(matches!(
         value.body[0],
         Statement::Return { value: Some(_), .. }
     ));
-    let Declaration::Function(empty) = declaration(&file, 1) else {
-        panic!("expected a function");
-    };
+    let empty = declaration(&file, 1)
+        .function()
+        .expect("expected a function");
     assert!(matches!(
         empty.body[0],
         Statement::Return { value: None, .. }
     ));
-    let Declaration::Function(panics) = declaration(&file, 2) else {
-        panic!("expected a function");
-    };
+    let panics = declaration(&file, 2)
+        .function()
+        .expect("expected a function");
     assert!(matches!(panics.body[0], Statement::Panic { .. }));
 }
 
@@ -432,9 +493,9 @@ fn rejects_missing_semicolon() {
 #[test]
 fn parses_field_assignment() {
     let file = parse("fn f(args: P) { args.cmd = \"x\"; };");
-    let Declaration::Function(function) = declaration(&file, 0) else {
-        panic!("expected a function");
-    };
+    let function = declaration(&file, 0)
+        .function()
+        .expect("expected a function");
     assert!(matches!(
         &function.body[0],
         Statement::FieldAssignment { field, .. } if field == "cmd"
@@ -444,9 +505,9 @@ fn parses_field_assignment() {
 #[test]
 fn parses_bindings_and_field_assignment() {
     let file = parse("fn f(x: txt) { let r: P = { a = \"1\" }; r.a = \"2\"; };");
-    let Declaration::Function(function) = declaration(&file, 0) else {
-        panic!("expected a function");
-    };
+    let function = declaration(&file, 0)
+        .function()
+        .expect("expected a function");
     assert!(matches!(function.body[0], Statement::Binding(_)));
     assert!(matches!(
         function.body[1],
@@ -488,9 +549,9 @@ fn parser_errors() {
 #[test]
 fn parses_a_closure() {
     let file = parse("fn main() { let f: fn(int) -> int = fn(x: int) -> int { return x; }; };");
-    let Declaration::Function(function) = declaration(&file, 0) else {
-        panic!("expected a function");
-    };
+    let function = declaration(&file, 0)
+        .function()
+        .expect("expected a function");
     let Statement::Binding(binding) = &function.body[0] else {
         panic!("expected a binding");
     };
@@ -500,9 +561,9 @@ fn parses_a_closure() {
 #[test]
 fn parses_a_no_value_function_type() {
     let file = parse("fn main() { let go: fn(txt) = fn(name: txt) { }; };");
-    let Declaration::Function(function) = declaration(&file, 0) else {
-        panic!("expected a function");
-    };
+    let function = declaration(&file, 0)
+        .function()
+        .expect("expected a function");
     let Statement::Binding(binding) = &function.body[0] else {
         panic!("expected a binding");
     };
@@ -513,11 +574,67 @@ fn parses_a_no_value_function_type() {
 }
 
 #[test]
-fn parses_a_method_function() {
+fn parses_an_impl_block() {
+    let file = parse(
+        "impl Vec {\n\
+           pub fn new<T>() -> Vec<T> { return Vec.new(); };\n\
+           fn push<T>(self: Vec<T>, item: T) -> Vec<T> { return self; };\n\
+         };",
+    );
+    let block = declaration(&file, 0)
+        .impl_block()
+        .expect("expected an impl block");
+    assert_eq!(block.name, "Vec");
+    assert_eq!(block.functions.len(), 2);
+    assert_eq!(block.functions[0].name, "new");
+    assert!(block.functions[0].public);
+    assert_eq!(block.functions[1].name, "push");
+    assert!(!block.functions[1].public);
+    assert_eq!(
+        block.functions[1]
+            .function()
+            .expect("a member carries its function")
+            .parameters[0]
+            .name,
+        "self"
+    );
+    // An empty block is a form: it files nothing.
+    let file = parse("impl Vec {};");
+    let block = declaration(&file, 0)
+        .impl_block()
+        .expect("expected an impl block");
+    assert!(block.functions.is_empty());
+}
+
+#[test]
+fn impl_block_errors() {
+    assert_eq!(
+        parse_error("impl Vec { let x: int = 1; };"),
+        "expected a function in the impl block, found `let`"
+    );
+    assert_eq!(
+        parse_error("pub impl Vec {};"),
+        "expected a declaration, found `pub`"
+    );
+    assert_eq!(
+        parse_error("impl Vec {}"),
+        "expected `;` after the impl block, found the end of the file"
+    );
+    assert_eq!(
+        parse_error("impl Vec<T> {};"),
+        "expected `{` to open the impl block, found `<`"
+    );
+}
+
+#[test]
+fn parses_a_function_with_a_receiver_parameter() {
+    // Outside an `impl` block, a function with a receiver-shaped first
+    // parameter is an ordinary function: the block is what files it under a
+    // type.
     let file = parse("fn len<T>(self: Vec<T>) -> int { return 0; };");
-    let Item::Declaration(Declaration::Function(function)) = &file.items[0] else {
-        panic!("expected a function");
-    };
+    let function = declaration(&file, 0)
+        .function()
+        .expect("expected a function");
     assert_eq!(function.type_parameters, vec!["T".to_owned()]);
     assert_eq!(function.parameters[0].name, "self");
     assert_eq!(function.name, "len");

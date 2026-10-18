@@ -1,15 +1,10 @@
-# std/fs.kiru
+# std/fs/fs.kiru
 #
-# File helpers written on top of the native file kernel.
-
-use std;
-use std::text;
-use std::dynamic;
-use std::dynamic::Vec;
+# File helpers written on top of the native syscall kernel.
 
 # Append `text` to a file, creating it when it is absent.
 pub fn append(path: txt, text: txt) {
-  match std::fs::exists(path) {
+  match std::syscalls::access(path) {
     true => { std::fs::write(path, "@(std::fs::read(path))@(text)"); };
     _ => { std::fs::write(path, text); };
   };
@@ -18,17 +13,17 @@ pub fn append(path: txt, text: txt) {
 # Create a unique empty file in the temporary directory and return its path.
 # The caller owns the file and must remove it.
 pub fn temp_file() -> txt {
-  return std::fs::mkstemp("@(std::process::temp_dir())/kiru-XXXXXX");
+  return std::syscalls::mkstemp("@(std::process::temp_dir())/kiru-XXXXXX");
 };
 
 # Whether the `[...]` class starting at `p` matches `value`: the index just
 # after the closing `]`, or `-1`. A leading `!` or `^` negates, `a-z` is a
 # range, and `\` escapes the next byte.
 fn class_end(pattern: txt, p: int, value: int) -> int {
-  let count: int = pattern.len();
+  let count: int = std::text::strlen(pattern);
   let index: int = p + 1;
   let negate: bool = false;
-  match index < count && (pattern.byte(index) == 33 || pattern.byte(index) == 94) {
+  match index < count && (std::text::byte_at(pattern, index) == 33 || std::text::byte_at(pattern, index) == 94) {
     true => { negate = true; index = index + 1; };
     _ => {};
   };
@@ -36,7 +31,7 @@ fn class_end(pattern: txt, p: int, value: int) -> int {
   let first: bool = true;
   for {
     match index < count { false => { break; }; true => {}; };
-    let code: int = pattern.byte(index);
+    let code: int = std::text::byte_at(pattern, index);
     # 93 is `]`: it closes the class unless it is the first character.
     match code == 93 && !first {
       true => { break; };
@@ -45,15 +40,15 @@ fn class_end(pattern: txt, p: int, value: int) -> int {
     first = false;
     # `\` escapes the next byte.
     let escaped: bool = code == 92 && index + 1 < count;
-    let item: int = match escaped { true => pattern.byte(index + 1); false => code; };
+    let item: int = match escaped { true => std::text::byte_at(pattern, index + 1); false => code; };
     let step: int = match escaped { true => 2; false => 1; };
     # A range `a-z`.
     let is_range: bool = index + step + 1 < count
-      && pattern.byte(index + step) == 45
-      && pattern.byte(index + step + 1) != 93;
+      && std::text::byte_at(pattern, index + step) == 45
+      && std::text::byte_at(pattern, index + step + 1) != 93;
     match is_range {
       true => {
-        let high: int = pattern.byte(index + step + 1);
+        let high: int = std::text::byte_at(pattern, index + step + 1);
         match item <= value && value <= high {
           true => { matched = true; };
           _ => {};
@@ -81,8 +76,8 @@ fn class_end(pattern: txt, p: int, value: int) -> int {
 # Whether the token at `p` in `pattern` matches the byte `value`: the index
 # just after the token, or `-1` when it does not match.
 fn token_matches(pattern: txt, p: int, value: int) -> int {
-  let count: int = pattern.len();
-  let code: int = pattern.byte(p);
+  let count: int = std::text::strlen(pattern);
+  let code: int = std::text::byte_at(pattern, p);
   # 92 is `\`: the next byte is a literal.
   match code == 92 {
     true => {
@@ -91,7 +86,7 @@ fn token_matches(pattern: txt, p: int, value: int) -> int {
         true => { return -1; };
         _ => {};
       };
-      let literal: int = pattern.byte(next);
+      let literal: int = std::text::byte_at(pattern, next);
       let answer: int = match literal == value { true => next + 1; false => -1; };
       return answer;
     };
@@ -104,7 +99,7 @@ fn token_matches(pattern: txt, p: int, value: int) -> int {
   };
   # 91 is `[`: a class.
   match code == 91 {
-    true => { return class_end(pattern, p, value); };
+    true => { return std::fs::class_end(pattern, p, value); };
     _ => {};
   };
   let answer: int = match code == value { true => p + 1; false => -1; };
@@ -116,8 +111,8 @@ fn token_matches(pattern: txt, p: int, value: int) -> int {
 # is iterative — a remembered `*` and the name index to resume at — so the
 # matcher needs no recursion.
 fn match_name(pattern: txt, name: txt) -> bool {
-  let plen: int = pattern.len();
-  let nlen: int = name.len();
+  let plen: int = std::text::strlen(pattern);
+  let nlen: int = std::text::strlen(name);
   let p: int = 0;
   let n: int = 0;
   let star: int = -1;
@@ -125,10 +120,10 @@ fn match_name(pattern: txt, name: txt) -> bool {
   for {
     match n < nlen { false => { break; }; true => {}; };
     # 42 is `*`: remember it and let it match a run.
-    match p < plen && pattern.byte(p) == 42 {
+    match p < plen && std::text::byte_at(pattern, p) == 42 {
       true => { star = p; mark = n; p = p + 1; };
       _ => {
-        let next: int = match p < plen { true => token_matches(pattern, p, name.byte(n)); false => -1; };
+        let next: int = match p < plen { true => std::fs::token_matches(pattern, p, std::text::byte_at(name, n)); false => -1; };
         match next >= 0 {
           true => { p = next; n = n + 1; };
           _ => {
@@ -142,7 +137,7 @@ fn match_name(pattern: txt, name: txt) -> bool {
     };
   };
   for {
-    match p < plen && pattern.byte(p) == 42 { false => { break; }; true => {}; };
+    match p < plen && std::text::byte_at(pattern, p) == 42 { false => { break; }; true => {}; };
     p = p + 1;
   };
   return p == plen;
@@ -150,11 +145,11 @@ fn match_name(pattern: txt, name: txt) -> bool {
 
 # Whether `segment` holds a wildcard byte: `*`, `?`, or a class `[`.
 fn has_wildcard(segment: txt) -> bool {
-  let count: int = segment.len();
+  let count: int = std::text::strlen(segment);
   let index: int = 0;
   for {
     match index < count { false => { break; }; true => {}; };
-    let code: int = segment.byte(index);
+    let code: int = std::text::byte_at(segment, index);
     match code == 42 || code == 63 || code == 91 {
       true => { return true; };
       _ => {};
@@ -164,10 +159,10 @@ fn has_wildcard(segment: txt) -> bool {
   return false;
 };
 
-# Whether `path` names a directory. A trailing slash makes `exists` false for
-# a file and true for a directory, so the `exists` native answers it.
+# Whether `path` names a directory. A trailing slash makes `access` false for
+# a file and true for a directory, so the `access` native answers it.
 pub fn is_dir(path: txt) -> bool {
-  return std::fs::exists("@(path)/");
+  return std::syscalls::access("@(path)/");
 };
 
 # The path `name` under `prefix`. The relative root has no prefix, and a
@@ -177,7 +172,7 @@ fn child_of(prefix: txt, name: txt) -> txt {
     "" => { return name; };
     _ => {};
   };
-  match prefix.ends_with("/") {
+  match std::text::ends_with(prefix, "/") {
     true => { return "@(prefix)@(name)"; };
     _ => { return "@(prefix)/@(name)"; };
   };
@@ -185,10 +180,10 @@ fn child_of(prefix: txt, name: txt) -> txt {
 
 # The entry names of a directory. The relative root lists the current
 # directory.
-fn entries(prefix: txt) -> Vec<txt> {
+fn entries(prefix: txt) -> std::dynamic::Vec<txt> {
   match prefix {
-    "" => { return std::fs::list("."); };
-    _ => { return std::fs::list(prefix); };
+    "" => { return std::syscalls::readdir("."); };
+    _ => { return std::syscalls::readdir(prefix); };
   };
 };
 
@@ -196,10 +191,10 @@ fn entries(prefix: txt) -> Vec<txt> {
 # is the length. This is the worklist write below: a popped slot is overwritten
 # and a fresh slot is appended, so the vec keeps every slot a later write may
 # revisit.
-fn put<T>(xs: Vec<T>, index: int, item: T) -> Vec<T> {
-  match index < xs.len() {
-    true => { return xs.replace(index, item); };
-    _ => { return xs.push(item); };
+fn put<T>(xs: std::dynamic::Vec<T>, index: int, item: T) -> std::dynamic::Vec<T> {
+  match index < std::dynamic::len(xs) {
+    true => { return std::dynamic::replace(xs, index, item); };
+    _ => { return std::dynamic::push(xs, item); };
   };
 };
 
@@ -209,59 +204,59 @@ fn put<T>(xs: Vec<T>, index: int, item: T) -> Vec<T> {
 # literal segment is descended directly, and a wildcard segment lists the
 # directory and matches each name. This replaces the `glob` crate: pattern
 # matching is kiru, not a Rust library above the syscall floor.
-pub fn glob(pattern: txt) -> Vec<txt> {
-  let segments: Vec<txt> = std::split(pattern, "/");
-  let absolute: bool = pattern.starts_with("/");
+pub fn glob(pattern: txt) -> std::dynamic::Vec<txt> {
+  let segments: std::dynamic::Vec<txt> = std::text::split(pattern, "/");
+  let absolute: bool = std::text::starts_with(pattern, "/");
   # A worklist of (segment index, prefix), in two parallel vecs because a
   # worklist entry is a pair and there is no recursion. `count` is its length.
-  let work_at: Vec<int> = Vec.new();
-  let work_prefix: Vec<txt> = Vec.new();
+  let work_at: std::dynamic::Vec<int> = std::dynamic::Vec.new();
+  let work_prefix: std::dynamic::Vec<txt> = std::dynamic::Vec.new();
   let count: int = 1;
-  work_at = put(work_at, 0, match absolute { true => 1; false => 0; });
-  work_prefix = put(work_prefix, 0, match absolute { true => "/"; false => ""; });
-  let results: Vec<txt> = Vec.new();
+  work_at = std::fs::put(work_at, 0, match absolute { true => 1; false => 0; });
+  work_prefix = std::fs::put(work_prefix, 0, match absolute { true => "/"; false => ""; });
+  let results: std::dynamic::Vec<txt> = std::dynamic::Vec.new();
   for {
     match count > 0 { false => { break; }; true => {}; };
     count = count - 1;
-    let at: int = work_at.at(count);
-    let prefix: txt = work_prefix.at(count);
-    match at == segments.len() {
+    let at: int = std::dynamic::at(work_at, count);
+    let prefix: txt = std::dynamic::at(work_prefix, count);
+    match at == std::dynamic::len(segments) {
       true => {
         # The relative root ("") is not a path; every other prefix is a match.
         match prefix {
           "" => {};
-          _ => { results = results.push(prefix); };
+          _ => { results = std::dynamic::push(results, prefix); };
         };
       };
       _ => {
-        let segment: txt = segments.at(at);
+        let segment: txt = std::dynamic::at(segments, at);
         match segment == "**" {
           true => {
             # `**` matches zero segments...
-            work_at = put(work_at, count, at + 1);
-            work_prefix = put(work_prefix, count, prefix);
+            work_at = std::fs::put(work_at, count, at + 1);
+            work_prefix = std::fs::put(work_prefix, count, prefix);
             count = count + 1;
             # ...or one entry and keeps matching. A file is consumed here; a
             # directory is descended into, and its own zero-match consumes it
             # (so a directory is never matched twice).
-            match is_dir(prefix) {
+            match std::fs::is_dir(prefix) {
               true => {
-                let names: Vec<txt> = entries(prefix);
+                let names: std::dynamic::Vec<txt> = std::fs::entries(prefix);
                 let name_index: int = 0;
-                let name_count: int = names.len();
+                let name_count: int = std::dynamic::len(names);
                 for {
                   match name_index < name_count { false => { break; }; true => {}; };
-                  let name: txt = names.at(name_index);
-                  let child: txt = child_of(prefix, name);
-                  match is_dir(child) {
+                  let name: txt = std::dynamic::at(names, name_index);
+                  let child: txt = std::fs::child_of(prefix, name);
+                  match std::fs::is_dir(child) {
                     true => {
-                      work_at = put(work_at, count, at);
-                      work_prefix = put(work_prefix, count, child);
+                      work_at = std::fs::put(work_at, count, at);
+                      work_prefix = std::fs::put(work_prefix, count, child);
                       count = count + 1;
                     };
                     _ => {
-                      work_at = put(work_at, count, at + 1);
-                      work_prefix = put(work_prefix, count, child);
+                      work_at = std::fs::put(work_at, count, at + 1);
+                      work_prefix = std::fs::put(work_prefix, count, child);
                       count = count + 1;
                     };
                   };
@@ -272,20 +267,20 @@ pub fn glob(pattern: txt) -> Vec<txt> {
             };
           };
           _ => {
-            match has_wildcard(segment) {
+            match std::fs::has_wildcard(segment) {
               true => {
-                match is_dir(prefix) {
+                match std::fs::is_dir(prefix) {
                   true => {
-                    let names: Vec<txt> = entries(prefix);
+                    let names: std::dynamic::Vec<txt> = std::fs::entries(prefix);
                     let name_index: int = 0;
-                    let name_count: int = names.len();
+                    let name_count: int = std::dynamic::len(names);
                     for {
                       match name_index < name_count { false => { break; }; true => {}; };
-                      let name: txt = names.at(name_index);
-                      match match_name(segment, name) {
+                      let name: txt = std::dynamic::at(names, name_index);
+                      match std::fs::match_name(segment, name) {
                         true => {
-                          work_at = put(work_at, count, at + 1);
-                          work_prefix = put(work_prefix, count, child_of(prefix, name));
+                          work_at = std::fs::put(work_at, count, at + 1);
+                          work_prefix = std::fs::put(work_prefix, count, std::fs::child_of(prefix, name));
                           count = count + 1;
                         };
                         _ => {};
@@ -297,11 +292,11 @@ pub fn glob(pattern: txt) -> Vec<txt> {
                 };
               };
               _ => {
-                let next: txt = child_of(prefix, segment);
-                match std::fs::exists(next) {
+                let next: txt = std::fs::child_of(prefix, segment);
+                match std::syscalls::access(next) {
                   true => {
-                    work_at = put(work_at, count, at + 1);
-                    work_prefix = put(work_prefix, count, next);
+                    work_at = std::fs::put(work_at, count, at + 1);
+                    work_prefix = std::fs::put(work_prefix, count, next);
                     count = count + 1;
                   };
                   _ => {};
@@ -313,5 +308,5 @@ pub fn glob(pattern: txt) -> Vec<txt> {
       };
     };
   };
-  return std::dynamic::sorted(results);
+  return std::dynamic::sort(results);
 };

@@ -1,153 +1,156 @@
 # std/dynamic/map.kiru
 #
 # The map: an ordered association from keys to values, built over `Vec`. A
-# `Map<K, V>` is an ordinary `rec`, not a built-in type — the runtime
-# represents it like any other rec, so nothing here needs a native. A function
-# whose first parameter is a `Map<K, V>` is callable as `m.name(...)`, so these
-# are the map methods. The type and its helpers share the `std::dynamic`
-# namespace, so `use std::dynamic;` brings in both.
-
-# `bool`/`int`/`Option` live at the `std` root; `Vec<T>` is declared in this
-# namespace, and `Entry` and `Map` are declared here too.
-use std;
+# `std::dynamic::Map<K, V>` is an ordinary `rec`, not a built-in type — the
+# runtime represents it like any other rec, so nothing here needs a native. The
+# functions in the `impl` block below are filed under `Map`: those with a
+# `Map<K, V>` first parameter are methods, and `new` — whose first parameter is
+# not the type — is an associated function reached as `std::dynamic::Map.new()`.
+#
+# This file writes full paths: it uses no `use`, and every bound function is
+# reached through its absolute path.
 
 # One key/value association. The type is private to `std::dynamic`; a program
-# builds a map with `Map.new().with(key, value)`, so it never names `Entry`.
+# builds a map with `std::dynamic::Map.new()` and the map's methods, so it
+# never names `Entry`.
 rec Entry<K, V> { pub key: K, pub value: V };
 
 # An ordered association of keys to values, keyed by equality. A later write
 # to a key replaces the earlier value and keeps its place.
-pub rec Map<K, V> { entries: Vec<Entry<K, V>> };
+pub rec Map<K, V> { entries: std::dynamic::Vec<std::dynamic::Entry<K, V>> };
 
-# The empty map. It is a constructor: a function with no parameters, reachable
-# as `Map.new()` through the type it returns.
-pub fn new<K, V>() -> Map<K, V> {
-  return { entries = Vec.new() };
-};
+impl Map {
+  # The empty map. It is an associated function: its first parameter is not the
+  # type, so it is reached as `std::dynamic::Map.new()`.
+  pub fn new<K, V>() -> std::dynamic::Map<K, V> {
+    return { entries = std::dynamic::Vec.new() };
+  };
 
-# A new map with `key` set to `value`, replacing any existing value in place
-# and appending a new key. Declared before `from_entries`, which builds on it.
-pub fn with<K, V>(self: Map<K, V>, key: K, value: V) -> Map<K, V> {
-  let out: Vec<Entry<K, V>> = Vec.new();
-  let replaced: bool = false;
-  let index: int = 0;
-  let count: int = self.entries.len();
-  for {
-    match index < count { false => { break; }; true => {}; };
-    let entry: Entry<K, V> = self.entries.at(index);
-    match entry.key == key {
-      true => {
-        let written: Entry<K, V> = { key = key, value = value };
-        out = out.push(written);
-        replaced = true;
+  # A new map with `key` set to `value`, replacing any existing value in place
+  # and appending a new key.
+  pub fn insert<K, V>(self: std::dynamic::Map<K, V>, key: K, value: V) -> std::dynamic::Map<K, V> {
+    let out: std::dynamic::Vec<std::dynamic::Entry<K, V>> = std::dynamic::Vec.new();
+    let replaced: bool = false;
+    let index: int = 0;
+    let count: int = std::dynamic::len(self.entries);
+    for {
+      match index < count { false => { break; }; true => {}; };
+      let entry: std::dynamic::Entry<K, V> = std::dynamic::at(self.entries, index);
+      match entry.key == key {
+        true => {
+          let written: std::dynamic::Entry<K, V> = { key = key, value = value };
+          out = std::dynamic::push(out, written);
+          replaced = true;
+        };
+        _ => { out = std::dynamic::push(out, entry); };
       };
-      _ => { out = out.push(entry); };
+      index = index + 1;
     };
-    index = index + 1;
-  };
-  match replaced {
-    true => {};
-    _ => {
-      let written: Entry<K, V> = { key = key, value = value };
-      out = out.push(written);
+    match replaced {
+      true => {};
+      _ => {
+        let written: std::dynamic::Entry<K, V> = { key = key, value = value };
+        out = std::dynamic::push(out, written);
+      };
     };
+    return { entries = out };
   };
-  return { entries = out };
-};
 
-# A map from a vec of entries. A later entry replaces an earlier one with the
-# same key, so the result has one entry per distinct key.
-pub fn from_entries<K, V>(entries: Vec<Entry<K, V>>) -> Map<K, V> {
-  let result: Map<K, V> = Map.new();
-  let index: int = 0;
-  let count: int = entries.len();
-  for {
-    match index < count { false => { break; }; true => {}; };
-    let entry: Entry<K, V> = entries.at(index);
-    result = result.with(entry.key, entry.value);
-    index = index + 1;
-  };
-  return result;
-};
-
-# The value stored for `key`. A missing key has no value, so it stops the run.
-pub fn get<K, V>(self: Map<K, V>, key: K) -> V {
-  let index: int = 0;
-  let count: int = self.entries.len();
-  for {
-    match index < count { false => { break; }; true => {}; };
-    let entry: Entry<K, V> = self.entries.at(index);
-    match entry.key == key {
-      true => { return entry.value; };
-      _ => {};
+  # A map from a vec of entries. A later entry replaces an earlier one with the
+  # same key, so the result has one entry per distinct key. Its first parameter
+  # is not the type, so it is reached as `std::dynamic::Map.from_entries(...)`.
+  pub fn from_entries<K, V>(entries: std::dynamic::Vec<std::dynamic::Entry<K, V>>) -> std::dynamic::Map<K, V> {
+    let result: std::dynamic::Map<K, V> = std::dynamic::Map.new();
+    let index: int = 0;
+    let count: int = std::dynamic::len(entries);
+    for {
+      match index < count { false => { break; }; true => {}; };
+      let entry: std::dynamic::Entry<K, V> = std::dynamic::at(entries, index);
+      result = std::dynamic::insert(result, entry.key, entry.value);
+      index = index + 1;
     };
-    index = index + 1;
+    return result;
   };
-  std::eprint("get: the map has no entry for the key");
-};
 
-# The value stored for `key`, or `fallback` when it is missing.
-pub fn get_or<K, V>(self: Map<K, V>, key: K, fallback: V) -> V {
-  let index: int = 0;
-  let count: int = self.entries.len();
-  for {
-    match index < count { false => { break; }; true => {}; };
-    let entry: Entry<K, V> = self.entries.at(index);
-    match entry.key == key {
-      true => { return entry.value; };
-      _ => {};
+  # The value stored for `key`. A missing key has no value, so it stops the run.
+  pub fn get<K, V>(self: std::dynamic::Map<K, V>, key: K) -> V {
+    let index: int = 0;
+    let count: int = std::dynamic::len(self.entries);
+    for {
+      match index < count { false => { break; }; true => {}; };
+      let entry: std::dynamic::Entry<K, V> = std::dynamic::at(self.entries, index);
+      match entry.key == key {
+        true => { return entry.value; };
+        _ => {};
+      };
+      index = index + 1;
     };
-    index = index + 1;
+    std::eprint("get: the map has no entry for the key");
   };
-  return fallback;
-};
 
-# Whether `key` is present.
-pub fn contains<K, V>(self: Map<K, V>, key: K) -> bool {
-  let found: bool = false;
-  let index: int = 0;
-  let count: int = self.entries.len();
-  for {
-    match index < count { false => { break; }; true => {}; };
-    let entry: Entry<K, V> = self.entries.at(index);
-    match entry.key == key {
-      true => { found = true; break; };
-      _ => {};
+  # The value stored for `key`, or `fallback` when it is missing.
+  pub fn get_or<K, V>(self: std::dynamic::Map<K, V>, key: K, fallback: V) -> V {
+    let index: int = 0;
+    let count: int = std::dynamic::len(self.entries);
+    for {
+      match index < count { false => { break; }; true => {}; };
+      let entry: std::dynamic::Entry<K, V> = std::dynamic::at(self.entries, index);
+      match entry.key == key {
+        true => { return entry.value; };
+        _ => {};
+      };
+      index = index + 1;
     };
-    index = index + 1;
+    return fallback;
   };
-  return found;
-};
 
-# The keys, in order.
-pub fn keys<K, V>(self: Map<K, V>) -> Vec<K> {
-  let out: Vec<K> = Vec.new();
-  let index: int = 0;
-  let count: int = self.entries.len();
-  for {
-    match index < count { false => { break; }; true => {}; };
-    let entry: Entry<K, V> = self.entries.at(index);
-    out = out.push(entry.key);
-    index = index + 1;
+  # Whether `key` is present.
+  pub fn contains<K, V>(self: std::dynamic::Map<K, V>, key: K) -> bool {
+    let found: bool = false;
+    let index: int = 0;
+    let count: int = std::dynamic::len(self.entries);
+    for {
+      match index < count { false => { break; }; true => {}; };
+      let entry: std::dynamic::Entry<K, V> = std::dynamic::at(self.entries, index);
+      match entry.key == key {
+        true => { found = true; break; };
+        _ => {};
+      };
+      index = index + 1;
+    };
+    return found;
   };
-  return out;
-};
 
-# The values, in order.
-pub fn values<K, V>(self: Map<K, V>) -> Vec<V> {
-  let out: Vec<V> = Vec.new();
-  let index: int = 0;
-  let count: int = self.entries.len();
-  for {
-    match index < count { false => { break; }; true => {}; };
-    let entry: Entry<K, V> = self.entries.at(index);
-    out = out.push(entry.value);
-    index = index + 1;
+  # The keys, in order.
+  pub fn keys<K, V>(self: std::dynamic::Map<K, V>) -> std::dynamic::Vec<K> {
+    let out: std::dynamic::Vec<K> = std::dynamic::Vec.new();
+    let index: int = 0;
+    let count: int = std::dynamic::len(self.entries);
+    for {
+      match index < count { false => { break; }; true => {}; };
+      let entry: std::dynamic::Entry<K, V> = std::dynamic::at(self.entries, index);
+      out = std::dynamic::push(out, entry.key);
+      index = index + 1;
+    };
+    return out;
   };
-  return out;
-};
 
-# The number of entries.
-pub fn len<K, V>(self: Map<K, V>) -> int {
-  return self.entries.len();
+  # The values, in order.
+  pub fn values<K, V>(self: std::dynamic::Map<K, V>) -> std::dynamic::Vec<V> {
+    let out: std::dynamic::Vec<V> = std::dynamic::Vec.new();
+    let index: int = 0;
+    let count: int = std::dynamic::len(self.entries);
+    for {
+      match index < count { false => { break; }; true => {}; };
+      let entry: std::dynamic::Entry<K, V> = std::dynamic::at(self.entries, index);
+      out = std::dynamic::push(out, entry.value);
+      index = index + 1;
+    };
+    return out;
+  };
+
+  # The number of entries.
+  pub fn len<K, V>(self: std::dynamic::Map<K, V>) -> int {
+    return std::dynamic::len(self.entries);
+  };
 };

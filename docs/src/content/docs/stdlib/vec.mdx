@@ -1,63 +1,299 @@
 ---
-title: std::vec
-description: Inspect and transform vec.
+title: Vec
+description: The Vec type and its methods.
 ---
 
-`std::vec` declares the `Vec<T>` type and adds methods to it. Write `Vec<T>`
-after `use std::vec;` (or name it `std::vec::vec`). A transform returns a new
-vec, so calls chain. [Vecs](/concepts/vecs/) and [Closures](/concepts/closures/)
-cover the narrative.
+`Vec<T>` is a declared `rec` in `std::dynamic`, not an intrinsic. It has no
+literal and no index brackets: a value is built and changed through its
+operations. The five container natives — `new`, `push`, `replace`, `at`, `len` —
+are the floor; every other method below is ordinary kiru in `std::dynamic`. Write
+`Vec<T>` after `use std::dynamic::Vec;`, or name it `std::dynamic::Vec<T>`. A
+transform returns a new vec, so calls chain. [Vecs](/concepts/vecs/) and
+[Closures](/concepts/closures/) cover the narrative.
+
+<details>
+<summary><code>new</code> — the empty vec</summary>
+
+```text
+std::dynamic::Vec.new<T>() -> Vec<T>
+```
+
+- Returns a vec with no elements. Its element type comes from the expected type.
+
+```kiru
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let xs: Vec<int> = Vec.new();
+  std::print("@(xs.len())");   # 0
+};
+```
+
+</details>
 
 <details>
 <summary><code>len</code> — the number of elements</summary>
 
-```kiru
+```text
 items.len() -> int
 ```
 
 - Returns the element count, for a vec of any element type.
 
 ```kiru
-use std::text;
-use std::vec;
-let items: Vec<txt> = ["a", "b", "c"];
-std::print("@(items.len())");   # 3
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let items: Vec<txt> = Vec.new();
+  items = items.push("a");
+  items = items.push("b");
+  items = items.push("c");
+  std::print("@(items.len())");   # 3
+};
 ```
 
 </details>
 
 <details>
-<summary><code>add</code> — a new vec with one element added</summary>
+<summary><code>at</code> — the element at an index</summary>
 
-```kiru
-items.with(element: T) -> Vec<T>
+```text
+items.at(index: int) -> T
 ```
 
-- `element` — the element to add at the end.
-- Returns a new vec.
+- `index` — a zero-based index.
+- Returns the element there. An index at or past the end stops the run.
 
 ```kiru
-use std::text;
-use std::vec;
-let xs: Vec<txt> = ["a", "b"].with("c");
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let items: Vec<txt> = Vec.new();
+  items = items.push("a");
+  items = items.push("b");
+  std::print(items.at(1));   # b
+};
 ```
 
 </details>
 
 <details>
-<summary><code>add_first</code> — a new vec with one element at the front</summary>
+<summary><code>push</code> — a new vec with one element appended</summary>
 
-```kiru
-items.with_first(element: T) -> Vec<T>
+```text
+items.push(element: T) -> Vec<T>
 ```
 
-- `element` — the element to add at the front.
-- Returns a new vec.
+- `element` — the element to append.
+- Returns a new vec with the element at the end.
 
 ```kiru
-use std::text;
-use std::vec;
-let xs: Vec<txt> = ["b", "c"].with_first("a");
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let xs: Vec<txt> = Vec.new();
+  xs = xs.push("a");
+  xs = xs.push("b");
+  std::print("@(xs.len())");   # 2
+};
+```
+
+</details>
+
+<details>
+<summary><code>replace</code> — a new vec with one element replaced</summary>
+
+```text
+items.replace(index: int, element: T) -> Vec<T>
+```
+
+- `index` — the position to replace.
+- `element` — the new value.
+- Returns a new vec. An index at or past the end stops the run; use `push` to
+  append.
+
+```kiru
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let xs: Vec<int> = Vec.new();
+  xs = xs.push(10);
+  xs = xs.push(20);
+  xs = xs.replace(0, 99);
+  std::print("@(xs.at(0))");   # 99
+};
+```
+
+</details>
+
+<details>
+<summary><code>insert</code> — a new vec with one element inserted</summary>
+
+```text
+items.insert(index: int, element: T) -> Vec<T>
+```
+
+- `index` — where the element goes; the elements from there shift up. It may be
+  the length, which appends.
+- `element` — the element to insert.
+- Returns a new vec. An index outside the vec stops the run.
+
+```kiru
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let xs: Vec<txt> = Vec.new();
+  xs = xs.push("a");
+  xs = xs.push("c");
+  xs = xs.insert(1, "b");
+  std::print(xs.join(""));   # abc
+};
+```
+
+</details>
+
+<details>
+<summary><code>remove</code> — a new vec with one element dropped</summary>
+
+```text
+items.remove(index: int) -> Vec<T>
+```
+
+- `index` — the position to drop; the elements after it shift down.
+- Returns a new vec. An index outside the vec stops the run.
+
+```kiru
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let xs: Vec<txt> = Vec.new();
+  xs = xs.push("a");
+  xs = xs.push("b");
+  xs = xs.push("c");
+  xs = xs.remove(1);
+  std::print(xs.join(""));   # ac
+};
+```
+
+</details>
+
+<details>
+<summary><code>is_empty</code> — whether there are no elements</summary>
+
+```text
+items.is_empty() -> bool
+```
+
+- Returns `true` when the vec has no elements.
+
+```kiru
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let xs: Vec<int> = Vec.new();
+  let ys: Vec<int> = Vec.new();
+  ys = ys.push(1);
+  std::print("@(xs.is_empty()) @(ys.is_empty())");   # true false
+};
+```
+
+</details>
+
+<details>
+<summary><code>clear</code> — the empty vec</summary>
+
+```text
+items.clear() -> Vec<T>
+```
+
+- Returns a new, empty vec of the same element type.
+
+```kiru
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let xs: Vec<txt> = Vec.new();
+  xs = xs.push("a");
+  xs = xs.push("b");
+  xs = xs.clear();
+  std::print("@(xs.len())");   # 0
+};
+```
+
+</details>
+
+<details>
+<summary><code>slice</code> — a new vec of a half-open range</summary>
+
+```text
+items.slice(from: int, to: int) -> Vec<T>
+```
+
+- `from` — the first index to keep.
+- `to` — the index one past the last to keep.
+- Returns a new vec of the elements in that half-open range. A range outside the
+  vec stops the run.
+
+```kiru
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let xs: Vec<txt> = Vec.new();
+  xs = xs.push("a");
+  xs = xs.push("b");
+  xs = xs.push("c");
+  xs = xs.push("d");
+  std::print(xs.slice(1, 3).join(""));   # bc
+};
+```
+
+</details>
+
+<details>
+<summary><code>take</code> — the first count elements</summary>
+
+```text
+items.take(count: int) -> Vec<T>
+```
+
+- `count` — how many leading elements to keep.
+- Returns a new vec of the first `count`, or all of them when `count` exceeds the
+  length.
+
+```kiru
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let xs: Vec<txt> = Vec.new();
+  xs = xs.push("a");
+  xs = xs.push("b");
+  xs = xs.push("c");
+  std::print(xs.take(2).join(""));   # ab
+};
+```
+
+</details>
+
+<details>
+<summary><code>skip</code> — everything after the first count</summary>
+
+```text
+items.skip(count: int) -> Vec<T>
+```
+
+- `count` — how many leading elements to drop.
+- Returns a new vec of everything after the first `count`.
+
+```kiru
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let xs: Vec<txt> = Vec.new();
+  xs = xs.push("a");
+  xs = xs.push("b");
+  xs = xs.push("c");
+  std::print(xs.skip(1).join(""));   # bc
+};
 ```
 
 </details>
@@ -65,7 +301,7 @@ let xs: Vec<txt> = ["b", "c"].with_first("a");
 <details>
 <summary><code>concat</code> — join two Vec</summary>
 
-```kiru
+```text
 items.concat(other: Vec<T>) -> Vec<T>
 ```
 
@@ -73,9 +309,16 @@ items.concat(other: Vec<T>) -> Vec<T>
 - Returns a new vec with every element of `other` after `items`.
 
 ```kiru
-use std::text;
-use std::vec;
-let xs: Vec<txt> = ["a", "b"].concat(["c", "d"]);
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let a: Vec<txt> = Vec.new();
+  a = a.push("a");
+  let b: Vec<txt> = Vec.new();
+  b = b.push("b");
+  let xs: Vec<txt> = a.concat(b);
+  std::print("@(xs.len())");   # 2
+};
 ```
 
 </details>
@@ -83,16 +326,21 @@ let xs: Vec<txt> = ["a", "b"].concat(["c", "d"]);
 <details>
 <summary><code>reverse</code> — a new vec in reverse order</summary>
 
-```kiru
-items.reversed() -> Vec<T>
+```text
+items.reverse() -> Vec<T>
 ```
 
 - Returns a new vec in reverse order.
 
 ```kiru
-use std::text;
-use std::vec;
-let xs: Vec<txt> = ["a", "b", "c"].reversed();
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let xs: Vec<txt> = Vec.new();
+  xs = xs.push("a");
+  xs = xs.push("b");
+  std::print(xs.reverse().at(0));   # b
+};
 ```
 
 </details>
@@ -100,7 +348,7 @@ let xs: Vec<txt> = ["a", "b", "c"].reversed();
 <details>
 <summary><code>contains</code> — whether a value is an element</summary>
 
-```kiru
+```text
 items.contains(element: T) -> bool
 ```
 
@@ -109,30 +357,37 @@ items.contains(element: T) -> bool
 
 ```kiru
 use std;
-use std::text;
-use std::vec;
-let present: bool = ["a", "b"].contains("b");   # true
+use std::dynamic::Vec;
+fn main() {
+  let xs: Vec<txt> = Vec.new();
+  xs = xs.push("a");
+  xs = xs.push("b");
+  std::print("@(xs.contains("b"))");   # true
+};
 ```
 
 </details>
 
 <details>
-<summary><code>find</code> — the first index of a value</summary>
+<summary><code>index_of</code> — the first index of a value</summary>
 
-```kiru
-items.find(element: T) -> Option<int>
+```text
+items.index_of(element: T) -> std::Option<int>
 ```
 
-- `element` — the element to find.
+- `element` — the element to look for.
 - Returns `Option.some(index)` at the first position where `==` holds, or
   `Option.none` when it is not an element.
 
 ```kiru
 use std;
-use std::text;
-use std::vec;
-let first: int = ["a", "b", "a"].find("a").or(-1);   # 0
-let missing: int = ["a", "b"].find("z").or(-1);     # -1
+use std::dynamic::Vec;
+fn main() {
+  let xs: Vec<txt> = Vec.new();
+  xs = xs.push("a");
+  xs = xs.push("b");
+  std::print("@(xs.index_of("b").or(-1))");   # 1
+};
 ```
 
 Related: [Absence](/concepts/absence/).
@@ -142,7 +397,7 @@ Related: [Absence](/concepts/absence/).
 <details>
 <summary><code>first</code> — the first element</summary>
 
-```kiru
+```text
 items.first() -> T
 ```
 
@@ -150,9 +405,14 @@ items.first() -> T
   run.
 
 ```kiru
-use std::text;
-use std::vec;
-let xs: Vec<txt> = ["a", "b", "c"];   # xs.first() is "a"
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let xs: Vec<txt> = Vec.new();
+  xs = xs.push("a");
+  xs = xs.push("b");
+  std::print(xs.first());   # a
+};
 ```
 
 </details>
@@ -160,7 +420,7 @@ let xs: Vec<txt> = ["a", "b", "c"];   # xs.first() is "a"
 <details>
 <summary><code>last</code> — the last element</summary>
 
-```kiru
+```text
 items.last() -> T
 ```
 
@@ -168,9 +428,14 @@ items.last() -> T
   run.
 
 ```kiru
-use std::text;
-use std::vec;
-let xs: Vec<txt> = ["a", "b", "c"];   # xs.last() is "c"
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let xs: Vec<txt> = Vec.new();
+  xs = xs.push("a");
+  xs = xs.push("b");
+  std::print(xs.last());   # b
+};
 ```
 
 </details>
@@ -178,7 +443,7 @@ let xs: Vec<txt> = ["a", "b", "c"];   # xs.last() is "c"
 <details>
 <summary><code>map</code> — a new vec with a function applied</summary>
 
-```kiru
+```text
 items.map(apply: fn(T) -> U) -> Vec<U>
 ```
 
@@ -187,10 +452,15 @@ items.map(apply: fn(T) -> U) -> Vec<U>
 
 ```kiru
 use std;
-use std::vec;
+use std::dynamic::Vec;
 fn double(x: int) -> int { return x * 2; };
-
-let xs: Vec<int> = [1, 2, 3].map(double);   # [2, 4, 6]
+fn main() {
+  let xs: Vec<int> = Vec.new();
+  xs = xs.push(1);
+  xs = xs.push(2);
+  let doubled: Vec<int> = xs.map(double);
+  std::print("@(doubled.at(0))");   # 2
+};
 ```
 
 </details>
@@ -198,7 +468,7 @@ let xs: Vec<int> = [1, 2, 3].map(double);   # [2, 4, 6]
 <details>
 <summary><code>filter</code> — a new vec of the accepted elements</summary>
 
-```kiru
+```text
 items.filter(keep: fn(T) -> bool) -> Vec<T>
 ```
 
@@ -207,10 +477,95 @@ items.filter(keep: fn(T) -> bool) -> Vec<T>
 
 ```kiru
 use std;
-use std::vec;
+use std::dynamic::Vec;
 fn even(x: int) -> bool { return x % 2 == 0; };
+fn main() {
+  let xs: Vec<int> = Vec.new();
+  xs = xs.push(1);
+  xs = xs.push(2);
+  xs = xs.push(3);
+  xs = xs.push(4);
+  let evens: Vec<int> = xs.filter(even);
+  std::print("@(evens.len())");   # 2
+};
+```
 
-let xs: Vec<int> = [1, 2, 3, 4].filter(even);   # [2, 4]
+</details>
+
+<details>
+<summary><code>fold</code> — combine the elements from the left</summary>
+
+```text
+items.fold<U>(initial: U, combine: fn(U, T) -> U) -> U
+```
+
+- `initial` — the accumulator before the first element.
+- `combine` — a function value called once per element, left to right, with the
+  accumulator first and the element second.
+- Returns the final accumulator.
+
+```kiru
+use std;
+use std::dynamic::Vec;
+fn add(acc: int, x: int) -> int { return acc + x; };
+fn main() {
+  let xs: Vec<int> = Vec.new();
+  xs = xs.push(1);
+  xs = xs.push(2);
+  xs = xs.push(3);
+  std::print("@(xs.fold(0, add))");   # 6
+};
+```
+
+</details>
+
+<details>
+<summary><code>each</code> — call a function on every element</summary>
+
+```text
+items.each(apply: fn(T))
+```
+
+- `apply` — a function value called on every element, left to right.
+- Returns nothing.
+
+```kiru
+use std;
+use std::dynamic::Vec;
+fn show(x: int) { std::print("@(x)"); };
+fn main() {
+  let xs: Vec<int> = Vec.new();
+  xs = xs.push(1);
+  xs = xs.push(2);
+  xs.each(show);   # 1
+                   # 2
+};
+```
+
+</details>
+
+<details>
+<summary><code>count</code> — how many elements satisfy a predicate</summary>
+
+```text
+items.count(keep: fn(T) -> bool) -> int
+```
+
+- `keep` — a function value answering `true` for an element to count.
+- Returns how many elements `keep` accepts.
+
+```kiru
+use std;
+use std::dynamic::Vec;
+fn even(x: int) -> bool { return x % 2 == 0; };
+fn main() {
+  let xs: Vec<int> = Vec.new();
+  xs = xs.push(1);
+  xs = xs.push(2);
+  xs = xs.push(3);
+  xs = xs.push(4);
+  std::print("@(xs.count(even))");   # 2
+};
 ```
 
 </details>
@@ -218,8 +573,8 @@ let xs: Vec<int> = [1, 2, 3, 4].filter(even);   # [2, 4]
 <details>
 <summary><code>sort_by</code> — a new vec ordered by a comparator</summary>
 
-```kiru
-items.sorted_by(less: fn(T, T) -> bool) -> Vec<T>
+```text
+items.sort_by(less: fn(T, T) -> bool) -> Vec<T>
 ```
 
 - `less` — a function value answering `true` when its first argument orders
@@ -228,10 +583,15 @@ items.sorted_by(less: fn(T, T) -> bool) -> Vec<T>
 
 ```kiru
 use std;
-use std::vec;
+use std::dynamic::Vec;
 fn greater(a: int, b: int) -> bool { return a > b; };
-
-let xs: Vec<int> = [1, 3, 2].sorted_by(greater);   # [3, 2, 1]
+fn main() {
+  let xs: Vec<int> = Vec.new();
+  xs = xs.push(1);
+  xs = xs.push(3);
+  xs = xs.push(2);
+  std::print("@(xs.sort_by(greater).at(0))");   # 3
+};
 ```
 
 </details>
@@ -239,37 +599,47 @@ let xs: Vec<int> = [1, 3, 2].sorted_by(greater);   # [3, 2, 1]
 <details>
 <summary><code>sort</code> — a new vec of text in order</summary>
 
-```kiru
-std::vec::sorted(items: Vec<txt>) -> Vec<txt>
+```text
+items.sort() -> Vec<txt>
 ```
 
-- `items` — the source vec.
 - Returns a new vec of the same text ordered byte by byte. It applies to
   `Vec<txt>` alone.
 
 ```kiru
-use std::text;
-use std::vec;
-let xs: Vec<txt> = std::vec::sorted(["c", "a", "b"]);   # [a, b, c]
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let xs: Vec<txt> = Vec.new();
+  xs = xs.push("c");
+  xs = xs.push("a");
+  xs = xs.push("b");
+  std::print(xs.sort().at(0));   # a
+};
 ```
 
 </details>
 
 <details>
-<summary><code>unique</code> — a new vec without adjacent duplicates</summary>
+<summary><code>dedup</code> — a new vec without adjacent duplicates</summary>
 
-```kiru
-items.uniqued() -> Vec<T>
+```text
+items.dedup() -> Vec<T>
 ```
 
 - Returns a new vec with adjacent duplicates dropped, comparing with `==`. A
-  sorted vec becomes unique, so `sorted` then `uniqued` leaves one of each.
+  sort vec becomes unique, so `sort` then `dedup` leaves one of each.
 
 ```kiru
-use std::text;
-use std::vec;
-let xs: Vec<txt> = ["a", "a", "b"].uniqued();   # [a, b]
-let unique: Vec<txt> = std::vec::sorted(["b", "a", "b"]).uniqued();   # [a, b]
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let xs: Vec<txt> = Vec.new();
+  xs = xs.push("a");
+  xs = xs.push("a");
+  xs = xs.push("b");
+  std::print("@(xs.dedup().len())");   # 2
+};
 ```
 
 </details>
@@ -277,16 +647,22 @@ let unique: Vec<txt> = std::vec::sorted(["b", "a", "b"]).uniqued();   # [a, b]
 <details>
 <summary><code>join</code> — join a vec of text into one text</summary>
 
-```kiru
-std::join(parts: Vec<txt>, separator: txt) -> txt
+```text
+items.join(separator: txt) -> txt
 ```
 
-- `parts` — the vec to join.
 - `separator` — the text between each pair.
 - Returns the joined text. It applies to `Vec<txt>` alone.
 
 ```kiru
-std::print(std::join(["a", "b"], "-"));   # a-b
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let parts: Vec<txt> = Vec.new();
+  parts = parts.push("a");
+  parts = parts.push("b");
+  std::print(parts.join("-"));   # a-b
+};
 ```
 
 </details>

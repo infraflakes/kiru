@@ -67,8 +67,8 @@ fn label(name: txt, code: int) -> txt {
 fn main() { std::print(label("build", 3)); };
 ```
 
-`std::quote` escapes text that must reach a command as data rather than as shell
-syntax; [std](/stdlib/std/) covers it.
+`std::process::quote` escapes text that must reach a command as data rather than
+as shell syntax; [std::process](/stdlib/process/) covers it.
 
 ## Interpolation
 
@@ -120,21 +120,21 @@ A `Map` and a vec cannot be ordered, only compared for equality.
 ## Bytes
 
 Text is a sequence of bytes, and every index counts bytes rather than
-characters. `len` is the byte count, `byte` reads one byte, and `slice(start,
-end)` is the half-open range of bytes:
+characters. `strlen` is the byte count, `byte_at` reads one byte, and
+`substr(start, end)` is the half-open range of bytes:
 
 ```kiru
 use std;
 use std::text;
 fn main() {
   let word: txt = "héllo";
-  std::print("@(word.len())");        # 6, not 5
-  std::print(word.slice(0, 3));       # hé
+  std::print("@(word.strlen())");       # 6, not 5
+  std::print(word.substr(0, 3));        # hé
 };
 ```
 
-Because the byte count and the character count differ, a `slice` range that
-falls inside a character is refused: `slice` stops the run rather than produce
+Because the byte count and the character count differ, a `substr` range that
+falls inside a character is refused: `substr` stops the run rather than produce
 text that is not UTF-8. `find` returns a byte index, and an absent needle is the
 absence ([Absence](/concepts/absence/) covers it):
 

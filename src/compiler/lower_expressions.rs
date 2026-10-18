@@ -5,8 +5,8 @@
 //! called through a function value, a `match` becomes a compare-and-jump chain
 //! that keeps the first-match order, and a native call is dispatched by index.
 
-use crate::bytecode::{Code, CompareOp, Instruction, NumberOp};
-use crate::model::{
+use crate::compiler::bytecode::{Code, CompareOp, Instruction, NumberOp};
+use crate::compiler::model::{
     DeclarationId, Expression, Function, MatchArm, MatchBody, Pattern, Statement, StringPart,
 };
 use crate::syntax::{BinaryOp, UnaryOp};
@@ -409,22 +409,22 @@ impl Lowerer<'_> {
     fn lower_reference(&mut self, declaration: DeclarationId) -> u16 {
         let dst = self.fresh();
         let program = self.program;
-        match &program.declaration(declaration).value {
-            Some(Expression::Function(function)) => {
-                let code = self.declaration_codes[declaration.0].expect("a function has a code");
-                self.make_function(dst, code, function);
-            }
-            Some(_) => {
-                let global =
-                    self.declaration_globals[declaration.0].expect("a module value has a global");
-                self.instructions
-                    .push(Instruction::LoadGlobal { dst, global });
-            }
-            None => {
-                debug_assert!(!program.declaration(declaration).is_native());
-                let slot = self.slot(declaration);
-                self.instructions.push(Instruction::LoadLocal { dst, slot });
-            }
+        let node = program.declaration(declaration);
+        if node.kind.callable() && node.kind.has_body() {
+            let function = node
+                .function()
+                .expect("a callable body is a function expression");
+            let code = self.declaration_codes[declaration.0].expect("a function has a code");
+            self.make_function(dst, code, function);
+        } else if node.kind.has_value() && node.owner.is_none() {
+            let global =
+                self.declaration_globals[declaration.0].expect("a module value has a global");
+            self.instructions
+                .push(Instruction::LoadGlobal { dst, global });
+        } else {
+            debug_assert!(!node.kind.native());
+            let slot = self.slot(declaration);
+            self.instructions.push(Instruction::LoadLocal { dst, slot });
         }
         dst
     }

@@ -7,30 +7,31 @@
 //! stage repeats that work. The model is the shared intermediate the compiler
 //! builds and the runtime reads.
 
-mod body;
 mod declarations;
+mod expressions;
 mod ids;
 mod program;
-mod structure;
 mod types;
+mod verify_graph;
+mod verify_spans;
 mod visitors;
 
-pub(crate) use body::{
-    Expression, Field, Function, MatchArm, MatchBody, Pattern, Statement, StringPart,
-};
 pub(crate) use declarations::{
-    Declaration, Derived, TypeDecl, TypeFieldDecl, TypeKind, VariantDecl,
+    Declaration, DeclarationKind, Derived, TypeDecl, TypeFieldDecl, TypeKind, VariantDecl,
+};
+pub(crate) use expressions::{
+    Expression, Field, Function, MatchArm, MatchBody, Pattern, Statement, StringPart,
 };
 pub(crate) use ids::{DeclarationId, FileId, NamespaceId};
 pub(crate) use program::{
     File, MethodTable, NameTable, Namespace, Origin, Program, TypeTable, first_duplicate,
-    join_path, namespace_at, namespace_path, rec_field, rec_field_decl,
+    join_path, namespace_at, reachable, rec_field,
 };
-pub(crate) use structure::verify_program;
 pub(crate) use types::{
-    BuiltinType, Type, TypeHead, TypeId, fits, has_parameter, substitute, substitute_optional,
-    type_parameters_of, unify,
+    Arity, Binding, Group, RuntimeShape, Shape, Type, TypeHead, TypeId, fits, has_parameter,
+    scalar_from_name, substitute, type_name, type_parameters_of, unify,
 };
+pub(crate) use verify_graph::verify_program;
 pub(crate) use visitors::{
     Visitor, VisitorMut, walk_expression, walk_expression_mut, walk_statements,
 };

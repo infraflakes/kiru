@@ -1,25 +1,92 @@
 ---
 title: std::text
-description: Inspect and transform text.
+description: Inspect and transform text, over the byte kernel.
 ---
 
-`std::text` adds methods to `txt`. Length and byte indices count bytes, not
-characters, so they line up with files and shell streams. A `txt` method needs
-`use std::text;` (the same `use` that brings `txt`). [Text](/concepts/text/)
-covers the literals, escapes, and interpolation.
+`std::text` adds methods to `txt`. The byte kernel — `strlen`, `byte_at`,
+`memchr`, and `substr` — is the four natives of the namespace, and the methods
+above them are ordinary kiru in the same namespace. Length and byte indices
+count bytes, not characters, so they line up with files and shell streams.
+[Text](/concepts/text/) covers the literals, escapes, and interpolation.
 
 <details>
-<summary><code>len</code> — the number of bytes</summary>
+<summary><code>strlen</code> — the number of bytes</summary>
 
-```kiru
-text.len() -> int
+```text
+text.strlen() -> int
 ```
 
 - Returns the byte count.
 
 ```kiru
+use std;
 use std::text;
-let n: int = "abc".len();   # n is 3
+fn main() {
+  std::print("@("abc".strlen())");   # 3
+};
+```
+
+</details>
+
+<details>
+<summary><code>byte_at</code> — the byte at an index</summary>
+
+```text
+text.byte_at(index: int) -> int
+```
+
+- `index` — a byte index.
+- Returns the byte value there. An index outside the text stops the run.
+
+```kiru
+use std;
+use std::text;
+fn main() {
+  std::print("@("abc".byte_at(1))");   # 98, the byte `b`
+};
+```
+
+</details>
+
+<details>
+<summary><code>substr</code> — a range of bytes</summary>
+
+```text
+text.substr(start: int, end: int) -> txt
+```
+
+- `start`, `end` — the half-open byte range `[start, end)`.
+- Returns the bytes in that range. A range outside the text, or one that splits
+  a character, stops the run.
+
+```kiru
+use std;
+use std::text;
+fn main() {
+  std::print("hello".substr(1, 3));   # el
+};
+```
+
+</details>
+
+<details>
+<summary><code>memchr</code> — the first byte index of a needle</summary>
+
+```text
+text.memchr(needle: txt) -> std::Option<int>
+```
+
+- `needle` — the text to find.
+- Returns `some(index)` for the byte index of the first occurrence, or `none`
+  when it is absent. [Absence](/concepts/absence/) covers the optional value.
+
+```text
+use std;
+use std::text;
+match "hello".memchr("l") {
+  std::Option.some(index) => { std::print("@(index)"); };   # 2
+  std::Option.none => { std::print("absent"); };
+};
 ```
 
 </details>
@@ -27,41 +94,97 @@ let n: int = "abc".len();   # n is 3
 <details>
 <summary><code>find</code> — the first byte index of a needle</summary>
 
-```kiru
+```text
 text.find(needle: txt) -> std::Option<int>
 ```
 
-- `needle` — the text to find.
-- Returns `some(index)` for the byte index of the first occurrence, or `none`
-  when it is absent. [Absence](/concepts/absence/) covers the optional value.
+The kernel under the method's name: `find` is `memchr`.
 
 ```kiru
 use std;
 use std::text;
-match "hello".find("l") {
-  std::Option.some(index) => { std::print("@(index)"); };   # 2
-  std::Option.none => { std::print("absent"); };
+fn main() {
+  std::print("@("a=b".find("=").or(-1))");   # 1
 };
 ```
-
-`std::text::find_byte(text, needle) -> std::Option<int>` returns the same
-index.
 
 </details>
 
 <details>
-<summary><code>byte</code> — the byte at an index</summary>
+<summary><code>contains</code> — whether text contains a needle</summary>
 
-```kiru
-text.byte(index: int) -> int
+```text
+text.contains(needle: txt) -> bool
 ```
 
-- `index` — a byte index.
-- Returns the byte value there. An index outside the text stops the run.
+- `needle` — the text to find.
+- Returns `true` or `false`.
 
 ```kiru
+use std;
 use std::text;
-let b: int = "abc".byte(1);   # b is 98, the byte `b`
+fn main() {
+  std::print("@("hello".contains("ell"))");   # true
+};
+```
+
+</details>
+
+<details>
+<summary><code>starts_with</code> — whether text starts with a prefix</summary>
+
+```text
+text.starts_with(prefix: txt) -> bool
+```
+
+- `prefix` — the expected start.
+- Returns `true` or `false`.
+
+```kiru
+use std;
+use std::text;
+fn main() {
+  std::print("@("hello".starts_with("he"))");   # true
+};
+```
+
+</details>
+
+<details>
+<summary><code>ends_with</code> — whether text ends with a suffix</summary>
+
+```text
+text.ends_with(suffix: txt) -> bool
+```
+
+- `suffix` — the expected end.
+- Returns `true` or `false`.
+
+```kiru
+use std;
+use std::text;
+fn main() {
+  std::print("@("hello".ends_with("lo"))");   # true
+};
+```
+
+</details>
+
+<details>
+<summary><code>trim</code> — drop surrounding whitespace</summary>
+
+```text
+text.trim() -> txt
+```
+
+- Returns the text without leading or trailing ASCII whitespace.
+
+```kiru
+use std;
+use std::text;
+fn main() {
+  std::print("  hi\n".trim());   # hi
+};
 ```
 
 </details>
@@ -69,7 +192,7 @@ let b: int = "abc".byte(1);   # b is 98, the byte `b`
 <details>
 <summary><code>number</code> — the number the text writes</summary>
 
-```kiru
+```text
 text.number() -> std::Option<int>
 ```
 
@@ -79,24 +202,9 @@ text.number() -> std::Option<int>
 ```kiru
 use std;
 use std::text;
-let n: int = "42".number().or(0);    # n is 42
-let bad: int = "4x".number().or(0);  # 0
-```
-
-</details>
-
-<details>
-<summary><code>trim</code> — drop surrounding whitespace</summary>
-
-```kiru
-text.trim() -> txt
-```
-
-- Returns the text without leading or trailing ASCII whitespace.
-
-```kiru
-use std::text;
-let s: txt = "  hi\n".trim();   # s is "hi"
+fn main() {
+  std::print("@("42".number().or(0))");    # 42
+};
 ```
 
 </details>
@@ -104,18 +212,21 @@ let s: txt = "  hi\n".trim();   # s is "hi"
 <details>
 <summary><code>split</code> — split text on a separator</summary>
 
-```kiru
+```text
 text.split(separator: txt) -> Vec<txt>
 ```
 
 - `separator` — the text between parts. An empty separator stops the run.
-- Returns the parts as a vec. It is declared at the `std` root as
-  `std::split(text, separator)`.
+- Returns the parts as a `Vec<txt>`.
 
 ```kiru
+use std;
 use std::text;
-use std::vec;
-let parts: Vec<txt> = "a,b,c".split(",");
+use std::dynamic::Vec;
+fn main() {
+  let parts: Vec<txt> = "a,b,c".split(",");
+  std::print("@(parts.len())");
+};
 ```
 
 </details>
@@ -123,67 +234,20 @@ let parts: Vec<txt> = "a,b,c".split(",");
 <details>
 <summary><code>lines</code> — split text into lines</summary>
 
-```kiru
+```text
 text.lines() -> Vec<txt>
 ```
 
 - Returns the lines, split on `\n`. A trailing newline adds no empty line.
 
 ```kiru
+use std;
 use std::text;
-use std::vec;
-let lines: Vec<txt> = "a\nb\n".lines();
-```
-
-</details>
-
-<details>
-<summary><code>contains</code> — whether text contains a needle</summary>
-
-```kiru
-text.contains(needle: txt) -> bool
-```
-
-- `needle` — the text to find.
-- Returns `true` or `false`.
-
-```kiru
-use std::text;
-let found: bool = "hello".contains("ell");   # true
-```
-
-</details>
-
-<details>
-<summary><code>starts_with</code> — whether text starts with a prefix</summary>
-
-```kiru
-text.starts_with(prefix: txt) -> bool
-```
-
-- `prefix` — the expected start.
-- Returns `true` or `false`.
-
-```kiru
-use std::text;
-let starts: bool = "hello".starts_with("he");   # true
-```
-
-</details>
-
-<details>
-<summary><code>ends_with</code> — whether text ends with a suffix</summary>
-
-```kiru
-text.ends_with(suffix: txt) -> bool
-```
-
-- `suffix` — the expected end.
-- Returns `true` or `false`.
-
-```kiru
-use std::text;
-let ends: bool = "hello".ends_with("lo");   # true
+use std::dynamic::Vec;
+fn main() {
+  let lines: Vec<txt> = "a\nb\n".lines();
+  std::print("@(lines.len())");
+};
 ```
 
 </details>
@@ -191,7 +255,7 @@ let ends: bool = "hello".ends_with("lo");   # true
 <details>
 <summary><code>replace</code> — replace every occurrence</summary>
 
-```kiru
+```text
 text.replace(from: txt, to: txt) -> txt
 ```
 
@@ -200,7 +264,11 @@ text.replace(from: txt, to: txt) -> txt
 - Returns a new text.
 
 ```kiru
-std::print("a-b-c".replace("-", "+"));   # a+b+c
+use std;
+use std::text;
+fn main() {
+  std::print("a-b-c".replace("-", "+"));   # a+b+c
+};
 ```
 
 </details>

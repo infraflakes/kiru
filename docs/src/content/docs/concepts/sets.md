@@ -1,30 +1,29 @@
 ---
 title: Sets
-description: The Set type, of and insert, contains and remove, and the comparator it carries.
+description: The Set type, new and insert, contains and remove, and the comparator it carries.
 ---
 
 A set is a collection of **distinct keys kept in order**. It is the keys of a
-map without the values: `with` puts a key in, `contains` asks whether it is there, and
-`without` takes it out, with no duplicate and no associated value. A vec finds an
-element by its position; a set finds a key by its order.
+map without the values: `insert` puts a key in, `contains` asks whether it is
+there, and `remove` takes it out, with no duplicate and no associated value. A
+vec finds an element by its position; a set finds a key by its order.
 
 `Set` is not a built-in type. It is an ordinary declared type — a `rec` — in the
-`std::set` namespace, built over a vec of keys that is kept sorted:
+`std::dynamic` namespace, built over a vec of keys that is kept sorted:
 
-```kiru
+```text
 use std;
-use std::vec;
+use std::dynamic::Vec;
 pub rec Set<K> { entries: Vec<K>, less: fn(K, K) -> bool };
 ```
 
-`use std::set;` brings `Set` and the set methods into scope. A qualified
-`std::set::Set` names the type without it, but a method call like `s.contains(...)`
-still needs the `use`, the same as any other method
-([Methods](/concepts/methods/) covers reachability). Both of `Set`'s fields,
-`entries` and `less`, are **private** to `std::set`: a program never writes
-`{ entries = … }` and never reads `s.entries`, and it does not reach for
-`s.less` either. A set is built and read only through its methods.
-[std::set](/stdlib/set/) lists every signature.
+`use std::dynamic;` brings `Set` and the set methods into scope. A qualified
+`std::dynamic::Set` names the type without it, and a method call like
+`s.contains(...)` needs no `use` ([Methods](/concepts/methods/) covers
+reachability). Both of `Set`'s fields, `entries` and `less`, are **private** to
+`std::dynamic`: a program never writes `{ entries = … }` and never reads
+`s.entries`, and it does not reach for `s.less` either. A set is built and read
+only through its methods. [Set](/stdlib/set/) lists every signature.
 
 ## The order is a comparator you carry
 
@@ -33,39 +32,43 @@ that as a bound, `BTreeSet<T: Ord>`, and takes the order from the key's `Ord`.
 kiru has no bounds, and the checker rejects ordering a type parameter: a body
 that writes `a < b` on two `T` reports that `T` cannot be ordered, and only
 `int` or `txt` can be compared. The order cannot come from the type, so it comes
-from a value — exactly as `sorted_by` already takes a comparator
-([Closures](/concepts/closures/) covers `sorted_by`).
+from a value — exactly as `sort_by` already takes a comparator
+([Closures](/concepts/closures/) covers `sort_by`).
 
 That value is the `less` field: `fn(K, K) -> bool`, answering `true` when its
 first argument orders before its second. Every set carries one, and every method
-that places a key uses it. `of` takes it as an argument:
+that places a key uses it. `Set.new(less)` starts an empty set with it:
 
 ```kiru
 use std;
-use std::text;
-use std::set;
-use std::vec;
+use std::dynamic::Set;
+
 fn main() {
-  let s: Set<txt> = std::set::of(["b", "a", "a"], std::vec::text_less);
-  std::print(std::join(s.items(), ","));   # a,b
+  let s: Set<txt> = Set.new(std::dynamic::text_order);
+  s = s.insert("a");
+  s = s.insert("c");
+  s = s.insert("b");
+  std::print(s.items().join(","));   # a,b,c
 };
 ```
 
-`of` sorts with the comparator and then drops adjacent duplicates, so one of
-each key survives. `std::vec::text_less` is the ready-made byte-order comparator
-for text; a set of `int` takes one of its own, and any function of the right
-type works. Because the order is a value, a set can order its keys the way the
-program wants rather than the way the type forces:
+`std::dynamic::text_order` is the ready-made byte-order comparator for text; a
+set of `int` takes one of its own, and any function of the right type works.
+Because the order is a value, a set can order its keys the way the program wants
+rather than the way the type forces:
 
 ```kiru
 use std;
-use std::text;
-use std::set;
-use std::vec;
+use std::dynamic::Set;
+
 fn reverse_less(a: txt, b: txt) -> bool { return b < a; };
+
 fn main() {
-  let s: Set<txt> = std::set::of(["a", "c", "b"], reverse_less);
-  std::print(std::join(s.items(), ","));   # c,b,a
+  let s: Set<txt> = Set.new(reverse_less);
+  s = s.insert("a");
+  s = s.insert("c");
+  s = s.insert("b");
+  std::print(s.items().join(","));   # c,b,a
 };
 ```
 
@@ -75,41 +78,29 @@ separates them — or a key could be present yet unreachable.
 
 ## Adding, testing, and removing
 
-A set starts from `of` and grows with `with`:
+`insert` adds the key in order and ignores one already present. `contains`
+answers whether a key is present, and `remove` returns the set without it:
 
 ```kiru
 use std;
-use std::text;
-use std::set;
-use std::vec;
-fn main() {
-  let s: Set<txt> = std::set::of(["a", "c"], std::vec::text_less);
-  s = s.with("b");
-  s = s.with("a");    # already present, so the set is unchanged
-  std::print(std::join(s.items(), ","));   # a,b,c
-};
-```
+use std::dynamic::Set;
 
-`with` inserts the key in order and ignores one already present. `contains` answers
-whether a key is present, and `without` returns the set without it:
-
-```kiru
-use std;
-use std::text;
-use std::set;
-use std::vec;
 fn main() {
-  let s: Set<txt> = std::set::of(["a", "b", "c"], std::vec::text_less);
+  let s: Set<txt> = Set.new(std::dynamic::text_order);
+  s = s.insert("a");
+  s = s.insert("b");
+  s = s.insert("c");
+  s = s.insert("a");    # already present, so the set is unchanged
   std::print("@(s.contains("b")) @(s.contains("z"))");   # true false
-  s = s.without("b");
-  std::print(std::join(s.items(), ","));       # a,c
+  s = s.remove("b");
+  std::print(s.items().join(","));                       # a,c
 };
 ```
 
-A value passed to a function is a local copy, so `with` and `without` cannot change
-the set they are called on; each returns a new set and the caller rebinds
-([Values and Types](/concepts/values/) covers assignment). `with`, `contains`, and
-`without` binary-search on `less`, so each is O(log n).
+A value passed to a function is a local copy, so `insert` and `remove` cannot
+change the set they are called on; each returns a new set and the caller rebinds
+([Values and Types](/concepts/values/) covers assignment). `insert`, `contains`,
+and `remove` binary-search on `less`, so each is O(log n).
 
 ## The set operations
 
@@ -119,15 +110,14 @@ by the receiver's comparator:
 
 ```kiru
 use std;
-use std::text;
-use std::set;
-use std::vec;
+use std::dynamic::Set;
+
 fn main() {
-  let a: Set<txt> = std::set::of(["a", "b"], std::vec::text_less);
-  let b: Set<txt> = std::set::of(["b", "c"], std::vec::text_less);
-  std::print(std::join(a.union(b).items(), ","));          # a,b,c
-  std::print(std::join(a.intersection(b).items(), ","));   # b
-  std::print(std::join(a.difference(b).items(), ","));     # a
+  let a: Set<txt> = Set.new(std::dynamic::text_order).insert("a").insert("b");
+  let b: Set<txt> = Set.new(std::dynamic::text_order).insert("b").insert("c");
+  std::print(a.union(b).items().join(","));          # a,b,c
+  std::print(a.intersection(b).items().join(","));   # b
+  std::print(a.difference(b).items().join(","));     # a
 };
 ```
 
@@ -138,20 +128,19 @@ seen names against the allowed ones:
 
 ```kiru
 use std;
-use std::text;
-use std::set;
-use std::vec;
+use std::dynamic::Set;
+
 fn main() {
-  let installed: Set<txt> = std::set::of(["core", "cli", "docs"], std::vec::text_less);
-  let required: Set<txt> = std::set::of(["cli", "core"], std::vec::text_less);
+  let installed: Set<txt> = Set.new(std::dynamic::text_order).insert("core").insert("cli").insert("docs");
+  let required: Set<txt> = Set.new(std::dynamic::text_order).insert("cli").insert("core");
   std::print("@(required.is_subset(installed))");                        # true
-  std::print(std::join(installed.difference(required).items(), ","));   # docs
-  std::print(std::join(installed.intersection(required).items(), ",")); # cli,core
+  std::print(installed.difference(required).items().join(","));          # docs
+  std::print(installed.intersection(required).items().join(","));        # cli,core
 };
 ```
 
 `len` is the key count and `items` is the keys in order.
-[std::set](/stdlib/set/) has every signature.
+[Set](/stdlib/set/) has every signature.
 
 ## A set or a map?
 

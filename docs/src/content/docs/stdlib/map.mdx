@@ -1,40 +1,40 @@
 ---
-title: std::map
+title: Map
 description: The Map record and its methods.
 ---
 
-`std::map` declares the `Map<K, V>` record and the map methods. `Map` is an
-ordinary `rec` over a vec of entries, so a function whose first parameter is a
-`Map<K, V>` is callable as `m.name(...)`. `use std::map;` brings the type and
-the methods into scope; a qualified `std::map::Map` names the type without it,
-but the methods still need the `use`. `Entry` and `Map`'s field `entries` are
-private to `std::map`, so a map is built and read only through the methods
-below. [Maps](/concepts/maps/) covers the narrative.
+`Map<K, V>` is a declared `rec` in `std::dynamic`, an ordered association built
+over a `Vec` of entries. A method whose first parameter is a `Map<K, V>` is
+callable as `m.name(...)`; an associated function is reached as
+`Map.name(...)`. `use std::dynamic;` brings the type and its methods into scope,
+and a qualified `std::dynamic::Map` names the type without it. `Entry` and
+`Map`'s field `entries` are private to `std::dynamic`, so a map is built and
+read only through the methods below. [Maps](/concepts/maps/) covers the
+narrative.
 
-```kiru
-use std::vec;
+```text
+use std::dynamic::Vec;
 rec Entry<K, V> { pub key: K, pub value: V };
 pub rec Map<K, V> { entries: Vec<Entry<K, V>> };
 ```
 
 <details>
-<summary><code>empty</code> — the empty map</summary>
+<summary><code>new</code> — the empty map</summary>
 
-```kiru
-std::map::empty<K, V>() -> Map<K, V>
+```text
+std::dynamic::Map.new<K, V>() -> Map<K, V>
 ```
 
 - Returns a map with no entries.
 
-`empty` has no argument to solve `K` and `V` from, so the call takes them from
+`new` has no argument to solve `K` and `V` from, so the call takes them from
 its expected type: write the annotation and it works.
 
 ```kiru
 use std;
-use std::text;
-use std::map;
+use std::dynamic::Map;
 fn main() {
-  let m: Map<txt, txt> = std::map::empty();
+  let m: Map<txt, txt> = Map.new();
   std::print("@(m.len())");   # 0
 };
 ```
@@ -42,36 +42,34 @@ fn main() {
 </details>
 
 <details>
-<summary><code>of</code> — a map from a vec of entries</summary>
+<summary><code>insert</code> — a new map with one key written</summary>
 
-```kiru
-std::map::of<K, V>(entries: Vec<Entry<K, V>>) -> Map<K, V>
+```text
+map.insert(key: K, value: V) -> Map<K, V>
 ```
 
-- `entries` — the entries to build from. A later entry with the same key
-  replaces an earlier one.
-- Returns a new map with one entry per distinct key.
+- `key` — the key to write.
+- `value` — the value to store for it.
+- Returns a new map: an existing key is replaced in place, a new key is
+  appended. The map it is called on is unchanged.
 
 ```kiru
 use std;
-use std::text;
-use std::map;
+use std::dynamic::Map;
 fn main() {
-  let m: Map<txt, txt> = std::map::of([{ key = "a", value = "1" }]);
-  std::print("@(m.len())");   # 1
+  let m: Map<txt, txt> = Map.new();
+  m = m.insert("a", "1");
+  let n: Map<txt, txt> = m.insert("b", "2");
+  std::print("@(n.len())");   # 2
 };
 ```
-
-The annotation supplies `K` and `V`, which flow into the argument, so the
-`{ key = …, value = … }` literals are `Entry<txt, txt>` and `Entry` never has to
-be written.
 
 </details>
 
 <details>
 <summary><code>get</code> — the value stored for a key</summary>
 
-```kiru
+```text
 map.get(key: K) -> V
 ```
 
@@ -82,10 +80,10 @@ map.get(key: K) -> V
 
 ```kiru
 use std;
-use std::text;
-use std::map;
+use std::dynamic::Map;
 fn main() {
-  let m: Map<txt, txt> = std::map::of([{ key = "a", value = "1" }]);
+  let m: Map<txt, txt> = Map.new();
+  m = m.insert("a", "1");
   std::print(m.get("a"));   # 1
 };
 ```
@@ -95,7 +93,7 @@ fn main() {
 <details>
 <summary><code>get_or</code> — the value stored for a key, or a fallback</summary>
 
-```kiru
+```text
 map.get_or(key: K, fallback: V) -> V
 ```
 
@@ -106,10 +104,10 @@ map.get_or(key: K, fallback: V) -> V
 
 ```kiru
 use std;
-use std::text;
-use std::map;
+use std::dynamic::Map;
 fn main() {
-  let m: Map<txt, txt> = std::map::of([{ key = "a", value = "1" }]);
+  let m: Map<txt, txt> = Map.new();
+  m = m.insert("a", "1");
   std::print(m.get_or("a", "missing"));   # 1
   std::print(m.get_or("z", "missing"));   # missing
 };
@@ -118,34 +116,9 @@ fn main() {
 </details>
 
 <details>
-<summary><code>insert</code> — a new map with one key written</summary>
-
-```kiru
-map.with(key: K, value: V) -> Map<K, V>
-```
-
-- `key` — the key to write.
-- `value` — the value to store for it.
-- Returns a new map: an existing key is replaced in place, a new key is
-  appended. The map it is called on is unchanged.
-
-```kiru
-use std;
-use std::text;
-use std::map;
-fn main() {
-  let m: Map<txt, txt> = std::map::of([{ key = "a", value = "1" }]);
-  let n: Map<txt, txt> = m.with("b", "2");
-  std::print("@(n.len())");   # 2
-};
-```
-
-</details>
-
-<details>
 <summary><code>contains</code> — whether a key is present</summary>
 
-```kiru
+```text
 map.contains(key: K) -> bool
 ```
 
@@ -154,10 +127,10 @@ map.contains(key: K) -> bool
 
 ```kiru
 use std;
-use std::text;
-use std::map;
+use std::dynamic::Map;
 fn main() {
-  let m: Map<txt, txt> = std::map::of([{ key = "a", value = "1" }]);
+  let m: Map<txt, txt> = Map.new();
+  m = m.insert("a", "1");
   std::print("@(m.contains("a")) @(m.contains("z"))");   # true false
 };
 ```
@@ -167,7 +140,7 @@ fn main() {
 <details>
 <summary><code>keys</code> — the keys, in order</summary>
 
-```kiru
+```text
 map.keys() -> Vec<K>
 ```
 
@@ -175,13 +148,12 @@ map.keys() -> Vec<K>
 
 ```kiru
 use std;
-use std::text;
-use std::map;
-use std::vec;
+use std::dynamic::Map;
 fn main() {
-  let m: Map<txt, txt> = std::map::of([{ key = "a", value = "1" }, { key = "b", value = "2" }]);
-  let ks: Vec<txt> = m.keys();
-  std::print(std::join(ks, ","));   # a,b
+  let m: Map<txt, txt> = Map.new();
+  m = m.insert("a", "1");
+  m = m.insert("b", "2");
+  std::print(m.keys().join(","));   # a,b
 };
 ```
 
@@ -190,7 +162,7 @@ fn main() {
 <details>
 <summary><code>values</code> — the values, in order</summary>
 
-```kiru
+```text
 map.values() -> Vec<V>
 ```
 
@@ -198,13 +170,12 @@ map.values() -> Vec<V>
 
 ```kiru
 use std;
-use std::text;
-use std::map;
-use std::vec;
+use std::dynamic::Map;
 fn main() {
-  let m: Map<txt, txt> = std::map::of([{ key = "a", value = "1" }, { key = "b", value = "2" }]);
-  let vs: Vec<txt> = m.values();
-  std::print(std::join(vs, ","));   # 1,2
+  let m: Map<txt, txt> = Map.new();
+  m = m.insert("a", "1");
+  m = m.insert("b", "2");
+  std::print(m.values().join(","));   # 1,2
 };
 ```
 
@@ -213,7 +184,7 @@ fn main() {
 <details>
 <summary><code>len</code> — the number of entries</summary>
 
-```kiru
+```text
 map.len() -> int
 ```
 
@@ -221,10 +192,11 @@ map.len() -> int
 
 ```kiru
 use std;
-use std::text;
-use std::map;
+use std::dynamic::Map;
 fn main() {
-  let m: Map<txt, txt> = std::map::of([{ key = "a", value = "1" }, { key = "b", value = "2" }]);
+  let m: Map<txt, txt> = Map.new();
+  m = m.insert("a", "1");
+  m = m.insert("b", "2");
   std::print("@(m.len())");   # 2
 };
 ```

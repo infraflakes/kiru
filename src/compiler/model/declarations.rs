@@ -6,15 +6,22 @@
 //! form: its value is storage. A native is the one value the runtime provides
 //! rather than the program, so it carries a marker instead of an expression.
 
+mod group;
+
+pub(crate) use group::DeclarationKind;
+
 use crate::native_registry::Native;
 
-use super::body::{Expression, Function};
+use super::expressions::{Expression, Function};
 use super::ids::{DeclarationId, FileId, NamespaceId};
-use crate::model::Type;
+use crate::compiler::model::Type;
 
-/// One declaration node: a name, the type it holds, and the value it holds.
+/// One declaration node: its kind, its name, the type it holds, and the value
+/// it holds. The kind is the one place every form fact is read from; a pass
+/// never re-derives it from the payload fields.
 #[derive(Debug)]
 pub(crate) struct Declaration {
+    pub(crate) kind: DeclarationKind,
     pub(crate) name: String,
     /// The file that declared it; natives and locals have none.
     pub(crate) file: Option<FileId>,
@@ -49,35 +56,29 @@ impl Declaration {
         self.value.as_ref()
     }
 
-    /// Whether this node is a parameter or local binding: storage for its
-    /// declared type, with no value form of its own.
-    pub(crate) fn is_binding(&self) -> bool {
-        self.value.is_none() && self.native.is_none()
-    }
-
     /// Whether the runtime provides this callable.
     pub(crate) fn is_native(&self) -> bool {
-        self.native.is_some()
+        self.kind.native()
     }
 
     /// Whether this node is a callable: a function value or a native.
     pub(crate) fn is_callable(&self) -> bool {
-        self.function().is_some() || self.is_native()
+        self.kind.callable()
     }
 
     /// The declared return type of a callable, or `None` for any other name.
-    pub(crate) fn return_type(&self) -> Option<Type> {
-        self.ty.return_type()
+    pub(crate) fn return_type(&self, types: &[TypeDecl]) -> Option<Type> {
+        self.ty.return_type(types)
     }
 
     /// The type parameters a call binds: a function's declared ones, or the
     /// parameters a native's row mentions, in order of first appearance. A
     /// native has no function node, so its row's function type is the
     /// declaration.
-    pub(crate) fn type_parameters(&self) -> Vec<String> {
+    pub(crate) fn type_parameters(&self, types: &[TypeDecl]) -> Vec<String> {
         match self.function() {
             Some(function) => function.type_parameters.clone(),
-            None => crate::model::type_parameters_of(&self.ty),
+            None => crate::compiler::model::type_parameters_of(&self.ty, types),
         }
     }
 }

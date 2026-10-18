@@ -2,9 +2,7 @@
 //! so no command output is captured. Only the tests that build commands
 //! spawn processes.
 
-use std::time::{Duration, Instant};
-
-use crate::compiler::{checked_program, prune_unreachable};
+use crate::compiler::checked_program;
 use crate::runtime::Value;
 
 use super::Runtime;
@@ -112,7 +110,7 @@ fn interpolation_inserts_values() {
         ),
         (
             "an expression with a call",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let s: txt = \"abc\"; return \"len=@(std::text::len(s))\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let s: txt = \"abc\"; return \"len=@(std::text::strlen(s))\"; };\nfn main() {};",
             "f",
             "len=3",
         ),
@@ -222,19 +220,19 @@ fn lists_and_for_evaluate() {
     expect_text_results(&[
         (
             "a Vec joins",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { return std::join(Vec.new().push(\"a\").push(\"b\"), \"-\"); };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { return Vec.new().push(\"a\").push(\"b\").join(\"-\"); };\nfn main() {};",
             "f",
             "a-b",
         ),
         (
             "split then join",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { return std::join(std::split(\"a,b,c\", \",\"), \"-\"); };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { return \"a,b,c\".split(\",\").join(\"-\"); };\nfn main() {};",
             "f",
             "a-b-c",
         ),
         (
             "lines drops a trailing newline",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let parts: Vec<txt> = \"a\\nb\\n\".lines(); let joined: txt = std::join(parts, \"|\"); return \"@(std::text::len(joined))\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let parts: Vec<txt> = \"a\\nb\\n\".lines(); let joined: txt = parts.join(\"|\"); return \"@(std::text::strlen(joined))\"; };\nfn main() {};",
             "f",
             "3",
         ),
@@ -270,13 +268,13 @@ fn lists_and_for_evaluate() {
         ),
         (
             "a nested loop over a split",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let rows: Vec<txt> = std::split(\"1;2;3\", \";\"); let last: txt = \"\"; let row_index: int = 0; let row_count: int = rows.len(); for { match row_index < row_count { false => { break; }; true => {}; }; let row: txt = rows.at(row_index); let cells: Vec<txt> = std::split(row, \";\"); let cell_index: int = 0; let cell_count: int = cells.len(); for { match cell_index < cell_count { false => { break; }; true => {}; }; last = cells.at(cell_index); cell_index = cell_index + 1; }; row_index = row_index + 1; }; return last; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let rows: Vec<txt> = \"1;2;3\".split(\";\"); let last: txt = \"\"; let row_index: int = 0; let row_count: int = rows.len(); for { match row_index < row_count { false => { break; }; true => {}; }; let row: txt = rows.at(row_index); let cells: Vec<txt> = row.split(\";\"); let cell_index: int = 0; let cell_count: int = cells.len(); for { match cell_index < cell_count { false => { break; }; true => {}; }; last = cells.at(cell_index); cell_index = cell_index + 1; }; row_index = row_index + 1; }; return last; };\nfn main() {};",
             "f",
             "3",
         ),
         (
             "a module Vec value is read",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nlet xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\");\nfn f() -> txt { return std::join(xs, \"\"); };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nlet xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\");\nfn f() -> txt { return xs.join(\"\"); };\nfn main() {};",
             "f",
             "ab",
         ),
@@ -408,7 +406,7 @@ fn vec_mutation_evaluates() {
     expect_text_results(&[
         (
             "replace replaces an element",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\"); xs = xs.replace(1, \"c\"); return std::join(xs, \"\"); };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\"); xs = xs.replace(1, \"c\"); return xs.join(\"\"); };\nfn main() {};",
             "f",
             "ac",
         ),
@@ -462,17 +460,136 @@ fn text_comparisons_and_sort_evaluate() {
         ),
         (
             "sort orders text ascending",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"c\").push(\"a\").push(\"b\"); let ys: Vec<txt> = std::dynamic::sorted(xs); return \"@(ys.at(0))@(ys.at(1))@(ys.at(2))\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"c\").push(\"a\").push(\"b\"); let ys: Vec<txt> = std::dynamic::sort(xs); return \"@(ys.at(0))@(ys.at(1))@(ys.at(2))\"; };\nfn main() {};",
             "f",
             "abc",
         ),
         (
             "sort_by orders with a comparator",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn greater(a: int, b: int) -> bool { return a > b; };\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(3).push(2); let ys: Vec<int> = xs.sorted_by(greater); return \"@(ys.at(0))@(ys.at(1))@(ys.at(2))\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn greater(a: int, b: int) -> bool { return a > b; };\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(3).push(2); let ys: Vec<int> = xs.sort_by(greater); return \"@(ys.at(0))@(ys.at(1))@(ys.at(2))\"; };\nfn main() {};",
             "f",
             "321",
         ),
     ]);
+}
+
+#[test]
+fn new_vec_methods_evaluate() {
+    expect_text_results(&[
+        (
+            "insert places an element and shifts the rest up",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\").push(\"c\"); xs = xs.insert(1, \"b\"); return xs.join(\"\"); };\nfn main() {};",
+            "f",
+            "abc",
+        ),
+        (
+            "insert at the length appends",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\"); xs = xs.insert(1, \"b\"); return xs.join(\"\"); };\nfn main() {};",
+            "f",
+            "ab",
+        ),
+        (
+            "remove drops an element and shifts the rest down",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\").push(\"c\"); xs = xs.remove(1); return xs.join(\"\"); };\nfn main() {};",
+            "f",
+            "ac",
+        ),
+        (
+            "is_empty answers whether there are no elements",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new(); let ys: Vec<int> = Vec.new().push(1); return \"@(xs.is_empty()):@(ys.is_empty())\"; };\nfn main() {};",
+            "f",
+            "true:false",
+        ),
+        (
+            "clear drops every element",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\"); xs = xs.clear(); return \"@(xs.len())\"; };\nfn main() {};",
+            "f",
+            "0",
+        ),
+        (
+            "slice keeps the half-open range",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\").push(\"c\").push(\"d\"); let ys: Vec<txt> = xs.slice(1, 3); return ys.join(\"\"); };\nfn main() {};",
+            "f",
+            "bc",
+        ),
+        (
+            "take keeps the first count",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\").push(\"c\"); let ys: Vec<txt> = xs.take(2); return ys.join(\"\"); };\nfn main() {};",
+            "f",
+            "ab",
+        ),
+        (
+            "take past the length keeps every element",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\").push(\"c\"); let ys: Vec<txt> = xs.take(9); return ys.join(\"\"); };\nfn main() {};",
+            "f",
+            "abc",
+        ),
+        (
+            "skip drops the first count",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\").push(\"c\"); let ys: Vec<txt> = xs.skip(1); return ys.join(\"\"); };\nfn main() {};",
+            "f",
+            "bc",
+        ),
+        (
+            "fold combines from the left with the accumulator first",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3); let total: int = xs.fold(0, fn(acc: int, x: int) -> int { return acc + x; }); return \"@(total)\"; };\nfn main() {};",
+            "f",
+            "6",
+        ),
+        (
+            "each runs over every element and returns nothing",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3); xs.each(fn(x: int) { }); return \"done\"; };\nfn main() {};",
+            "f",
+            "done",
+        ),
+        (
+            "count answers how many elements satisfy the predicate",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn even(x: int) -> bool { return x % 2 == 0; };\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3).push(4); return \"@(xs.count(even))\"; };\nfn main() {};",
+            "f",
+            "2",
+        ),
+    ]);
+}
+
+#[test]
+fn each_calls_apply_for_every_element() {
+    // A panicking apply proves the element is visited; an empty vec calls it
+    // never, so the run completes.
+    let visited = runtime(
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3); xs.each(fn(x: int) { match x { 3 => { std::eprint(\"visited\"); }; _ => {}; }; }); return \"ok\"; };\nfn main() {};",
+    );
+    assert!(visited.call_root("f", Vec::new()).is_err());
+    let empty = runtime(
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new(); xs.each(fn(x: int) { std::eprint(\"visited\"); }); return \"ok\"; };\nfn main() {};",
+    );
+    assert_eq!(call_text(&empty, "f"), "ok");
+}
+
+#[test]
+fn an_out_of_range_insert_fails_the_run() {
+    let runtime = runtime(
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\"); xs = xs.insert(9, \"b\"); return xs.join(\"\"); };\nfn main() {};",
+    );
+    assert!(runtime.call_root("f", Vec::new()).is_err());
+    assert!(runtime.state.panicked(), "the run remembers the failure");
+}
+
+#[test]
+fn an_out_of_range_remove_fails_the_run() {
+    let runtime = runtime(
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\"); xs = xs.remove(9); return xs.join(\"\"); };\nfn main() {};",
+    );
+    assert!(runtime.call_root("f", Vec::new()).is_err());
+    assert!(runtime.state.panicked(), "the run remembers the failure");
+}
+
+#[test]
+fn an_out_of_range_slice_fails_the_run() {
+    let runtime = runtime(
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\"); let ys: Vec<txt> = xs.slice(0, 9); return ys.join(\"\"); };\nfn main() {};",
+    );
+    assert!(runtime.call_root("f", Vec::new()).is_err());
+    assert!(runtime.state.panicked(), "the run remembers the failure");
 }
 
 #[test]
@@ -520,19 +637,19 @@ fn methods_evaluate() {
     expect_text_results(&[
         (
             "a Vec method counts elements",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn count<T>(self: Vec<T>) -> int { return self.len(); };\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3); return \"@(xs.count())\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nimpl Vec { fn tally<T>(self: Vec<T>) -> int { return self.len(); }; };\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3); return \"@(xs.tally())\"; };\nfn main() {};",
             "f",
             "3",
         ),
         (
             "a declared-type method reads fields",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec Point { x: int, y: int };\nfn sum(self: Point) -> int { return self.x + self.y; };\nfn f() -> txt { let p: Point = { x = 4, y = 5 }; return \"@(p.sum())\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec Point { x: int, y: int };\nimpl Point { fn sum(self: Point) -> int { return self.x + self.y; }; };\nfn f() -> txt { let p: Point = { x = 4, y = 5 }; return \"@(p.sum())\"; };\nfn main() {};",
             "f",
             "9",
         ),
         (
             "a method chains into another",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn count<T>(self: Vec<T>) -> int { return self.len(); }; fn doubled<T>(self: Vec<T>) -> int { return self.count() + self.count(); };\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2); return \"@(xs.doubled())\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nimpl Vec { fn tally<T>(self: Vec<T>) -> int { return self.len(); }; fn doubled<T>(self: Vec<T>) -> int { return self.tally() + self.tally(); }; };\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2); return \"@(xs.doubled())\"; };\nfn main() {};",
             "f",
             "4",
         ),
@@ -815,216 +932,4 @@ fn panic_stops_the_run() {
     );
     assert!(runtime.call_root("f", Vec::new()).is_err());
     assert!(runtime.state.panicked(), "the run remembers the panic");
-}
-
-#[test]
-fn async_does_not_wait_for_the_call() {
-    let runtime = runtime(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn worker() -> txt { return \"w\"; };\n\
-         fn f() -> txt { async worker(); return \"done\"; };\n\
-         fn main() {};",
-    );
-    assert_eq!(call_text(&runtime, "f"), "done");
-}
-
-#[test]
-fn wait_blocks_until_the_thread_finishes() {
-    let directory = tempfile::tempdir().expect("temp dir");
-    let marker = directory.path().join("finished");
-    let source = format!(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn worker() {{ std::process::command(\"sleep 0.2; touch {}\").run(); }};\n\
-         fn f() -> txt {{ async worker(); wait; return \"done\"; }};\n\
-         fn main() {{}};",
-        marker.display()
-    );
-    assert_eq!(call_text(&runtime(&source), "f"), "done");
-    assert!(marker.exists(), "wait joined the thread before continuing");
-}
-
-#[test]
-fn wait_joins_every_outstanding_thread() {
-    let directory = tempfile::tempdir().expect("temp dir");
-    let first = directory.path().join("first");
-    let second = directory.path().join("second");
-    let third = directory.path().join("third");
-    let source = format!(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn work(marker: txt) {{ std::process::command(\"sleep 0.2; touch @(marker)\").run(); }};\n\
-         fn f() -> txt {{\n\
-           async work(\"{first}\");\n\
-           async work(\"{second}\");\n\
-           async work(\"{third}\");\n\
-           wait;\n\
-           return \"done\";\n\
-         }};\nfn main() {{}};",
-        first = first.display(),
-        second = second.display(),
-        third = third.display(),
-    );
-    assert_eq!(call_text(&runtime(&source), "f"), "done");
-    assert!(first.exists(), "the first thread finished");
-    assert!(second.exists(), "the second thread finished");
-    assert!(third.exists(), "the third thread finished");
-}
-
-#[test]
-fn a_second_wait_returns_immediately() {
-    let runtime = runtime(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn worker() {};\n\
-         fn f() -> txt {\n\
-           async worker();\n\
-           wait;\n\
-           wait;\n\
-           return \"done\";\n\
-         };\n\
-         fn main() {};",
-    );
-    assert_eq!(call_text(&runtime, "f"), "done");
-}
-
-#[test]
-fn wait_inside_a_spawned_thread_returns_without_joining_its_spawner() {
-    let runtime = runtime(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn worker() { wait; };\n\
-         fn f() -> txt { async worker(); wait; return \"done\"; };\n\
-         fn main() {};",
-    );
-    assert_eq!(call_text(&runtime, "f"), "done");
-}
-
-#[test]
-fn wait_inside_a_spawned_thread_joins_its_own_children() {
-    let directory = tempfile::tempdir().expect("temp dir");
-    let marker = directory.path().join("finished");
-    let source = format!(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn child() {{ std::process::command(\"sleep 0.2; touch {}\").run(); }};\n\
-         fn worker() {{ async child(); wait; }};\n\
-         fn f() -> txt {{ async worker(); wait; return \"done\"; }};\n\
-         fn main() {{}};",
-        marker.display()
-    );
-    assert_eq!(call_text(&runtime(&source), "f"), "done");
-    assert!(
-        marker.exists(),
-        "the inner wait joined the thread worker spawned"
-    );
-}
-
-#[test]
-fn panic_in_an_async_thread_sets_the_panicked_flag() {
-    let runtime = runtime(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn worker() { panic; };\n\
-         fn f() -> txt { async worker(); return \"done\"; };\n\
-         fn main() {};",
-    );
-    // The detached panic can reach the caller before or after `f` returns.
-    let _ = runtime.call_root("f", Vec::new());
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline && !runtime.state.panicked() {
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    assert!(
-        runtime.state.panicked(),
-        "a panic in a detached thread is remembered"
-    );
-}
-
-#[test]
-fn panic_in_a_waited_thread_fails_the_run() {
-    let runtime = runtime(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn worker() { panic; };\n\
-         fn f() -> txt { async worker(); wait; return \"done\"; };\nfn main() {};",
-    );
-    let _ = runtime.call_root("f", Vec::new());
-    assert!(runtime.state.panicked(), "the joined panic fails the run");
-}
-
-#[test]
-fn async_over_a_command_call_runs_on_the_thread() {
-    let directory = tempfile::tempdir().expect("temp dir");
-    let marker = directory.path().join("ran");
-    let source = format!(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt {{\n\
-           async std::process::command(\"touch {}\").run();\n\
-           wait;\n\
-           return \"done\";\n\
-         }};\n\
-         fn main() {{}};",
-        marker.display()
-    );
-    assert_eq!(call_text(&runtime(&source), "f"), "done");
-    assert!(marker.exists(), "the call ran on the spawned thread");
-}
-
-#[test]
-fn async_of_a_command_call_runs_in_its_directory() {
-    let directory = tempfile::tempdir().expect("temp dir");
-    let marker = directory.path().join("ran");
-    let source = format!(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt {{\n\
-           async std::process::command(\"touch ran\").dir(\"{}\").run();\n\
-           wait;\n\
-           return \"done\";\n\
-         }};\n\
-         fn main() {{}};",
-        directory.path().display()
-    );
-    assert_eq!(call_text(&runtime(&source), "f"), "done");
-    assert!(
-        marker.exists(),
-        "the command ran in the directory named by the spec"
-    );
-}
-
-#[test]
-fn a_panic_cancels_other_threads_commands() {
-    let directory = tempfile::tempdir().expect("temp dir");
-    let marker = directory.path().join("survived");
-    let source = format!(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn worker() {{ panic; }};\n\
-         fn other() {{ std::process::command(\"sleep 0.2; touch {}\").run(); }};\n\
-         fn f() -> txt {{\n\
-           async worker();\n\
-           async other();\n\
-           wait;\n\
-           return \"done\";\n\
-         }};\n\
-         fn main() {{}};",
-        marker.display()
-    );
-    let runtime = runtime(&source);
-    let _ = runtime.call_root("f", Vec::new());
-    assert!(runtime.state.panicked(), "the panic is recorded");
-    assert!(
-        !marker.exists(),
-        "a panic cancels the other thread's command"
-    );
-}
-
-#[test]
-fn a_retained_program_still_runs() {
-    let mut program = checked_program(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn answer() -> txt { return \"42\"; };\n\
-         fn main() { answer(); };",
-    );
-    prune_unreachable(&mut program);
-    let runtime = Runtime::for_testing(program);
-    let value = runtime
-        .call_root("answer", Vec::new())
-        .expect("the retained function runs");
-    assert_eq!(value, Value::Text("42".into()));
-}
-
-#[test]
-fn retained_module_values_still_evaluate() {
-    let mut program = checked_program(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nlet base: txt = \"a\";\n\
-         fn f() -> txt { return \"@(base)b\"; };\n\
-         fn main() { f(); };",
-    );
-    prune_unreachable(&mut program);
-    let runtime = Runtime::for_testing(program);
-    let value = runtime
-        .call_root("f", Vec::new())
-        .expect("the retained module value evaluates");
-    assert_eq!(value, Value::Text("ab".into()));
 }

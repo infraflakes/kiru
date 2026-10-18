@@ -2,20 +2,21 @@
 //!
 //! Names are already edges, so the checker only reads and writes node types.
 //! The statement walk and the flow rules live here; the typing of an
-//! expression lives in `body_expressions`. A function's return type is
-//! declared, so a return is checked against it rather than accumulated, and a
-//! call that produces no value may only stand as a statement.
+//! expression lives in `expression_typing`, and the match rules live in
+//! `match_rules`. A function's return type is declared, so a return is checked
+//! against it rather than accumulated, and a call that produces no value may
+//! only stand as a statement.
 
-use crate::compiler::{Diagnostic, private_member};
-use crate::model::Type;
-use crate::model::{
-    DeclarationId, Expression, FileId, Function, MatchArm, MatchBody, NamespaceId, Program,
-    Statement, TypeId, TypeKind, rec_field_decl, substitute,
+use crate::compiler::model::Type;
+use crate::compiler::model::{
+    Binding, DeclarationId, Expression, FileId, Function, MatchArm, MatchBody, NamespaceId,
+    Program, Statement, TypeId, reachable, rec_field, substitute,
 };
+use crate::compiler::{Diagnostic, private_member};
 use crate::syntax::Span;
 
-use super::body_expressions::is_exhaustive;
 use super::flow::Flow;
+use super::match_rules::is_exhaustive;
 
 /// The checker over one body. Names are already edges, so it only reads and
 /// writes node types.
@@ -100,7 +101,7 @@ impl<'a> Checker<'a> {
     /// member is `pub`. The one visibility rule, shared by a field and a
     /// variant and matching the rule a name already has.
     fn member_reachable(&self, public: bool, declaring: NamespaceId) -> bool {
-        public || declaring == self.namespace
+        reachable(public, declaring, self.namespace)
     }
 
     /// Reject reading, writing, or building a field of `type_id` when the field
@@ -145,7 +146,7 @@ impl<'a> Checker<'a> {
         if path.is_empty() {
             "the root namespace".to_owned()
         } else {
-            crate::model::join_path(&path)
+            crate::compiler::model::join_path(&path)
         }
     }
 
@@ -281,7 +282,7 @@ impl<'a> Checker<'a> {
             ));
         }
         let node = self.program.declaration(declaration);
-        if node.is_binding() {
+        if !(node.kind.module_value() && node.owner.is_none()) {
             return Ok(self.kind_of(declaration));
         }
         Err(self.error(
@@ -303,7 +304,7 @@ impl<'a> Checker<'a> {
         name: &'a str,
     ) -> Result<Flow, Diagnostic> {
         let span = function.span;
-        let return_type = function.ty.return_type();
+        let return_type = function.ty.return_type(&self.program.types);
         let saved_return = std::mem::replace(&mut self.return_type, return_type.clone());
         let saved_name = self.function_name.replace(name);
         let saved_loop = std::mem::replace(&mut self.in_loop, false);
@@ -350,22 +351,22 @@ impl<'a> Checker<'a> {
         let name = self.program.declaration(declaration).name.clone();
         match self.assignment_target(declaration, name_span)? {
             Type::Named(id, arguments) => {
-                match &self.program.type_decl(id).kind {
-                    TypeKind::Rec(_) => {}
-                    TypeKind::Enum(_) => {
-                        return Err(self.error(name_span, format!("`{name}` is an enum; match it")));
-                    }
+                let declaration = self.program.type_decl(id);
+                if declaration.group().has_variants() {
+                    return Err(self.error(name_span, format!("`{name}` is an enum; match it")));
                 }
-                match rec_field_decl(&self.program.types, id, field) {
-                    Some(field_decl) => {
-                        self.check_field(id, field, field_decl.public, name_span)?;
-                        let parameters = &self.program.type_decl(id).parameters;
-                        let ty = substitute(&field_decl.ty, parameters, &arguments);
-                        self.require(value, &ty)?;
-                        Ok(())
-                    }
-                    None => Err(self.error(name_span, format!("`{name}` has no field `{field}`"))),
-                }
+                let Some(field_decl) = rec_field(&self.program.types, id, field) else {
+                    return Err(self.error(name_span, format!("`{name}` has no field `{field}`")));
+                };
+                self.check_field(id, field, field_decl.public, name_span)?;
+                let ty = substitute(
+                    &field_decl.ty,
+                    &self.program.types,
+                    &declaration.parameters,
+                    Binding::Complete(&arguments),
+                );
+                self.require(value, &ty)?;
+                Ok(())
             }
             _ => Err(self.error(
                 name_span,

@@ -1,6 +1,6 @@
 //! Serializing the bytecode into a payload and recovering it.
 
-use crate::bytecode::Bytecode;
+use crate::compiler::bytecode::Bytecode;
 
 /// Serialize a lowered program to the payload a compiled binary carries.
 pub(crate) fn serialize_bytecode(bytecode: &Bytecode) -> Result<Vec<u8>, String> {

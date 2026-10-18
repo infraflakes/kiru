@@ -3,20 +3,21 @@ title: Running Commands
 description: The command builder, run and capture, streams, and the argv-level calls.
 ---
 
-Running other programs is what Kiru is for. `std::command(line)` starts a
-builder that runs one shell line, and `.run()` or `.capture()` finishes it.
-`std::process::spawn` and `wait_for` are the argv-level calls underneath.
+Running other programs is what Kiru is for. `std::process::command(line)` starts
+a builder that runs one shell line, and `.run()` or `.capture()` finishes it.
+`std::syscalls::posix_spawn` and `std::process::wait_for` are the argv-level
+calls underneath.
 
 ## The builder
 
-`std::command(line)` returns a `Command` under construction. The line is shell
-syntax, run through `/bin/sh -c`, and each setting method returns a new
+`std::process::command(line)` returns a `Command` under construction. The line
+is shell syntax, run through `/bin/sh -c`, and each setting method returns a new
 `Command`, so calls chain:
 
 | Method | Effect |
 | --- | --- |
-| `dir(path)` | run after `cd <path> &&`, with `path` quoted by `std::quote` |
-| `env(name, value)` | prepend `export <name>=<quoted value>;`, with `value` quoted by `std::quote` |
+| `dir(path)` | run after `cd <path> &&`, with `path` quoted by `std::process::quote` |
+| `env(name, value)` | prepend `export <name>=<quoted value>;`, with `value` quoted by `std::process::quote` |
 | `timeout(seconds)` | bound the line with `timeout <seconds> sh -c` |
 | `stream(stream, target)` | attach `stdin`, `stdout`, or `stderr` to `target` |
 
@@ -30,12 +31,12 @@ a field.
 
 ```kiru
 use std;
-use std::text;
+use std::process;
 
 fn main() {
-  let where: std::Output = std::command("pwd").dir("/tmp").capture();
+  let where: std::process::Output = std::process::command("pwd").dir("/tmp").capture();
   std::print(where.out);
-  let secret: std::Output = std::command("printenv FOO").env("FOO", "bar").capture();
+  let secret: std::process::Output = std::process::command("printenv FOO").env("FOO", "bar").capture();
   std::print(secret.out);
 };
 ```
@@ -45,11 +46,11 @@ a setting only when a flag is set.
 
 ```kiru
 use std;
-use std::text;
+use std::process;
 
 fn main() {
   let quiet: bool = true;
-  let step: std::Command = std::command("echo working");
+  let step: std::process::Command = std::process::command("echo working");
   match quiet {
     true => { step = step.stream("stdout", "/dev/null"); };
     _ => {};
@@ -58,7 +59,7 @@ fn main() {
 };
 ```
 
-A value that must not become shell syntax is quoted with `std::quote`.
+A value that must not become shell syntax is quoted with `std::process::quote`.
 
 ## Finishing a command
 
@@ -66,10 +67,10 @@ A value that must not become shell syntax is quoted with `std::quote`.
 
 ```kiru
 use std;
-use std::text;
+use std::process;
 
 fn run(line: txt) {
-  let code: int = std::command(line).run();
+  let code: int = std::process::command(line).run();
   match code {
     0 => { std::print("@(line) passed"); };
     _ => { std::eprint("@(line) failed with code @(code)"); };
@@ -78,7 +79,6 @@ fn run(line: txt) {
 
 fn main() {
   run("true");
-  run("false");
 };
 ```
 
@@ -93,13 +93,13 @@ blocks on a pipe and nothing streams live:
 
 ```kiru
 use std;
-use std::text;
+use std::process;
 
 fn main() {
-  let result: std::Output = std::command("echo hello; echo oops >&2; exit 4").capture();
+  let result: std::process::Output = std::process::command("echo hello; echo oops >&2; exit 4").capture();
   match result.code {
     0 => { std::print(result.out); };
-    _ => { std::eprint(result.err); };
+    _ => { std::print(result.err); };
   };
 };
 ```
@@ -124,31 +124,33 @@ stdout is noise, but a failure still prints its diagnostics.
 
 ## argv-level processes
 
-When a shell is not wanted, `std::process::spawn(argv)` runs an argv directly in
-its own process group and returns a pid as an `int`. `std::process::wait_for(pid)`
-reaps it and returns its exit code as an `int`, and
-`std::process::signal(pid, name)` sends a named signal to its group:
+When a shell is not wanted, `std::syscalls::posix_spawn(argv)` runs an argv
+directly in its own process group and returns a pid as an `int`.
+`std::process::wait_for(pid)` reaps it and returns its exit code as an `int`,
+and `std::process::signal(pid, name)` sends a named signal to its group:
 
 ```kiru
 use std;
-use std::text;
-use std::vec;
 use std::process;
+use std::dynamic::Vec;
 
 fn main() {
-  let pid: int = std::process::spawn(["sleep", "5"]);
+  let argv: Vec<txt> = Vec.new();
+  argv = argv.push("sleep");
+  argv = argv.push("5");
+  let pid: int = std::syscalls::posix_spawn(argv);
   std::process::signal(pid, "KILL");
   let code: int = std::process::wait_for(pid);
   std::print("code: @(code)");
 };
 ```
 
-`spawn` takes an argv, not a shell line, so it sets no directory, environment,
-timeout, or streams; every stream is inherited. Use the builder when a command
-needs any of those.
+`posix_spawn` takes an argv, not a shell line, so it sets no directory,
+environment, timeout, or streams; every stream is inherited. Use the builder
+when a command needs any of those.
 
-`command` is the one way to run a shell line; `spawn` and `wait_for` are the
-argv-level primitives underneath it.
+`command` is the one way to run a shell line; `posix_spawn` and `wait_for` are
+the argv-level primitives underneath it.
 
 A spawn that fails, and exceeding the concurrent-process limit, are runtime
 errors. [Panic and Failure](/failure/panic/) covers runtime errors.

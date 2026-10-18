@@ -1,27 +1,28 @@
 # std/process.kiru
 #
-# The command abstraction. `std::process::command(line)` returns a `Command` builder and
-# each setting method returns a new `Command`, so calls chain. The syscalls are
-# the natives in `std::process`; the text forms beside them (`wait_for`,
-# `signal`, and the signal-name table) are the language's.
+# The command abstraction. `std::process::command(line)` returns a `Command`
+# builder and each setting method returns a new `Command`, so calls chain. The
+# kernel calls are the natives in `std::syscalls`; the text forms beside them
+# (`wait_for`, `signal`, and the signal-name table) are the language's.
 #
-# A `rec` plus chained methods is how a command is configured; a `Map<K, V>`
-# (in `std::dynamic`) is how data is passed and returned. There is one way to run a
-# process — the builder — and one method that changes I/O: `stream`.
-
-use std;
-use std::text;
-use std::dynamic;
-use std::dynamic::Vec;
-use std::Option;
+# A `rec` plus chained methods is how a command is configured; a
+# `std::dynamic::Map<K, V>` is how data is passed and returned. There is one
+# way to run a process — the builder — and one method that changes I/O:
+# `stream`. The functions in the `impl Command` block below are filed under
+# `Command`: those with a `Command` first parameter are methods, and `command`
+# builds the value.
+#
+# This file writes full paths: it uses no `use`, and every bound function is
+# reached through its absolute path.
 
 # Wait for the process `pid` and return its exit code. A raw `wait` status
 # encodes the signal in its low seven bits and the exit code in its high byte,
 # so a signal ended the process when that low field is non-zero, and its code
 # is `128 + signal`. The syscall reports the status; what it means is the
-# language's rule.
+# language's rule. It takes an int and belongs to no type, so it is a plain
+# function.
 pub fn wait_for(pid: int) -> int {
-  let raw: int = std::process::reap(pid);
+  let raw: int = std::syscalls::waitpid(pid);
   let signal: int = raw % 128;
   match signal {
     0 => { return raw / 256; };
@@ -46,14 +47,15 @@ pub fn signal(pid: int, name: txt) {
     "CONT" => { number = 18; };
     _ => { std::eprint("unknown signal `@(name)`"); };
   };
-  std::process::signal_group(pid, number);
+  std::syscalls::killpg(pid, number);
 };
 
 # Quote text as one POSIX shell word: wrap it in single quotes and replace an
 # embedded quote with the `'\''` sequence, so the shell reads exactly the text
-# and nothing else.
+# and nothing else. It takes a text and belongs to no type, so it is a plain
+# function.
 pub fn quote(text: txt) -> txt {
-  return "'@(text.replace("'", "'\\''"))'";
+  return "'@(std::text::replace(text, "'", "'\\''"))'";
 };
 
 # What a captured run produced: its exit code and its two output streams.
@@ -63,20 +65,20 @@ pub rec Output {
   pub err: txt,
 };
 
-# A command under construction. `std::process::command(line)` returns the defaults and
-# each setting method returns a new `Command`, so calls chain:
-# `std::process::command("cargo build").dir("docs").stream("stderr", "/dev/null").run()`.
+# A command under construction. `std::process::command(line)` returns the
+# defaults and each setting method returns a new `Command`, so calls chain:
+# `std::process::stream(std::process::dir(std::process::command("cargo build"), "docs"), "stderr", "/dev/null")`.
 # An unset entry is the absence, not empty text. The type is `pub`, so a
 # program can name a half-built command and configure it conditionally; the
 # fields stay private, so a program builds a command through the methods.
 pub rec Command {
   line: txt,
-  dir: Option<txt>,
-  env: Option<txt>,
-  timeout: Option<int>,
-  stdin: Option<txt>,
-  stdout: Option<txt>,
-  stderr: Option<txt>,
+  dir: std::Option<txt>,
+  env: std::Option<txt>,
+  timeout: std::Option<int>,
+  stdin: std::Option<txt>,
+  stdout: std::Option<txt>,
+  stderr: std::Option<txt>,
 };
 
 # Build the shell line for `dir`, `env`, and `timeout`, attach the streams,
@@ -84,110 +86,115 @@ pub rec Command {
 # default; an absent stream is inherited, so a command that changes nothing
 # streams normally. An absent stream attaches nothing; a path attaches the
 # stream to that file with the shell's redirection operator.
-fn shell(dir: Option<txt>, env: Option<txt>, timeout: Option<int>, stdin: Option<txt>, stdout: Option<txt>, stderr: Option<txt>, line: txt) -> int {
+fn shell(dir: std::Option<txt>, env: std::Option<txt>, timeout: std::Option<int>, stdin: std::Option<txt>, stdout: std::Option<txt>, stderr: std::Option<txt>, line: txt) -> int {
   let directed: txt = match dir {
-    Option.some(path) => "cd @(quote(path)) && @(line)";
-    Option.none => line;
+    std::Option.some(path) => "cd @(std::process::quote(path)) && @(line)";
+    std::Option.none => line;
   };
   let exported: txt = match env {
-    Option.some(assignments) => "export @(assignments); @(directed)";
-    Option.none => directed;
+    std::Option.some(assignments) => "export @(assignments); @(directed)";
+    std::Option.none => directed;
   };
   let timed: txt = match timeout {
-    Option.some(seconds) => "timeout @(seconds) sh -c @(quote(exported))";
-    Option.none => exported;
+    std::Option.some(seconds) => "timeout @(seconds) sh -c @(std::process::quote(exported))";
+    std::Option.none => exported;
   };
   let input: txt = match stdin {
-    Option.some(path) => " < @(quote(path))";
-    Option.none => "";
+    std::Option.some(path) => " < @(std::process::quote(path))";
+    std::Option.none => "";
   };
   let output_redirect: txt = match stdout {
-    Option.some(path) => " > @(quote(path))";
-    Option.none => "";
+    std::Option.some(path) => " > @(std::process::quote(path))";
+    std::Option.none => "";
   };
   let error: txt = match stderr {
-    Option.some(path) => " 2> @(quote(path))";
-    Option.none => "";
+    std::Option.some(path) => " 2> @(std::process::quote(path))";
+    std::Option.none => "";
   };
   let redirects: txt = "@(input)@(output_redirect)@(error)";
   let wrapped: txt = match redirects {
     "" => timed;
     _ => "{ @(timed); }@(redirects)";
   };
-  let argv: Vec<txt> = Vec.new().push("/bin/sh").push("-c").push(wrapped);
-  return std::process::wait_for(std::process::spawn(argv));
+  let argv: std::dynamic::Vec<txt> = std::dynamic::Vec.new();
+  argv = std::dynamic::push(argv, "/bin/sh");
+  argv = std::dynamic::push(argv, "-c");
+  argv = std::dynamic::push(argv, wrapped);
+  return std::process::wait_for(std::syscalls::posix_spawn(argv));
 };
 
 # Start a command under construction.
-pub fn command(line: txt) -> Command {
+pub fn command(line: txt) -> std::process::Command {
   return {
     line = line,
-    dir = Option.none,
-    env = Option.none,
-    timeout = Option.none,
-    stdin = Option.none,
-    stdout = Option.none,
-    stderr = Option.none,
+    dir = std::Option.none,
+    env = std::Option.none,
+    timeout = std::Option.none,
+    stdin = std::Option.none,
+    stdout = std::Option.none,
+    stderr = std::Option.none,
   };
 };
 
-# Change the working directory.
-pub fn dir(self: Command, path: txt) -> Command {
-  let copy: Command = self;
-  copy.dir = Option.some(path);
-  return copy;
-};
-
-# Export `name` as `value` for the command.
-pub fn env(self: Command, name: txt, value: txt) -> Command {
-  let copy: Command = self;
-  let assignment: txt = "@(name)=@(quote(value))";
-  copy.env = match copy.env {
-    Option.some(existing) => Option.some("@(existing) @(assignment)");
-    Option.none => Option.some(assignment);
+impl Command {
+  # Change the working directory.
+  pub fn dir(self: std::process::Command, path: txt) -> std::process::Command {
+    let copy: std::process::Command = self;
+    copy.dir = std::Option.some(path);
+    return copy;
   };
-  return copy;
-};
 
-# Bound the run to `seconds` with `timeout`.
-pub fn timeout(self: Command, seconds: int) -> Command {
-  let copy: Command = self;
-  copy.timeout = Option.some(seconds);
-  return copy;
-};
-
-# Send one stream to `target`: `stream` is "stdin", "stdout", or "stderr" and
-# `target` is the path the stream is attached to (`/dev/null` discards it).
-# Not calling `stream` streams normally: the child inherits the stream.
-pub fn stream(self: Command, stream: txt, target: txt) -> Command {
-  let copy: Command = self;
-  match stream {
-    "stdin" => { copy.stdin = Option.some(target); };
-    "stdout" => { copy.stdout = Option.some(target); };
-    "stderr" => { copy.stderr = Option.some(target); };
-    _ => { std::eprint("command: `@(stream)` is not a stream; use stdin, stdout, or stderr"); };
+  # Export `name` as `value` for the command.
+  pub fn env(self: std::process::Command, name: txt, value: txt) -> std::process::Command {
+    let copy: std::process::Command = self;
+    let assignment: txt = "@(name)=@(std::process::quote(value))";
+    copy.env = match copy.env {
+      std::Option.some(existing) => std::Option.some("@(existing) @(assignment)");
+      std::Option.none => std::Option.some(assignment);
+    };
+    return copy;
   };
-  return copy;
-};
 
-# Run the command and return its exit code.
-pub fn run(self: Command) -> int {
-  return shell(self.dir, self.env, self.timeout, self.stdin, self.stdout, self.stderr, self.line);
-};
-
-# Run the command and return its exit code and captured streams. The line's
-# stdout and stderr go to temporary files, which are read once the command
-# exits and then removed, so the output never streams.
-pub fn capture(self: Command) -> Output {
-  let out_path: txt = std::fs::temp_file();
-  let err_path: txt = std::fs::temp_file();
-  let code: int = shell(self.dir, self.env, self.timeout, self.stdin, Option.some(out_path), Option.some(err_path), self.line);
-  let result: Output = {
-    code = code,
-    out = std::fs::read(out_path),
-    err = std::fs::read(err_path),
+  # Bound the run to `seconds` with `timeout`.
+  pub fn timeout(self: std::process::Command, seconds: int) -> std::process::Command {
+    let copy: std::process::Command = self;
+    copy.timeout = std::Option.some(seconds);
+    return copy;
   };
-  std::fs::remove(out_path);
-  std::fs::remove(err_path);
-  return result;
+
+  # Send one stream to `target`: `stream` is "stdin", "stdout", or "stderr" and
+  # `target` is the path the stream is attached to (`/dev/null` discards it).
+  # Not calling `stream` streams normally: the child inherits the stream.
+  pub fn stream(self: std::process::Command, stream: txt, target: txt) -> std::process::Command {
+    let copy: std::process::Command = self;
+    match stream {
+      "stdin" => { copy.stdin = std::Option.some(target); };
+      "stdout" => { copy.stdout = std::Option.some(target); };
+      "stderr" => { copy.stderr = std::Option.some(target); };
+      _ => { std::eprint("command: `@(stream)` is not a stream; use stdin, stdout, or stderr"); };
+    };
+    return copy;
+  };
+
+  # Run the command and return its exit code.
+  pub fn run(self: std::process::Command) -> int {
+    return std::process::shell(self.dir, self.env, self.timeout, self.stdin, self.stdout, self.stderr, self.line);
+  };
+
+  # Run the command and return its exit code and captured streams. The line's
+  # stdout and stderr go to temporary files, which are read once the command
+  # exits and then removed, so the output never streams.
+  pub fn capture(self: std::process::Command) -> std::process::Output {
+    let out_path: txt = std::fs::temp_file();
+    let err_path: txt = std::fs::temp_file();
+    let code: int = std::process::shell(self.dir, self.env, self.timeout, self.stdin, std::Option.some(out_path), std::Option.some(err_path), self.line);
+    let result: std::process::Output = {
+      code = code,
+      out = std::fs::read(out_path),
+      err = std::fs::read(err_path),
+    };
+    std::syscalls::unlink(out_path);
+    std::syscalls::unlink(err_path);
+    return result;
+  };
 };

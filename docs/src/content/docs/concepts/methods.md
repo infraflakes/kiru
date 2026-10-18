@@ -1,131 +1,127 @@
 ---
 title: Methods
-description: Dispatch by receiver type, method families, and chaining.
+description: impl blocks, bound functions, dispatch, and chaining.
 ---
 
-A **method** is a function whose first parameter accepts the receiver. The name
-of that parameter is irrelevant; the type after the colon is what makes the call
-work. A call `receiver.name(arguments)` resolves the name `name` in scope, picks
-the function whose first parameter has the receiver's type, and calls it with the
-receiver as the first argument:
+A **bound function** is a function declared inside an `impl` block for a type.
+There are two kinds, told apart by the first parameter:
+
+- a **method** has the block's type as its first parameter, so a call
+  `receiver.name(arguments)` passes the receiver as that first argument;
+- an **associated function** has any other first parameter, so it is reached as
+  `Type.name(arguments)`.
+
+A bound function is never a namespace-level name. It is reached only through its
+type: a value call, a `Type.name` call, or `Type.name` as a value.
+
+## impl blocks
+
+`impl Type { fn ...; };` files every function inside under the block's type.
+The type is named as a written type is, so `impl Vec` and `impl Command` work
+for a declared type.
 
 ```kiru
 use std;
-use std::vec;
-fn count<T>(self: Vec<T>) -> int {
-  let n: int = 0;
-  for item in self { n = n + 1; };
-  return n;
-};
-fn main() {
-  let xs: Vec<int> = [1, 2, 3];
-  std::print("@(xs.count())");    # 3
-};
-```
 
-The parameter is ordinary: `fn count(xs: Vec<T>)` dispatches exactly the same,
-because the receiver's type — not the name — selects it. `self` is only a
-convention for that first parameter. A method's own type parameters are in scope
-for its signature and body, so `count` works on a `Vec<int>` or a vec of any
-other element type.
-
-## Targets
-
-The first parameter may be a built-in type (`txt`, `int`, `bool`, `Vec<T>`) or a
-declared type:
-
-```kiru
-use std;
 rec Point { x: int, y: int };
 
-fn sum(self: Point) -> int { return self.x + self.y; };
+impl Point {
+  pub fn sum(self: Point) -> int {
+    return self.x + self.y;
+  };
+};
+
 fn main() {
   let p: Point = { x = 1, y = 2 };
-  std::print("@(p.sum())");
+  std::print("@(p.sum())");   # 3
 };
 ```
 
-Inside the body, `self` (or whatever the parameter is named) names the receiver,
-and it is a local copy, like any parameter.
+The first parameter's **type** is the dispatch target; its **name** is
+irrelevant. `fn sum(self: Point)` and `fn sum(p: Point)` dispatch exactly the
+same. `self` is only a convention for that first parameter. Inside the body,
+`self` (or whatever the parameter is named) names the receiver, and it is a
+local copy, like any parameter.
+
+An associated function has a first parameter that is not the block's type, or no
+parameter at all:
+
+```kiru
+use std;
+
+rec Point { x: int, y: int };
+
+impl Point {
+  pub fn origin() -> Point {
+    return { x = 0, y = 0 };
+  };
+};
+
+fn main() {
+  let p: Point = Point.origin();
+  std::print("@(p.x)");   # 0
+};
+```
+
+`Point.origin()` is a `Type.name` call. The type's name is also how the function
+is reached as a value: `Point.origin` is the function itself.
+
+```kiru
+use std;
+
+rec Counter { n: int };
+
+impl Counter {
+  pub fn zero() -> Counter {
+    return { n = 0 };
+  };
+};
+
+fn make(build: fn() -> Counter) -> Counter {
+  return build();
+};
+
+fn main() {
+  let c: Counter = make(Counter.zero);
+  std::print("@(c.n)");   # 0
+};
+```
 
 ## Dispatch
 
-A call dispatches on the receiver's type: `xs.count()` on a `Vec<int>` picks the
-`count` whose first parameter is a `Vec<T>`. The lookup is by type head — `Vec<T>`
-answers a `Vec<int>` receiver — and the receiver's head selects among the
-declarations of that name, whether they share one namespace or sit in different
-namespaces in scope:
+A value call dispatches on the receiver's type head: `xs.len()` on a `Vec<int>`
+picks the `len` whose first parameter is a `Vec<T>`, and the arguments are then
+checked exactly. A `Type.name` call reads the associated-function pool by the
+type's head.
+
+Because a bound function is filed under a type, a name may repeat in a namespace
+when the functions are bound to **different types**. `Map.len` and `Set.len`
+share `len` in `std::dynamic`, and the receiver's type head selects between
+them:
 
 ```kiru
 use std;
-use std::text;   # `len` on txt
-use std::vec;    # `len` on Vec<T>
+
+rec A { n: int };
+rec B { n: int };
+
+impl A {
+  pub fn get(self: A) -> int { return self.n; };
+};
+
+impl B {
+  pub fn get(self: B) -> int { return self.n + 1; };
+};
+
 fn main() {
-  let xs: Vec<txt> = ["a", "b", "c"];
-  let n: int = xs.len();      # picks std::vec::len
-  let m: int = "abc".len();   # picks the txt kernel, std::text::len
-  std::print("@(n) @(m)");
+  let a: A = { n = 1 };
+  let b: B = { n = 1 };
+  std::print("@(a.get()) @(b.get())");   # 1 2
 };
 ```
 
-Both names are in scope, so the receiver's type chooses. The full argument list
-is then checked exactly: a `count` for a `Vec<txt>` called on a `Vec<int>` is
-reported as `expected Vec<text>, found Vec<int>`.
-
-After that selection, a method call is an ordinary call: the callee must be
-declared earlier, so two methods that call each other are just two functions,
-each declared before its caller.
-
-## Reachability
-
-A method is a declaration in a namespace like any other, so it is reached through
-the same `use`/`pub` mechanism. To call `"abc".len()`, the namespace that
-declares `len` (`std::text`) must be in scope:
-
-```kiru
-use std::text;
-fn main() {
-  let word: txt = "abc";
-  std::print("@(word.len())");   # 3
-};
-```
-
-Without `use std::text;`, the call reports that `len` is declared in `std::text`
-and to add the `use`. A method marked `pub` is reachable from a namespace that
-`use`s it; a private method is only reachable from its own namespace.
-
-A type's fields are declarations too, so they follow the same rule: a field is
-private to its declaring namespace unless it is marked `pub`, and a `{ … }`
-literal written elsewhere may name only `pub` fields. A type reached through
-methods keeps its fields private — the `std::cli` and `std::command` builders
-are examples, with public types whose every read is a method.
-[Modules](/concepts/modules/) states the rule once.
-
-## One pool per receiver head
-
-A method is registered in its namespace by name *and* by its receiver's type
-head, so a name may repeat once per head. Two methods with the same name in one
-namespace are a method family, and the receiver's type head selects between them
-exactly as it selects between namespaces:
-
-```kiru
-use std;
-use std::text;
-rec Command { about: txt };
-rec Flag { help: txt };
-
-fn about(self: Command, text: txt) -> Command { return self; };
-fn about(self: Flag, text: txt) -> Flag { return self; };   # same name, other head
-fn main() { std::print("ok"); };
-```
-
-Two methods for the same receiver head, or two declarations with the same name
-and no receiver, are still `declared more than once in this namespace`. The same
-name may also appear in different namespaces (`std::vec::len` and
-`std::text::len`), and the receiver's type head chooses between them at the call.
-
-A call whose receiver has no function of that name whose first parameter accepts
-it is an error:
+Two functions bound to the same type, or two plain declarations of one name, are
+still an error. A call whose receiver has no method of that name is an error:
 
 ```console
 $ kc main.kiru
@@ -133,3 +129,69 @@ main.kiru:3:6: error: no method `nope` for this value
   xs.nope();
      ^^^^
 ```
+
+## Reachability
+
+A bound function is gated by `pub` alone, never by a `use`. In its own namespace
+it is reachable whatever its visibility; across a namespace it is reachable only
+when the function is `pub` and its type is `pub`. Calling a method therefore
+needs no `use` — the type the receiver has decides:
+
+```kiru
+use std;
+use std::dynamic::Vec;
+
+fn main() {
+  let word: txt = "abc";
+  let xs: Vec<txt> = Vec.new();
+  xs = xs.push(word);
+  std::print("@(xs.len())");   # 1
+};
+```
+
+`Vec` is reached by its `use`, and `len` comes with the type. A private bound
+function is reachable only from its own namespace, so a library keeps its
+helpers private and marks the ones a program may call `pub`.
+
+A type's fields are declarations too, so they follow the same rule: a field is
+private to its declaring namespace unless it is marked `pub`, and a `{ … }`
+literal written elsewhere may name only `pub` fields. A type reached through
+methods keeps its fields private — the `std::process` and `std::cli` builders
+are examples, with public types whose every read is a bound function.
+[Namespaces](/concepts/modules/) states the visibility rule once.
+
+## Chaining
+
+Because each method returns a value, calls chain. A builder is a `rec` whose
+methods each return a new copy, so a configuration reads as one chain:
+
+```kiru
+use std;
+
+rec Step { line: txt, quiet: bool };
+
+impl Step {
+  pub fn quiet(self: Step) -> Step {
+    let copy: Step = self;
+    copy.quiet = true;
+    return copy;
+  };
+
+  pub fn run(self: Step) -> int {
+    match self.quiet {
+      true => { return 0; };
+      _ => { return 1; };
+    };
+  };
+};
+
+fn main() {
+  let start: Step = { line = "cargo build", quiet = false };
+  let code: int = start.quiet().run();
+  std::print("@(code)");   # 0
+};
+```
+
+The `std::process` command builder is exactly this shape:
+`command(line).dir(...).run()`. [Running
+Commands](/commands/running-a-command/) covers it.

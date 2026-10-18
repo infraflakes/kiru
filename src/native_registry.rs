@@ -24,7 +24,7 @@
 //! the runtime's handler match is exhaustive, and the runtime checks the
 //! handler consumes exactly the declared arity.
 
-use crate::model::{Type, TypeId};
+use crate::compiler::model::{Type, TypeId};
 
 /// The namespace the runtime's builtins live in.
 pub(crate) const BUILTIN_NAMESPACE: &[&str] = &["std"];
@@ -163,30 +163,37 @@ macro_rules! native_registry {
 native_registry! {
     absence,
     vec,
+    // The pure vec operations stay in `std::dynamic`.
     VecNew { ["std", "dynamic"], "new", [] -> vec_of(vec, element()) },
     VecPush { ["std", "dynamic"], "push", [vec_of(vec, element()), element()] -> vec_of(vec, element()) },
     VecReplace { ["std", "dynamic"], "replace", [vec_of(vec, element()), Type::Int, element()] -> vec_of(vec, element()) },
     VecAt { ["std", "dynamic"], "at", [vec_of(vec, element()), Type::Int] -> element() },
     VecLen { ["std", "dynamic"], "len", [vec_of(vec, element())] -> Type::Int },
-    Spawn { ["std", "process"], "spawn", [vec_of(vec, Type::Text)] -> Type::Int },
-    Reap { ["std", "process"], "reap", [Type::Int] -> Type::Int },
-    SignalGroup { ["std", "process"], "signal_group", [Type::Int, Type::Int] },
-    Write { ["std", "process"], "write", [Type::Int, Type::Text] },
-    IsTerminal { ["std", "process"], "is_terminal", [Type::Int] -> Type::Bool },
-    ReadStdin { ["std", "process"], "read_stdin", [] -> Type::Text },
+    // Reading and writing a path are file operations, not syscalls, so they
+    // live beside the rest of `std::fs`.
     Read { ["std", "fs"], "read", [Type::Text] -> Type::Text },
     WriteFile { ["std", "fs"], "write", [Type::Text, Type::Text] },
-    Remove { ["std", "fs"], "remove", [Type::Text] },
-    Exists { ["std", "fs"], "exists", [Type::Text] -> Type::Bool },
-    Mkstemp { ["std", "fs"], "mkstemp", [Type::Text] -> Type::Text },
-    List { ["std", "fs"], "list", [Type::Text] -> vec_of(vec, Type::Text) },
-    Length { ["std", "text"], "len", [Type::Text] -> Type::Int },
-    Find { ["std", "text"], "find_byte", [Type::Text, Type::Text] -> option_of(absence, Type::Int) },
-    Byte { ["std", "text"], "byte", [Type::Text, Type::Int] -> Type::Int },
-    Slice { ["std", "text"], "slice", [Type::Text, Type::Int, Type::Int] -> Type::Text },
-    SleepSeconds { ["std", "process"], "sleep_seconds", [Type::Int] },
-    EnvVar { ["std", "process"], "var", [Type::Text] -> option_of(absence, Type::Text) },
-    CurrentDir { ["std", "process"], "current_dir", [] -> Type::Text },
+    // The pure byte kernels operate on text and touch no OS, so they stay
+    // beside their kind under their libc names.
+    Strlen { ["std", "text"], "strlen", [Type::Text] -> Type::Int },
+    Memchr { ["std", "text"], "memchr", [Type::Text, Type::Text] -> option_of(absence, Type::Int) },
+    Substr { ["std", "text"], "substr", [Type::Text, Type::Int, Type::Int] -> Type::Text },
+    ByteAt { ["std", "text"], "byte_at", [Type::Text, Type::Int] -> Type::Int },
+    // Every native that touches the OS lives in `std::syscalls`, under its
+    // syscall-like name.
+    Write { ["std", "syscalls"], "write", [Type::Int, Type::Text] },
+    Unlink { ["std", "syscalls"], "unlink", [Type::Text] },
+    Access { ["std", "syscalls"], "access", [Type::Text] -> Type::Bool },
+    Mkstemp { ["std", "syscalls"], "mkstemp", [Type::Text] -> Type::Text },
+    Readdir { ["std", "syscalls"], "readdir", [Type::Text] -> vec_of(vec, Type::Text) },
+    Getenv { ["std", "syscalls"], "getenv", [Type::Text] -> option_of(absence, Type::Text) },
+    Getcwd { ["std", "syscalls"], "getcwd", [] -> Type::Text },
+    Isatty { ["std", "syscalls"], "isatty", [Type::Int] -> Type::Bool },
+    ReadStdin { ["std", "syscalls"], "read_stdin", [] -> Type::Text },
+    PosixSpawn { ["std", "syscalls"], "posix_spawn", [vec_of(vec, Type::Text)] -> Type::Int },
+    Waitpid { ["std", "syscalls"], "waitpid", [Type::Int] -> Type::Int },
+    Killpg { ["std", "syscalls"], "killpg", [Type::Int, Type::Int] },
+    Nanosleep { ["std", "syscalls"], "nanosleep", [Type::Int] },
 }
 
 /// The shape of a native: its path, name, and parameter count.
@@ -220,6 +227,10 @@ mod tests {
 
     #[test]
     fn native_paths_and_names_are_unique() {
+        // A name is unique in its namespace: two natives may never share a
+        // path and a name, whatever their parameters. The descriptor `write`
+        // and the path `write` are told apart by their namespaces, not their
+        // heads.
         for (index, (_, row)) in NATIVE_SHAPES.iter().enumerate() {
             for (_, other) in NATIVE_SHAPES.iter().skip(index + 1) {
                 assert_ne!(

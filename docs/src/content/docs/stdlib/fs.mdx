@@ -1,27 +1,36 @@
 ---
 title: std::fs
-description: Read and write files.
+description: Read and write files, expand globs, and split paths.
 ---
 
-`std::fs` reads and writes files, tests whether a path exists, and expands
-globs. If any operation except `exists` fails, the program exits with an error;
-`exists` returns `false` instead.
+`std::fs` reads and writes files and works with paths. A path is plain text, so
+[std::text](/stdlib/text/) works on it too, and every path function splits on
+POSIX `/` separators. The two file operations are natives here, beside the path
+helpers, because reading and writing a path is a file operation rather than a
+syscall; removing a file and testing a path are the
+[std::syscalls](/stdlib/syscalls/) natives `unlink` and `access`.
 
 <details>
 <summary><code>read</code> — read a whole file</summary>
 
-```kiru
+```text
 std::fs::read(path: txt) -> txt
 ```
 
 Reads a whole file as text.
 
 - `path` — the file to read.
-- Returns its contents. If the file cannot be read, the program exits with an
-  error.
+- Returns its contents. A file whose bytes are not UTF-8, and a file that cannot
+  be read, stop the run.
 
 ```kiru
-std::print(std::fs::read("notes.txt"));
+use std;
+fn main() {
+  let path: txt = std::fs::temp_file();
+  std::fs::write(path, "hello\n");
+  std::print(std::fs::read(path));
+  std::syscalls::unlink(path);
+};
 ```
 
 </details>
@@ -29,7 +38,7 @@ std::print(std::fs::read("notes.txt"));
 <details>
 <summary><code>write</code> — replace a file with text</summary>
 
-```kiru
+```text
 std::fs::write(path: txt, text: txt)
 ```
 
@@ -39,7 +48,13 @@ Replaces a file with text, creating it when absent.
 - `text` — the new contents.
 
 ```kiru
-std::fs::write("notes.txt", "hello\n");
+use std;
+fn main() {
+  let path: txt = std::fs::temp_file();
+  std::fs::write(path, "hello\n");
+  std::syscalls::unlink(path);
+  std::print("written");
+};
 ```
 
 </details>
@@ -47,7 +62,7 @@ std::fs::write("notes.txt", "hello\n");
 <details>
 <summary><code>append</code> — append text to a file</summary>
 
-```kiru
+```text
 std::fs::append(path: txt, text: txt)
 ```
 
@@ -58,46 +73,60 @@ across concurrent writers.
 - `text` — the text to add.
 
 ```kiru
-std::fs::append("notes.txt", "more\n");
+use std;
+fn main() {
+  let path: txt = std::fs::temp_file();
+  std::fs::write(path, "a\n");
+  std::fs::append(path, "b\n");
+  std::print(std::fs::read(path));
+  std::syscalls::unlink(path);
+};
 ```
 
 </details>
 
 <details>
-<summary><code>remove</code> — remove a file</summary>
+<summary><code>temp_file</code> — create a unique empty file</summary>
 
-```kiru
-std::fs::remove(path: txt)
+```text
+std::fs::temp_file() -> txt
 ```
 
-Removes a file.
+Creates an exclusive, owner-only empty file under `$TMPDIR` (falling back to
+`/tmp`) and returns its path.
 
-- `path` — the file to remove. If the file cannot be removed, the program
-  exits with an error.
+- Returns the path as text. The caller owns the file and must remove it.
 
 ```kiru
-std::fs::remove("notes.txt");
+use std;
+fn main() {
+  let path: txt = std::fs::temp_file();
+  std::fs::write(path, "scratch");
+  std::syscalls::unlink(path);
+  std::print("done");
+};
 ```
 
 </details>
 
 <details>
-<summary><code>exists</code> — whether a path exists</summary>
+<summary><code>glob</code> — expand a glob into a Vec</summary>
 
-```kiru
-std::fs::exists(path: txt) -> bool
+```text
+std::fs::glob(pattern: txt) -> Vec<txt>
 ```
 
-Tests whether a path exists. It returns `false` instead of failing when the
-path is absent.
+Expands a glob pattern into a vec of matching paths.
 
-- `path` — the path to test.
-- Returns `true` or `false`.
+- `pattern` — supports `*`, `?`, `[...]`, and `**`.
+- Returns the matches in sorted order.
 
 ```kiru
-match std::fs::exists("notes.txt") {
-  true => { std::print("found"); };
-  _ => { std::print("missing"); };
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let files: Vec<txt> = std::fs::glob("*.kiru");
+  std::print("@(files.len())");
 };
 ```
 
@@ -106,7 +135,7 @@ match std::fs::exists("notes.txt") {
 <details>
 <summary><code>is_dir</code> — whether a path names a directory</summary>
 
-```kiru
+```text
 std::fs::is_dir(path: txt) -> bool
 ```
 
@@ -117,51 +146,114 @@ Tests whether a path names a directory.
   does not exist.
 
 ```kiru
-match std::fs::is_dir("docs") {
-  true => { std::print("a directory"); };
-  _ => { std::print("not a directory"); };
+use std;
+fn main() {
+  match std::fs::is_dir("/tmp") {
+    true => { std::print("a directory"); };
+    _ => { std::print("not a directory"); };
+  };
 };
 ```
 
 </details>
 
 <details>
-<summary><code>temp_file</code> — create a unique empty file</summary>
+<summary><code>is_absolute</code> — whether a path is absolute</summary>
 
-```kiru
-std::fs::temp_file() -> txt
+```text
+std::fs::is_absolute(path: txt) -> bool
 ```
 
-Creates an exclusive, owner-only empty file under `$TMPDIR` (falling back to
-`/tmp`) and returns its path.
-
-- Returns the path as text. The caller owns the file and must remove it.
+- `path` — the path to test.
+- Returns `true` when the path starts with `/`, otherwise `false`.
 
 ```kiru
-use std::text;
-let path: txt = std::fs::temp_file();
-std::fs::write(path, "scratch");
-std::fs::remove(path);
+use std;
+fn main() {
+  std::print("@(std::fs::is_absolute("/a"))");
+};
 ```
 
 </details>
 
 <details>
-<summary><code>glob</code> — expand a glob into a Vec</summary>
+<summary><code>join</code> — join two path segments</summary>
 
-```kiru
-std::fs::glob(pattern: txt) -> Vec<txt>
+```text
+std::fs::join(base: txt, name: txt) -> txt
 ```
 
-Expands a glob pattern into a vec of matching paths.
+Joins two path segments. An absolute `name` replaces `base`, an empty `base` is
+replaced by `name`, and a `base` already ending in `/` is used as is.
 
-- `pattern` — supports `*`, `?`, `[...]`, and `**`.
-- Returns the matches in sorted order.
+- `base`, `name` — the segments to join.
+- Returns the joined path.
 
 ```kiru
-use std::text;
-use std::vec;
-let files: Vec<txt> = std::fs::glob("src/*.kiru");
+use std;
+fn main() {
+  std::print(std::fs::join("/home/dev", ".config"));
+};
+```
+
+</details>
+
+<details>
+<summary><code>base</code> — the last segment</summary>
+
+```text
+std::fs::base(path: txt) -> txt
+```
+
+- `path` — the path to read.
+- Returns the text after the last `/`; the whole path when it has no `/`. An
+  empty path has no segment, so it stops the run.
+
+```kiru
+use std;
+fn main() {
+  std::print(std::fs::base("/a/b/c"));   # c
+};
+```
+
+</details>
+
+<details>
+<summary><code>dir</code> — a path without its last segment</summary>
+
+```text
+std::fs::dir(path: txt) -> txt
+```
+
+- `path` — the path to read.
+- Returns the text before the last `/`, or `""` when there is none; an empty
+  path has none.
+
+```kiru
+use std;
+fn main() {
+  std::print(std::fs::dir("/a/b/c"));   # /a/b
+};
+```
+
+</details>
+
+<details>
+<summary><code>ext</code> — the extension</summary>
+
+```text
+std::fs::ext(path: txt) -> std::Option<txt>
+```
+
+- `path` — the path to read.
+- Returns the text after the last `.` of the last segment as `Option.some`, or
+  `Option.none` when the last segment has no dot.
+
+```kiru
+use std;
+fn main() {
+  std::print(std::fs::ext("archive.tar.gz").or(""));   # gz
+};
 ```
 
 </details>

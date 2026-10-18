@@ -1,33 +1,53 @@
 ---
-title: std::set
+title: Set
 description: The Set record and its methods.
 ---
 
-`std::set` declares the `Set<K>` record and the set methods. `Set` is an
-ordinary `rec` over a vec of keys kept sorted by a comparator it carries, so a
-function whose first parameter is a `Set<K>` is callable as `s.name(...)`.
-`use std::set;` brings the type and the methods into scope; a qualified
-`std::set::Set` names the type without it, but the methods still need the `use`.
-Both of `Set`'s fields, `entries` and `less`, are private to `std::set`, so a set
-is built and read only through the methods below. [Sets](/concepts/sets/) covers
-the narrative.
+`Set<K>` is a declared `rec` in `std::dynamic`, a vec of keys kept sorted by a
+comparator it carries. A method whose first parameter is a `Set<K>` is callable
+as `s.name(...)`; an associated function is reached as `Set.name(...)`.
+`use std::dynamic;` brings the type and its methods into scope, and a qualified
+`std::dynamic::Set` names the type without it. Both of `Set`'s fields, `entries`
+and `less`, are private to `std::dynamic`, so a set is built and read only
+through the methods below. [Sets](/concepts/sets/) covers the narrative.
 
-```kiru
+```text
 use std;
-use std::vec;
+use std::dynamic::Vec;
 pub rec Set<K> { entries: Vec<K>, less: fn(K, K) -> bool };
 ```
 
 A set orders by the comparator it carries, not by a bound: kiru has no bounds
 and the checker rejects ordering a type parameter, so `less` is a value, exactly
-as `sorted_by` takes one. Two keys are the same when `==` answers `true`; `less`
+as `sort_by` takes one. Two keys are the same when `==` answers `true`; `less`
 fixes their order. Every method below takes the set as its receiver.
 
 <details>
-<summary><code>of</code> — a set from a vec of keys</summary>
+<summary><code>new</code> — the empty set</summary>
+
+```text
+std::dynamic::Set.new<K>(less: fn(K, K) -> bool) -> Set<K>
+```
+
+- `less` — the comparator that orders the keys.
+- Returns a set with no keys.
 
 ```kiru
-std::set::of<K>(items: Vec<K>, less: fn(K, K) -> bool) -> Set<K>
+use std;
+use std::dynamic::Set;
+fn main() {
+  let s: Set<txt> = Set.new(std::dynamic::text_order);
+  std::print("@(s.len())");   # 0
+};
+```
+
+</details>
+
+<details>
+<summary><code>from_items</code> — a set from a vec of keys</summary>
+
+```text
+std::dynamic::Set.from_items<K>(items: Vec<K>, less: fn(K, K) -> bool) -> Set<K>
 ```
 
 - `items` — the keys to build from.
@@ -36,25 +56,27 @@ std::set::of<K>(items: Vec<K>, less: fn(K, K) -> bool) -> Set<K>
 
 ```kiru
 use std;
-use std::text;
-use std::set;
-use std::vec;
+use std::dynamic::{Set, Vec};
 fn main() {
-  let s: Set<txt> = std::set::of(["b", "a", "a"], std::vec::text_less);
+  let items: Vec<txt> = Vec.new();
+  items = items.push("b");
+  items = items.push("a");
+  items = items.push("a");
+  let s: Set<txt> = Set.from_items(items, std::dynamic::text_order);
   std::print("@(s.len())");   # 2
 };
 ```
 
-`of` sorts with `sorted_by` and then drops adjacent duplicates, so one of each
-key survives.
+`from_items` sorts with `sort_by` and then drops adjacent duplicates, so one of
+each key survives.
 
 </details>
 
 <details>
 <summary><code>insert</code> — a new set with one key inserted</summary>
 
-```kiru
-s.with(item: K) -> Set<K>
+```text
+s.insert(item: K) -> Set<K>
 ```
 
 - `item` — the key to insert.
@@ -63,24 +85,24 @@ s.with(item: K) -> Set<K>
 
 ```kiru
 use std;
-use std::text;
-use std::set;
-use std::vec;
+use std::dynamic::Set;
 fn main() {
-  let s: Set<txt> = std::set::of(["a", "c"], std::vec::text_less);
-  let n: Set<txt> = s.with("b");
-  std::print(std::join(n.items(), ","));   # a,b,c
+  let s: Set<txt> = Set.new(std::dynamic::text_order);
+  s = s.insert("a");
+  s = s.insert("c");
+  let n: Set<txt> = s.insert("b");
+  std::print(n.items().join(","));   # a,b,c
 };
 ```
 
-`with` binary-searches for the position, so it is O(log n).
+`insert` binary-searches for the position, so it is O(log n).
 
 </details>
 
 <details>
 <summary><code>contains</code> — whether a key is present</summary>
 
-```kiru
+```text
 s.contains(item: K) -> bool
 ```
 
@@ -90,11 +112,11 @@ s.contains(item: K) -> bool
 
 ```kiru
 use std;
-use std::text;
-use std::set;
-use std::vec;
+use std::dynamic::Set;
 fn main() {
-  let s: Set<txt> = std::set::of(["a", "b"], std::vec::text_less);
+  let s: Set<txt> = Set.new(std::dynamic::text_order);
+  s = s.insert("a");
+  s = s.insert("b");
   std::print("@(s.contains("a")) @(s.contains("z"))");   # true false
 };
 ```
@@ -104,8 +126,8 @@ fn main() {
 <details>
 <summary><code>remove</code> — a new set without one key</summary>
 
-```kiru
-s.without(item: K) -> Set<K>
+```text
+s.remove(item: K) -> Set<K>
 ```
 
 - `item` — the key to remove.
@@ -114,13 +136,14 @@ s.without(item: K) -> Set<K>
 
 ```kiru
 use std;
-use std::text;
-use std::set;
-use std::vec;
+use std::dynamic::Set;
 fn main() {
-  let s: Set<txt> = std::set::of(["a", "b", "c"], std::vec::text_less);
-  let n: Set<txt> = s.without("b");
-  std::print(std::join(n.items(), ","));   # a,c
+  let s: Set<txt> = Set.new(std::dynamic::text_order);
+  s = s.insert("a");
+  s = s.insert("b");
+  s = s.insert("c");
+  let n: Set<txt> = s.remove("b");
+  std::print(n.items().join(","));   # a,c
 };
 ```
 
@@ -129,7 +152,7 @@ fn main() {
 <details>
 <summary><code>union</code> — the keys of both sets</summary>
 
-```kiru
+```text
 s.union(other: Set<K>) -> Set<K>
 ```
 
@@ -139,13 +162,11 @@ s.union(other: Set<K>) -> Set<K>
 
 ```kiru
 use std;
-use std::text;
-use std::set;
-use std::vec;
+use std::dynamic::Set;
 fn main() {
-  let a: Set<txt> = std::set::of(["a", "b"], std::vec::text_less);
-  let b: Set<txt> = std::set::of(["b", "c"], std::vec::text_less);
-  std::print(std::join(a.union(b).items(), ","));   # a,b,c
+  let a: Set<txt> = Set.new(std::dynamic::text_order).insert("a").insert("b");
+  let b: Set<txt> = Set.new(std::dynamic::text_order).insert("b").insert("c");
+  std::print(a.union(b).items().join(","));   # a,b,c
 };
 ```
 
@@ -154,7 +175,7 @@ fn main() {
 <details>
 <summary><code>intersection</code> — the keys of both sets</summary>
 
-```kiru
+```text
 s.intersection(other: Set<K>) -> Set<K>
 ```
 
@@ -164,13 +185,11 @@ s.intersection(other: Set<K>) -> Set<K>
 
 ```kiru
 use std;
-use std::text;
-use std::set;
-use std::vec;
+use std::dynamic::Set;
 fn main() {
-  let a: Set<txt> = std::set::of(["a", "b"], std::vec::text_less);
-  let b: Set<txt> = std::set::of(["b", "c"], std::vec::text_less);
-  std::print(std::join(a.intersection(b).items(), ","));   # b
+  let a: Set<txt> = Set.new(std::dynamic::text_order).insert("a").insert("b");
+  let b: Set<txt> = Set.new(std::dynamic::text_order).insert("b").insert("c");
+  std::print(a.intersection(b).items().join(","));   # b
 };
 ```
 
@@ -179,7 +198,7 @@ fn main() {
 <details>
 <summary><code>difference</code> — the keys only in this set</summary>
 
-```kiru
+```text
 s.difference(other: Set<K>) -> Set<K>
 ```
 
@@ -189,13 +208,11 @@ s.difference(other: Set<K>) -> Set<K>
 
 ```kiru
 use std;
-use std::text;
-use std::set;
-use std::vec;
+use std::dynamic::Set;
 fn main() {
-  let a: Set<txt> = std::set::of(["a", "b"], std::vec::text_less);
-  let b: Set<txt> = std::set::of(["b", "c"], std::vec::text_less);
-  std::print(std::join(a.difference(b).items(), ","));   # a
+  let a: Set<txt> = Set.new(std::dynamic::text_order).insert("a").insert("b");
+  let b: Set<txt> = Set.new(std::dynamic::text_order).insert("b").insert("c");
+  std::print(a.difference(b).items().join(","));   # a
 };
 ```
 
@@ -204,7 +221,7 @@ fn main() {
 <details>
 <summary><code>is_subset</code> — whether every key is in another set</summary>
 
-```kiru
+```text
 s.is_subset(other: Set<K>) -> bool
 ```
 
@@ -214,12 +231,10 @@ s.is_subset(other: Set<K>) -> bool
 
 ```kiru
 use std;
-use std::text;
-use std::set;
-use std::vec;
+use std::dynamic::Set;
 fn main() {
-  let small: Set<txt> = std::set::of(["a"], std::vec::text_less);
-  let big: Set<txt> = std::set::of(["a", "b"], std::vec::text_less);
+  let small: Set<txt> = Set.new(std::dynamic::text_order).insert("a");
+  let big: Set<txt> = Set.new(std::dynamic::text_order).insert("a").insert("b");
   std::print("@(small.is_subset(big)) @(big.is_subset(small))");   # true false
 };
 ```
@@ -229,7 +244,7 @@ fn main() {
 <details>
 <summary><code>len</code> — the number of keys</summary>
 
-```kiru
+```text
 s.len() -> int
 ```
 
@@ -237,11 +252,9 @@ s.len() -> int
 
 ```kiru
 use std;
-use std::text;
-use std::set;
-use std::vec;
+use std::dynamic::Set;
 fn main() {
-  let s: Set<txt> = std::set::of(["a", "b", "b"], std::vec::text_less);
+  let s: Set<txt> = Set.new(std::dynamic::text_order).insert("a").insert("b").insert("b");
   std::print("@(s.len())");   # 2
 };
 ```
@@ -251,7 +264,7 @@ fn main() {
 <details>
 <summary><code>items</code> — the keys, in order</summary>
 
-```kiru
+```text
 s.items() -> Vec<K>
 ```
 
@@ -259,12 +272,10 @@ s.items() -> Vec<K>
 
 ```kiru
 use std;
-use std::text;
-use std::set;
-use std::vec;
+use std::dynamic::Set;
 fn main() {
-  let s: Set<txt> = std::set::of(["c", "a", "b"], std::vec::text_less);
-  std::print(std::join(s.items(), ","));   # a,b,c
+  let s: Set<txt> = Set.new(std::dynamic::text_order).insert("c").insert("a").insert("b");
+  std::print(s.items().join(","));   # a,b,c
 };
 ```
 

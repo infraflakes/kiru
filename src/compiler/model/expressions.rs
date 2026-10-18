@@ -1,7 +1,7 @@
 //! The linked expressions and statements. Every name is already an edge to a
 //! declaration node.
 
-use crate::model::{Type, TypeId};
+use crate::compiler::model::{Type, TypeId};
 use crate::syntax::{BinaryOp, Span, UnaryOp};
 
 use super::ids::DeclarationId;

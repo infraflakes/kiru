@@ -9,9 +9,12 @@
 use std::path::Path;
 
 use crate::compiler::{
-    DIAGNOSTIC_PREFIX, Diagnostic, LoadedProgram, attach_trailer, load_files, lower_bytecode,
-    prune_unreachable, resolve_names, serialize_bytecode, validate_program,
+    DIAGNOSTIC_PREFIX, attach_trailer, load_files, lower_bytecode, prune_unreachable,
+    resolve_names, serialize_bytecode, validate_program,
 };
+
+use super::diagnostic::render;
+use super::output_file::{make_writable_executable, same_file};
 
 /// Compile `entry` to `output`, or to the entry path without its extension,
 /// by copying `executable` (the running `kc`) and attaching the program. On
@@ -59,39 +62,4 @@ pub(crate) fn compile(
         )
     })?;
     Ok(())
-}
-
-/// Give a file the mode of a normal executable, so the trailer can be
-/// appended to a copy of a read-only `kc`.
-fn make_writable_executable(path: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
-}
-
-/// Whether `output` names the same file as `entry`, following symlinks and
-/// `..` when the output already exists.
-fn same_file(entry: &Path, output: &Path) -> bool {
-    let entry = entry.canonicalize().unwrap_or_else(|_| entry.to_path_buf());
-    let output = match output.canonicalize() {
-        Ok(canonical) => canonical,
-        Err(_) => match (output.parent(), output.file_name()) {
-            (Some(parent), Some(name)) => parent
-                .canonicalize()
-                .map(|parent| parent.join(name))
-                .unwrap_or_else(|_| output.to_path_buf()),
-            _ => output.to_path_buf(),
-        },
-    };
-    entry == output
-}
-
-/// Render a diagnostic against the source of the file it points at.
-fn render(program: &LoadedProgram, diagnostic: &Diagnostic) -> String {
-    let source = program
-        .files
-        .iter()
-        .find(|file| file.path == diagnostic.path)
-        .map(|file| file.source.as_str())
-        .unwrap_or("");
-    diagnostic.render(source)
 }

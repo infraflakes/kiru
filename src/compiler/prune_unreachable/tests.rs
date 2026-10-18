@@ -1,6 +1,8 @@
 use super::prune_declarations::prune_unreachable;
+use crate::compiler::model::Program;
 use crate::compiler::{checked_program, lower_bytecode, validate_program};
-use crate::model::Program;
+use crate::runtime::Runtime;
+use crate::runtime::Value;
 
 /// The names of the declarations a program still carries.
 fn retained_names(program: &Program) -> Vec<&str> {
@@ -99,4 +101,33 @@ fn retention_shrinks_the_payload() {
         "retention must shrink the payload: {before} bytes before, {after} after"
     );
     eprintln!("payload: {before} bytes before retention, {after} after");
+}
+
+#[test]
+fn a_retained_program_still_runs() {
+    let mut program = checked_program(
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn answer() -> txt { return \"42\"; };\n\
+         fn main() { answer(); };",
+    );
+    prune_unreachable(&mut program);
+    let runtime = Runtime::for_testing(program);
+    let value = runtime
+        .call_root("answer", Vec::new())
+        .expect("the retained function runs");
+    assert_eq!(value, Value::Text("42".into()));
+}
+
+#[test]
+fn retained_module_values_still_evaluate() {
+    let mut program = checked_program(
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nlet base: txt = \"a\";\n\
+         fn f() -> txt { return \"@(base)b\"; };\n\
+         fn main() { f(); };",
+    );
+    prune_unreachable(&mut program);
+    let runtime = Runtime::for_testing(program);
+    let value = runtime
+        .call_root("f", Vec::new())
+        .expect("the retained module value evaluates");
+    assert_eq!(value, Value::Text("ab".into()));
 }

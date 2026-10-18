@@ -8,17 +8,21 @@
 //! `prune_unreachable` keeps only what the entry reaches; `lower_bytecode`
 //! lowers the result to a compact instruction stream; and `package_binary`
 //! serializes that bytecode behind the binary trailer. The model it builds
-//! lives in `crate::model`, and the bytecode it produces lives in
-//! `crate::bytecode`.
+//! lives in `crate::compiler::model`, and the bytecode it produces lives in
+//! `crate::compiler::bytecode`.
 
 /// The name the compiler reports under. The runtime reports under the
 /// program's own name instead.
 pub(crate) const DIAGNOSTIC_PREFIX: &str = "kc";
 
-mod diagnostics;
+pub(crate) mod bytecode;
+mod diagnostic;
 mod load_files;
 mod lower_bytecode;
 mod lower_expressions;
+mod messages;
+pub(crate) mod model;
+mod output_file;
 mod package_binary;
 mod pipeline;
 mod prune_unreachable;
@@ -27,12 +31,13 @@ mod resolve_names;
 mod test_support;
 mod validate_program;
 
-pub(in crate::compiler) use diagnostics::{
-    Diagnostic, duplicate_field, duplicate_in_namespace, duplicate_name, expected_instead,
-    native_used_as_value, private_member, value_called,
-};
+pub(in crate::compiler) use diagnostic::Diagnostic;
 pub(crate) use load_files::{LoadedProgram, load_files};
 pub(crate) use lower_bytecode::lower_bytecode;
+pub(in crate::compiler) use messages::{
+    duplicate_field, duplicate_in_namespace, duplicate_name, expected_instead,
+    native_used_as_value, private_member, value_called,
+};
 pub(crate) use package_binary::{
     attach_trailer, deserialize_bytecode, read_trailer, serialize_bytecode,
 };

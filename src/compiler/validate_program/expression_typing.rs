@@ -7,36 +7,21 @@
 //! return is checked against it rather than accumulated, and a call that
 //! produces no value may only stand as a statement.
 
+use crate::compiler::model::{
+    Binding, DeclarationId, Expression, Field, Group, RuntimeShape, Shape, StringPart, Type,
+    TypeId, TypeKind, first_duplicate, fits, has_parameter, rec_field, substitute, unify,
+};
 use crate::compiler::{
     Diagnostic, duplicate_field, expected_instead, native_used_as_value, value_called,
 };
-use crate::model::{
-    DeclarationId, Expression, Field, MatchArm, MatchBody, Pattern, StringPart, TypeId, TypeKind,
-    first_duplicate, rec_field_decl,
-};
-use crate::model::{Type, fits, has_parameter, substitute, substitute_optional, unify};
 use crate::syntax::{BinaryOp, Span, UnaryOp};
 
-use super::body_check::Checker;
-use super::patterns::{atoms_equal, covers_booleans, duplicate_pattern_message, is_atom};
+use super::statement_check::Checker;
 
 /// Whether an expression is a record literal, which takes its type from the
 /// position it is checked against rather than from its own form.
 fn is_map_literal(expression: &Expression) -> bool {
     matches!(expression, Expression::Map { .. })
-}
-
-/// Whether a match takes an arm for every value: it has a `_` arm, it covers
-/// both booleans, or it covers every variant of its enum subject.
-pub(super) fn is_exhaustive(
-    default: &Option<MatchBody>,
-    subject_type: &Type,
-    cases: &[MatchArm],
-    covered: Option<&[bool]>,
-) -> bool {
-    default.is_some()
-        || covers_booleans(subject_type, cases)
-        || covered.is_some_and(|covered| covered.iter().all(|flag| *flag))
 }
 
 impl<'a> Checker<'a> {
@@ -181,23 +166,24 @@ impl<'a> Checker<'a> {
                 match target_type {
                     Type::Named(id, arguments) => {
                         let declaration = self.program.type_decl(id);
-                        match &declaration.kind {
-                            TypeKind::Rec(_) => {
-                                let Some(field) = rec_field_decl(&self.program.types, id, name)
-                                else {
-                                    let message =
-                                        format!("`{}` has no field `{name}`", declaration.name);
-                                    return Err(self.error(*name_span, message));
-                                };
-                                self.check_field(id, name, field.public, *name_span)?;
-                                let ty = substitute(&field.ty, &declaration.parameters, &arguments);
-                                Ok(Some(ty))
-                            }
-                            TypeKind::Enum(_) => Err(self.error(
+                        if declaration.group().has_variants() {
+                            return Err(self.error(
                                 *name_span,
                                 format!("`{}` is an enum; match it", declaration.name),
-                            )),
+                            ));
                         }
+                        let Some(field) = rec_field(&self.program.types, id, name) else {
+                            let message = format!("`{}` has no field `{name}`", declaration.name);
+                            return Err(self.error(*name_span, message));
+                        };
+                        self.check_field(id, name, field.public, *name_span)?;
+                        let ty = substitute(
+                            &field.ty,
+                            &self.program.types,
+                            &declaration.parameters,
+                            Binding::Complete(&arguments),
+                        );
+                        Ok(Some(ty))
                     }
                     other => Err(self.error(
                         target.span(),
@@ -211,7 +197,7 @@ impl<'a> Checker<'a> {
             Expression::Unary { op, operand, .. } => self.unary(*op, operand),
         }?;
         match (&actual, expected) {
-            (Some(actual), Some(required)) if !fits(actual, required) => {
+            (Some(actual), Some(required)) if !fits(actual, required, &self.program.types) => {
                 return Err(self.error(
                     expression.span(),
                     expected_instead(&self.type_name(required), &self.type_name(actual)),
@@ -312,7 +298,7 @@ impl<'a> Checker<'a> {
                 "`@(…)` inserts text, an integer, or a boolean, found no value",
             ));
         };
-        if matches!(ty, Type::Text | Type::Int | Type::Bool) {
+        if ty.group(&self.program.types).runtime_shape() == RuntimeShape::Scalar {
             return Ok(());
         }
         Err(self.error(
@@ -381,11 +367,18 @@ impl<'a> Checker<'a> {
     ) -> Result<Option<Type>, Diagnostic> {
         let (returns, type_parameters, declared) = {
             let node = self.program.declaration(callee);
-            let returns = node.return_type();
-            let type_parameters = node.type_parameters();
-            let declared = match &node.ty {
-                Type::Function { parameters, .. } => parameters.clone(),
-                _ => unreachable!("a callable has a function type"),
+            let returns = node.return_type(&self.program.types);
+            let type_parameters = node.type_parameters(&self.program.types);
+            let declared = match node.ty.group(&self.program.types) {
+                Group::Function => {
+                    let Type::Function { parameters, .. } = &node.ty else {
+                        unreachable!("a function group is a function type");
+                    };
+                    parameters.clone()
+                }
+                Group::Scalar | Group::Rec | Group::Enum | Group::Parameter => {
+                    unreachable!("a callable has a function type")
+                }
             };
             (returns, type_parameters, declared)
         };
@@ -400,7 +393,13 @@ impl<'a> Checker<'a> {
         // it.
         let mut expected_bindings: Vec<Option<Type>> = vec![None; type_parameters.len()];
         if let (Some(expected), Some(returns)) = (expected, &returns)
-            && !unify(returns, expected, &type_parameters, &mut expected_bindings)
+            && !unify(
+                returns,
+                expected,
+                &self.program.types,
+                &type_parameters,
+                &mut expected_bindings,
+            )
         {
             expected_bindings = vec![None; type_parameters.len()];
         }
@@ -413,16 +412,22 @@ impl<'a> Checker<'a> {
         // argument with a type of its own is typed on its own, so a
         // conflicting one still reports against the argument.
         for (argument, parameter) in arguments.iter().zip(&declared) {
-            if has_parameter(parameter) {
+            if has_parameter(parameter, &self.program.types) {
                 let mut hint_solution = solution.clone();
                 for (slot, expected) in hint_solution.iter_mut().zip(&expected_bindings) {
                     if slot.is_none() {
                         *slot = expected.clone();
                     }
                 }
-                let hint_bound = substitute_optional(parameter, &type_parameters, &hint_solution);
-                let hint = (!has_parameter(&hint_bound)
-                    && (!matches!(parameter, Type::Parameter(_)) || is_map_literal(argument)))
+                let hint_bound = substitute(
+                    parameter,
+                    &self.program.types,
+                    &type_parameters,
+                    Binding::Partial(&hint_solution),
+                );
+                let hint = (!has_parameter(&hint_bound, &self.program.types)
+                    && (parameter.group(&self.program.types) != Group::Parameter
+                        || is_map_literal(argument)))
                 .then_some(&hint_bound);
                 let Some(actual) = self.expression(argument, hint)? else {
                     return Err(self.error(
@@ -433,7 +438,13 @@ impl<'a> Checker<'a> {
                         ),
                     ));
                 };
-                if !unify(parameter, &actual, &type_parameters, &mut solution) {
+                if !unify(
+                    parameter,
+                    &actual,
+                    &self.program.types,
+                    &type_parameters,
+                    &mut solution,
+                ) {
                     return Err(self.error(
                         argument.span(),
                         format!(
@@ -466,10 +477,22 @@ impl<'a> Checker<'a> {
             inferred.push(bound);
         }
         for (argument, parameter) in arguments.iter().zip(&declared) {
-            let required = substitute(parameter, &type_parameters, &inferred);
+            let required = substitute(
+                parameter,
+                &self.program.types,
+                &type_parameters,
+                Binding::Complete(&inferred),
+            );
             self.require(argument, &required)?;
         }
-        Ok(returns.map(|returns| substitute(&returns, &type_parameters, &inferred)))
+        Ok(returns.map(|returns| {
+            substitute(
+                &returns,
+                &self.program.types,
+                &type_parameters,
+                Binding::Complete(&inferred),
+            )
+        }))
     }
 
     /// The type of an indirect call: the callee must be a function value. A
@@ -489,11 +512,7 @@ impl<'a> Checker<'a> {
             }
             return Err(self.error(callee.span(), "a call's callee must produce a value"));
         };
-        let Type::Function {
-            parameters,
-            returns,
-        } = callee_type
-        else {
+        if callee_type.group(&self.program.types) != Group::Function {
             if let Expression::Reference { declaration, .. } = callee {
                 return Err(self.error(
                     callee.span(),
@@ -504,13 +523,20 @@ impl<'a> Checker<'a> {
                 callee.span(),
                 expected_instead("a function", &self.type_name(&callee_type)),
             ));
+        }
+        let Type::Function {
+            parameters,
+            returns,
+        } = callee_type
+        else {
+            unreachable!("a function group is a function type");
         };
         if arguments.len() != parameters.len() {
             return Err(self.error(
                 callee.span(),
                 format!(
                     "a function value takes {}, found {}",
-                    crate::compiler::diagnostics::count(parameters.len(), "argument"),
+                    crate::compiler::messages::count(parameters.len(), "argument"),
                     arguments.len()
                 ),
             ));
@@ -534,7 +560,7 @@ impl<'a> Checker<'a> {
                 format!(
                     "`{}` takes {}, found {}",
                     self.program.display(callee),
-                    crate::compiler::diagnostics::count(expected, "argument"),
+                    crate::compiler::messages::count(expected, "argument"),
                     arguments.len()
                 ),
             ));
@@ -569,8 +595,11 @@ impl<'a> Checker<'a> {
         span: Span,
     ) -> Result<(), Diagnostic> {
         let declaration = self.program.type_decl(id);
-        let TypeKind::Rec(declared_fields) = &declaration.kind else {
+        if declaration.group().shape() != Shape::Record {
             return Err(self.error(span, format!("`{}` has no fields", declaration.name)));
+        }
+        let TypeKind::Rec(declared_fields) = &declaration.kind else {
+            unreachable!("a group with fields is a rec");
         };
         let name = declaration.name.clone();
         let parameters = declaration.parameters.clone();
@@ -580,7 +609,12 @@ impl<'a> Checker<'a> {
                 (
                     field.name.clone(),
                     field.public,
-                    substitute(&field.ty, &parameters, arguments),
+                    substitute(
+                        &field.ty,
+                        &self.program.types,
+                        &parameters,
+                        Binding::Complete(arguments),
+                    ),
                 )
             })
             .collect();
@@ -616,8 +650,11 @@ impl<'a> Checker<'a> {
     ) -> Result<(), Diagnostic> {
         let (name, variant_name, public, parameters, declared) = {
             let declaration = self.program.type_decl(id);
-            let TypeKind::Enum(variants) = &declaration.kind else {
+            if declaration.group().shape() != Shape::Variant {
                 return Err(self.error(span, format!("`{}` is not an enum", declaration.name)));
+            }
+            let TypeKind::Enum(variants) = &declaration.kind else {
+                unreachable!("a group with variants is an enum");
             };
             let Some(variant) = variants.get(index) else {
                 return Err(self.error(span, "unknown enum variant"));
@@ -636,209 +673,20 @@ impl<'a> Checker<'a> {
                 span,
                 format!(
                     "`{name}.{variant_name}` takes {}, found {}",
-                    crate::compiler::diagnostics::count(declared.len(), "argument"),
+                    crate::compiler::messages::count(declared.len(), "argument"),
                     payload.len()
                 ),
             ));
         }
         for (argument, required) in payload.iter().zip(&declared) {
-            let required = substitute(required, &parameters, arguments);
+            let required = substitute(
+                required,
+                &self.program.types,
+                &parameters,
+                Binding::Complete(arguments),
+            );
             self.require(argument, &required)?;
         }
         Ok(())
-    }
-    /// The name of an optional type for a diagnostic: `no value` when the
-    /// expression produced none.
-    fn optional_type_name(&self, ty: &Option<Type>) -> String {
-        match ty {
-            Some(ty) => self.type_name(ty),
-            None => "no value".to_owned(),
-        }
-    }
-
-    /// The type a match compares. Its subject must produce a value: text, a
-    /// map, or any other value, never a call that produces none.
-    pub(super) fn match_subject(&mut self, subject: &Expression) -> Result<Type, Diagnostic> {
-        let Some(ty) = self.expression(subject, None)? else {
-            return Err(self.error(subject.span(), "a match subject must have a value"));
-        };
-        Ok(ty)
-    }
-
-    /// The type of a match in expression position: the common type of the arm
-    /// expressions, or no type when the arms are blocks. `expected`, when there
-    /// is one, is the type the whole match must have; it flows into each arm so
-    /// a generic construction or a nominal literal takes its type from the
-    /// match. The match must be exhaustive, so it always takes an arm and
-    /// always yields a value.
-    fn match_expression(
-        &mut self,
-        span: Span,
-        subject: &Expression,
-        cases: &[MatchArm],
-        default: &Option<MatchBody>,
-        expected: Option<&Type>,
-    ) -> Result<Option<Type>, Diagnostic> {
-        let subject_type = self.match_subject(subject)?;
-        let mut seen: Vec<&Expression> = Vec::new();
-        let mut covered = self.enum_coverage(&subject_type);
-        let mut result: Option<Option<Type>> = expected.map(|expected| Some(expected.clone()));
-        for arm in cases {
-            let pushed =
-                self.match_pattern(&arm.pattern, &subject_type, &mut seen, covered.as_mut())?;
-            let ty = match (&arm.body, expected) {
-                (MatchBody::Expression(expression), Some(expected)) => {
-                    Some(self.require(expression, expected)?)
-                }
-                _ => self.match_body_type(&arm.body)?,
-            };
-            for _ in 0..pushed {
-                self.overrides.pop();
-            }
-            if let Some(previous) = &result
-                && previous != &ty
-            {
-                return Err(self.error(
-                    arm.span,
-                    expected_instead(
-                        &self.optional_type_name(previous),
-                        &self.optional_type_name(&ty),
-                    ),
-                ));
-            }
-            result = Some(ty);
-        }
-        if let Some(default) = default {
-            let ty = match (default, expected) {
-                (MatchBody::Expression(expression), Some(expected)) => {
-                    Some(self.require(expression, expected)?)
-                }
-                _ => self.match_body_type(default)?,
-            };
-            if let Some(previous) = &result
-                && previous != &ty
-            {
-                return Err(self.error(
-                    subject.span(),
-                    expected_instead(
-                        &self.optional_type_name(previous),
-                        &self.optional_type_name(&ty),
-                    ),
-                ));
-            }
-            result = Some(ty);
-        }
-        if !is_exhaustive(default, &subject_type, cases, covered.as_deref()) {
-            return Err(self.error(
-                span,
-                "a match that produces a value must cover every case; add a `_` arm",
-            ));
-        }
-        Ok(result.flatten())
-    }
-    /// The coverage tracker for an enum subject: one flag per variant, or
-    /// `None` for a non-enum.
-    pub(super) fn enum_coverage(&self, subject_type: &Type) -> Option<Vec<bool>> {
-        let Type::Named(id, _) = subject_type else {
-            return None;
-        };
-        match &self.program.type_decl(*id).kind {
-            TypeKind::Enum(variants) => Some(vec![false; variants.len()]),
-            TypeKind::Rec(_) => None,
-        }
-    }
-
-    /// Validate one match arm's pattern against the subject type, tracking
-    /// duplicate value patterns and covered enum variants. Returns how many
-    /// binding overrides it pushed, which the caller pops after the arm body.
-    pub(super) fn match_pattern<'e>(
-        &mut self,
-        pattern: &'e Pattern,
-        subject_type: &Type,
-        seen: &mut Vec<&'e Expression>,
-        covered: Option<&mut Vec<bool>>,
-    ) -> Result<usize, Diagnostic> {
-        match pattern {
-            Pattern::Value(expression) => {
-                if !is_atom(expression) {
-                    return Err(self.error(
-                        expression.span(),
-                        "a match arm is a literal, a name, or a field path",
-                    ));
-                }
-                // Two arms are duplicates when they are the same atom: equal
-                // literal value, the same declaration, or the same field path.
-                if seen.iter().any(|other| atoms_equal(other, expression)) {
-                    return Err(
-                        self.error(expression.span(), duplicate_pattern_message(expression))
-                    );
-                }
-                self.require(expression, subject_type)?;
-                seen.push(expression);
-                Ok(0)
-            }
-            Pattern::Variant {
-                ty,
-                index,
-                bindings,
-                span,
-            } => {
-                let Type::Named(id, subject_arguments) = subject_type else {
-                    return Err(self.error(
-                        *span,
-                        expected_instead("an enum", &self.type_name(subject_type)),
-                    ));
-                };
-                if id != ty {
-                    return Err(self.error(
-                        *span,
-                        expected_instead(
-                            &self.type_name(subject_type),
-                            &self.type_name(&Type::Named(*ty, Vec::new())),
-                        ),
-                    ));
-                }
-                let Some(covered) = covered else {
-                    return Err(self.error(*span, "a variant pattern needs an enum subject"));
-                };
-                if covered[*index] {
-                    return Err(self.error(*span, "duplicate match pattern"));
-                }
-                covered[*index] = true;
-                let (variant_name, parameters, public, declared) = {
-                    let declaration = self.program.type_decl(*ty);
-                    let TypeKind::Enum(variants) = &declaration.kind else {
-                        unreachable!("a variant pattern names an enum");
-                    };
-                    let variant = &variants[*index];
-                    (
-                        variant.name.clone(),
-                        declaration.parameters.clone(),
-                        variant.public,
-                        variant.payload.clone(),
-                    )
-                };
-                self.check_variant(*ty, &variant_name, public, *span)?;
-                for (binding, field_type) in bindings.iter().zip(&declared) {
-                    if let Some(binding) = binding {
-                        let ty = substitute(field_type, &parameters, subject_arguments);
-                        self.overrides.push((*binding, ty));
-                    }
-                }
-                Ok(bindings.iter().filter(|binding| binding.is_some()).count())
-            }
-        }
-    }
-
-    /// The type of a match arm's body: an expression's type, or no type for a
-    /// block (a block produces no value).
-    fn match_body_type(&mut self, body: &MatchBody) -> Result<Option<Type>, Diagnostic> {
-        match body {
-            MatchBody::Expression(expression) => self.expression(expression, None),
-            MatchBody::Block(statements) => {
-                self.statements(statements)?;
-                Ok(None)
-            }
-        }
     }
 }

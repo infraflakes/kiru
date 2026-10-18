@@ -6,17 +6,13 @@
 
 use crate::compiler::Diagnostic;
 use crate::compiler::load_files::LoadedProgram;
-use crate::model::Type;
-use crate::model::{
+use crate::compiler::model::Type;
+use crate::compiler::model::{
     Declaration, DeclarationId, Derived, Expression, Field, FileId, Function, MatchArm, MatchBody,
-    NamespaceId, Pattern, Program, Statement, StringPart, rec_field,
+    NamespaceId, Program, Statement, StringPart,
 };
 use crate::syntax::Span;
-use crate::syntax::{BinaryOp, UnaryOp};
-use crate::syntax::{
-    Declaration as ParsedDeclaration, Expression as ParsedExpression, Statement as ParsedStatement,
-    TypeExpr,
-};
+use crate::syntax::{Expression as ParsedExpression, Statement as ParsedStatement, TypeExpr};
 
 use super::builder::Builder;
 use super::scopes::{Context, Scopes};
@@ -34,7 +30,7 @@ pub(crate) fn resolve_names(loaded: &LoadedProgram) -> Result<Program, Diagnosti
     builder.link_declarations(loaded)?;
     let module_values = builder.order_module_values()?;
     let program = builder.finish(entry, module_values);
-    crate::model::verify_program(&program);
+    crate::compiler::model::verify_program(&program);
     Ok(program)
 }
 
@@ -59,18 +55,21 @@ impl Builder {
             let skeleton = &self.skeletons[declaration_id.0];
             let name = skeleton.name.clone();
             let declaration = &loaded.items[syntax_index].declaration;
-            let ty = match declaration {
-                ParsedDeclaration::Function(function) => {
-                    self.function_signature(function, namespace, file)?
-                }
-                ParsedDeclaration::Binding(binding) => {
-                    self.resolve_type(&binding.ty, namespace, file, &[])?
-                }
-                ParsedDeclaration::Type(_) => {
-                    unreachable!("a type declaration has no body to link")
-                }
+            let ty = if declaration.kind.callable() {
+                let function = declaration
+                    .function()
+                    .expect("a callable declaration carries a function body");
+                self.function_signature(function, namespace, file)?
+            } else if declaration.kind.module_value() {
+                let binding = declaration
+                    .binding()
+                    .expect("a module value carries its initializer");
+                self.resolve_type(&binding.ty, namespace, file, &[])?
+            } else {
+                unreachable!("only a callable or a module value is pending linking")
             };
             self.declarations[declaration_id.0] = Some(Declaration {
+                kind: declaration.kind,
                 name,
                 file: Some(file),
                 namespace,
@@ -85,65 +84,66 @@ impl Builder {
             let file = pending.file;
             let namespace = pending.namespace;
             let declaration = &loaded.items[pending.syntax_index].declaration;
-            let value = match declaration {
-                ParsedDeclaration::Function(function) => {
-                    let mut scopes = Scopes::default();
-                    scopes.push();
-                    let type_parameters = function.type_parameters.clone();
-                    let mut context = Context {
-                        scopes: &mut scopes,
-                        namespace,
-                        file,
-                        current: pending.declaration,
-                        type_parameters: &type_parameters,
-                    };
-                    let mut parameters = Vec::new();
-                    for parameter in &function.parameters {
-                        let ty =
-                            self.resolve_type(&parameter.ty, namespace, file, &type_parameters)?;
-                        let id = self.declare_local(
-                            context.scopes,
-                            LocalDeclaration {
-                                file,
-                                namespace,
-                                name: &parameter.name,
-                                name_span: parameter.span,
-                                owner: pending.declaration,
-                                ty,
-                            },
-                        )?;
-                        context.scopes.declare(&parameter.name, id);
-                        parameters.push(id);
-                    }
-                    let body = self.link_statements(&function.body, &mut context)?;
-                    let ty = self.declarations[pending.declaration.0]
-                        .as_ref()
-                        .expect("the first pass settled every declaration's type")
-                        .ty
-                        .clone();
-                    Expression::Function(Function {
-                        ty,
-                        parameters,
-                        body,
-                        type_parameters,
-                        captures: Vec::new(),
-                        span: function.span,
-                    })
+            let value = if declaration.kind.callable() {
+                let function = declaration
+                    .function()
+                    .expect("a callable declaration carries a function body");
+                let mut scopes = Scopes::default();
+                scopes.push();
+                let type_parameters = function.type_parameters.clone();
+                let mut context = Context {
+                    scopes: &mut scopes,
+                    namespace,
+                    file,
+                    current: pending.declaration,
+                    type_parameters: &type_parameters,
+                };
+                let mut parameters = Vec::new();
+                for parameter in &function.parameters {
+                    let ty = self.resolve_type(&parameter.ty, namespace, file, &type_parameters)?;
+                    let id = self.declare_local(
+                        context.scopes,
+                        LocalDeclaration {
+                            file,
+                            namespace,
+                            name: &parameter.name,
+                            name_span: parameter.span,
+                            owner: pending.declaration,
+                            ty,
+                        },
+                    )?;
+                    context.scopes.declare(&parameter.name, id);
+                    parameters.push(id);
                 }
-                ParsedDeclaration::Binding(binding) => {
-                    let mut scopes = Scopes::default();
-                    let mut context = Context {
-                        scopes: &mut scopes,
-                        namespace,
-                        file,
-                        current: pending.declaration,
-                        type_parameters: &[],
-                    };
-                    self.link_expression(&binding.value, &mut context)?
-                }
-                ParsedDeclaration::Type(_) => {
-                    unreachable!("a type declaration has no body to link")
-                }
+                let body = self.link_statements(&function.body, &mut context)?;
+                let ty = self.declarations[pending.declaration.0]
+                    .as_ref()
+                    .expect("the first pass settled every declaration's type")
+                    .ty
+                    .clone();
+                Expression::Function(Function {
+                    ty,
+                    parameters,
+                    body,
+                    type_parameters,
+                    captures: Vec::new(),
+                    span: function.span,
+                })
+            } else if declaration.kind.module_value() {
+                let binding = declaration
+                    .binding()
+                    .expect("a module value carries its initializer");
+                let mut scopes = Scopes::default();
+                let mut context = Context {
+                    scopes: &mut scopes,
+                    namespace,
+                    file,
+                    current: pending.declaration,
+                    type_parameters: &[],
+                };
+                self.link_expression(&binding.value, &mut context)?
+            } else {
+                unreachable!("only a callable or a module value is pending linking")
             };
             self.declarations[pending.declaration.0]
                 .as_mut()
@@ -411,10 +411,11 @@ impl Builder {
                         span: *span,
                     });
                 }
-                // A type name as the receiver reaches a constructor: the
-                // function with no parameters whose result has the type's head.
-                // The type is not a value, so it is not an argument.
-                if let Some(declaration) = self.constructor_member(context, receiver, method)? {
+                // A type name as the receiver reaches an associated function:
+                // the function in the type's `impl` block whose first parameter
+                // is not the type. The type is not a value, so it is not an
+                // argument.
+                if let Some(declaration) = self.associated_member(context, receiver, method)? {
                     let mut linked_arguments = Vec::new();
                     for argument in arguments {
                         linked_arguments.push(self.link_expression(argument, context)?);
@@ -430,7 +431,7 @@ impl Builder {
                     });
                 }
                 let linked = self.link_expression(receiver, context)?;
-                let receiver_head = self.receiver_type(&linked).map(|ty| ty.head());
+                let receiver_head = self.receiver_type(&linked).map(|ty| ty.head(&self.types));
                 // A `receiver.name(args)` call is a call to a function named
                 // `name` whose first parameter accepts the receiver: the
                 // receiver becomes the first argument. The name is resolved in
@@ -440,11 +441,10 @@ impl Builder {
                 let declaration =
                     self.select_method(context, method, receiver_head, *method_span)?;
                 let Some(declaration) = declaration else {
-                    return Err(self.method_not_found(
-                        context,
-                        method,
-                        receiver_head,
+                    return Err(Diagnostic::new(
+                        &self.files[context.file.0].path,
                         *method_span,
+                        format!("no method `{method}` for this value"),
                     ));
                 };
                 let mut linked_arguments = vec![linked];
@@ -485,7 +485,7 @@ impl Builder {
                 let head = linked_arguments
                     .first()
                     .and_then(|argument| self.receiver_type(argument))
-                    .map(|ty| ty.head());
+                    .map(|ty| ty.head(&self.types));
                 let declaration = self.resolve_call(context, callee, head, *callee_span)?;
                 Expression::Call {
                     callee: Box::new(Expression::Reference {
@@ -503,6 +503,14 @@ impl Builder {
                 name_span,
                 span,
             } => {
+                // A bound function reached through its type as a value:
+                // `Type.name` is the function value, with no call parentheses.
+                if let Some(declaration) = self.bound_member(context, target, name)? {
+                    return Ok(Expression::Reference {
+                        declaration,
+                        span: *name_span,
+                    });
+                }
                 if let Some((ty, index)) = self.variant_member(context, target, name)? {
                     return Ok(Expression::Variant {
                         ty,
@@ -606,87 +614,6 @@ impl Builder {
         }))
     }
 
-    /// The enclosing locals a function literal body reads, following into
-    /// nested literals so a value they need is available in this frame. A
-    /// reference is a capture when it names a local of an enclosing function
-    /// that no function nested here owns.
-    fn collect_captures(
-        &self,
-        body: &[Statement],
-        parameters: &[DeclarationId],
-    ) -> Vec<DeclarationId> {
-        let mut locals = LocalCollector {
-            locals: parameters.iter().copied().collect(),
-        };
-        crate::model::walk_statements(&mut locals, body);
-        let mut collector = CaptureCollector {
-            declarations: &self.declarations,
-            locals: &locals.locals,
-            captures: Vec::new(),
-        };
-        crate::model::walk_statements(&mut collector, body);
-        collector.captures
-    }
-
-    /// The type of a method receiver, from declared types alone. kiru annotates
-    /// every binding, parameter, and return, so this is exact for a name and a
-    /// declared field; elsewhere it gives the head (a `Vec.new()` call is
-    /// `Vec`, and so on), which is all method dispatch keys on. The checker
-    /// then re-verifies the desugared call, so an approximation can never be
-    /// unsound.
-    fn receiver_type(&self, expression: &Expression) -> Option<Type> {
-        match expression {
-            Expression::Text { .. } | Expression::Interpolated { .. } => Some(Type::Text),
-            Expression::Int { .. } => Some(Type::Int),
-            Expression::Bool { .. } => Some(Type::Bool),
-            Expression::Map { .. } => None,
-            Expression::Variant { ty, .. } => Some(Type::Named(*ty, Vec::new())),
-            Expression::Reference { declaration, .. } => self.declared_type(*declaration),
-            Expression::Call { callee, .. } => self.receiver_type(callee)?.return_type(),
-            Expression::Field { target, name, .. } => {
-                let target = self.receiver_type(target)?;
-                self.field_type(&target, name)
-            }
-            Expression::Binary { op, .. } => Some(match op {
-                BinaryOp::Add
-                | BinaryOp::Subtract
-                | BinaryOp::Multiply
-                | BinaryOp::Divide
-                | BinaryOp::Remainder => Type::Int,
-                _ => Type::Bool,
-            }),
-            Expression::Unary { op, .. } => Some(match op {
-                UnaryOp::Negate => Type::Int,
-                UnaryOp::Not => Type::Bool,
-            }),
-            Expression::Match { cases, default, .. } => {
-                for arm in cases {
-                    if let MatchBody::Expression(expression) = &arm.body {
-                        return self.receiver_type(expression);
-                    }
-                }
-                match default {
-                    Some(MatchBody::Expression(expression)) => self.receiver_type(expression),
-                    _ => None,
-                }
-            }
-            // A function literal has no methods; dispatch does not key on it.
-            Expression::Function(_) => None,
-        }
-    }
-
-    /// The declared type of a name, whatever its body produces.
-    fn declared_type(&self, declaration: DeclarationId) -> Option<Type> {
-        Some(self.declarations[declaration.0].as_ref()?.ty.clone())
-    }
-
-    /// The type of a field, substituting a declared type's arguments.
-    fn field_type(&self, target: &Type, name: &str) -> Option<Type> {
-        match target {
-            Type::Named(id, arguments) => rec_field(&self.types, *id, arguments, name),
-            _ => None,
-        }
-    }
     fn link_match_body(
         &mut self,
         body: &crate::syntax::MatchBody,
@@ -701,71 +628,6 @@ impl Builder {
             }
         })
     }
-}
-/// Collects the local declarations a function literal body introduces anywhere
-/// within it, including those of nested literals. A reference to one of these
-/// is not a capture of the enclosing literal.
-struct LocalCollector {
-    locals: std::collections::HashSet<DeclarationId>,
-}
-
-impl crate::model::Visitor for LocalCollector {
-    fn expression(&mut self, expression: &Expression) {
-        if let Expression::Function(function) = expression {
-            self.locals.extend(function.parameters.iter().copied());
-        }
-    }
-
-    fn statement(&mut self, statement: &Statement) {
-        match statement {
-            Statement::Bind { declaration, .. } => {
-                self.locals.insert(*declaration);
-            }
-            Statement::Assign { .. }
-            | Statement::FieldAssign { .. }
-            | Statement::Expression(_)
-            | Statement::Return { .. }
-            | Statement::Panic { .. }
-            | Statement::Async { .. }
-            | Statement::Wait { .. }
-            | Statement::Forever { .. }
-            | Statement::Break { .. } => {}
-        }
-    }
-
-    fn pattern(&mut self, pattern: &Pattern) {
-        if let Pattern::Variant { bindings, .. } = pattern {
-            self.locals.extend(bindings.iter().flatten().copied());
-        }
-    }
-}
-
-/// Collects the enclosing locals a function literal body reads, following into
-/// nested literals so a value they need is present in this frame too.
-struct CaptureCollector<'a> {
-    declarations: &'a [Option<Declaration>],
-    locals: &'a std::collections::HashSet<DeclarationId>,
-    captures: Vec<DeclarationId>,
-}
-
-impl crate::model::Visitor for CaptureCollector<'_> {
-    fn expression(&mut self, expression: &Expression) {
-        if let Expression::Reference { declaration, .. } = expression {
-            let is_local = self.declarations[declaration.0]
-                .as_ref()
-                .is_some_and(|node| node.owner.is_some());
-            if is_local
-                && !self.locals.contains(declaration)
-                && !self.captures.contains(declaration)
-            {
-                self.captures.push(*declaration);
-            }
-        }
-    }
-
-    fn statement(&mut self, _: &Statement) {}
-
-    fn pattern(&mut self, _: &Pattern) {}
 }
 
 /// What a local binding needs: where it was written, what it is called, which

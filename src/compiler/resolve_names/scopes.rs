@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use crate::model::{DeclarationId, FileId, NamespaceId};
+use crate::compiler::model::{DeclarationId, FileId, NamespaceId};
 
 /// The context a body is linked in: the open scopes, the namespace and
 /// declaration being linked.

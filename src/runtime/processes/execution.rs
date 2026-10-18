@@ -49,7 +49,7 @@ pub(crate) fn spawn(state: &RuntimeState, argv: &[String]) -> Result<i32, String
         let _ = child.wait();
         return Err("too many concurrent processes".to_owned());
     }
-    state.store_child(pid, child);
+    state.processes.store_child(pid, child);
     Ok(pid)
 }
 
@@ -66,7 +66,7 @@ pub(crate) enum WaitFailure {
 /// otherwise — is the standard library's rule, not the syscall's. A stop
 /// condition ends the wait early.
 pub(crate) fn wait_for(state: &RuntimeState, pid: i32) -> Result<i32, WaitFailure> {
-    let Some(mut child) = state.take_child(pid) else {
+    let Some(mut child) = state.processes.take_child(pid) else {
         return Err(WaitFailure::Reported(format!("{pid}: no such process")));
     };
     let waited = wait_for_stop(state, &mut child, pid);

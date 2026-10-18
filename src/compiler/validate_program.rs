@@ -7,10 +7,10 @@
 //! checked against the declared type, a value function must not fall through,
 //! and a call to a function that stops the run ends its caller's path.
 
-mod body_check;
-mod body_expressions;
+mod expression_typing;
 mod flow;
-mod patterns;
+mod match_rules;
+mod statement_check;
 mod validate_declarations;
 
 #[cfg(test)]

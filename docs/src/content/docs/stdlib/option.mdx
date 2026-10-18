@@ -3,23 +3,22 @@ title: std::Option
 description: A value that may be present or absent.
 ---
 
-`std::Option<T>` is an ordinary enum: a value that is either present (`some`)
-or absent (`none`). [Absence](/concepts/absence/) covers where it appears and
-what produces it.
+`std::Option<T>` is an ordinary enum in the `std` namespace: a value that is
+either present (`some`) or absent (`none`). [Absence](/concepts/absence/) covers
+where it appears and what produces it.
 
-```kiru
+```text
 pub enum Option<T> { pub some(T), pub none };
 ```
 
-`Option` lives in the `std` namespace. Write it `std::Option`, or add `use std;`
-to write it bare. Both variants are `pub`, so a program outside `std`
-constructs and matches them; the helpers are methods, so calling one needs
-`use std;`.
+Write it `std::Option`, or add `use std;` to write it bare. Both variants are
+`pub`, so a program outside `std` constructs and matches them; the helpers are
+bound functions, so calling one needs no `use`.
 
 <details>
 <summary><code>or</code> — the value, or a fallback</summary>
 
-```kiru
+```text
 option.or(fallback: T) -> T
 ```
 
@@ -29,7 +28,9 @@ option.or(fallback: T) -> T
 ```kiru
 use std;
 use std::text;
-let index: int = "a=b".find("=").or(-1);   # 1
+fn main() {
+  std::print("@("a=b".find("=").or(-1))");   # 1
+};
 ```
 
 </details>
@@ -37,7 +38,7 @@ let index: int = "a=b".find("=").or(-1);   # 1
 <details>
 <summary><code>contains</code> — whether a value is present</summary>
 
-```kiru
+```text
 option.contains() -> bool
 ```
 
@@ -46,8 +47,10 @@ option.contains() -> bool
 ```kiru
 use std;
 use std::text;
-let found: std::Option<int> = "a=b".find("=");
-let present: bool = found.contains();   # true
+fn main() {
+  let found: std::Option<int> = "a=b".find("=");
+  std::print("@(found.contains())");   # true
+};
 ```
 
 </details>

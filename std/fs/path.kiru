@@ -1,27 +1,20 @@
-# std/path.kiru
+# std/fs/path.kiru
 #
-# Path helpers written on top of the native path kernel and the text kernel.
-
-# `Option` lives at the `std` root; `txt` and `Vec<T>` in their categories.
-use std;
-use std::text;
-use std::dynamic;
-use std::dynamic::Vec;
-use std::Option;
+# Path helpers written on top of the native text kernel.
 
 # Whether a path is absolute.
 pub fn is_absolute(path: txt) -> bool {
-  return path.starts_with("/");
+  return std::text::starts_with(path, "/");
 };
 
 # Join two path segments. An absolute `name` replaces `base`; an empty `base`
 # is replaced by `name`; and a `base` already ending in `/` is used as is.
 pub fn join(base: txt, name: txt) -> txt {
-  let joined: txt = match is_absolute(name) {
+  let joined: txt = match std::fs::is_absolute(name) {
     true => name;
     _ => match base {
       "" => name;
-      _ => match base.ends_with("/") {
+      _ => match std::text::ends_with(base, "/") {
         true => "@(base)@(name)";
         _ => "@(base)/@(name)";
       };
@@ -33,49 +26,49 @@ pub fn join(base: txt, name: txt) -> txt {
 # The last segment of a path. An empty path has no segment, so it stops the
 # run.
 pub fn base(path: txt) -> txt {
-  match path.len() {
+  match std::text::strlen(path) {
     0 => { std::eprint("base: the path is empty"); };
     _ => {};
   };
-  return std::split(path, "/").last();
+  return std::dynamic::last(std::text::split(path, "/"));
 };
 
 # The path without its last segment, or the empty text when there is no
 # separator.
 pub fn dir(path: txt) -> txt {
-  match path.len() {
+  match std::text::strlen(path) {
     0 => { return ""; };
     _ => {};
   };
-  let head: Vec<txt> = Vec.new();
+  let head: std::dynamic::Vec<txt> = std::dynamic::Vec.new();
   let pending: txt = "";
   let first: bool = true;
-  let parts: Vec<txt> = std::split(path, "/");
+  let parts: std::dynamic::Vec<txt> = std::text::split(path, "/");
   let index: int = 0;
-  let count: int = parts.len();
+  let count: int = std::dynamic::len(parts);
   for {
     match index < count { false => { break; }; true => {}; };
-    let part: txt = parts.at(index);
+    let part: txt = std::dynamic::at(parts, index);
     match first {
       true => { first = false; };
-      _ => { head = head.push(pending); };
+      _ => { head = std::dynamic::push(head, pending); };
     };
     pending = part;
     index = index + 1;
   };
-  return std::join(head, "/");
+  return std::dynamic::join(head, "/");
 };
 
 # The extension of a path, without the dot. A path whose last segment has no
 # dot has no extension, so it is the absence.
-pub fn ext(path: txt) -> Option<txt> {
-  match path.len() {
-    0 => { return Option.none; };
+pub fn ext(path: txt) -> std::Option<txt> {
+  match std::text::strlen(path) {
+    0 => { return std::Option.none; };
     _ => {};
   };
-  let name: txt = base(path);
-  match name.find(".") {
-    Option.some(_) => { return Option.some(std::split(name, ".").last()); };
-    Option.none => { return Option.none; };
+  let name: txt = std::fs::base(path);
+  match std::text::find(name, ".") {
+    std::Option.some(_) => { return std::Option.some(std::dynamic::last(std::text::split(name, "."))); };
+    std::Option.none => { return std::Option.none; };
   };
 };

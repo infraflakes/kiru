@@ -51,30 +51,25 @@ fn classify(mode: txt) -> txt {
 fn main() { std::print(classify("slow")); };
 ```
 
-A `{ … }` literal or a vec literal is a pattern too, and matches the whole
-value exactly:
+A `{ … }` literal is a pattern too, and matches the whole value exactly:
 
 ```kiru
 use std;
-use std::text;
-use std::vec;
 rec Spec { cmd: txt };
-fn describe(spec: Spec, tags: Vec<txt>) -> txt {
+fn describe(spec: Spec) -> txt {
   let by_spec: txt = match spec {
     { cmd = "build" } => "spec hit";
     _ => "spec miss";
   };
-  let by_vec: txt = match tags {
-    ["api", "prod"] => "vec hit";
-    _ => "vec miss";
-  };
-  return "@(by_spec) @(by_vec)";
+  return by_spec;
 };
-fn main() { std::print(describe({ cmd = "build" }, ["api"])); };
+fn main() { std::print(describe({ cmd = "build" })); };
 ```
 
-[Declared Types](/concepts/declared-types/) and [Vecs](/concepts/vecs/) cover the
-two literal forms.
+A vec has no literal, so it is not a pattern: a vec is compared by a name, or
+read through its operations.
+
+[Declared Types](/concepts/declared-types/) covers the literal form.
 
 A pattern is built only from literals, names, and field paths — never a call, an
 operator, or an interpolation:

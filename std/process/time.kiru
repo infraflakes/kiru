@@ -1,8 +1,6 @@
-# std/time.kiru
+# std/process/time.kiru
 #
 # The time helper written on top of the native time kernel.
-
-use std;
 
 # Sleep for `seconds` whole seconds. A negative count stops the run.
 pub fn sleep(seconds: int) {
@@ -10,5 +8,5 @@ pub fn sleep(seconds: int) {
     true => { std::eprint("`@(seconds)` is not a whole number of seconds"); };
     false => {};
   };
-  std::process::sleep_seconds(seconds);
+  std::syscalls::nanosleep(seconds);
 };

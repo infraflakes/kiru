@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use crate::compiler::lower_bytecode;
-use crate::model::Program;
+use crate::compiler::model::Program;
 use crate::runtime::Panic;
 use crate::runtime::Value;
 use crate::runtime::processes::RuntimeState;
@@ -45,13 +45,14 @@ fn root_symbols(program: &Program) -> HashMap<String, u32> {
     let mut symbols = HashMap::new();
     let root = program.declaration(program.entry).namespace;
     for declaration in &program.declarations {
-        let has_code = declaration.value.is_some();
+        let has_code = (declaration.kind.has_body() && declaration.kind.callable())
+            || (declaration.kind.has_value() && declaration.owner.is_none());
         if !has_code {
             continue;
         }
         if declaration.namespace == root
             && declaration.owner.is_none()
-            && declaration.function().is_some()
+            && declaration.kind.callable()
         {
             symbols.insert(declaration.name.clone(), code_id);
         }

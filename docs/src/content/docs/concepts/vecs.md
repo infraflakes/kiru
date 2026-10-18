@@ -1,132 +1,142 @@
 ---
 title: Vecs
-description: Vec literals, indexing, building, for, and break.
+description: The Vec type, its operations, loops, and break.
 ---
 
-A vec holds several values of one type in order. A vec type is written `Vec<T>`,
+A vec holds several values of one type in order. The type is written `Vec<T>`,
 where `T` is the element type; the element type is always written, so there is
-no bare form. A literal uses square brackets:
+no bare form. `Vec` is a declared `rec` in `std::dynamic`, not an intrinsic, so
+a program reaches it by its path or with `use std::dynamic::Vec;`. It has no
+literal and no index brackets: a value is built and changed through its
+operations.
 
 ```kiru
 use std;
-use std::text;
-use std::vec;
+use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<txt> = ["a", "b", "c"];
-  let empty: Vec<txt> = [];
-  let numbers: Vec<int> = [1, 2, 3];
-  std::print("@(xs.len())");
+  let xs: Vec<txt> = Vec.new();
+  xs = xs.push("a");
+  xs = xs.push("b");
+  xs = xs.push("c");
+  std::print("@(xs.len())");   # 3
 };
 ```
 
-A vec is one of the runtime types, like text and int: a parameter, a return
-type, and a binding can all be a vec, and the element can be a declared type:
+A vec is an ordinary declared type: a parameter, a return type, and a binding
+can all be a vec, and the element can be a declared type:
 
 ```kiru
 use std;
-use std::text;
-use std::vec;
+use std::dynamic::Vec;
 rec Task { name: txt, weight: int };
 
 fn heaviest(tasks: Vec<Task>) -> txt {
   let best: txt = "";
   let weight: int = -1;
-  for task in tasks {
+  let index: int = 0;
+  for {
+    match index < tasks.len() { false => { break; }; true => {}; };
+    let task: Task = tasks.at(index);
     match task.weight > weight {
       true => { best = task.name; weight = task.weight; };
       _ => {};
     };
+    index = index + 1;
   };
   return best;
 };
-fn main() { std::print(heaviest([{ name = "a", weight = 2 }])); };
+fn main() {
+  let tasks: Vec<Task> = Vec.new();
+  tasks = tasks.push({ name = "a", weight = 2 });
+  tasks = tasks.push({ name = "b", weight = 5 });
+  std::print(heaviest(tasks));   # b
+};
 ```
 
 [Declared Types](/concepts/declared-types/) covers `rec`.
 
-## Indexing
+## Reading an element
 
-`xs[i]` reads the element at a zero-based `int` index. The target must be a vec
-and the index an `int`; an index at or past the end stops the run:
-
-```kiru
-use std::text;
-use std::vec;
-fn main() {
-  let xs: Vec<txt> = ["a", "b", "c"];
-  std::print(xs[1]);   # b
-};
-```
-
-`xs.len()` and `s.len()` return an `int`, so an index and a length compare
-directly. `len` works for a vec of any element type.
-
-## Mutable vec
-
-A vec can be written in place with `xs[i] = value`. An index within the vec
-replaces the element; an index equal to the length appends:
+`xs.at(i)` reads the element at a zero-based `int` index. The target must be a
+vec and the index an `int`; an index at or past the end stops the run:
 
 ```kiru
 use std;
-use std::vec;
+use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<int> = [];
-  xs[0] = 10;    # appends
-  xs[1] = 20;    # appends
-  xs[0] = 99;    # replaces
-  std::print("@(xs[0]) @(xs[1])");
+  let xs: Vec<txt> = Vec.new();
+  xs = xs.push("a");
+  xs = xs.push("b");
+  xs = xs.push("c");
+  std::print(xs.at(1));   # b
 };
 ```
 
-An index past the length is an error. This is how a loop builds a vec without
-the `with` helper:
+`xs.len()` returns an `int`, so an index and a length compare directly. `len`
+works for a vec of any element type.
+
+## Building a vec
+
+A vec is built with `Vec.new()` and grown with `push`. `replace(i, value)`
+replaces the element at `i`:
 
 ```kiru
 use std;
-use std::vec;
+use std::dynamic::Vec;
+fn main() {
+  let xs: Vec<int> = Vec.new();
+  xs = xs.push(10);
+  xs = xs.push(20);
+  xs = xs.replace(0, 99);
+  std::print("@(xs.at(0)) @(xs.at(1))");   # 99 20
+};
+```
+
+`push` appends; an index outside the vec is an error. A loop builds a vec one
+element at a time:
+
+```kiru
+use std;
+use std::dynamic::Vec;
 fn squares(count: int) -> Vec<int> {
-  let out: Vec<int> = [];
+  let out: Vec<int> = Vec.new();
   let i: int = 0;
   for {
-    out[i] = i * i;
+    match i < count { false => { break; }; true => {}; };
+    out = out.push(i * i);
     i = i + 1;
-    match i { count => { break; }; _ => {}; };
   };
   return out;
 };
-fn main() { std::print("@(squares(3)[2])"); };
+fn main() { std::print("@(squares(3).at(2))"); };   # 4
 ```
 
-## for over a vec
+## Looping over a vec
 
-`for item in <vec> { ... };` runs the body once per element, binding `item` to
-the element type, in order. The item is scoped to the body:
+There is no `for x in xs`. A vec is walked with a plain `for { ... };` loop, an
+index, and `len`:
 
 ```kiru
-use std::text;
-use std::vec;
-fn head(xs: Vec<txt>) -> txt {
-  let found: txt = "";
-  for x in xs {
-    found = x;
-    break;
+use std;
+use std::dynamic::Vec;
+fn total(xs: Vec<int>) -> int {
+  let sum: int = 0;
+  let index: int = 0;
+  for {
+    match index < xs.len() { false => { break; }; true => {}; };
+    sum = sum + xs.at(index);
+    index = index + 1;
   };
-  return found;
+  return sum;
 };
-fn main() { std::print(head(["a", "b"])); };
+fn main() {
+  let xs: Vec<int> = Vec.new();
+  xs = xs.push(1);
+  xs = xs.push(2);
+  xs = xs.push(3);
+  std::print("@(total(xs))");   # 6
+};
 ```
-
-The iterable must be a vec. A vec `for` may run zero times.
-
-The vec methods are generic over the element type: `len<T>`, `add<T>`,
-`add_first<T>`, `concat<T>`, `reverse<T>`, `contains<T>`, `find<T>`,
-`unique<T>`, and `last<T>` all work for a vec of any `T`. `find` returns the
-first position of an element as an `Option<int>`
-([Absence](/concepts/absence/) covers the optional value), and `uniqued` drops
-adjacent duplicates, so `sorted` then `uniqued` leaves one of each. The two text-only helpers
-stay free functions: `std::join(parts, separator)` joins a `Vec<txt>`, and
-`std::vec::sorted(items)` orders a `Vec<txt>`. [Closures](/concepts/closures/)
-covers `map`, `filter`, and `sorted_by`, which take a function value.
 
 ## for without a vec
 
@@ -156,17 +166,49 @@ To skip an element, put the work in a `match` arm and leave the other arm empty:
 ```kiru
 use std;
 use std::text;
-use std::vec;
+use std::dynamic::Vec;
 fn main() {
-  let paths: Vec<txt> = ["keep.kiru", "skip.tmp"];
-  for path in paths {
+  let paths: Vec<txt> = Vec.new();
+  paths = paths.push("keep.kiru");
+  paths = paths.push("skip.tmp");
+  let index: int = 0;
+  for {
+    match index < paths.len() { false => { break; }; true => {}; };
+    let path: txt = paths.at(index);
     match path.ends_with(".tmp") {
       true => {};
       _ => { std::print(path); };
     };
+    index = index + 1;
   };
 };
 ```
 
-The standard library reads the OS into vec and joins them back: `std::split`,
-`std::text::lines`, and `std::join`.
+## The vec methods
+
+The vec methods are generic over the element type: `len`, `at`, `push`,
+`replace`, `insert`, `remove`, `is_empty`, `clear`, `slice`, `take`, `skip`,
+`fold`, `each`, `count`, `concat`, `reverse`, `contains`, `index_of`, `dedup`,
+`map`, `filter`, `first`, `last`, and `sort_by` all work for a vec of any `T`.
+`index_of` returns the first position of an element as an `Option<int>`
+([Absence](/concepts/absence/) covers the optional value), and `dedup` drops
+adjacent duplicates, so `sort` then `dedup` leaves one of each. Two methods
+apply to `Vec<txt>` alone and stay bound to it: `sort()` orders in byte order,
+and `join(separator)` builds one text:
+
+```kiru
+use std;
+use std::dynamic::Vec;
+fn main() {
+  let xs: Vec<txt> = Vec.new();
+  xs = xs.push("b");
+  xs = xs.push("a");
+  xs = xs.push("a");
+  let unique: Vec<txt> = xs.sort().dedup();
+  std::print(unique.join(","));   # a,b
+};
+```
+
+[Closures](/concepts/closures/) covers `map`, `filter`, `fold`, `each`, and
+`sort_by`, which take a function value. The standard library reads the OS into a vec and joins it
+back: `std::fs::glob`, `std::text::lines`, and `Vec.join`.

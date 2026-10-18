@@ -2,7 +2,8 @@
 
 The runtime provides the vec's five operations. A call reaches them as
 `std::dynamic::name(...)`, or as a method on a `Vec<T>` receiver:
-`xs.at(index)`. `new` is a constructor, reached as `Vec.new()`.
+`xs.at(index)`. `new` is an associated function, reached as
+`std::dynamic::Vec.new()`.
 
 - `new() -> Vec<T>`: a new, empty vec. Returns the vec.
 - `len(self: Vec<T>) -> int`: the number of elements. Returns the count.

@@ -1,28 +1,54 @@
 //! Declaration level grammar: functions, variables, recs, and nominal type
 //! declarations.
 
+use crate::compiler::model::DeclarationKind;
 use crate::syntax::ast::{
-    Binding, Closure, Declaration, Expression, Function, Parameter, TypeDeclaration,
-    TypeDeclarationKind, TypeExpr, TypeField, Use, VariantDeclaration,
+    Binding, Closure, Declaration, DeclarationForm, Expression, Function, ImplBlock, Parameter,
+    TypeDeclaration, TypeDeclarationKind, TypeExpr, TypeField, Use, VariantDeclaration,
 };
 use crate::syntax::token::TokenKind;
 
 use super::{ParseError, Parser};
 
 impl Parser {
-    /// Parse one declaration: a function, a module value, or a nominal type.
+    /// The kind the current token opens, when it opens a declaration. The
+    /// marking from the surface form to the model's kind lives here, once.
+    fn declaration_kind(&self, lookahead: usize) -> Option<DeclarationKind> {
+        match &self.peek(lookahead).kind {
+            TokenKind::Fn => Some(DeclarationKind::Function),
+            TokenKind::Let => Some(DeclarationKind::Let),
+            TokenKind::Rec => Some(DeclarationKind::Rec),
+            TokenKind::Enum => Some(DeclarationKind::Enum),
+            TokenKind::Impl => Some(DeclarationKind::Impl),
+            _ => None,
+        }
+    }
+
+    /// Parse one declaration: a function, a module value, a nominal type, or an
+    /// `impl` block.
     pub(super) fn parse_declaration(&mut self) -> Result<Declaration, ParseError> {
-        // `pub` marks a declaration another namespace may reach.
-        let public = self.eat(&TokenKind::Pub);
-        let mut declaration = match &self.current().kind {
-            TokenKind::Fn => Declaration::Function(self.parse_function()?),
-            // At the top level, `rec` opens a nominal type declaration and
-            // `enum` opens an enum type declaration. The runtime's scalar types
-            // are intrinsics and its `Vec` is registered by the compiler, so
-            // there is no bodyless `type` form.
-            TokenKind::Rec => Declaration::Type(self.parse_type_declaration()?),
-            TokenKind::Enum => Declaration::Type(self.parse_enum_declaration()?),
-            TokenKind::Let => Declaration::Binding(self.parse_let_binding()?),
+        // `pub` is a production only for a kind that takes visibility. For a
+        // `let` or an `impl` it is not consumed, so the declaration dispatch
+        // reports it as an ordinary unexpected token.
+        let public = self
+            .declaration_kind(1)
+            .is_some_and(DeclarationKind::takes_visibility)
+            && self.eat(&TokenKind::Pub);
+        let kind = match self.declaration_kind(0) {
+            Some(kind) => kind,
+            None => {
+                return Err(self.error_here(format!(
+                    "expected a declaration, found {}",
+                    self.current().kind.describe()
+                )));
+            }
+        };
+        let form = match &self.current().kind {
+            TokenKind::Fn => DeclarationForm::Function(self.parse_function()?),
+            TokenKind::Let => DeclarationForm::Binding(self.parse_let_binding()?),
+            TokenKind::Rec => DeclarationForm::Type(self.parse_type_declaration()?),
+            TokenKind::Enum => DeclarationForm::Type(self.parse_enum_declaration()?),
+            TokenKind::Impl => DeclarationForm::Impl(self.parse_impl_block()?),
             other => {
                 return Err(self.error_here(format!(
                     "expected a declaration, found {}",
@@ -30,21 +56,102 @@ impl Parser {
                 )));
             }
         };
-        match &mut declaration {
-            Declaration::Function(function) => function.public = public,
-            Declaration::Binding(binding) => binding.public = public,
-            Declaration::Type(type_declaration) => type_declaration.public = public,
-        }
-        Ok(declaration)
+        let (name, name_span) = match &form {
+            DeclarationForm::Function(function) => (&function.name, function.name_span),
+            DeclarationForm::Binding(binding) => (&binding.name, binding.name_span),
+            DeclarationForm::Type(declaration) => (&declaration.name, declaration.name_span),
+            DeclarationForm::Impl(block) => (&block.name, block.name_span),
+        };
+        Ok(Declaration {
+            kind,
+            public,
+            name: name.clone(),
+            name_span,
+            form,
+        })
     }
 
-    /// Parse a `use a::b;` item. What the path ends at decides what it brings
-    /// into the namespace that wrote it: a namespace, or one name.
+    /// Parse an `impl Type { fn ...; };` block. Every function in the block is
+    /// filed under the block's type; a function's own `pub` lets another
+    /// namespace reach it.
+    fn parse_impl_block(&mut self) -> Result<ImplBlock, ParseError> {
+        let start = self.advance().start;
+        let (name, name_span) = self.expect_identifier("in an impl block")?;
+        self.expect(&TokenKind::LBrace, "to open the impl block")?;
+        let mut functions = Vec::new();
+        while !self.check(&TokenKind::RBrace) {
+            let public = self.eat(&TokenKind::Pub);
+            if !self.check(&TokenKind::Fn) {
+                return Err(self.error_here(format!(
+                    "expected a function in the impl block, found {}",
+                    self.current().kind.describe()
+                )));
+            }
+            let function = self.parse_function()?;
+            functions.push(Declaration {
+                kind: DeclarationKind::Impl,
+                public,
+                name: function.name.clone(),
+                name_span: function.name_span,
+                form: DeclarationForm::Function(function),
+            });
+        }
+        self.expect(&TokenKind::RBrace, "to close the impl block")?;
+        let span = self.span_through_semicolon(start, "after the impl block")?;
+        Ok(ImplBlock {
+            name,
+            name_span,
+            functions,
+            span,
+        })
+    }
+
+    /// Parse a `use a::b;` item or a `use a::{b, c};` group. One level of
+    /// braces names several things under one prefix.
     pub(super) fn parse_use(&mut self) -> Result<Use, ParseError> {
         let start = self.advance().start;
-        let (path, _) = self.parse_path_segments("in a use path")?;
+        // The path may end at `::{`, so the separator before a group is read
+        // here rather than by the general path parser.
+        let (first, _) = self.expect_identifier("in a use path")?;
+        let mut path = vec![first];
+        let mut group = false;
+        while self.eat(&TokenKind::PathSep) {
+            if self.check(&TokenKind::LBrace) {
+                group = true;
+                break;
+            }
+            let (segment, _) = self.expect_identifier("in a use path")?;
+            path.push(segment);
+        }
+        let mut paths = Vec::new();
+        if group {
+            let (names, group_span) = self.parse_delimited(
+                &TokenKind::LBrace,
+                &TokenKind::RBrace,
+                "to open the use group",
+                "to close the use group",
+                |parser| {
+                    parser
+                        .expect_identifier("in a use group")
+                        .map(|(name, _)| name)
+                },
+            )?;
+            if names.is_empty() {
+                return Err(ParseError {
+                    span: group_span,
+                    message: "a use group must name at least one thing".to_owned(),
+                });
+            }
+            for name in names {
+                let mut full = path.clone();
+                full.push(name);
+                paths.push(full);
+            }
+        } else {
+            paths.push(path);
+        }
         let span = self.span_through_semicolon(start, "after the use path")?;
-        Ok(Use { path, span })
+        Ok(Use { paths, span })
     }
 
     /// Parse a `rec Name { field: Type, ... };` type declaration.
@@ -63,7 +170,6 @@ impl Parser {
         Ok(TypeDeclaration {
             name,
             name_span,
-            public: false,
             parameters,
             kind: TypeDeclarationKind::Rec(fields),
             span,
@@ -86,7 +192,6 @@ impl Parser {
         Ok(TypeDeclaration {
             name,
             name_span,
-            public: false,
             parameters,
             kind: TypeDeclarationKind::Enum(variants),
             span,
@@ -204,7 +309,6 @@ impl Parser {
         Ok(Function {
             name,
             name_span,
-            public: false,
             type_parameters,
             parameters,
             return_type,
@@ -310,7 +414,6 @@ impl Parser {
             ty,
             name,
             name_span,
-            public: false,
             value,
             span,
         })

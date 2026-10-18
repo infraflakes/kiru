@@ -1,8 +1,10 @@
 //! Registering the runtime's natives into the builtin namespace, and the
 //! runtime's `Vec` type declaration beside them.
 
-use crate::model::Type;
-use crate::model::{DeclarationId, NamespaceId, TypeDecl, TypeId, TypeKind};
+use crate::compiler::model::Type;
+use crate::compiler::model::{
+    DeclarationId, DeclarationKind, NamespaceId, TypeDecl, TypeHead, TypeId, TypeKind,
+};
 use crate::native_registry::{Native, NativeRow, native_rows};
 use crate::syntax::Span;
 
@@ -45,26 +47,32 @@ impl Builder {
             parameters: row.parameters.clone(),
             returns: row.returns.clone().map(Box::new),
         };
-        let first_parameter_head = match &ty {
-            Type::Function { parameters, .. } => parameters.first().map(Type::head),
-            _ => None,
-        };
-        // A native with no parameters is reachable through the type it
-        // returns, exactly as a file function is.
-        let constructor_head = match &ty {
+        // The row's own signature names the type the native belongs to: a first
+        // parameter gives the receiver head of a method, and a row with no
+        // parameters is an associated function of the declared type it returns.
+        // A no-parameter native that returns a built-in type belongs to no
+        // type: it is a plain namespace-level name, like `getcwd`.
+        let (receiver_head, associated_head) = match &ty {
             Type::Function {
                 parameters,
                 returns,
-            } if parameters.is_empty() => returns.as_ref().map(|returns| returns.head()),
-            _ => None,
+            } => match parameters.first() {
+                Some(parameter) => (Some(parameter.head(&self.types)), None),
+                None => match returns.as_ref().map(|returns| returns.head(&self.types)) {
+                    Some(head @ TypeHead::Named(_)) => (None, Some(head)),
+                    _ => (None, None),
+                },
+            },
+            _ => (None, None),
         };
         let id = self.create_node(
             Skeleton {
+                kind: DeclarationKind::Native,
                 name: row.name.to_owned(),
                 name_span: Span::new(0, 0),
                 public: true,
-                first_parameter_head,
-                constructor_head,
+                receiver_head,
+                associated_head,
                 file: None,
                 namespace,
                 syntax_index: None,
@@ -72,17 +80,24 @@ impl Builder {
             None,
             Some(Slot::Native(ty, native)),
         );
-        // A native with a head joins the method pool like any other
-        // declaration: a method under its receiver's head, a constructor under
-        // the head of the type it returns.
+        // A native with a head joins the pool its row names: a method under its
+        // receiver's head, an associated function under the head of the type it
+        // belongs to. A bound function is not a namespace-level name, so it
+        // does not join the name pool; a plain native does.
         let table = &mut self.namespaces[namespace.0];
-        if let Some(head) = first_parameter_head.or(constructor_head) {
+        if let Some(head) = receiver_head {
             table
                 .methods
                 .insert(head, row.name.to_owned(), id)
-                .expect("native names are unique, so a builtin never collides");
+                .expect("a native's name and head are unique, so a builtin never collides");
+        } else if let Some(head) = associated_head {
+            table
+                .associates
+                .insert(head, row.name.to_owned(), id)
+                .expect("a native's name and head are unique, so a builtin never collides");
+        } else {
+            table.names.insert(row.name.to_owned(), id);
         }
-        table.names.insert(row.name.to_owned(), id);
         id
     }
 

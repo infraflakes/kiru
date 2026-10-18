@@ -8,18 +8,17 @@ more; `?` means optional. A term produces a value; a statement ends with `;`.
 
 ```text
 file        := item*
-item        := declaration | module | import | use
-module      := "mod" path "{" (declaration | use)* "}" ";"
-import      := "import" string ";"
+item        := use | declaration
 use         := "use" path ";"
+             | "use" path "::" "{" ident ("," ident)* ","? "}" ";"
 
-declaration          := "pub"? (function | binding | builtin_type | rec_declaration | enum_declaration)
-function             := "fn" ident type_params? "(" params? ")" ("->" type)? block ";"
-binding              := "let" ident ":" type "=" expression ";"
-builtin_type         := "type" ident type_params? ";"                   # a runtime type; the missing body is the marker
-rec_declaration      := "rec" ident type_params? "{" (field_decl ("," field_decl)* ","?)? "}" ";"
-enum_declaration     := "enum" ident type_params? "{" (variant ("," variant)* ","?)? "}" ";"
-field_decl  := "pub"? ident ":" type
+declaration := "pub"? (function | binding | rec_declaration | enum_declaration | impl_block)
+function    := "fn" ident type_params? "(" params? ")" ("->" type)? block ";"
+binding     := "let" ident ":" type "=" expression ";"
+rec_declaration  := "rec" ident type_params? "{" (field ("," field)* ","?)? "}" ";"
+enum_declaration := "enum" ident type_params? "{" (variant ("," variant)* ","?)? "}" ";"
+impl_block  := "impl" ident "{" (pub? function)* "}" ";"
+field       := "pub"? ident ":" type
 variant     := "pub"? ident ("(" (type ("," type)* ","?)? ")")?
 type_params := "<" ident ("," ident)* ","? ">"
 params      := param ("," param)* ","?
@@ -29,13 +28,12 @@ type          := function_type | type_path
 function_type := "fn" "(" (type ("," type)* ","?)? ")" ("->" type)?
 type_path     := path type_args?
 type_args     := "<" type ("," type)* ","? ">"
-path          := "::"? ident ("::" ident)*
+path          := ident ("::" ident)*
 
 block       := "{" statement* "}"
 statement   := binding
              | assignment
              | field_assignment
-             | index_assignment
              | expression ";"
              | "return" expression? ";"
              | "panic" ";"
@@ -45,8 +43,7 @@ statement   := binding
              | "break" ";"
 assignment       := ident "=" expression ";"
 field_assignment := ident "." ident "=" expression ";"
-index_assignment := ident "[" expression "]" "=" expression ";"
-for         := "for" (ident "in" expression)? block ";"
+for              := "for" block ";"
 
 expression     := logical_or
 logical_or     := logical_and ("||" logical_and)*
@@ -58,13 +55,11 @@ multiplicative := unary (("*" | "/" | "%") unary)*
 unary          := ("-" | "!") unary | term
 term           := primary postfix*
 postfix        := "." ident arguments?                        # field, or method call
-                | "[" expression "]"                            # index
 primary        := string
                 | number
                 | "true"
                 | "false"
                 | "{" (field ("," field)* ","?)? "}"            # record literal (a declared type)
-                | "[" (expression ("," expression)* ","?)? "]"  # vec literal
                 | "(" expression ")"                            # grouping
                 | "fn" "(" params? ")" ("->" type)? block       # closure
                 | "match" expression "{" arm* "}"
@@ -72,10 +67,9 @@ primary        := string
 arguments   := "(" (expression ("," expression)* ","?)? ")"
 field       := ident "=" expression
 
-match       := "{" arm* "}"
 arm         := pattern "=>" (expression | block) ";"
 pattern     := variant_pattern | expression
-variant_pattern := ident ("." ident)+ ("(" (pattern_binding ("," pattern_binding)* ","?)? ")")?
+variant_pattern := path "." ident ("(" (pattern_binding ("," pattern_binding)* ","?)? ")")?
 pattern_binding := ident | "_"
 ```
 
@@ -90,5 +84,6 @@ escape      := "\n" | "\t" | "\r" | "\e" | "\\" | "\"" | "\@"
 comment     := "#" to end of line
 ```
 
-[Text](/concepts/text/) covers strings, escapes, and interpolation, and
-[Values](/concepts/values/) covers the operators.
+A file is a namespace: it belongs to its directory, and there is no `mod` or
+`import`. [Modules](/concepts/modules/) covers namespaces and `use`, and
+[Text](/concepts/text/) covers strings, escapes, and interpolation.

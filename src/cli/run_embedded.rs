@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::bytecode::{Bytecode, validate_bytecode_structure};
+use crate::compiler::bytecode::{Bytecode, validate_bytecode_structure};
 use crate::compiler::deserialize_bytecode;
 use crate::runtime;
 

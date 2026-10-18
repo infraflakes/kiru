@@ -13,9 +13,9 @@ pub enum Option<T> { pub some(T), pub none };
 ```
 
 `Option` is not a built-in type. It is declared in the `std` namespace, in
-`stdlib/option.kiru`, and written `std::Option` or brought in with `use std;`.
+`std/std.kiru`, and written `std::Option` or brought in with `use std;`.
 Both variants are `pub`, so a program outside `std` constructs and matches them
-([Modules](/concepts/modules/) covers visibility).
+([Namespaces](/concepts/modules/) covers visibility).
 
 ## Matching
 
@@ -67,8 +67,8 @@ like any other name.
 
 The absence shows up wherever a lookup can miss:
 
-- `std::env::var(name)` is `Option<txt>`, and `Option.none` when the variable is
-  unset ([std::env](/stdlib/env/) covers it);
+- `std::syscalls::getenv(name)` is `Option<txt>`, and `Option.none` when the
+  variable is unset ([std::syscalls](/stdlib/syscalls/) covers it);
 - `text.find(needle)` is `Option<int>`, and `Option.none` when the needle is
   absent ([Text](/concepts/text/) covers the byte index).
 

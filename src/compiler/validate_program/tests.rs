@@ -1,6 +1,6 @@
+use crate::compiler::model::Type;
+use crate::compiler::model::{DeclarationId, Program};
 use crate::compiler::{checked_files, checked_program};
-use crate::model::Type;
-use crate::model::{DeclarationId, Program};
 
 fn check(files: &[(&str, &str)], entry: &str) -> Result<(), String> {
     checked_files(files, entry).map(|_| ())
@@ -36,7 +36,7 @@ fn first_parameter(program: &Program, id: DeclarationId) -> DeclarationId {
 fn value_type(program: &Program, id: DeclarationId) -> Option<Type> {
     let declaration = program.declaration(id);
     if declaration.function().is_some() || declaration.is_native() {
-        return declaration.return_type();
+        return declaration.return_type(&program.types);
     }
     Some(declaration.ty.clone())
 }
@@ -139,17 +139,17 @@ fn entry_and_return_rules() {
         (
             "a value function that can fall through",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f(s: txt) -> txt { match s { \"a\" => { return \"a\"; }; }; };\nfn main() {};",
-            "`f` is declared to return text, so every path must end with `return ...`, `panic;`, or a call that stops the run",
+            "`f` is declared to return txt, so every path must end with `return ...`, `panic;`, or a call that stops the run",
         ),
         (
             "a returned value of the wrong type",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f(s: txt) -> txt { match s { \"a\" => { return \"a\"; }; _ => { return { k = \"v\" }; }; }; };\nfn main() {};",
-            "expected text, found a `{ … }` literal",
+            "expected txt, found a `{ … }` literal",
         ),
         (
             "returning a nothing call",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn work() {};\nfn f() -> txt { return work(); };\nfn main() {};",
-            "expected text, found no value",
+            "expected txt, found no value",
         ),
         (
             "a value return in a nothing function",
@@ -159,7 +159,7 @@ fn entry_and_return_rules() {
         (
             "a bare return in a value function",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { return; };\nfn main() {};",
-            "`f` is declared to return text, so `return` must carry a value",
+            "`f` is declared to return txt, so `return` must carry a value",
         ),
     ]);
 }
@@ -174,17 +174,17 @@ fn panic_and_no_value_rules() {
         (
             "fail bound to text",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let x: txt = std::eprint(\"x\"); };",
-            "expected text, found no value",
+            "expected txt, found no value",
         ),
         (
             "fail passed as a text argument",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn take(x: txt) {};\nfn main() { take(std::eprint(\"x\")); };",
-            "expected text, found no value",
+            "expected txt, found no value",
         ),
         (
             "fail in a record field",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec R { k: txt };\nfn main() { let r: R = { k = std::eprint(\"x\") }; };",
-            "expected text, found no value",
+            "expected txt, found no value",
         ),
     ]);
 }
@@ -233,12 +233,12 @@ fn command_and_field_rules() {
         (
             "command with a non-text line",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { std::process::command(1); };",
-            "expected text, found int",
+            "expected txt, found int",
         ),
         (
             "field access on text",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let x: txt = \"a\".b; };",
-            "expected a rec, found text",
+            "expected a rec, found txt",
         ),
     ]);
 }
@@ -267,17 +267,17 @@ fn text_and_record_rules() {
         (
             "arithmetic on text",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let x: int = \"a\" + \"b\"; };",
-            "expected int, found text",
+            "expected int, found txt",
         ),
         (
             "text parameter used as a record",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f(x: txt) { let a: txt = x; let b: txt = x.b; };\nfn main() { f(\"s\"); };",
-            "expected a rec, found text",
+            "expected a rec, found txt",
         ),
         (
             "text where a record is required",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec Repo { dir: txt };\nfn read(repo: Repo) -> txt { return repo.dir; };\nfn main() { read(\"x\"); };",
-            "expected Repo, found text",
+            "expected Repo, found txt",
         ),
     ]);
 }
@@ -345,7 +345,7 @@ fn bindings_and_scope_rules() {
         (
             "assigning a record literal to a text local",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let x: txt = \"a\"; x = {}; };",
-            "expected text, found a `{ … }` literal",
+            "expected txt, found a `{ … }` literal",
         ),
         (
             "duplicate literal match pattern",
@@ -355,7 +355,7 @@ fn bindings_and_scope_rules() {
         (
             "text arm against a text subject only",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { match \"a\" { {} => {}; }; };",
-            "expected text, found a `{ … }` literal",
+            "expected txt, found a `{ … }` literal",
         ),
         (
             "match arm does not leak locals",
@@ -396,12 +396,12 @@ fn match_expression_rules() {
         (
             "match arms of different types",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let x: txt = match \"a\" { \"a\" => \"one\"; _ => { k = \"v\" }; }; };",
-            "expected text, found a `{ … }` literal",
+            "expected txt, found a `{ … }` literal",
         ),
         (
             "a text match assigned to a record",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec R { k: txt };\nfn main() { let x: R = match \"a\" { \"a\" => \"one\"; _ => \"two\"; }; };",
-            "expected R, found text",
+            "expected R, found txt",
         ),
     ]);
 }
@@ -434,12 +434,12 @@ fn match_on_records_and_lists() {
         (
             "a text arm against a record subject",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec S { a: txt };\nfn main() { let s: S = { a = \"1\" }; match s { \"a\" => {}; }; };",
-            "expected S, found text",
+            "expected S, found txt",
         ),
         (
             "a record arm against a Vec subject",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let s: Vec<txt> = Vec.new().push(\"a\"); match s { {} => {}; }; };",
-            "expected Vec<text>, found a `{ … }` literal",
+            "expected Vec<txt>, found a `{ … }` literal",
         ),
         (
             "a value match without a default",
@@ -563,7 +563,7 @@ fn nominal_type_rules() {
         (
             "a field of the wrong type",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec Project { count: int };\nfn main() { let p: Project = { count = \"x\" }; };",
-            "expected int, found text",
+            "expected int, found txt",
         ),
         (
             "an unknown declared type",
@@ -615,57 +615,6 @@ fn comparison_rules() {
             "ordering a boolean",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let b: bool = true < false; };",
             "`bool` cannot be ordered; compare `int` or `txt`",
-        ),
-    ]);
-}
-
-#[test]
-fn name_and_call_rules() {
-    expect_accepts(&[
-        (
-            "a local shadows a module value; a qualified path reaches it",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nuse root;\nlet value: txt = \"root\";\nfn main() {\nlet value: txt = \"local\";\nstd::print(value);\nstd::print(root::value);\n};",
-        ),
-        (
-            "a function may call itself",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() { f(); };\nfn main() {};",
-        ),
-    ]);
-    expect_rejections(&[
-        (
-            "a value and a function share a name",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn build() -> txt { return \"built\"; };\nlet build: txt = \"text\";\nfn main() { std::print(build); };",
-            "`build` is declared more than once in this namespace",
-        ),
-        (
-            "function value where a text is expected",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() {};\nfn main() { let x: txt = f; };",
-            "expected text, found fn()",
-        ),
-        (
-            "calling a module value",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nlet x: txt = \"a\";\nfn main() { x(); };",
-            "`root::x` is a value and cannot be called",
-        ),
-        (
-            "calling a local",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let x: txt = \"a\"; x(); };",
-            "`x` is a value and cannot be called",
-        ),
-        (
-            "wrong arity",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f(a: txt) {};\nfn main() { f(); };",
-            "`root::f` takes 1 argument, found 0",
-        ),
-        (
-            "unknown absolute name",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nuse root;\nlet value: txt = \"root\";\nfn main() { std::print(root::missing); };",
-            "unknown name `root::missing`",
-        ),
-        (
-            "value self reference",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nlet x: txt = x;\nfn main() {};",
-            "`x` is part of a cycle among module values",
         ),
     ]);
 }
@@ -820,12 +769,12 @@ fn list_and_loop_rules() {
         (
             "a Vec binding whose value is not a Vec",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<txt> = \"a\"; };",
-            "expected Vec<text>, found text",
+            "expected Vec<txt>, found txt",
         ),
         (
             "a value function whose only path is a loop",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f(xs: Vec<txt>) -> txt { let index: int = 0; let count: int = xs.len(); for { match index < count { false => { break; }; true => {}; }; return xs.at(index); }; }; fn main() {};",
-            "`f` is declared to return text, so every path must end with `return ...`, `panic;`, or a call that stops the run",
+            "`f` is declared to return txt, so every path must end with `return ...`, `panic;`, or a call that stops the run",
         ),
     ]);
 }
@@ -863,17 +812,17 @@ fn parameterized_vec_rules() {
         (
             "an element of the wrong type",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new().push(\"a\"); };",
-            "`std::dynamic::push` cannot take an argument of type text",
+            "`std::dynamic::push` cannot take an argument of type txt",
         ),
         (
             "a Vec of the wrong element type",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new().push(1); let ys: Vec<txt> = xs; };",
-            "expected Vec<text>, found Vec<int>",
+            "expected Vec<txt>, found Vec<int>",
         ),
         (
             "a loop item used as text",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new().push(1); let index: int = 0; let count: int = xs.len(); for { match index < count { false => { break; }; true => {}; }; let x: int = xs.at(index); std::print(x); index = index + 1; }; };",
-            "expected text, found int",
+            "expected txt, found int",
         ),
         (
             "a record element missing a declared field",
@@ -908,7 +857,7 @@ fn vec_access_rules() {
         (
             "a text index",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f(xs: Vec<txt>) -> txt { return xs.at(\"a\"); };\nfn main() {};",
-            "expected int, found text",
+            "expected int, found txt",
         ),
     ]);
 }
@@ -962,7 +911,7 @@ fn enum_rules() {
         (
             "a wrong construction argument type",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nenum Shape { Circle(int) };\nfn main() { let s: Shape = Shape.Circle(\"x\"); };",
-            "expected int, found text",
+            "expected int, found txt",
         ),
         (
             "a duplicate variant pattern",
@@ -1007,7 +956,7 @@ fn generic_type_rules() {
         (
             "a payload of the wrong type",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nenum Option<T> { some(T), none };\nfn main() { let o: Option<int> = Option.some(\"x\"); };",
-            "expected int, found text",
+            "expected int, found txt",
         ),
         (
             "an uninferrable generic construction",
@@ -1037,7 +986,7 @@ fn generic_function_rules() {
         (
             "conflicting argument types",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn same<T>(a: T, b: T) -> T { return a; };\nfn main() { std::print(same(1, \"x\")); };",
-            "`root::same` cannot take an argument of type text",
+            "`root::same` cannot take an argument of type txt",
         ),
         (
             "an uninferrable type parameter",
@@ -1058,11 +1007,11 @@ fn map_construction_infers_from_the_expected_type() {
         ),
         (
             "with infers its type arguments from the binding",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let m: Map<txt, txt> = Map.new().with(\"a\", \"1\"); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let m: Map<txt, txt> = Map.new().insert(\"a\", \"1\"); };",
         ),
     ]);
     expect_rejections(&[(
-        "a constructor without a type still cannot infer",
+        "an associated function without a type still cannot infer",
         "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { Map.new(); };",
         "cannot infer the type parameter `K` of `std::dynamic::new`; add a type annotation",
     )]);
@@ -1194,12 +1143,12 @@ fn vec_mutation_rules() {
         (
             "a value of the wrong element type",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new().push(1); xs = xs.replace(0, \"a\"); };",
-            "`std::dynamic::replace` cannot take an argument of type text",
+            "`std::dynamic::replace` cannot take an argument of type txt",
         ),
         (
             "a non-int index",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new().push(1); xs = xs.replace(\"a\", 1); };",
-            "expected int, found text",
+            "expected int, found txt",
         ),
     ]);
 }
@@ -1215,45 +1164,6 @@ fn negative_integer_pattern_rules() {
         "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let n: int = -1; match n { -1 => {}; -1 => {}; }; };",
         "duplicate match pattern `-1`",
     )]);
-}
-
-#[test]
-fn method_rules() {
-    expect_accepts(&[
-        (
-            "a method on a Vec",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn count<T>(self: Vec<T>) -> int { let n: int = 0; let index: int = 0; let total: int = self.len(); for { match index < total { false => { break; }; true => {}; }; n = n + 1; index = index + 1; }; return n; };\nfn main() { let xs: Vec<int> = Vec.new().push(1).push(2); let n: int = xs.count(); };",
-        ),
-        (
-            "a method on a declared type",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec Point { x: int, y: int };\nfn sum(self: Point) -> int { return self.x + self.y; };\nfn main() { let p: Point = { x = 1, y = 2 }; let n: int = p.sum(); };",
-        ),
-        (
-            "a method calling an earlier method",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn count<T>(self: Vec<T>) -> int { return 0; }; fn head<T>(self: Vec<T>) -> int { return self.count(); };\nfn main() { let xs: Vec<int> = Vec.new().push(1); let n: int = xs.head(); };",
-        ),
-        (
-            "the receiver parameter's name is irrelevant",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn count<T>(xs: Vec<T>) -> int { return 0; };\nfn main() { let xs: Vec<int> = Vec.new().push(1); let n: int = xs.count(); };",
-        ),
-    ]);
-    expect_rejections(&[
-        (
-            "an unknown method",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new().push(1).push(2); xs.nope(); };",
-            "no method `nope` for this value",
-        ),
-        (
-            "a duplicate name in one namespace",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn count<T>(self: Vec<T>) -> int { return 0; }; fn count<T>(self: Vec<T>) -> int { return 1; };\nfn main() {};",
-            "`count` is declared more than once in this namespace",
-        ),
-        (
-            "a free function whose receiver type does not match",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn count(xs: Vec<txt>) -> int { return 0; };\nfn main() { let xs: Vec<int> = Vec.new().push(1); xs.count(); };",
-            "expected Vec<text>, found Vec<int>",
-        ),
-    ]);
 }
 
 #[test]
@@ -1307,7 +1217,7 @@ fn closure_rules() {
         (
             "a wrong-typed closure return",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let f: fn(int) -> int = fn(x: int) -> int { return \"s\"; }; };",
-            "expected int, found text",
+            "expected int, found txt",
         ),
     ]);
 }
@@ -1405,9 +1315,19 @@ fn rule_conformance_visibility() {
             "pub enum Colour { pub red };",
         ),
         (
-            "a public method is reachable through `use`",
+            "a public method is reachable across namespaces",
             "fn main() { let s: txt = \"a\".shout(); std::print(s); };",
-            "pub fn shout(self: txt) -> txt { return self; };",
+            "impl txt { pub fn shout(self: txt) -> txt { return self; }; };",
+        ),
+        (
+            "a public method needs no `use` at all",
+            "fn main() { let s: txt = \"a\".shout(); std::print(s); };",
+            "impl txt { pub fn shout(self: txt) -> txt { return self; }; };",
+        ),
+        (
+            "a public method of a public type is reachable across namespaces",
+            "fn main() { let p: m::P = m::point(); std::print(\"@(p.sum())\"); };",
+            "pub rec P { x: int };\npub fn point() -> P { return { x = 1 }; };\nimpl P { pub fn sum(self: P) -> int { return self.x; }; };",
         ),
     ];
     let mut failures = Vec::new();
@@ -1445,8 +1365,14 @@ fn rule_conformance_visibility() {
         (
             "a private method is unreachable across namespaces",
             "fn main() { let s: txt = \"a\".shout(); std::print(s); };",
-            "fn shout(self: txt) -> txt { return self; };",
+            "impl txt { fn shout(self: txt) -> txt { return self; }; };",
             "no method `shout` for this value",
+        ),
+        (
+            "a method of a private type is unreachable across namespaces",
+            "fn main() { std::print(\"@(m::point().sum())\"); };",
+            "rec P { x: int };\npub fn point() -> P { return { x = 1 }; };\nimpl P { pub fn sum(self: P) -> int { return self.x; }; };",
+            "no method `sum` for this value",
         ),
         (
             "an absolute path cannot reach a private name",
@@ -1471,88 +1397,6 @@ fn rule_conformance_visibility() {
         failures.len(),
         failures.join("\n")
     );
-}
-
-/// The audit's rule-conformance probes, order: Resolution is order-free, so a
-/// name may be declared after the point that names it and a function may call
-/// itself; a cycle among a namespace's module values is the one order error;
-/// one pool of names admits methods that differ by receiver head and parameter
-/// count, and a type may be recursive.
-///
-/// Each case is the smallest program for one stated rule.
-#[test]
-fn rule_conformance_order_and_scope() {
-    expect_accepts(&[
-        (
-            "a local shadows a top-level value",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nlet a: int = 1;\nfn main() { let a: int = 2; std::print(\"@(a)\"); };\n",
-        ),
-        (
-            "a method name repeats once per receiver head",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec A { x: int };\nrec B { y: int };\nfn about(self: A) -> int { return 1; };\nfn about(self: B) -> int { return 2; };\nfn main() { std::print(\"ok\"); };\n",
-        ),
-        (
-            "a method call dispatches on the receiver's type",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() {\n  let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\").push(\"c\");\n  let n: int = xs.len();\n  let m: int = \"abc\".len();\n  std::print(\"@(n) @(m)\");\n};\n",
-        ),
-        (
-            "a recursive declared type",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec Tree { name: txt, kids: Vec<Tree> };\nfn main() { let t: Tree = { name = \"r\", kids = Vec.new() }; std::print(t.name); };\n",
-        ),
-        (
-            "a forward reference resolves",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { std::print(banner()); };\nfn banner() -> txt { return \"x\"; };\n",
-        ),
-        (
-            "a function may call itself",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f(n: int) -> int { match n { 0 => { return 0; }; _ => {}; }; return f(n - 1); };\nfn main() { std::print(\"@(f(1))\"); };\n",
-        ),
-        (
-            "a constructor and a method may share a name",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec A { x: int };\nfn m() -> int { return 1; };\nfn m(self: A) -> int { return 2; };\nfn main() {};\n",
-        ),
-        (
-            "a `use` is order-free",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nuse root;\nfn main() {};\n",
-        ),
-    ]);
-    expect_rejections(&[
-        (
-            "a value that references itself",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nlet x: int = x;\nfn main() { std::print(\"@(x)\"); };\n",
-            "`x` is part of a cycle among module values",
-        ),
-        (
-            "a duplicate local",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let a: int = 1; let a: int = 2; std::print(\"@(a)\"); };\n",
-            "`a` is declared more than once",
-        ),
-        (
-            "a value and a function share a name",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nlet thing: txt = \"v\";\nfn thing() -> txt { return \"f\"; };\nfn main() {};\n",
-            "`thing` is declared more than once in this namespace",
-        ),
-        (
-            "two methods for one receiver head",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn len(self: txt) -> int { return 1; };\nfn len(self: txt) -> int { return 2; };\nfn main() { std::print(\"a\"); };\n",
-            "`len` is declared more than once in this namespace",
-        ),
-        (
-            "a method declared after a head-less function",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec A { x: int };\nfn m() { std::print(\"x\"); };\nfn m(self: A) -> int { return 2; };\nfn main() {};\n",
-            "`m` is declared more than once in this namespace",
-        ),
-        (
-            "a method declared after a module value",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec A { x: int };\nlet m: int = 1;\nfn m(self: A) -> int { return 2; };\nfn main() {};\n",
-            "`m` is declared more than once in this namespace",
-        ),
-        (
-            "a module value declared after a method",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec A { x: int };\nfn m(self: A) -> int { return 2; };\nlet m: int = 1;\nfn main() {};\n",
-            "`m` is declared more than once in this namespace",
-        ),
-    ]);
 }
 
 /// The audit's rule-conformance probes, declarations: The intrinsic types are built in, not declared, so a bodyless `type` is not a form; fields, variants, type parameters, and parameters are unique; a generic type is applied; and `main` has its one shape.
@@ -1677,6 +1521,11 @@ fn rule_conformance_declarations() {
             "use std;\nfn main() { let m: Map<txt, txt> = {}; };\n",
             "unknown type `Map`",
         ),
+        (
+            "an `impl` block for an undeclared type",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nimpl Missing { fn f() {}; };\nfn main() {};\n",
+            "unknown type `Missing`",
+        ),
     ]);
 }
 
@@ -1746,6 +1595,10 @@ fn rule_conformance_syntax() {
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { std::print(\"x\"); };\n",
         ),
         (
+            "a use group names several things under one prefix",
+            "use std;\nuse std::dynamic::{Map, text_order};\nfn main() { let m: Map<txt, int> = Map.new(); std::print(\"@(m.len()) @(text_order(\"a\", \"b\"))\"); };\n",
+        ),
+        (
             "`&&` short-circuits",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn boom() -> bool { std::print(\"boom\"); return true; };\nfn main() { let r: bool = false && boom(); std::print(\"@(r)\"); };\n",
         ),
@@ -1778,9 +1631,24 @@ fn rule_conformance_syntax() {
             "`std::tex` names neither a namespace nor a declaration",
         ),
         (
+            "a `use` of an impl-bound function",
+            "use std::dynamic;\nuse std::dynamic::push;\nfn main() {};\n",
+            "`std::dynamic::push` belongs to the type `Vec`; reach it through the type",
+        ),
+        (
+            "a `use` of a module value",
+            "use root::value;\nlet value: int = 1;\nfn main() {};\n",
+            "`root::value` is a module value; `use` reaches a namespace, a type, or a plain function",
+        ),
+        (
             "a reserved word as a binding name",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let match: int = 1; };\n",
             "expected a name in a binding, found `match`",
+        ),
+        (
+            "`impl` is a reserved word",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let impl: int = 1; };\n",
+            "expected a name in a binding, found `impl`",
         ),
         (
             "`if` is not a form",
@@ -1805,7 +1673,7 @@ fn rule_conformance_syntax() {
         (
             "text concatenation with `+`",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let s: txt = \"a\" + \"b\"; };\n",
-            "expected int, found text",
+            "expected int, found txt",
         ),
         (
             "`mut` is not a keyword",

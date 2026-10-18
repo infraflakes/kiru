@@ -2,8 +2,8 @@
 
 use std::collections::HashSet;
 
-use crate::model::{
-    Declaration, DeclarationId, Expression, Pattern, Program, Statement, VisitorMut,
+use crate::compiler::model::{
+    Declaration, DeclarationId, Expression, MatchBody, Pattern, Program, Statement, VisitorMut,
     walk_expression_mut,
 };
 
@@ -14,7 +14,7 @@ pub(crate) fn prune_unreachable(program: &mut Program) {
     let reachable = collect_reachable_declarations(program);
     let mapping = compact(program, &reachable);
     remap(program, &mapping);
-    crate::model::verify_program(program);
+    crate::compiler::model::verify_program(program);
 }
 
 /// Move the reachable declarations into a fresh Vector, in their old order,
@@ -55,6 +55,7 @@ fn remap(program: &mut Program, mapping: &[Option<DeclarationId>]) {
     for namespace in &mut program.namespaces {
         namespace.names.remap(mapping);
         namespace.methods.remap(mapping);
+        namespace.associates.remap(mapping);
     }
 }
 
@@ -78,58 +79,79 @@ struct EdgeRemapper<'a> {
     mapping: &'a [Option<DeclarationId>],
 }
 
+impl EdgeRemapper<'_> {
+    /// Rewrite the declaration a binding statement declares.
+    fn declared(&mut self, statement: &mut Statement) {
+        let (Statement::Bind { declaration, .. }
+        | Statement::Assign { declaration, .. }
+        | Statement::FieldAssign { declaration, .. }) = statement
+        else {
+            unreachable!("the walk names a binding statement");
+        };
+        *declaration = mapped(self.mapping, *declaration);
+    }
+}
+
 impl VisitorMut for EdgeRemapper<'_> {
-    fn expression(&mut self, expression: &mut Expression) {
-        match expression {
-            Expression::Reference { declaration, .. } => {
-                *declaration = mapped(self.mapping, *declaration);
-            }
-            Expression::Function(function) => {
-                for parameter in &mut function.parameters {
-                    *parameter = mapped(self.mapping, *parameter);
-                }
-                for capture in &mut function.captures {
-                    *capture = mapped(self.mapping, *capture);
-                }
-            }
-            Expression::Text { .. }
-            | Expression::Map { .. }
-            | Expression::Bool { .. }
-            | Expression::Int { .. }
-            | Expression::Variant { .. }
-            | Expression::Call { .. }
-            | Expression::Field { .. }
-            | Expression::Binary { .. }
-            | Expression::Unary { .. }
-            | Expression::Interpolated { .. }
-            | Expression::Match { .. } => {}
+    fn reference(&mut self, expression: &mut Expression) {
+        let Expression::Reference { declaration, .. } = expression else {
+            unreachable!("the walk names a reference");
+        };
+        *declaration = mapped(self.mapping, *declaration);
+    }
+
+    fn function(&mut self, expression: &mut Expression) {
+        let Expression::Function(function) = expression else {
+            unreachable!("the walk names a function");
+        };
+        for parameter in &mut function.parameters {
+            *parameter = mapped(self.mapping, *parameter);
+        }
+        for capture in &mut function.captures {
+            *capture = mapped(self.mapping, *capture);
         }
     }
 
-    fn pattern(&mut self, pattern: &mut Pattern) {
-        if let Pattern::Variant { bindings, .. } = pattern {
-            for id in bindings.iter_mut().flatten() {
-                *id = mapped(self.mapping, *id);
-            }
+    fn bind(&mut self, statement: &mut Statement) {
+        self.declared(statement);
+    }
+    fn assign(&mut self, statement: &mut Statement) {
+        self.declared(statement);
+    }
+    fn field_assign(&mut self, statement: &mut Statement) {
+        self.declared(statement);
+    }
+
+    fn variant_pattern(&mut self, pattern: &mut Pattern) {
+        let Pattern::Variant { bindings, .. } = pattern else {
+            unreachable!("the walk names a variant pattern");
+        };
+        for id in bindings.iter_mut().flatten() {
+            *id = mapped(self.mapping, *id);
         }
     }
 
-    fn statement(&mut self, statement: &mut Statement) {
-        match statement {
-            Statement::Bind { declaration, .. }
-            | Statement::Assign { declaration, .. }
-            | Statement::FieldAssign { declaration, .. } => {
-                *declaration = mapped(self.mapping, *declaration);
-            }
-            Statement::Expression(_)
-            | Statement::Return { .. }
-            | Statement::Panic { .. }
-            | Statement::Async { .. }
-            | Statement::Wait { .. }
-            | Statement::Break { .. }
-            | Statement::Forever { .. } => {}
-        }
-    }
+    fn text(&mut self, _: &mut Expression) {}
+    fn map(&mut self, _: &mut Expression) {}
+    fn boolean(&mut self, _: &mut Expression) {}
+    fn integer(&mut self, _: &mut Expression) {}
+    fn variant(&mut self, _: &mut Expression) {}
+    fn interpolated(&mut self, _: &mut Expression) {}
+    fn call(&mut self, _: &mut Expression) {}
+    fn field(&mut self, _: &mut Expression) {}
+    fn binary(&mut self, _: &mut Expression) {}
+    fn unary(&mut self, _: &mut Expression) {}
+    fn match_expression(&mut self, _: &mut Expression) {}
+    fn expression_statement(&mut self, _: &mut Statement) {}
+    fn return_statement(&mut self, _: &mut Statement) {}
+    fn panic(&mut self, _: &mut Statement) {}
+    fn asynchronous(&mut self, _: &mut Statement) {}
+    fn wait(&mut self, _: &mut Statement) {}
+    fn forever(&mut self, _: &mut Statement) {}
+    fn break_statement(&mut self, _: &mut Statement) {}
+    fn value_pattern(&mut self, _: &mut Pattern) {}
+    fn expression_body(&mut self, _: &mut MatchBody) {}
+    fn block_body(&mut self, _: &mut MatchBody) {}
 }
 
 /// The new id of a retained declaration. A dropped id here is a compiler bug:

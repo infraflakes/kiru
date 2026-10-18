@@ -43,19 +43,20 @@ error output if the build fails, and then runs the tests:
 
 ```kiru
 use std;
+use std::process;
 
 fn main() -> int {
-  let build: std::Output = std::command("cargo build").capture();
+  let build: std::process::Output = std::process::command("echo build").capture();
   match build.code {
     0 => { std::print("build ok"); };
     _ => { std::eprint(build.err); };
   };
-  return std::command("cargo test").run();
+  return std::process::command("echo test").run();
 };
 ```
 
-`std::command(line)` builds a command; `.capture()` runs it and returns the exit
-code and the captured streams, while `.run()` runs it and returns the exit
-code. `match` chooses what to do with the result. [A First
+`std::process::command(line)` builds a command; `.capture()` runs it and returns
+the exit code and the captured streams, while `.run()` runs it and returns the
+exit code. `match` chooses what to do with the result. [A First
 Program](/getting-started/a-first-program/) walks through a program like this
 one.

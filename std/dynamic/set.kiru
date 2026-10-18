@@ -1,40 +1,37 @@
 # std/dynamic/set.kiru
 #
 # The set: a collection of distinct keys, kept sorted by a comparator it
-# carries. A `Set<K>` is an ordinary `rec`, not a built-in type — the runtime
-# represents it like any other rec, so nothing here needs a native. A function
-# whose first parameter is a `Set<K>` is callable as `s.name(...)`, so these are
-# the set methods. The type and its helpers share the `std::dynamic` namespace,
-# so `use std::dynamic;` brings in both.
+# carries. A `std::dynamic::Set<K>` is an ordinary `rec`, not a built-in type —
+# the runtime represents it like any other rec, so nothing here needs a native.
+# The functions in the `impl` block below are filed under `Set`: those with a
+# `Set<K>` first parameter are methods, and `new`/`from_items` — whose first
+# parameters are not the type — are associated functions reached as
+# `std::dynamic::Set.new(...)` and `std::dynamic::Set.from_items(...)`.
 #
 # A set orders by a value, not a bound: kiru has no bounds and the checker
-# rejects ordering a type parameter, so `Set<K>` carries `less: fn(K, K) -> bool`
-# exactly as `sorted_by` takes a comparator. Two keys are the same when `==`
-# answers `true`; `less` fixes their order.
-
-# `bool`/`int`/`Option` live at the `std` root; `Vec<T>` and `Set` are declared
-# in this namespace.
+# rejects ordering a type parameter, so `Set<K>` carries
+# `less: fn(K, K) -> bool` exactly as `std::dynamic::sort_by` takes a
+# comparator. Two keys are the same when `==` answers `true`; `less` fixes
+# their order.
+#
+# This file writes full paths: it uses no `use`, and every bound function is
+# reached through its absolute path.
 
 # A set of keys, kept sorted by the comparator it carries, with no
 # duplicates. Both fields are private; the methods are the API.
-pub rec Set<K> { entries: Vec<K>, less: fn(K, K) -> bool };
-
-# A new, empty set ordered by `less`. The caller passes a named comparator,
-# exactly as `sorted_by` takes one.
-pub fn new<K>(less: fn(K, K) -> bool) -> Set<K> {
-  return { entries = Vec.new(), less = less };
-};
+pub rec Set<K> { entries: std::dynamic::Vec<K>, less: fn(K, K) -> bool };
 
 # The first index at which `item` belongs in the sorted `entries`: every key
 # before it orders before `item`, every key at or after it does not. The
 # binary search the three O(log n) methods share; `less` decides the order.
-fn lower_bound<K>(entries: Vec<K>, item: K, less: fn(K, K) -> bool) -> int {
+# It takes a vec first and belongs to no type, so it is a plain function.
+fn lower_bound<K>(entries: std::dynamic::Vec<K>, item: K, less: fn(K, K) -> bool) -> int {
   let low: int = 0;
-  let high: int = entries.len();
+  let high: int = std::dynamic::len(entries);
   for {
     match low < high { false => { break; }; true => {}; };
     let middle: int = low + (high - low) / 2;
-    match less(entries.at(middle), item) {
+    match less(std::dynamic::at(entries, middle), item) {
       true => { low = middle + 1; };
       _ => { high = middle; };
     };
@@ -42,194 +39,205 @@ fn lower_bound<K>(entries: Vec<K>, item: K, less: fn(K, K) -> bool) -> int {
   return low;
 };
 
-# A set from a vec of keys: `items` sorted by `less`, with duplicates dropped.
-# `sorted_by` then `uniqued` is the unique pass, so equal keys end up adjacent
-# and only the first of each survives.
-pub fn from_items<K>(items: Vec<K>, less: fn(K, K) -> bool) -> Set<K> {
-  let entries: Vec<K> = items.sorted_by(less).uniqued();
-  return { entries = entries, less = less };
-};
-
-# A new set with `item` inserted in order. A key already present is ignored,
-# so the set it is called on is unchanged and the result is the same set.
-pub fn with<K>(self: Set<K>, item: K) -> Set<K> {
-  let at: int = lower_bound(self.entries, item, self.less);
-  let count: int = self.entries.len();
-  match at < count && self.entries.at(at) == item {
-    true => { return self; };
-    _ => {};
+impl Set {
+  # A new, empty set ordered by `less`. The caller passes a named comparator,
+  # exactly as `std::dynamic::sort_by` takes one. Its first parameter is not
+  # the type, so it is reached as `std::dynamic::Set.new(...)`.
+  pub fn new<K>(less: fn(K, K) -> bool) -> std::dynamic::Set<K> {
+    return { entries = std::dynamic::Vec.new(), less = less };
   };
-  let out: Vec<K> = Vec.new();
-  let index: int = 0;
-  for {
-    match index < count { false => { break; }; true => {}; };
-    match index == at {
-      true => { out = out.push(item); };
+
+  # A set from a vec of keys: `items` sorted by `less`, with duplicates dropped.
+  # `std::dynamic::sort_by` then `std::dynamic::dedup` is the unique pass,
+  # so equal keys end up adjacent and only the first of each survives. Its
+  # first parameter is not the type, so it is reached as
+  # `std::dynamic::Set.from_items(...)`.
+  pub fn from_items<K>(items: std::dynamic::Vec<K>, less: fn(K, K) -> bool) -> std::dynamic::Set<K> {
+    let entries: std::dynamic::Vec<K> = std::dynamic::dedup(std::dynamic::sort_by(items, less));
+    return { entries = entries, less = less };
+  };
+
+  # A new set with `item` inserted in order. A key already present is ignored,
+  # so the set it is called on is unchanged and the result is the same set.
+  pub fn insert<K>(self: std::dynamic::Set<K>, item: K) -> std::dynamic::Set<K> {
+    let at: int = std::dynamic::lower_bound(self.entries, item, self.less);
+    let count: int = std::dynamic::len(self.entries);
+    match at < count && std::dynamic::at(self.entries, at) == item {
+      true => { return self; };
       _ => {};
     };
-    out = out.push(self.entries.at(index));
-    index = index + 1;
+    let out: std::dynamic::Vec<K> = std::dynamic::Vec.new();
+    let index: int = 0;
+    for {
+      match index < count { false => { break; }; true => {}; };
+      match index == at {
+        true => { out = std::dynamic::push(out, item); };
+        _ => {};
+      };
+      out = std::dynamic::push(out, std::dynamic::at(self.entries, index));
+      index = index + 1;
+    };
+    match at == count {
+      true => { out = std::dynamic::push(out, item); };
+      _ => {};
+    };
+    return { entries = out, less = self.less };
   };
-  match at == count {
-    true => { out = out.push(item); };
-    _ => {};
-  };
-  return { entries = out, less = self.less };
-};
 
-# Whether `item` is a key. The binary search narrows with `less`, then `==`
-# confirms the candidate, so the answer is O(log n).
-pub fn contains<K>(self: Set<K>, item: K) -> bool {
-  let at: int = lower_bound(self.entries, item, self.less);
-  match at < self.entries.len() && self.entries.at(at) == item {
-    true => { return true; };
-    _ => {};
+  # Whether `item` is a key. The binary search narrows with `less`, then `==`
+  # confirms the candidate, so the answer is O(log n).
+  pub fn contains<K>(self: std::dynamic::Set<K>, item: K) -> bool {
+    let at: int = std::dynamic::lower_bound(self.entries, item, self.less);
+    match at < std::dynamic::len(self.entries) && std::dynamic::at(self.entries, at) == item {
+      true => { return true; };
+      _ => {};
+    };
+    return false;
   };
-  return false;
-};
 
-# A new set with `item` removed. A key that is not present leaves the set
-# unchanged.
-pub fn without<K>(self: Set<K>, item: K) -> Set<K> {
-  let at: int = lower_bound(self.entries, item, self.less);
-  match at < self.entries.len() && self.entries.at(at) == item {
-    true => {};
-    _ => { return self; };
-  };
-  let out: Vec<K> = Vec.new();
-  let index: int = 0;
-  let count: int = self.entries.len();
-  for {
-    match index < count { false => { break; }; true => {}; };
-    match index == at {
+  # A new set with `item` removed. A key that is not present leaves the set
+  # unchanged.
+  pub fn remove<K>(self: std::dynamic::Set<K>, item: K) -> std::dynamic::Set<K> {
+    let at: int = std::dynamic::lower_bound(self.entries, item, self.less);
+    match at < std::dynamic::len(self.entries) && std::dynamic::at(self.entries, at) == item {
       true => {};
-      _ => { out = out.push(self.entries.at(index)); };
+      _ => { return self; };
     };
-    index = index + 1;
+    let out: std::dynamic::Vec<K> = std::dynamic::Vec.new();
+    let index: int = 0;
+    let count: int = std::dynamic::len(self.entries);
+    for {
+      match index < count { false => { break; }; true => {}; };
+      match index == at {
+        true => {};
+        _ => { out = std::dynamic::push(out, std::dynamic::at(self.entries, index)); };
+      };
+      index = index + 1;
+    };
+    return { entries = out, less = self.less };
   };
-  return { entries = out, less = self.less };
-};
 
-# A new set with every key of `self` and of `other`. A key in both appears
-# once. The two sorted vecs are merged in one pass, ordered by `self`'s
-# comparator.
-pub fn union<K>(self: Set<K>, other: Set<K>) -> Set<K> {
-  let less: fn(K, K) -> bool = self.less;
-  let left: Vec<K> = self.entries;
-  let right: Vec<K> = other.entries;
-  let left_count: int = left.len();
-  let right_count: int = right.len();
-  let out: Vec<K> = Vec.new();
-  let i: int = 0;
-  let j: int = 0;
-  for {
-    match i < left_count && j < right_count { false => { break; }; true => {}; };
-    match left.at(i) == right.at(j) {
-      true => { out = out.push(left.at(i)); i = i + 1; j = j + 1; };
-      _ => {
-        match less(right.at(j), left.at(i)) {
-          true => { out = out.push(right.at(j)); j = j + 1; };
-          _ => { out = out.push(left.at(i)); i = i + 1; };
+  # A new set with every key of `self` and of `other`. A key in both appears
+  # once. The two sorted vecs are merged in one pass, ordered by `self`'s
+  # comparator.
+  pub fn union<K>(self: std::dynamic::Set<K>, other: std::dynamic::Set<K>) -> std::dynamic::Set<K> {
+    let less: fn(K, K) -> bool = self.less;
+    let left: std::dynamic::Vec<K> = self.entries;
+    let right: std::dynamic::Vec<K> = other.entries;
+    let left_count: int = std::dynamic::len(left);
+    let right_count: int = std::dynamic::len(right);
+    let out: std::dynamic::Vec<K> = std::dynamic::Vec.new();
+    let i: int = 0;
+    let j: int = 0;
+    for {
+      match i < left_count && j < right_count { false => { break; }; true => {}; };
+      match std::dynamic::at(left, i) == std::dynamic::at(right, j) {
+        true => { out = std::dynamic::push(out, std::dynamic::at(left, i)); i = i + 1; j = j + 1; };
+        _ => {
+          match less(std::dynamic::at(right, j), std::dynamic::at(left, i)) {
+            true => { out = std::dynamic::push(out, std::dynamic::at(right, j)); j = j + 1; };
+            _ => { out = std::dynamic::push(out, std::dynamic::at(left, i)); i = i + 1; };
+          };
         };
       };
     };
+    for {
+      match i < left_count { false => { break; }; true => {}; };
+      out = std::dynamic::push(out, std::dynamic::at(left, i));
+      i = i + 1;
+    };
+    for {
+      match j < right_count { false => { break; }; true => {}; };
+      out = std::dynamic::push(out, std::dynamic::at(right, j));
+      j = j + 1;
+    };
+    return { entries = out, less = self.less };
   };
-  for {
-    match i < left_count { false => { break; }; true => {}; };
-    out = out.push(left.at(i));
-    i = i + 1;
-  };
-  for {
-    match j < right_count { false => { break; }; true => {}; };
-    out = out.push(right.at(j));
-    j = j + 1;
-  };
-  return { entries = out, less = self.less };
-};
 
-# A new set of the keys present in both `self` and `other`, merged in one
-# pass and ordered by `self`'s comparator.
-pub fn intersection<K>(self: Set<K>, other: Set<K>) -> Set<K> {
-  let less: fn(K, K) -> bool = self.less;
-  let left: Vec<K> = self.entries;
-  let right: Vec<K> = other.entries;
-  let left_count: int = left.len();
-  let right_count: int = right.len();
-  let out: Vec<K> = Vec.new();
-  let i: int = 0;
-  let j: int = 0;
-  for {
-    match i < left_count && j < right_count { false => { break; }; true => {}; };
-    match left.at(i) == right.at(j) {
-      true => { out = out.push(left.at(i)); i = i + 1; j = j + 1; };
-      _ => {
-        match less(left.at(i), right.at(j)) {
-          true => { i = i + 1; };
-          _ => { j = j + 1; };
+  # A new set of the keys present in both `self` and `other`, merged in one
+  # pass and ordered by `self`'s comparator.
+  pub fn intersection<K>(self: std::dynamic::Set<K>, other: std::dynamic::Set<K>) -> std::dynamic::Set<K> {
+    let less: fn(K, K) -> bool = self.less;
+    let left: std::dynamic::Vec<K> = self.entries;
+    let right: std::dynamic::Vec<K> = other.entries;
+    let left_count: int = std::dynamic::len(left);
+    let right_count: int = std::dynamic::len(right);
+    let out: std::dynamic::Vec<K> = std::dynamic::Vec.new();
+    let i: int = 0;
+    let j: int = 0;
+    for {
+      match i < left_count && j < right_count { false => { break; }; true => {}; };
+      match std::dynamic::at(left, i) == std::dynamic::at(right, j) {
+        true => { out = std::dynamic::push(out, std::dynamic::at(left, i)); i = i + 1; j = j + 1; };
+        _ => {
+          match less(std::dynamic::at(left, i), std::dynamic::at(right, j)) {
+            true => { i = i + 1; };
+            _ => { j = j + 1; };
+          };
         };
       };
     };
+    return { entries = out, less = self.less };
   };
-  return { entries = out, less = self.less };
-};
 
-# A new set of the keys of `self` that are not in `other`, merged in one pass
-# and ordered by `self`'s comparator.
-pub fn difference<K>(self: Set<K>, other: Set<K>) -> Set<K> {
-  let less: fn(K, K) -> bool = self.less;
-  let left: Vec<K> = self.entries;
-  let right: Vec<K> = other.entries;
-  let left_count: int = left.len();
-  let right_count: int = right.len();
-  let out: Vec<K> = Vec.new();
-  let i: int = 0;
-  let j: int = 0;
-  for {
-    match i < left_count { false => { break; }; true => {}; };
-    match j < right_count && left.at(i) == right.at(j) {
-      true => { i = i + 1; j = j + 1; };
-      _ => {
-        match j < right_count && less(right.at(j), left.at(i)) {
-          true => { j = j + 1; };
-          _ => { out = out.push(left.at(i)); i = i + 1; };
+  # A new set of the keys of `self` that are not in `other`, merged in one pass
+  # and ordered by `self`'s comparator.
+  pub fn difference<K>(self: std::dynamic::Set<K>, other: std::dynamic::Set<K>) -> std::dynamic::Set<K> {
+    let less: fn(K, K) -> bool = self.less;
+    let left: std::dynamic::Vec<K> = self.entries;
+    let right: std::dynamic::Vec<K> = other.entries;
+    let left_count: int = std::dynamic::len(left);
+    let right_count: int = std::dynamic::len(right);
+    let out: std::dynamic::Vec<K> = std::dynamic::Vec.new();
+    let i: int = 0;
+    let j: int = 0;
+    for {
+      match i < left_count { false => { break; }; true => {}; };
+      match j < right_count && std::dynamic::at(left, i) == std::dynamic::at(right, j) {
+        true => { i = i + 1; j = j + 1; };
+        _ => {
+          match j < right_count && less(std::dynamic::at(right, j), std::dynamic::at(left, i)) {
+            true => { j = j + 1; };
+            _ => { out = std::dynamic::push(out, std::dynamic::at(left, i)); i = i + 1; };
+          };
         };
       };
     };
+    return { entries = out, less = self.less };
   };
-  return { entries = out, less = self.less };
-};
 
-# Whether every key of `self` is also a key of `other`. The sorted vecs are
-# walked in one pass; the first key of `self` that `other` passes is absent.
-pub fn is_subset<K>(self: Set<K>, other: Set<K>) -> bool {
-  let less: fn(K, K) -> bool = self.less;
-  let left: Vec<K> = self.entries;
-  let right: Vec<K> = other.entries;
-  let left_count: int = left.len();
-  let right_count: int = right.len();
-  let i: int = 0;
-  let j: int = 0;
-  for {
-    match i < left_count { false => { break; }; true => {}; };
-    match j < right_count && right.at(j) == left.at(i) {
-      true => { i = i + 1; j = j + 1; };
-      _ => {
-        match j < right_count && less(right.at(j), left.at(i)) {
-          true => { j = j + 1; };
-          _ => { return false; };
+  # Whether every key of `self` is also a key of `other`. The sorted vecs are
+  # walked in one pass; the first key of `self` that `other` passes is absent.
+  pub fn is_subset<K>(self: std::dynamic::Set<K>, other: std::dynamic::Set<K>) -> bool {
+    let less: fn(K, K) -> bool = self.less;
+    let left: std::dynamic::Vec<K> = self.entries;
+    let right: std::dynamic::Vec<K> = other.entries;
+    let left_count: int = std::dynamic::len(left);
+    let right_count: int = std::dynamic::len(right);
+    let i: int = 0;
+    let j: int = 0;
+    for {
+      match i < left_count { false => { break; }; true => {}; };
+      match j < right_count && std::dynamic::at(right, j) == std::dynamic::at(left, i) {
+        true => { i = i + 1; j = j + 1; };
+        _ => {
+          match j < right_count && less(std::dynamic::at(right, j), std::dynamic::at(left, i)) {
+            true => { j = j + 1; };
+            _ => { return false; };
+          };
         };
       };
     };
+    return true;
   };
-  return true;
-};
 
-# The number of keys.
-pub fn len<K>(self: Set<K>) -> int {
-  return self.entries.len();
-};
+  # The number of keys.
+  pub fn len<K>(self: std::dynamic::Set<K>) -> int {
+    return std::dynamic::len(self.entries);
+  };
 
-# The keys, in order.
-pub fn items<K>(self: Set<K>) -> Vec<K> {
-  return self.entries;
+  # The keys, in order.
+  pub fn items<K>(self: std::dynamic::Set<K>) -> std::dynamic::Vec<K> {
+    return self.entries;
+  };
 };

@@ -2,10 +2,10 @@
 //! learn which functions stop the run.
 
 use crate::compiler::Diagnostic;
-use crate::model::Type;
-use crate::model::{DeclarationId, FileId, Function, Program};
+use crate::compiler::model::Type;
+use crate::compiler::model::{DeclarationId, FileId, Function, Program};
 
-use super::body_check::Checker;
+use super::statement_check::Checker;
 
 /// Validate every declaration in declaration order. A callee is always
 /// declared earlier, so its type and whether it stops the run are already
@@ -16,15 +16,21 @@ pub(crate) fn validate_program(program: &mut Program) -> Result<(), Diagnostic> 
     for index in 0..program.declarations.len() {
         let id = DeclarationId(index);
         let declaration = program.declaration(id);
-        if let Some(function) = declaration.function() {
+        if declaration.kind.callable() && declaration.kind.has_body() {
+            let function = declaration
+                .function()
+                .expect("a callable body is a function expression");
             // A function with no return type has no return type to check
             // against; its calls produce no value.
-            let return_type = declaration.return_type();
+            let return_type = declaration.return_type(&program.types);
             let halts = verify_function(program, id, program.file_of(id), function, return_type)?;
             program.declaration_mut(id).derived.halts = halts;
-        } else if let Some(value) = declaration.value() {
+        } else if declaration.kind.has_value() && declaration.owner.is_none() {
             let ty = declaration.ty.clone();
             let namespace = declaration.namespace;
+            let value = declaration
+                .value()
+                .expect("a module value carries its initializer");
             let mut walk = Checker::new(program, program.file_of(id), namespace);
             walk.require(value, &ty)?;
         }

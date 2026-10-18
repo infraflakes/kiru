@@ -7,13 +7,14 @@
 //! during development. The untrusted decode boundary is
 //! `validate_bytecode_structure`, which runs on the lowered bytecode.
 
-use crate::model::{Type, TypeId};
+use crate::compiler::model::{Type, TypeId};
 use crate::native_registry::native_shape;
 
-use super::body::{Expression, Field, Pattern, Statement};
+use super::Program;
 use super::declarations::TypeKind;
+use super::expressions::{Expression, MatchBody, Pattern, Statement};
 use super::ids::DeclarationId;
-use super::program::Program;
+use super::verify_spans::verify_spans;
 use super::visitors::{Visitor, walk_expression, walk_statements};
 
 /// Assert the program is structurally valid. A violation is a compiler bug.
@@ -60,6 +61,13 @@ pub(crate) fn validate_program_structure(program: &Program) -> Result<(), String
         for declaration in namespace.methods.iter() {
             check_id(declaration.0, declaration_count, "a registered method")?;
         }
+        for declaration in namespace.associates.iter() {
+            check_id(
+                declaration.0,
+                declaration_count,
+                "a registered associated function",
+            )?;
+        }
     }
     for file in &program.files {
         for declaration in &file.declarations {
@@ -79,24 +87,26 @@ pub(crate) fn validate_program_structure(program: &Program) -> Result<(), String
             check_id(owner.0, declaration_count, "a declaration owner")?;
         }
         check_type(&declaration.ty, type_count, "a declaration type")?;
-        match &declaration.value {
-            Some(Expression::Function(function)) => {
-                for parameter in &function.parameters {
-                    check_id(parameter.0, declaration_count, "a function parameter")?;
-                }
-                for capture in &function.captures {
-                    check_id(capture.0, declaration_count, "a function capture")?;
-                }
-                check_statements(program, &function.body)?;
+        if declaration.kind.callable() && declaration.kind.has_body() {
+            let function = declaration
+                .function()
+                .expect("a callable body is a function expression");
+            for parameter in &function.parameters {
+                check_id(parameter.0, declaration_count, "a function parameter")?;
             }
-            Some(value) => {
-                check_expression(program, value)?;
+            for capture in &function.captures {
+                check_id(capture.0, declaration_count, "a function capture")?;
             }
-            None => {
-                if let Some(native) = declaration.native {
-                    native_shape(native);
-                }
-            }
+            check_statements(program, &function.body)?;
+        } else if declaration.kind.has_value() && declaration.owner.is_none() {
+            check_expression(
+                program,
+                declaration
+                    .value()
+                    .expect("a module value carries its initializer"),
+            )?;
+        } else if let Some(native) = declaration.native {
+            native_shape(native);
         }
     }
     for declaration in &program.types {
@@ -154,17 +164,6 @@ fn check_id(id: usize, count: usize, what: &str) -> Result<(), String> {
     }
 }
 
-/// The span checks over every body, plus the reference and call edges the
-/// structural pass also covers. Every span is ordered.
-fn verify_spans(program: &Program) {
-    let mut check = SpanCheck;
-    for declaration in &program.declarations {
-        if let Some(value) = &declaration.value {
-            walk_expression(&mut check, value);
-        }
-    }
-}
-
 /// Walk a body and check every reference and call edge against the model.
 fn check_statements(program: &Program, statements: &[Statement]) -> Result<(), String> {
     let mut check = EdgeCheck {
@@ -182,41 +181,6 @@ fn check_expression(program: &Program, expression: &Expression) -> Result<(), St
     };
     walk_expression(&mut check, expression);
     check.error.map_or(Ok(()), Err)
-}
-
-/// Checks every span is ordered. The id edges are checked by `EdgeCheck`.
-struct SpanCheck;
-
-impl Visitor for SpanCheck {
-    fn expression(&mut self, expression: &Expression) {
-        let span = expression.span();
-        assert!(span.start <= span.end);
-        if let Expression::Call { callee_span, .. } = expression {
-            assert!(callee_span.start <= callee_span.end);
-        }
-        if let Expression::Field { name_span, .. } = expression {
-            assert!(name_span.start <= name_span.end);
-        }
-        if let Expression::Map { fields, .. } = expression {
-            assert_field_spans(fields);
-        }
-    }
-
-    fn pattern(&mut self, pattern: &Pattern) {
-        if let Pattern::Variant { span, .. } = pattern {
-            assert!(span.start <= span.end);
-        }
-    }
-
-    fn statement(&mut self, statement: &Statement) {
-        let span = statement.span();
-        assert!(span.start <= span.end);
-        if let Statement::Assign { name_span, .. } | Statement::FieldAssign { name_span, .. } =
-            statement
-        {
-            assert!(name_span.start <= name_span.end);
-        }
-    }
 }
 
 /// Checks every reference and call edge points at a declaration. Resolution is
@@ -243,69 +207,94 @@ impl EdgeCheck<'_> {
     }
 }
 
-impl Visitor for EdgeCheck<'_> {
-    fn expression(&mut self, expression: &Expression) {
-        match expression {
-            Expression::Reference { declaration, .. } => self.check(*declaration, "a reference"),
-            Expression::Call { callee, .. } => {
-                // A direct call names a callable declaration; a call through a
-                // value is a reference like any other.
-                if let Expression::Reference { declaration, .. } = callee.as_ref()
-                    && self.program.declaration(*declaration).is_callable()
-                {
-                    self.check(*declaration, "a call");
-                }
-            }
-            Expression::Variant { ty, .. } => self.check_type(*ty),
-            // A function literal owns its parameters and reads its captures.
-            Expression::Function(function) => {
-                for parameter in &function.parameters {
-                    self.check(*parameter, "a function parameter");
-                }
-                for capture in &function.captures {
-                    self.check(*capture, "a reference");
-                }
-            }
-            Expression::Text { .. }
-            | Expression::Map { .. }
-            | Expression::Bool { .. }
-            | Expression::Int { .. }
-            | Expression::Field { .. }
-            | Expression::Binary { .. }
-            | Expression::Unary { .. }
-            | Expression::Interpolated { .. }
-            | Expression::Match { .. } => {}
-        }
-    }
-
-    fn pattern(&mut self, pattern: &Pattern) {
-        if let Pattern::Variant { ty, .. } = pattern {
-            self.check_type(*ty);
-        }
-    }
-
-    fn statement(&mut self, statement: &Statement) {
-        match statement {
-            Statement::Bind { declaration, .. }
-            | Statement::Assign { declaration, .. }
-            | Statement::FieldAssign { declaration, .. } => {
-                self.check(*declaration, "a statement binding");
-            }
-            Statement::Expression(_)
-            | Statement::Return { .. }
-            | Statement::Panic { .. }
-            | Statement::Async { .. }
-            | Statement::Wait { .. }
-            | Statement::Break { .. }
-            | Statement::Forever { .. } => {}
-        }
+impl EdgeCheck<'_> {
+    /// Check the declaration a binding statement declares.
+    fn bound(&mut self, statement: &Statement) {
+        let (Statement::Bind { declaration, .. }
+        | Statement::Assign { declaration, .. }
+        | Statement::FieldAssign { declaration, .. }) = statement
+        else {
+            unreachable!("the walk names a binding statement");
+        };
+        self.check(*declaration, "a statement binding");
     }
 }
 
-/// The span checks shared by a map expression and a `rec` declaration.
-fn assert_field_spans(fields: &[Field]) {
-    for field in fields {
-        assert!(field.name_span.start <= field.name_span.end);
-        assert!(field.span.start <= field.span.end);
+impl Visitor for EdgeCheck<'_> {
+    fn reference(&mut self, expression: &Expression) {
+        let Expression::Reference { declaration, .. } = expression else {
+            unreachable!("the walk names a reference");
+        };
+        self.check(*declaration, "a reference");
     }
+
+    fn call(&mut self, expression: &Expression) {
+        let Expression::Call { callee, .. } = expression else {
+            unreachable!("the walk names a call");
+        };
+        // A direct call names a callable declaration; a call through a value
+        // is a reference like any other.
+        if let Expression::Reference { declaration, .. } = callee.as_ref()
+            && self.program.declaration(*declaration).kind.callable()
+        {
+            self.check(*declaration, "a call");
+        }
+    }
+
+    fn variant(&mut self, expression: &Expression) {
+        let Expression::Variant { ty, .. } = expression else {
+            unreachable!("the walk names a variant");
+        };
+        self.check_type(*ty);
+    }
+
+    // A function literal owns its parameters and reads its captures.
+    fn function(&mut self, expression: &Expression) {
+        let Expression::Function(function) = expression else {
+            unreachable!("the walk names a function");
+        };
+        for parameter in &function.parameters {
+            self.check(*parameter, "a function parameter");
+        }
+        for capture in &function.captures {
+            self.check(*capture, "a reference");
+        }
+    }
+
+    fn bind(&mut self, statement: &Statement) {
+        self.bound(statement);
+    }
+    fn assign(&mut self, statement: &Statement) {
+        self.bound(statement);
+    }
+    fn field_assign(&mut self, statement: &Statement) {
+        self.bound(statement);
+    }
+
+    fn variant_pattern(&mut self, pattern: &Pattern) {
+        let Pattern::Variant { ty, .. } = pattern else {
+            unreachable!("the walk names a variant pattern");
+        };
+        self.check_type(*ty);
+    }
+
+    fn text(&mut self, _: &Expression) {}
+    fn map(&mut self, _: &Expression) {}
+    fn boolean(&mut self, _: &Expression) {}
+    fn integer(&mut self, _: &Expression) {}
+    fn interpolated(&mut self, _: &Expression) {}
+    fn field(&mut self, _: &Expression) {}
+    fn binary(&mut self, _: &Expression) {}
+    fn unary(&mut self, _: &Expression) {}
+    fn match_expression(&mut self, _: &Expression) {}
+    fn expression_statement(&mut self, _: &Statement) {}
+    fn return_statement(&mut self, _: &Statement) {}
+    fn panic(&mut self, _: &Statement) {}
+    fn asynchronous(&mut self, _: &Statement) {}
+    fn wait(&mut self, _: &Statement) {}
+    fn forever(&mut self, _: &Statement) {}
+    fn break_statement(&mut self, _: &Statement) {}
+    fn value_pattern(&mut self, _: &Pattern) {}
+    fn expression_body(&mut self, _: &MatchBody) {}
+    fn block_body(&mut self, _: &MatchBody) {}
 }

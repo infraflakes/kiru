@@ -63,7 +63,7 @@ impl Runtime {
                 let vec = self.pop_vec(&mut values)?;
                 Ok(Value::Int(vec.len() as i64))
             }
-            Native::Spawn => {
+            Native::PosixSpawn => {
                 let argv = self.pop_list(&mut values)?;
                 let argv = argv
                     .into_iter()
@@ -73,7 +73,7 @@ impl Runtime {
                     .map_err(|reason| self.native_failure(native, reason))?;
                 Ok(Value::Int(pid as i64))
             }
-            Native::Reap => {
+            Native::Waitpid => {
                 let pid = self.pop_int(&mut values)?;
                 let pid = i32::try_from(pid).map_err(|_| {
                     self.native_failure(native, "process id out of range".to_owned())
@@ -86,7 +86,7 @@ impl Runtime {
                     Err(process::WaitFailure::Cancelled) => Err(self.fail()),
                 }
             }
-            Native::SignalGroup => {
+            Native::Killpg => {
                 let number = self.pop_int(&mut values)?;
                 let pid = self.pop_int(&mut values)?;
                 let pid = i32::try_from(pid).map_err(|_| {
@@ -105,7 +105,7 @@ impl Runtime {
                 terminal_output::write(file_descriptor, &text)
                     .map_err(|reason| self.native_failure(native, reason))
             }
-            Native::IsTerminal => {
+            Native::Isatty => {
                 let file_descriptor = self.pop_int(&mut values)?;
                 terminal_output::is_terminal(file_descriptor)
                     .map_err(|reason| self.native_failure(native, reason))
@@ -123,11 +123,11 @@ impl Runtime {
                 file_system::write(&path, &text)
                     .map_err(|reason| self.native_failure(native, reason))
             }
-            Native::Remove => {
+            Native::Unlink => {
                 let path = self.pop_text(&mut values)?;
                 file_system::remove(&path).map_err(|reason| self.native_failure(native, reason))
             }
-            Native::Exists => {
+            Native::Access => {
                 let path = self.pop_text(&mut values)?;
                 Ok(file_system::exists(&path))
             }
@@ -136,40 +136,40 @@ impl Runtime {
                 file_system::mkstemp(&template)
                     .map_err(|reason| self.native_failure(native, reason))
             }
-            Native::List => {
+            Native::Readdir => {
                 let path = self.pop_text(&mut values)?;
                 file_system::list(&path).map_err(|reason| self.native_failure(native, reason))
             }
-            Native::Length => {
+            Native::Strlen => {
                 let text = self.pop_text(&mut values)?;
                 Ok(Value::Int(text.byte_len() as i64))
             }
-            Native::Find => {
+            Native::Memchr => {
                 let needle = self.pop_text(&mut values)?;
                 let text = self.pop_text(&mut values)?;
                 Ok(text_operations::find(&text, &needle))
             }
-            Native::Byte => {
+            Native::ByteAt => {
                 let index = self.pop_int(&mut values)?;
                 let text = self.pop_text(&mut values)?;
                 text_operations::byte(&text, index)
                     .map_err(|reason| self.native_failure(native, reason))
             }
-            Native::Slice => {
+            Native::Substr => {
                 let end = self.pop_int(&mut values)?;
                 let start = self.pop_int(&mut values)?;
                 let text = self.pop_text(&mut values)?;
                 text_operations::slice(&text, start, end)
                     .map_err(|reason| self.native_failure(native, reason))
             }
-            Native::EnvVar => {
+            Native::Getenv => {
                 let name = self.pop_text(&mut values)?;
                 Ok(environment::var(&name))
             }
-            Native::CurrentDir => {
+            Native::Getcwd => {
                 environment::current_dir().map_err(|reason| self.native_failure(native, reason))
             }
-            Native::SleepSeconds => {
+            Native::Nanosleep => {
                 let seconds = self.pop_int(&mut values)?;
                 let seconds = u64::try_from(seconds)
                     .map_err(|_| self.native_failure(native, "seconds out of range".to_owned()))?;
