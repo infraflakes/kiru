@@ -8,59 +8,66 @@
 use crate::compiler::Diagnostic;
 use crate::compiler::messages::expected_instead;
 use crate::compiler::model::{
-    Binding, Expression, MatchArm, MatchBody, Pattern, Type, TypeKind, substitute,
+    Binding, Expression, Finite, MatchArm, MatchBody, Pattern, Type, TypeKind, finite, substitute,
 };
-use crate::syntax::{Span, UnaryOp};
+use crate::syntax::Span;
 
 use super::statement_check::Checker;
 
-/// Whether a match takes an arm for every value: it has a `_` arm, it covers
-/// both booleans, or it covers every variant of its enum subject.
-pub(super) fn is_exhaustive(
-    default: &Option<MatchBody>,
-    subject_type: &Type,
-    cases: &[MatchArm],
-    covered: Option<&[bool]>,
-) -> bool {
-    default.is_some()
-        || covers_booleans(subject_type, cases)
-        || covered.is_some_and(|covered| covered.iter().all(|flag| *flag))
+/// The coverage of one finite subject: the values its type declares it can
+/// take, and whether an arm has covered each. One tracker serves a boolean's
+/// two values and an enum's variants, so a single pass decides exhaustiveness.
+pub(super) struct Coverage {
+    finite: Finite,
+    covered: Vec<bool>,
 }
 
-/// The value of a negative integer literal such as `-1`, which the parser makes
-/// a `Negate` over an `Int`. A match arm may compare against one.
-fn negative_int(expression: &Expression) -> Option<i64> {
-    match expression {
-        Expression::Unary {
-            op: UnaryOp::Negate,
-            operand,
-            ..
-        } => match &**operand {
-            Expression::Int { value, .. } => Some(-*value),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// Whether a match over a boolean has an arm for both `true` and `false`, so it
-/// needs no `_` arm. Only a literal arm covers a value; a name or a field path
-/// does not.
-fn covers_booleans(subject_type: &Type, cases: &[MatchArm]) -> bool {
-    if subject_type != &Type::Bool {
-        return false;
-    }
-    let mut covers_true = false;
-    let mut covers_false = false;
-    for arm in cases {
-        if let Pattern::Value(Expression::Bool { value, .. }) = &arm.pattern {
-            match value {
-                true => covers_true = true,
-                false => covers_false = true,
-            }
+impl Coverage {
+    /// The tracker for a finite subject, or `None` when the subject is open.
+    fn new(finite: Finite, value_count: usize) -> Option<Self> {
+        match finite {
+            Finite::Open => None,
+            Finite::Booleans => Some(Self {
+                finite,
+                covered: vec![false; 2],
+            }),
+            Finite::Variants => Some(Self {
+                finite,
+                covered: vec![false; value_count],
+            }),
         }
     }
-    covers_true && covers_false
+
+    /// Mark the value a pattern covers. Returns whether that value was already
+    /// covered, so a repeated finite value is a duplicate arm; a pattern that
+    /// names no finite value, or one this tracker does not enumerate, covers
+    /// nothing.
+    fn mark(&mut self, pattern: &Pattern) -> bool {
+        let index = match (self.finite, pattern) {
+            (Finite::Variants, Pattern::Variant { index, .. }) => *index,
+            (Finite::Booleans, Pattern::Value(Expression::Bool { value, .. })) => {
+                usize::from(*value)
+            }
+            _ => return false,
+        };
+        let Some(covered) = self.covered.get_mut(index) else {
+            return false;
+        };
+        let already = *covered;
+        *covered = true;
+        already
+    }
+
+    /// Whether every value the subject can take has an arm.
+    fn complete(&self) -> bool {
+        self.covered.iter().all(|covered| *covered)
+    }
+}
+
+/// Whether a match takes an arm for every value: it has a `_` arm, or its
+/// subject declares a finite set and every one of its values is covered.
+pub(super) fn is_exhaustive(default: &Option<MatchBody>, coverage: Option<&Coverage>) -> bool {
+    default.is_some() || coverage.is_some_and(Coverage::complete)
 }
 
 /// Whether an expression is an atom: a literal, a name, or a field path. A
@@ -73,7 +80,6 @@ fn is_atom(expression: &Expression) -> bool {
         | Expression::Reference { .. } => true,
         Expression::Field { target, .. } => is_atom(target),
         Expression::Map { fields, .. } => fields.iter().all(|field| is_atom(&field.value)),
-        Expression::Unary { .. } => negative_int(expression).is_some(),
         _ => false,
     }
 }
@@ -111,9 +117,6 @@ fn atoms_equal(left: &Expression, right: &Expression) -> bool {
                     })
                 })
         }
-        (Expression::Unary { .. }, Expression::Unary { .. }) => {
-            negative_int(left) == negative_int(right)
-        }
         _ => false,
     }
 }
@@ -124,10 +127,6 @@ fn duplicate_pattern_message(pattern: &Expression) -> String {
         Expression::Text { value, .. } => format!("duplicate match pattern `{value}`"),
         Expression::Bool { value, .. } => format!("duplicate match pattern `{value}`"),
         Expression::Int { value, .. } => format!("duplicate match pattern `{value}`"),
-        Expression::Unary { .. } => match negative_int(pattern) {
-            Some(value) => format!("duplicate match pattern `{value}`"),
-            None => "duplicate match pattern".to_owned(),
-        },
         _ => "duplicate match pattern".to_owned(),
     }
 }
@@ -144,7 +143,7 @@ impl<'a> Checker<'a> {
 
     /// The type a match compares. Its subject must produce a value: text, a
     /// map, or any other value, never a call that produces none.
-    pub(super) fn match_subject(&mut self, subject: &Expression) -> Result<Type, Diagnostic> {
+    pub(super) fn match_subject(&mut self, subject: &mut Expression) -> Result<Type, Diagnostic> {
         let Some(ty) = self.expression(subject, None)? else {
             return Err(self.error(subject.span(), "a match subject must have a value"));
         };
@@ -156,31 +155,38 @@ impl<'a> Checker<'a> {
     /// is one, is the type the whole match must have; it flows into each arm so
     /// a generic construction or a nominal literal takes its type from the
     /// match. The match must be exhaustive, so it always takes an arm and
-    /// always yields a value.
+    /// always yields a value. `exhaustive` records the coverage the flow pass
+    /// reads.
     pub(super) fn match_expression(
         &mut self,
         span: Span,
-        subject: &Expression,
-        cases: &[MatchArm],
-        default: &Option<MatchBody>,
+        subject: &mut Expression,
+        cases: &mut [MatchArm],
+        default: &mut Option<MatchBody>,
         expected: Option<&Type>,
+        exhaustive: &mut bool,
     ) -> Result<Option<Type>, Diagnostic> {
         let subject_type = self.match_subject(subject)?;
         let mut seen: Vec<&Expression> = Vec::new();
-        let mut covered = self.enum_coverage(&subject_type);
+        let mut coverage = self.coverage(&subject_type);
         let mut result: Option<Option<Type>> = expected.map(|expected| Some(expected.clone()));
-        for arm in cases {
-            let pushed =
-                self.match_pattern(&arm.pattern, &subject_type, &mut seen, covered.as_mut())?;
-            let ty = match (&arm.body, expected) {
+        for arm in cases.iter_mut() {
+            self.match_pattern(
+                &mut arm.pattern,
+                &subject_type,
+                &mut seen,
+                coverage.as_mut(),
+            )?;
+            let ty = match (&mut arm.body, expected) {
                 (MatchBody::Expression(expression), Some(expected)) => {
                     Some(self.require(expression, expected)?)
                 }
-                _ => self.match_body_type(&arm.body)?,
+                (MatchBody::Expression(expression), None) => self.expression(expression, None)?,
+                (MatchBody::Block(statements), _) => {
+                    self.statements(statements)?;
+                    None
+                }
             };
-            for _ in 0..pushed {
-                self.overrides.pop();
-            }
             if let Some(previous) = &result
                 && previous != &ty
             {
@@ -194,12 +200,16 @@ impl<'a> Checker<'a> {
             }
             result = Some(ty);
         }
-        if let Some(default) = default {
+        if let Some(default) = default.as_mut() {
             let ty = match (default, expected) {
                 (MatchBody::Expression(expression), Some(expected)) => {
                     Some(self.require(expression, expected)?)
                 }
-                _ => self.match_body_type(default)?,
+                (MatchBody::Expression(expression), None) => self.expression(expression, None)?,
+                (MatchBody::Block(statements), _) => {
+                    self.statements(statements)?;
+                    None
+                }
             };
             if let Some(previous) = &result
                 && previous != &ty
@@ -214,7 +224,9 @@ impl<'a> Checker<'a> {
             }
             result = Some(ty);
         }
-        if !is_exhaustive(default, &subject_type, cases, covered.as_deref()) {
+        let complete = is_exhaustive(default, coverage.as_ref());
+        *exhaustive = complete;
+        if !complete {
             return Err(self.error(
                 span,
                 "a match that produces a value must cover every case; add a `_` arm",
@@ -223,33 +235,46 @@ impl<'a> Checker<'a> {
         Ok(result.flatten())
     }
 
-    /// The coverage tracker for an enum subject: one flag per variant, or
-    /// `None` for a non-enum.
-    pub(super) fn enum_coverage(&self, subject_type: &Type) -> Option<Vec<bool>> {
-        let Type::Named(id, _) = subject_type else {
-            return None;
+    /// The coverage tracker for a subject: every value its type declares it can
+    /// take, or `None` when it declares no finite set.
+    pub(super) fn coverage(&self, subject_type: &Type) -> Option<Coverage> {
+        let finite = finite(subject_type, self.model.types());
+        let value_count = match finite {
+            Finite::Variants => {
+                let Type::Named(id, _) = subject_type else {
+                    unreachable!("a finite variant subject is a named type");
+                };
+                let TypeKind::Enum(variants) = &self.model.type_decl(*id).kind else {
+                    unreachable!("a finite variant subject is an enum");
+                };
+                variants.len()
+            }
+            Finite::Booleans | Finite::Open => 0,
         };
-        if !self.program.type_decl(*id).group().has_variants() {
-            return None;
-        }
-        let TypeKind::Enum(variants) = &self.program.type_decl(*id).kind else {
-            unreachable!("a group with variants is an enum");
-        };
-        Some(vec![false; variants.len()])
+        Coverage::new(finite, value_count)
     }
 
     /// Validate one match arm's pattern against the subject type, tracking
-    /// duplicate value patterns and covered enum variants. Returns how many
-    /// binding overrides it pushed, which the caller pops after the arm body.
+    /// duplicate value patterns and covered enum variants, and write each
+    /// binding's substituted type onto its declaration node. A binding is
+    /// created once, belongs to one pattern, and has one instantiation, so its
+    /// node is the only place its type is read.
     pub(super) fn match_pattern<'e>(
         &mut self,
-        pattern: &'e Pattern,
+        pattern: &'e mut Pattern,
         subject_type: &Type,
         seen: &mut Vec<&'e Expression>,
-        covered: Option<&mut Vec<bool>>,
-    ) -> Result<usize, Diagnostic> {
+        mut coverage: Option<&mut Coverage>,
+    ) -> Result<(), Diagnostic> {
         match pattern {
-            Pattern::Value(expression) => {
+            Pattern::Value(_) => {
+                // Mark coverage before the mutable borrow the typing needs.
+                if let Some(coverage) = coverage.as_mut() {
+                    coverage.mark(pattern);
+                }
+                let Pattern::Value(expression) = pattern else {
+                    unreachable!("the pattern is a value pattern");
+                };
                 if !is_atom(expression) {
                     return Err(self.error(
                         expression.span(),
@@ -265,14 +290,22 @@ impl<'a> Checker<'a> {
                 }
                 self.require(expression, subject_type)?;
                 seen.push(expression);
-                Ok(0)
+                Ok(())
             }
-            Pattern::Variant {
-                ty,
-                index,
-                bindings,
-                span,
-            } => {
+            Pattern::Variant { .. } => {
+                let tracker = coverage.is_some();
+                let already = coverage
+                    .as_mut()
+                    .is_some_and(|coverage| coverage.mark(&*pattern));
+                let Pattern::Variant {
+                    ty,
+                    index,
+                    bindings,
+                    span,
+                } = &*pattern
+                else {
+                    unreachable!("the pattern is a variant pattern");
+                };
                 let Type::Named(id, subject_arguments) = subject_type else {
                     return Err(self.error(
                         *span,
@@ -288,15 +321,14 @@ impl<'a> Checker<'a> {
                         ),
                     ));
                 }
-                let Some(covered) = covered else {
+                if !tracker {
                     return Err(self.error(*span, "a variant pattern needs an enum subject"));
-                };
-                if covered[*index] {
+                }
+                if already {
                     return Err(self.error(*span, "duplicate match pattern"));
                 }
-                covered[*index] = true;
                 let (variant_name, parameters, public, declared) = {
-                    let declaration = self.program.type_decl(*ty);
+                    let declaration = self.model.type_decl(*ty);
                     let TypeKind::Enum(variants) = &declaration.kind else {
                         unreachable!("a variant pattern names an enum");
                     };
@@ -308,31 +340,19 @@ impl<'a> Checker<'a> {
                         variant.payload.clone(),
                     )
                 };
-                self.check_variant(*ty, &variant_name, public, *span)?;
+                self.check_member(*ty, &variant_name, public, *span)?;
                 for (binding, field_type) in bindings.iter().zip(&declared) {
                     if let Some(binding) = binding {
                         let ty = substitute(
                             field_type,
-                            &self.program.types,
+                            self.model.types(),
                             &parameters,
                             Binding::Complete(subject_arguments),
                         );
-                        self.overrides.push((*binding, ty));
+                        self.model.set_type(*binding, ty);
                     }
                 }
-                Ok(bindings.iter().filter(|binding| binding.is_some()).count())
-            }
-        }
-    }
-
-    /// The type of a match arm's body: an expression's type, or no type for a
-    /// block (a block produces no value).
-    fn match_body_type(&mut self, body: &MatchBody) -> Result<Option<Type>, Diagnostic> {
-        match body {
-            MatchBody::Expression(expression) => self.expression(expression, None),
-            MatchBody::Block(statements) => {
-                self.statements(statements)?;
-                Ok(None)
+                Ok(())
             }
         }
     }

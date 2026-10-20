@@ -2,11 +2,22 @@
 
 use crate::compiler::Diagnostic;
 use crate::compiler::model::{
-    Arity, Group, NamespaceId, Type, TypeId, TypeKind, join_path, reachable, scalar_from_name,
+    Arity, Group, NamespaceId, Type, TypeHead, TypeId, TypeKind, UseTarget, VariantDecl, join_path,
+    reachable, scalar_from_name,
 };
 use crate::syntax::{Span, TypeExpr};
 
 use super::registration::Builder;
+
+/// One enum variant a written path names: the enum's type, the variant's index,
+/// and the declared variant itself. The lookup returns the declaration it
+/// resolved, so a caller that needs the variant's name or payload reads it from
+/// here rather than looking it up again.
+pub(in crate::compiler::resolve_names) struct Variant<'a> {
+    pub(in crate::compiler::resolve_names) ty: TypeId,
+    pub(in crate::compiler::resolve_names) index: usize,
+    pub(in crate::compiler::resolve_names) declaration: &'a VariantDecl,
+}
 
 /// The number of type arguments a written name must take: a fixed count for a
 /// kind that takes none, or the declaration's parameter count for a kind whose
@@ -100,14 +111,10 @@ impl Builder {
         reported_path: &std::path::Path,
     ) -> Result<Type, Diagnostic> {
         let WrittenType { path, span } = written;
-        // The scalar intrinsics are the language's own types, not
-        // declarations: a bare single-segment name names one directly, before
-        // any declaration is looked up. Nothing can delete `txt` by deleting a
-        // declaration, because there is none. `Vec` is not here: it is an
-        // ordinary declaration the compiler registers in `std::dynamic`.
-        if path.len() == 1
-            && let Some(scalar) = scalar_from_name(&path[0])
-        {
+        let named = self.named_type(written, namespace, reported_path)?;
+        // A scalar takes no arguments, so its count is settled before any
+        // argument is resolved.
+        if let NamedType::Scalar(scalar) = &named {
             let parameter_count = type_argument_count(scalar.group(&self.types), 0);
             if parameter_count != arguments.len() {
                 return Err(Diagnostic::new(
@@ -121,8 +128,125 @@ impl Builder {
                     ),
                 ));
             }
-            return Ok(scalar);
+            return Ok(scalar.clone());
         }
+        let mut resolved = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            resolved.push(self.resolve_type_expr(
+                argument,
+                namespace,
+                parameters,
+                reported_path,
+            )?);
+        }
+        match named {
+            NamedType::Scalar(_) => unreachable!("the scalar case was settled above"),
+            NamedType::Declared(id) => {
+                let declared = &self.types[id.0];
+                let parameter_count =
+                    type_argument_count(declared.group(), declared.parameters.len());
+                if parameter_count != arguments.len() {
+                    return Err(Diagnostic::new(
+                        reported_path,
+                        *span,
+                        format!(
+                            "`{}` takes {}, found {}",
+                            declared.name,
+                            crate::compiler::messages::count(parameter_count, "type argument"),
+                            arguments.len()
+                        ),
+                    ));
+                }
+                Ok(Type::Named(id, resolved))
+            }
+        }
+    }
+
+    /// Resolve a written named type path to the declaration it names: a scalar
+    /// intrinsic, or the declared type the path reaches. This is the one name
+    /// lookup a written type annotation and an `impl` target share. Applying
+    /// type arguments and checking their count belongs to the annotation, not
+    /// to the lookup.
+    fn named_type(
+        &self,
+        written: WrittenType<'_>,
+        namespace: NamespaceId,
+        reported_path: &std::path::Path,
+    ) -> Result<NamedType, Diagnostic> {
+        let WrittenType { path, span } = written;
+        // The scalar intrinsics are the language's own types, not
+        // declarations: a bare single-segment name names one directly, before
+        // any declaration is looked up. Nothing can delete `txt` by deleting a
+        // declaration, because there is none. `Vec` is not here: it is an
+        // ordinary declaration the compiler registers in `std::dynamic`.
+        if path.len() == 1
+            && let Some(scalar) = scalar_from_name(&path[0])
+        {
+            return Ok(NamedType::Scalar(scalar));
+        }
+        match self.find_type(namespace, path) {
+            Some(id) => Ok(NamedType::Declared(id)),
+            None => Err(Diagnostic::new(
+                reported_path,
+                *span,
+                format!("unknown type `{}`", join_path(path)),
+            )),
+        }
+    }
+
+    /// Resolve an `impl` block's target to the head every function in the block
+    /// is filed under. The block names a type declaration by any path, full,
+    /// shortened, or bare; its functions are keyed by the type's head, so a
+    /// generic declaration is named without its parameters and a written
+    /// argument list changes nothing beneath. Only a group that binds methods
+    /// may carry the block.
+    pub(in crate::compiler::resolve_names) fn resolve_impl_target(
+        &self,
+        ty: &TypeExpr,
+        namespace: NamespaceId,
+        reported_path: &std::path::Path,
+    ) -> Result<TypeHead, Diagnostic> {
+        let TypeExpr::Named { path, span, .. } = ty else {
+            let resolved = self.resolve_type_expr(ty, namespace, &[], reported_path)?;
+            return Err(Diagnostic::new(
+                reported_path,
+                ty.span(),
+                format!(
+                    "`{}` cannot carry methods",
+                    crate::compiler::model::type_name(&resolved, &self.types)
+                ),
+            ));
+        };
+        let resolved =
+            match self.named_type(WrittenType { path, span }, namespace, reported_path)? {
+                NamedType::Scalar(scalar) => scalar,
+                NamedType::Declared(id) => Type::Named(id, Vec::new()),
+            };
+        if !resolved.group(&self.types).binds_methods() {
+            return Err(Diagnostic::new(
+                reported_path,
+                ty.span(),
+                format!(
+                    "`{}` cannot carry methods",
+                    crate::compiler::model::type_name(&resolved, &self.types)
+                ),
+            ));
+        }
+        Ok(resolved.head(&self.types))
+    }
+
+    /// Apply a declared type named by a path to already-resolved arguments. A
+    /// written annotation and a native row both reach a declaration through
+    /// this one lookup, so the name resolution and the argument count are
+    /// enforced the same way for both.
+    pub(in crate::compiler::resolve_names) fn apply_declared_type(
+        &self,
+        path: &[String],
+        span: &Span,
+        arguments: Vec<Type>,
+        namespace: NamespaceId,
+        reported_path: &std::path::Path,
+    ) -> Result<Type, Diagnostic> {
         let Some(id) = self.find_type(namespace, path) else {
             return Err(Diagnostic::new(
                 reported_path,
@@ -144,26 +268,17 @@ impl Builder {
                 ),
             ));
         }
-        let mut resolved = Vec::with_capacity(arguments.len());
-        for argument in arguments {
-            resolved.push(self.resolve_type_expr(
-                argument,
-                namespace,
-                parameters,
-                reported_path,
-            )?);
-        }
-        Ok(Type::Named(id, resolved))
+        Ok(Type::Named(id, arguments))
     }
 
-    /// Resolve a `Type::Variant` path to the enum's type and the variant's
+    /// Resolve a `Type.Variant` path to the enum's type and the variant's
     /// index, when the path names a declared enum variant. A path with one
     /// segment is never a variant.
-    pub(in crate::compiler::resolve_names) fn resolve_variant(
-        &self,
+    pub(in crate::compiler::resolve_names) fn resolve_variant<'a>(
+        &'a self,
         namespace: NamespaceId,
         path: &[String],
-    ) -> Option<(TypeId, usize)> {
+    ) -> Option<Variant<'a>> {
         let (variant, type_segments) = path.split_last()?;
         if type_segments.is_empty() {
             return None;
@@ -178,26 +293,35 @@ impl Builder {
         let index = variants
             .iter()
             .position(|declared| &declared.name == variant)?;
-        Some((id, index))
+        Some(Variant {
+            ty: id,
+            index,
+            declaration: &variants[index],
+        })
     }
 
     /// The declared type a bare name sees: the current namespace's own, then a
-    /// type a name-`use` brings in.
+    /// type a name-`use` brings in. The `use`'s target was resolved once, when
+    /// the namespace's index was built, so this reads that recording.
     fn bare_type(&self, namespace: NamespaceId, name: &str) -> Option<TypeId> {
-        if let Some(found) = self.namespaces[namespace.0].type_id(name) {
+        let symbol = self.intern.resolve(name)?;
+        let namespace_table = &self.namespaces[namespace.0];
+        if let Some(found) = namespace_table.types.get(symbol) {
             return Some(found);
         }
-        for used in &self.namespaces[namespace.0].uses {
-            let Some(base) = self.name_use(used, name) else {
-                continue;
-            };
-            if let Some(found) = self.namespaces[base.0].type_id(name)
-                && reachable(self.types[found.0].public, base, namespace)
-            {
-                return Some(found);
-            }
-        }
-        None
+        namespace_table
+            .brought
+            .get(&symbol)?
+            .iter()
+            .find_map(|target| match target {
+                UseTarget::Type(found) => reachable(
+                    self.types[found.0].public,
+                    self.types[found.0].namespace,
+                    namespace,
+                )
+                .then_some(*found),
+                _ => None,
+            })
     }
 
     /// Find a declared type by a path. A bare single segment reads the current
@@ -216,7 +340,7 @@ impl Builder {
             return self.bare_type(namespace, name);
         }
         let target = self.namespace_of_path(namespace, prefix)?;
-        let found = self.namespaces[target.0].type_id(name)?;
+        let found = self.namespaces[target.0].type_id(&self.intern, name)?;
         reachable(self.types[found.0].public, target, namespace).then_some(found)
     }
 }
@@ -226,4 +350,11 @@ impl Builder {
 struct WrittenType<'a> {
     path: &'a [String],
     span: &'a Span,
+}
+
+/// The declaration a written named type path names, before type arguments are
+/// applied: a scalar intrinsic, or a declared type by its id.
+enum NamedType {
+    Scalar(Type),
+    Declared(TypeId),
 }

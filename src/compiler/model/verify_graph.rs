@@ -8,7 +8,7 @@
 //! `validate_bytecode_structure`, which runs on the lowered bytecode.
 
 use crate::compiler::model::{Type, TypeId};
-use crate::native_registry::native_shape;
+use crate::compiler::native_registry::native_shape;
 
 use super::Program;
 use super::declarations::TypeKind;
@@ -44,8 +44,11 @@ pub(crate) fn validate_program_structure(program: &Program) -> Result<(), String
     if program.namespace_at(&[]).is_none() {
         return Err("the root namespace is missing".to_owned());
     }
-    if let Some(vec_type) = program.vec_type {
-        check_id(vec_type.0, type_count, "the Vec type")?;
+    if let Some(list) = program.list_type() {
+        check_id(list.0, type_count, "the runtime list type")?;
+        if program.types[list.0].element_parameter().is_none() {
+            return Err("the runtime list does not declare one element parameter".to_owned());
+        }
     }
 
     for namespace in &program.namespaces {
@@ -98,7 +101,7 @@ pub(crate) fn validate_program_structure(program: &Program) -> Result<(), String
                 check_id(capture.0, declaration_count, "a function capture")?;
             }
             check_statements(program, &function.body)?;
-        } else if declaration.kind.has_value() && declaration.owner.is_none() {
+        } else if declaration.kind.module_value() {
             check_expression(
                 program,
                 declaration
@@ -150,7 +153,9 @@ fn check_type(ty: &Type, type_count: usize, what: &str) -> Result<(), String> {
                 check_type(returns, type_count, what)?;
             }
         }
-        _ => {}
+        // The leaf variants carry no nested type, so there is nothing below
+        // them to check. They are listed so a new variant is a compile error.
+        Type::Text | Type::Bool | Type::Int | Type::Parameter(_) => {}
     }
     Ok(())
 }
@@ -233,7 +238,8 @@ impl Visitor for EdgeCheck<'_> {
             unreachable!("the walk names a call");
         };
         // A direct call names a callable declaration; a call through a value
-        // is a reference like any other.
+        // is a reference like any other. A family callee names no declaration
+        // until the check resolves it.
         if let Expression::Reference { declaration, .. } = callee.as_ref()
             && self.program.declaration(*declaration).kind.callable()
         {
@@ -284,6 +290,7 @@ impl Visitor for EdgeCheck<'_> {
     fn integer(&mut self, _: &Expression) {}
     fn interpolated(&mut self, _: &Expression) {}
     fn field(&mut self, _: &Expression) {}
+    fn method(&mut self, _: &Expression) {}
     fn binary(&mut self, _: &Expression) {}
     fn unary(&mut self, _: &Expression) {}
     fn match_expression(&mut self, _: &Expression) {}
@@ -297,4 +304,8 @@ impl Visitor for EdgeCheck<'_> {
     fn value_pattern(&mut self, _: &Pattern) {}
     fn expression_body(&mut self, _: &MatchBody) {}
     fn block_body(&mut self, _: &MatchBody) {}
+
+    fn enters_deferred_body(&self) -> bool {
+        true
+    }
 }

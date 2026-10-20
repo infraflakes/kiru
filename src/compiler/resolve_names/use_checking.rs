@@ -6,9 +6,9 @@
 
 use crate::compiler::Diagnostic;
 use crate::compiler::load_files::LoadedProgram;
-use crate::compiler::model::{join_path, namespace_at};
+use crate::compiler::model::join_path;
 
-use super::builder::Builder;
+use super::builder::{Builder, UseMiss};
 
 impl Builder {
     /// Reject a `use` whose path may not end where it does: a `use` reaches a
@@ -31,44 +31,19 @@ impl Builder {
     }
 
     /// Why a `use` path is rejected, or `None` when it reaches a namespace, a
-    /// type, or a plain function. A use path is absolute: its prefix names a
-    /// namespace from the root.
+    /// type, or a plain function. The target is resolved once, by
+    /// `resolve_use`, for every pass that reads a `use`.
     fn use_rejection(&self, path: &[String]) -> Option<String> {
-        if namespace_at(&self.namespaces, path).is_some() {
-            return None;
-        }
-        let unreached = || {
-            format!(
+        match self.resolve_use(path) {
+            Ok(_) => None,
+            Err(UseMiss::Nothing) => Some(format!(
                 "`{}` names neither a namespace nor a declaration",
                 join_path(path)
-            )
-        };
-        let (name, prefix) = path.split_last()?;
-        if prefix.is_empty() {
-            return Some(unreached());
-        }
-        let Some(namespace) = namespace_at(&self.namespaces, prefix) else {
-            return Some(unreached());
-        };
-        if self.namespaces[namespace.0].types.get(name).is_some() {
-            return None;
-        }
-        if let Some(declaration) = self.namespaces[namespace.0].get(name).first().copied() {
-            if self.skeletons[declaration.0].kind.useable() {
-                return None;
-            }
-            return Some(format!(
+            )),
+            Err(UseMiss::Declaration) => Some(format!(
                 "`{}` is a module value; `use` reaches a namespace, a type, or a plain function",
                 join_path(path)
-            ));
+            )),
         }
-        if let Some(declaration) = self.filed_named(namespace, name) {
-            return Some(format!(
-                "`{}` belongs to the type `{}`; reach it through the type",
-                join_path(path),
-                self.bound_type_name(declaration),
-            ));
-        }
-        Some(unreached())
     }
 }

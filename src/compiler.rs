@@ -2,18 +2,14 @@
 //! lowering, and packaging.
 //!
 //! A compile walks the stages in order, and this facade is the one place that
-//! names them. `load_files` reads the entry and every import; `resolve_names`
-//! builds the program model and resolves every name into an edge;
-//! `validate_program` derives every type and enforces the body and flow rules;
-//! `prune_unreachable` keeps only what the entry reaches; `lower_bytecode`
-//! lowers the result to a compact instruction stream; and `package_binary`
-//! serializes that bytecode behind the binary trailer. The model it builds
-//! lives in `crate::compiler::model`, and the bytecode it produces lives in
-//! `crate::compiler::bytecode`.
-
-/// The name the compiler reports under. The runtime reports under the
-/// program's own name instead.
-pub(crate) const DIAGNOSTIC_PREFIX: &str = "kc";
+//! names them. `load_files` walks the entry file's directory tree and the
+//! embedded library; `resolve_names` builds the program model and resolves
+//! every name into an edge; `validate_program` derives every type and enforces
+//! the body and flow rules; `prune_unreachable` keeps only what the entry
+//! reaches; `lower_bytecode` lowers the result to a compact instruction
+//! stream; and `package_binary` serializes that bytecode behind the binary
+//! trailer. The model it builds lives in `crate::compiler::model`, and the
+//! bytecode it produces lives in `crate::compiler::bytecode`.
 
 pub(crate) mod bytecode;
 mod diagnostic;
@@ -22,6 +18,7 @@ mod lower_bytecode;
 mod lower_expressions;
 mod messages;
 pub(crate) mod model;
+pub(crate) mod native_registry;
 mod output_file;
 mod package_binary;
 mod pipeline;
@@ -31,8 +28,11 @@ mod resolve_names;
 mod test_support;
 mod validate_program;
 
+pub(crate) use diagnostic::DIAGNOSTIC_PREFIX;
 pub(in crate::compiler) use diagnostic::Diagnostic;
-pub(crate) use load_files::{LoadedProgram, load_files};
+pub(crate) use load_files::{LoadedProgram, STD_TREE, load_files};
+#[cfg(test)]
+pub(crate) use lower_bytecode::declaration_codes;
 pub(crate) use lower_bytecode::lower_bytecode;
 pub(in crate::compiler) use messages::{
     duplicate_field, duplicate_in_namespace, duplicate_name, expected_instead,
@@ -43,7 +43,7 @@ pub(crate) use package_binary::{
 };
 pub(crate) use pipeline::compile;
 pub(crate) use prune_unreachable::prune_unreachable;
-pub(crate) use resolve_names::resolve_names;
+pub(crate) use resolve_names::{EntryShape, resolve_names};
 #[cfg(test)]
 pub(crate) use test_support::{checked_files, checked_program};
 pub(crate) use validate_program::validate_program;

@@ -9,8 +9,82 @@
 
 use std::collections::HashMap;
 
-use crate::compiler::bytecode::{Bytecode, Code, Instruction};
-use crate::compiler::model::{DeclarationId, Program};
+use crate::compiler::bytecode::{Bytecode, Code, Instruction, ModuleValue};
+use crate::compiler::model::{DeclarationId, Program, Type};
+use crate::compiler::native_registry::{NativeSignature, argument_kind};
+
+/// Every lowering fact a declaration carries, read in one pass over the
+/// declaration table: its code id, its global when it is a module value, and
+/// its signature when it is a native. Only the body walk needs a second pass.
+pub(crate) struct DeclarationLayout {
+    /// The code id of every declaration, or none when it owns no body.
+    codes: Vec<Option<u32>>,
+    /// The global that receives each module value, or none.
+    globals: Vec<Option<u32>>,
+    /// The startup plan, in the resolver's evaluation order.
+    module_values: Vec<ModuleValue>,
+    /// Every native's parameter shapes, in declaration order.
+    natives: Vec<NativeSignature>,
+}
+
+impl DeclarationLayout {
+    fn of(program: &Program) -> Self {
+        let mut codes = vec![None; program.declarations.len()];
+        let mut globals = vec![None; program.declarations.len()];
+        let mut natives = Vec::new();
+        let mut next_code = 0;
+        let mut next_global = 0;
+        for (index, declaration) in program.declarations.iter().enumerate() {
+            let has_code = (declaration.kind.has_body() && declaration.kind.callable())
+                || declaration.kind.module_value();
+            if has_code {
+                codes[index] = Some(next_code);
+                next_code += 1;
+            }
+            if declaration.kind.module_value() {
+                globals[index] = Some(next_global);
+                next_global += 1;
+            }
+            if let Some(native) = declaration.native {
+                let Type::Function { parameters, .. } = &declaration.ty else {
+                    unreachable!("a native has a function type");
+                };
+                natives.push(NativeSignature {
+                    native,
+                    parameters: parameters
+                        .iter()
+                        .map(|ty| argument_kind(ty, &program.types))
+                        .collect(),
+                });
+            }
+        }
+        // The startup order is the resolver's dependency order, while the
+        // global a value is stored in is its declaration-order slot.
+        let module_values = program
+            .module_values
+            .iter()
+            .map(|id| ModuleValue {
+                code: codes[id.0].expect("a module value has a code"),
+                global: globals[id.0].expect("a module value has a global"),
+            })
+            .collect();
+        Self {
+            codes,
+            globals,
+            module_values,
+            natives,
+        }
+    }
+}
+
+/// The code id lowering assigns to each declaration, by declaration id. A
+/// function body and a module value each have one; every other declaration has
+/// none. The ids follow declaration order, so this one mapping is where that
+/// numbering is written and every reader of a code id reads it here.
+#[cfg(test)]
+pub(crate) fn declaration_codes(program: &Program) -> Vec<Option<u32>> {
+    DeclarationLayout::of(program).codes
+}
 
 /// Lower a validated, pruned program to bytecode.
 pub(crate) fn lower_bytecode(program: &Program) -> Bytecode {
@@ -22,12 +96,13 @@ pub(crate) fn lower_bytecode(program: &Program) -> Bytecode {
         module_values: Vec::new(),
         declaration_codes: vec![None; program.declarations.len()],
         declaration_globals: vec![None; program.declarations.len()],
+        natives: Vec::new(),
         slots: HashMap::new(),
         instructions: Vec::new(),
         loop_breaks: Vec::new(),
         next: 0,
     };
-    lowerer.assign_codes();
+    lowerer.assign_layout(DeclarationLayout::of(program));
     lowerer.lower_all();
     let entry = lowerer.declaration_codes[program.entry.0].expect("the entry has a code");
     Bytecode {
@@ -35,16 +110,19 @@ pub(crate) fn lower_bytecode(program: &Program) -> Bytecode {
         constants: lowerer.constants,
         module_values: lowerer.module_values,
         entry,
+        natives: lowerer.natives,
     }
 }
+
 pub(super) struct Lowerer<'a> {
     pub(super) program: &'a Program,
     pub(super) codes: Vec<Code>,
     pub(super) constants: Vec<String>,
     pub(super) constant_index: HashMap<String, u32>,
-    pub(super) module_values: Vec<u32>,
+    pub(super) module_values: Vec<ModuleValue>,
     pub(super) declaration_codes: Vec<Option<u32>>,
     pub(super) declaration_globals: Vec<Option<u32>>,
+    pub(super) natives: Vec<NativeSignature>,
     /// The current function's binding registers.
     pub(super) slots: HashMap<DeclarationId, u16>,
     /// The current function's instructions.
@@ -56,29 +134,25 @@ pub(super) struct Lowerer<'a> {
 }
 
 impl Lowerer<'_> {
-    /// Give every declaration with a value a code id, in declaration order. The
-    /// entry and every call can then name a code before any body is lowered. A
-    /// module value also gets a global, so it is evaluated once at startup, in
-    /// the dependency order the resolver computed.
-    fn assign_codes(&mut self) {
-        for (index, declaration) in self.program.declarations.iter().enumerate() {
-            let has_code = (declaration.kind.has_body() && declaration.kind.callable())
-                || (declaration.kind.has_value() && declaration.owner.is_none());
-            if !has_code {
-                continue;
-            }
-            let code_id = self.codes.len() as u32;
-            self.declaration_codes[index] = Some(code_id);
+    /// Install the one declaration scan's result and reserve a code for every
+    /// declaration that owns a body. The entry and every call can then name a
+    /// code before any body is lowered.
+    fn assign_layout(&mut self, layout: DeclarationLayout) {
+        self.declaration_codes = layout.codes;
+        self.declaration_globals = layout.globals;
+        self.module_values = layout.module_values;
+        self.natives = layout.natives;
+        for code_id in self.declaration_codes.iter().flatten() {
+            debug_assert_eq!(
+                *code_id as usize,
+                self.codes.len(),
+                "code ids follow declaration order"
+            );
             self.codes.push(Code {
                 instructions: Vec::new(),
                 registers: 0,
                 arity: 0,
             });
-        }
-        for id in &self.program.module_values {
-            let code_id = self.declaration_codes[id.0].expect("a module value has a code");
-            self.declaration_globals[id.0] = Some(self.module_values.len() as u32);
-            self.module_values.push(code_id);
         }
     }
 

@@ -1,60 +1,85 @@
-//! Verification: prove every function body against its declared type, and
-//! learn which functions stop the run.
+//! Verification: prove every function body against its declared type, then
+//! settle and report the flow rules.
+//!
+//! Typing is one job and needs no flow fact: a body is typed once, in
+//! declaration order, against the types settled by the linker. Whether a body
+//! falls through, breaks out of a loop, or returns where it may not is a
+//! statement fact, so the flow pass owns it and reads the typed model
+//! afterwards.
 
 use crate::compiler::Diagnostic;
-use crate::compiler::model::Type;
-use crate::compiler::model::{DeclarationId, FileId, Function, Program};
+use crate::compiler::model::{DeclarationId, Expression, Function, ModelView, Program};
 
+use super::flow_check::check_flow;
 use super::statement_check::Checker;
 
-/// Validate every declaration in declaration order. A callee is always
-/// declared earlier, so its type and whether it stops the run are already
-/// settled. A function's type comes from its declaration, and a module value's
-/// type is written in its own declaration, so only a function body and a module
-/// value initializer are proved.
+/// Validate every declaration: a function's type comes from its declaration,
+/// and a module value's type is written in its own declaration, so only a
+/// function body and a module value initializer are proved.
 pub(crate) fn validate_program(program: &mut Program) -> Result<(), Diagnostic> {
-    for index in 0..program.declarations.len() {
-        let id = DeclarationId(index);
-        let declaration = program.declaration(id);
-        if declaration.kind.callable() && declaration.kind.has_body() {
-            let function = declaration
-                .function()
-                .expect("a callable body is a function expression");
-            // A function with no return type has no return type to check
-            // against; its calls produce no value.
-            let return_type = declaration.return_type(&program.types);
-            let halts = verify_function(program, id, program.file_of(id), function, return_type)?;
-            program.declaration_mut(id).derived.halts = halts;
-        } else if declaration.kind.has_value() && declaration.owner.is_none() {
-            let ty = declaration.ty.clone();
-            let namespace = declaration.namespace;
-            let value = declaration
-                .value()
-                .expect("a module value carries its initializer");
-            let mut walk = Checker::new(program, program.file_of(id), namespace);
-            walk.require(value, &ty)?;
-        }
-    }
-    Ok(())
+    check_bodies(program)?;
+    check_flow(program)
 }
 
-/// Prove one function body against its declared return type and report whether
-/// every path stops the run.
-///
-/// A function declared with a return type must not fall through: every path
-/// ends in `return expr;`, `panic;`, or a call to a function that stops the
-/// run. A function declared with no return type may fall through. `main` is an
-/// ordinary function; the runtime discards its value.
-fn verify_function(
-    program: &Program,
-    id: DeclarationId,
-    file: FileId,
-    function: &Function,
-    return_type: Option<Type>,
-) -> Result<bool, Diagnostic> {
-    let name = program.declaration(id).name.as_str();
-    let namespace = program.declaration(id).namespace;
-    let mut walk = Checker::for_function(program, file, namespace, name, return_type);
-    let flow = walk.check_function(function, name)?;
-    Ok(!flow.falls && !flow.returns)
+/// Type every retained body once. The declared type is read from the
+/// declaration, and the body is taken out while the checker holds the rest of
+/// the program, so the one write it records (a variant-pattern binding's type)
+/// lands on the node that owns it.
+fn check_bodies(program: &mut Program) -> Result<(), Diagnostic> {
+    for index in 0..program.declarations.len() {
+        let id = DeclarationId(index);
+        let kind = program.declaration(id).kind;
+        let has_function_body = kind.callable() && kind.has_body();
+        if !has_function_body && !kind.module_value() {
+            continue;
+        }
+        let return_type = if has_function_body {
+            program.declaration(id).return_type(&program.types)
+        } else {
+            None
+        };
+        let declared = kind
+            .module_value()
+            .then(|| program.declaration(id).ty.clone());
+        let file = program.file_of(id);
+        let namespace = program.declaration(id).namespace;
+        let mut value = program
+            .declaration_mut(id)
+            .value
+            .take()
+            .expect("a body declaration carries its value");
+        let outcome = {
+            if has_function_body {
+                let Expression::Function(function) = &mut value else {
+                    unreachable!("a callable body is a function expression");
+                };
+                // While the body is checked, the declaration keeps the
+                // function's metadata so a reference to the function itself
+                // reads its parameters, captures and declared type. Only the
+                // body, which the walk owns, is absent.
+                program.declaration_mut(id).value = Some(Expression::Function(Function {
+                    declared_return: function.declared_return.clone(),
+                    parameters: function.parameters.clone(),
+                    body: Vec::new(),
+                    type_parameters: function.type_parameters.clone(),
+                    captures: function.captures.clone(),
+                    span: function.span,
+                }));
+                let mut walk = Checker::new(ModelView::from(&mut *program), file, namespace);
+                walk.check_function(function, return_type)
+            } else {
+                let mut walk = Checker::new(ModelView::from(&mut *program), file, namespace);
+                walk.require(
+                    &mut value,
+                    declared
+                        .as_ref()
+                        .expect("a module value carries its declared type"),
+                )
+                .map(|_| ())
+            }
+        };
+        program.declaration_mut(id).value = Some(value);
+        outcome?;
+    }
+    Ok(())
 }

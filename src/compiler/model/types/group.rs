@@ -8,8 +8,9 @@
 //! relations in `relation.rs` read these facts instead of matching a type's own
 //! variants, so a new kind is described in this one place.
 
-use super::super::declarations::{TypeDecl, TypeKind};
+use super::super::declarations::{RuntimeType, TypeDecl, TypeKind};
 use super::Type;
+use super::TypeId;
 
 /// The kind of thing a type is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,6 +31,21 @@ pub(crate) struct GroupName {
     pub(crate) written: &'static str,
     pub(crate) display: &'static str,
     pub(crate) ty: Type,
+    /// The values the scalar can take, when they are a finite set a match may
+    /// enumerate. `txt` and `int` are open.
+    pub(crate) finite: Finite,
+}
+
+/// The values a subject can take, when it is a finite set a match can cover.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Finite {
+    /// No finite set: only a `_` arm or an atom that covers the value decides
+    /// exhaustiveness.
+    Open,
+    /// The boolean values, `false` and `true`, in that order.
+    Booleans,
+    /// The declaration's variants, by index.
+    Variants,
 }
 
 /// Every scalar's name: one table, one spelling. The written word and the
@@ -40,16 +56,19 @@ const SCALAR_NAMES: &[GroupName] = &[
         written: "txt",
         display: "txt",
         ty: Type::Text,
+        finite: Finite::Open,
     },
     GroupName {
         written: "bool",
         display: "bool",
         ty: Type::Bool,
+        finite: Finite::Booleans,
     },
     GroupName {
         written: "int",
         display: "int",
         ty: Type::Int,
+        finite: Finite::Open,
     },
 ];
 
@@ -75,6 +94,9 @@ pub(crate) enum Shape {
     Callable,
     /// A type parameter: no literal of its own.
     Parameter,
+    /// No literal form: the value is built and changed through the type's own
+    /// operations. The runtime list declares this.
+    None,
 }
 
 /// How a kind's type is substituted: what `substitute` does at each node.
@@ -105,14 +127,35 @@ pub(crate) enum Unification {
 }
 
 /// The runtime representation a kind is stored as.
+///
+/// This is the one enumeration of the runtime's kinds: the runtime's own
+/// values carry one of these and read it instead of re-deriving a kind, so
+/// `Value` invents nothing beside this declaration. The scalars are separate
+/// shapes, because an operation applies to exactly one scalar and no other;
+/// the `rec` and `enum` groups separate their shapes, so the runtime reads a
+/// list, a record, and a variant as three declared facts and not one object
+/// it splits by hand.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RuntimeShape {
-    /// A machine scalar: `txt`, `int`, or `bool`.
-    Scalar,
-    /// A heap object the program built: a record, a variant, or a list.
-    Object,
-    /// A function value.
+    /// The text scalar.
+    Text,
+    /// The boolean scalar.
+    Bool,
+    /// The integer scalar.
+    Int,
+    /// A `rec` built from its fields: the record the program owns.
+    Record,
+    /// The one `rec` the runtime represents itself: the list, built and
+    /// changed only through its own operations.
+    List,
+    /// An `enum` construction: its declared variant tag and payload.
+    Variant,
+    /// A function value: its lowered code and the values it captured.
     Function,
+    /// The absence: the one shape a call that declares no return produces.
+    /// It is not a value of any type; a register only holds it before it is
+    /// written or after a discarded call.
+    Nothing,
     /// A type parameter: it has no runtime value of its own.
     Parameter,
 }
@@ -205,17 +248,6 @@ impl Group {
             Group::Parameter => Unification::Parameter,
         }
     }
-
-    /// The runtime representation a value of this group is stored as.
-    pub(crate) fn runtime_shape(self) -> RuntimeShape {
-        match self {
-            Group::Scalar => RuntimeShape::Scalar,
-            Group::Rec => RuntimeShape::Object,
-            Group::Enum => RuntimeShape::Object,
-            Group::Function => RuntimeShape::Function,
-            Group::Parameter => RuntimeShape::Parameter,
-        }
-    }
 }
 
 impl TypeDecl {
@@ -228,6 +260,102 @@ impl TypeDecl {
             TypeKind::Enum(_) => Group::Enum,
         }
     }
+
+    /// The shape of value literal this declaration is written as. The group
+    /// declares the default and the runtime's marker overrides it: the list
+    /// has no literal form, because the runtime builds it through its own
+    /// operations.
+    pub(crate) fn shape(&self) -> Shape {
+        match self.runtime {
+            RuntimeType::Declared => self.group().shape(),
+            RuntimeType::List => Shape::None,
+        }
+    }
+
+    /// The runtime representation a value of this declaration is stored as.
+    /// The kind's group declares the default and the runtime's marker
+    /// overrides it, exactly as the literal shape above does: the list is the
+    /// one declared type whose values the runtime keeps for itself.
+    pub(crate) fn runtime_shape(&self) -> RuntimeShape {
+        match self.runtime {
+            RuntimeType::Declared => match self.kind {
+                TypeKind::Rec(_) => RuntimeShape::Record,
+                TypeKind::Enum(_) => RuntimeShape::Variant,
+            },
+            RuntimeType::List => RuntimeShape::List,
+        }
+    }
+
+    /// Whether the runtime represents this type itself.
+    pub(crate) fn is_list(&self) -> bool {
+        self.runtime == RuntimeType::List
+    }
+
+    /// The element parameter of the runtime list, by the spelling its
+    /// declaration gave it.
+    pub(crate) fn element_parameter(&self) -> Option<&str> {
+        if !self.is_list() {
+            return None;
+        }
+        self.parameters.first().map(String::as_str)
+    }
+
+    /// The values this declaration can take, when it declares a finite set.
+    pub(crate) fn finite(&self) -> Finite {
+        match self.group() {
+            Group::Enum => Finite::Variants,
+            Group::Rec => Finite::Open,
+            Group::Scalar | Group::Function | Group::Parameter => Finite::Open,
+        }
+    }
+}
+
+impl Type {
+    /// The runtime shape a value of this type is stored as: one reading of the
+    /// shape set declared above. A scalar's shape is one value of the shape
+    /// set rather than the group's whole family, because an operation applies
+    /// to exactly one scalar; a declared type reads its declaration, and a
+    /// function type and a type parameter are their own.
+    pub(crate) fn runtime_shape(&self, types: &[TypeDecl]) -> RuntimeShape {
+        match self {
+            Type::Text => RuntimeShape::Text,
+            Type::Bool => RuntimeShape::Bool,
+            Type::Int => RuntimeShape::Int,
+            Type::Named(id, _) => types[id.0].runtime_shape(),
+            Type::Function { .. } => RuntimeShape::Function,
+            Type::Parameter(_) => RuntimeShape::Parameter,
+        }
+    }
+}
+
+/// The values a subject can take. A scalar's name declares whether it is a
+/// finite set; a declared type's group says whether its declaration enumerates
+/// its values. Every caller that covers a subject reads this one fact.
+pub(crate) fn finite(ty: &Type, types: &[TypeDecl]) -> Finite {
+    match ty.group(types) {
+        Group::Scalar => Group::Scalar
+            .names()
+            .iter()
+            .find(|named| named.ty == *ty)
+            .map_or(Finite::Open, |named| named.finite),
+        Group::Rec | Group::Function | Group::Parameter => Finite::Open,
+        Group::Enum => {
+            let Type::Named(id, _) = ty else {
+                unreachable!("an enum is a named type");
+            };
+            types[id.0].finite()
+        }
+    }
+}
+
+/// The id of the declaration the runtime represents itself, when the program
+/// has one. The marker lives on the declaration, so this reads it rather than
+/// any stage carrying the id.
+pub(crate) fn list_type(types: &[TypeDecl]) -> Option<TypeId> {
+    types
+        .iter()
+        .position(|declaration| declaration.is_list())
+        .map(TypeId)
 }
 
 /// The scalar type a written name denotes, or `None` when the runtime provides
@@ -256,29 +384,23 @@ pub(crate) fn display_name(ty: &Type) -> Option<&'static str> {
 /// function type shows its written form. The rendering is a fact of each group,
 /// so a new kind declares how it is shown beside every other fact.
 pub(crate) fn type_name(ty: &Type, types: &[TypeDecl]) -> String {
-    match ty.group(types) {
-        Group::Scalar => display_name(ty)
-            .expect("a scalar has a declared name")
+    match ty.group(types).substitution() {
+        Substitution::Applied => {
+            let Type::Named(id, arguments) = ty else {
+                unreachable!("an applied type is a named type");
+            };
+            named_type_name(&types[id.0].name, arguments, types)
+        }
+        Substitution::Leaf => display_name(ty)
+            .expect("a leaf has a declared name")
             .to_owned(),
-        Group::Rec => {
-            let Type::Named(id, arguments) = ty else {
-                unreachable!("a rec is a named type");
-            };
-            named_type_name(&types[id.0].name, arguments, types)
-        }
-        Group::Enum => {
-            let Type::Named(id, arguments) = ty else {
-                unreachable!("an enum is a named type");
-            };
-            named_type_name(&types[id.0].name, arguments, types)
-        }
-        Group::Function => {
+        Substitution::Callable => {
             let Type::Function {
                 parameters,
                 returns,
             } = ty
             else {
-                unreachable!("a function group is a function type");
+                unreachable!("a callable group is a function type");
             };
             let parts: Vec<String> = parameters
                 .iter()
@@ -293,7 +415,7 @@ pub(crate) fn type_name(ty: &Type, types: &[TypeDecl]) -> String {
                 None => format!("fn({})", parts.join(", ")),
             }
         }
-        Group::Parameter => {
+        Substitution::Parameter => {
             let Type::Parameter(name) = ty else {
                 unreachable!("a parameter group is a parameter type");
             };

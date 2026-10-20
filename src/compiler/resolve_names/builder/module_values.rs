@@ -5,6 +5,8 @@
 //! the same namespace is a dependency — a module value is never `pub`, so no
 //! value crosses a namespace. A cycle among them is an error.
 
+use std::collections::HashMap;
+
 use crate::compiler::Diagnostic;
 use crate::compiler::model::{
     DeclarationId, Expression, MatchBody, Pattern, Statement, Visitor, walk_expression,
@@ -18,19 +20,21 @@ impl Builder {
     /// initializer itself counts, and only another module value in the same
     /// namespace is a dependency — a module value is never `pub`, so no value
     /// crosses a namespace. A cycle among them is an error.
+    ///
+    /// Registration records every module value, so this walks only that list:
+    /// the declaration table is never scanned for values that are not there.
     pub(in crate::compiler::resolve_names) fn order_module_values(
         &self,
+        module_values: &[DeclarationId],
     ) -> Result<Vec<DeclarationId>, Diagnostic> {
-        let count = self.declarations.len();
-        let mut deps: Vec<Vec<DeclarationId>> = vec![Vec::new(); count];
-        for (index, dependencies) in deps.iter_mut().enumerate() {
-            let id = DeclarationId(index);
-            if !self.is_module_value(id) {
-                continue;
-            }
-            let declaration = self.declarations[index]
-                .as_ref()
-                .expect("every node is built during linking");
+        let positions: HashMap<DeclarationId, usize> = module_values
+            .iter()
+            .enumerate()
+            .map(|(position, id)| (*id, position))
+            .collect();
+        let mut deps: Vec<Vec<usize>> = Vec::with_capacity(module_values.len());
+        for id in module_values {
+            let declaration = &self.declarations[id.0];
             let namespace = declaration.namespace;
             let mut collector = InitializerReferences {
                 references: Vec::new(),
@@ -42,54 +46,43 @@ impl Builder {
                     .as_ref()
                     .expect("a module value has an initializer"),
             );
+            let mut dependencies = Vec::new();
             for reference in collector.references {
-                if self.is_module_value(reference)
-                    && self.declarations[reference.0]
-                        .as_ref()
-                        .expect("every node is built during linking")
-                        .namespace
-                        == namespace
-                    && !dependencies.contains(&reference)
+                let Some(&position) = positions.get(&reference) else {
+                    continue;
+                };
+                if self.declarations[reference.0].namespace == namespace
+                    && !dependencies.contains(&position)
                 {
-                    dependencies.push(reference);
+                    dependencies.push(position);
                 }
             }
+            deps.push(dependencies);
         }
-        let mut order = Vec::new();
+        let mut order = Vec::with_capacity(module_values.len());
         // 0 unvisited, 1 on the current path, 2 finished.
-        let mut state = vec![0u8; count];
-        for index in 0..count {
-            let id = DeclarationId(index);
-            if self.is_module_value(id) {
-                self.visit_module_value(id, &deps, &mut state, &mut order)?;
-            }
+        let mut state = vec![0u8; module_values.len()];
+        for position in 0..module_values.len() {
+            self.visit_module_value(position, module_values, &deps, &mut state, &mut order)?;
         }
         Ok(order)
-    }
-
-    /// Whether a declaration is a module value: a top-level `let`, not a local
-    /// binding. A function is code, not data, so it is evaluated when called.
-    fn is_module_value(&self, id: DeclarationId) -> bool {
-        self.declarations[id.0]
-            .as_ref()
-            .is_some_and(|declaration| declaration.kind.has_value() && declaration.owner.is_none())
     }
 
     /// Depth-first visit of one module value, emitting it after its
     /// dependencies. A value reached while already on the path closes a cycle.
     fn visit_module_value(
         &self,
-        id: DeclarationId,
-        deps: &[Vec<DeclarationId>],
+        position: usize,
+        module_values: &[DeclarationId],
+        deps: &[Vec<usize>],
         state: &mut [u8],
         order: &mut Vec<DeclarationId>,
     ) -> Result<(), Diagnostic> {
-        match state[id.0] {
+        match state[position] {
             2 => return Ok(()),
             1 => {
-                let declaration = self.declarations[id.0]
-                    .as_ref()
-                    .expect("every node is built during linking");
+                let id = module_values[position];
+                let declaration = &self.declarations[id.0];
                 let file = declaration
                     .file
                     .expect("a module value is a file declaration, so it has a file");
@@ -104,12 +97,12 @@ impl Builder {
             }
             _ => {}
         }
-        state[id.0] = 1;
-        for dependency in &deps[id.0] {
-            self.visit_module_value(*dependency, deps, state, order)?;
+        state[position] = 1;
+        for &dependency in &deps[position] {
+            self.visit_module_value(dependency, module_values, deps, state, order)?;
         }
-        state[id.0] = 2;
-        order.push(id);
+        state[position] = 2;
+        order.push(module_values[position]);
         Ok(())
     }
 }
@@ -134,6 +127,7 @@ impl Visitor for InitializerReferences {
     fn variant(&mut self, _: &Expression) {}
     fn interpolated(&mut self, _: &Expression) {}
     fn call(&mut self, _: &Expression) {}
+    fn method(&mut self, _: &Expression) {}
     fn field(&mut self, _: &Expression) {}
     fn binary(&mut self, _: &Expression) {}
     fn unary(&mut self, _: &Expression) {}
@@ -153,4 +147,11 @@ impl Visitor for InitializerReferences {
     fn variant_pattern(&mut self, _: &Pattern) {}
     fn expression_body(&mut self, _: &MatchBody) {}
     fn block_body(&mut self, _: &MatchBody) {}
+
+    // An initializer is evaluated when the module value is made. A function
+    // literal's body runs only when the value is called, so its references are
+    // not dependencies of the initializer.
+    fn enters_deferred_body(&self) -> bool {
+        false
+    }
 }

@@ -10,7 +10,7 @@ mod group;
 
 pub(crate) use group::DeclarationKind;
 
-use crate::native_registry::Native;
+use crate::compiler::native_registry::Native;
 
 use super::expressions::{Expression, Function};
 use super::ids::{DeclarationId, FileId, NamespaceId};
@@ -23,6 +23,10 @@ use crate::compiler::model::Type;
 pub(crate) struct Declaration {
     pub(crate) kind: DeclarationKind,
     pub(crate) name: String,
+    /// Whether another namespace may reach this declaration. A name reached
+    /// across namespaces and a bound function read it; a kind that takes no
+    /// visibility never sets it.
+    pub(crate) public: bool,
     /// The file that declared it; natives and locals have none.
     pub(crate) file: Option<FileId>,
     pub(crate) namespace: NamespaceId,
@@ -104,7 +108,24 @@ pub(crate) struct TypeDecl {
     /// The type parameters in `Name<A, B>`, in order; empty when there are
     /// none.
     pub(crate) parameters: Vec<String>,
+    /// Whether the group's representation describes the type, or the runtime
+    /// builds and changes its values itself. The runtime marks the one type it
+    /// represents directly; every other declaration is described by its group.
+    pub(crate) runtime: RuntimeType,
     pub(crate) kind: TypeKind,
+}
+
+/// Which side describes a declared type's values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RuntimeType {
+    /// The declaration's group describes the value: a `rec` is built from its
+    /// fields and an `enum` from its variants.
+    Declared,
+    /// The runtime represents the value itself: it is built and changed only
+    /// through the type's own operations, and it has no literal form. The
+    /// compiler registers the one such declaration, the runtime's list, whose
+    /// single type parameter is its element.
+    List,
 }
 
 /// The body of a declared type.

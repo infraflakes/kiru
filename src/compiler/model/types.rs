@@ -18,9 +18,12 @@ mod group;
 mod relation;
 
 pub(crate) use group::{
-    Arity, Group, RuntimeShape, Shape, display_name, scalar_from_name, type_name,
+    Arity, Finite, Group, RuntimeShape, Shape, display_name, finite, list_type, scalar_from_name,
+    type_name,
 };
 pub(crate) use relation::{Binding, fits, has_parameter, substitute, type_parameters_of, unify};
+
+use group::Substitution;
 
 use super::declarations::TypeDecl;
 
@@ -82,29 +85,23 @@ impl Type {
         }
     }
 
-    /// The head of this type, for method lookup: one match over the group plus
-    /// the type's identity. Dispatch keys on the specific type, so a method
-    /// declared for `Vec<T>` answers a `Vec<int>` receiver and the scalars stay
-    /// distinct.
+    /// The head of this type, for method lookup: one match over the group's
+    /// applied-type fact plus the type's identity. Dispatch keys on the
+    /// specific type, so a method declared for `Vec<T>` answers a `Vec<int>`
+    /// receiver and the scalars stay distinct.
     pub(crate) fn head(&self, types: &[TypeDecl]) -> TypeHead {
-        match self.group(types) {
-            Group::Scalar => {
-                TypeHead::Scalar(display_name(self).expect("a scalar has a declared name"))
-            }
-            Group::Rec => {
+        match self.group(types).substitution() {
+            Substitution::Applied => {
                 let Type::Named(id, _) = self else {
-                    unreachable!("a rec is a named type");
+                    unreachable!("an applied type is a named type");
                 };
                 TypeHead::Named(*id)
             }
-            Group::Enum => {
-                let Type::Named(id, _) = self else {
-                    unreachable!("an enum is a named type");
-                };
-                TypeHead::Named(*id)
+            Substitution::Leaf => {
+                TypeHead::Scalar(display_name(self).expect("a leaf has a declared name"))
             }
-            Group::Function => TypeHead::Function,
-            Group::Parameter => TypeHead::Parameter,
+            Substitution::Callable => TypeHead::Function,
+            Substitution::Parameter => TypeHead::Parameter,
         }
     }
 
@@ -157,7 +154,6 @@ mod tests {
             let _ = group.shape();
             let _ = group.substitution();
             let _ = group.unification();
-            let _ = group.runtime_shape();
         }
 
         assert_eq!(Group::Scalar.arity(), Arity::Fixed(0));
@@ -202,11 +198,56 @@ mod tests {
         assert_eq!(Group::Function.unification(), Unification::Callable);
         assert_eq!(Group::Parameter.unification(), Unification::Parameter);
 
-        assert_eq!(Group::Scalar.runtime_shape(), RuntimeShape::Scalar);
-        assert_eq!(Group::Rec.runtime_shape(), RuntimeShape::Object);
-        assert_eq!(Group::Enum.runtime_shape(), RuntimeShape::Object);
-        assert_eq!(Group::Function.runtime_shape(), RuntimeShape::Function);
-        assert_eq!(Group::Parameter.runtime_shape(), RuntimeShape::Parameter);
+        // The runtime shapes the marking reads: the three scalars carry one
+        // shape each, a function type and a type parameter are their own, and
+        // a declared type reads its declaration.
+        assert_eq!(Type::Text.runtime_shape(&[]), RuntimeShape::Text);
+        assert_eq!(Type::Bool.runtime_shape(&[]), RuntimeShape::Bool);
+        assert_eq!(Type::Int.runtime_shape(&[]), RuntimeShape::Int);
+        assert_eq!(
+            Type::Function {
+                parameters: Vec::new(),
+                returns: None
+            }
+            .runtime_shape(&[]),
+            RuntimeShape::Function
+        );
+        assert_eq!(
+            Type::Parameter("T".to_owned()).runtime_shape(&[]),
+            RuntimeShape::Parameter
+        );
+    }
+
+    #[test]
+    fn a_declared_type_reads_the_shape_its_declaration_says() {
+        let program = checked_program(
+            "enum Color { Red, Green };\nrec Point { x: int };\nfn main() { let xs: std::dynamic::Vec<int> = std::dynamic::Vec.new(); return; };",
+        );
+        let color = program
+            .types
+            .iter()
+            .position(|declaration| declaration.group() == Group::Enum);
+        let point = program
+            .types
+            .iter()
+            .position(|declaration| declaration.group() == Group::Rec);
+        let list = program
+            .list_type()
+            .expect("the compiler registers the runtime list");
+        assert_eq!(
+            Type::Named(TypeId(color.expect("an enum is declared")), Vec::new())
+                .runtime_shape(&program.types),
+            RuntimeShape::Variant
+        );
+        assert_eq!(
+            Type::Named(TypeId(point.expect("a rec is declared")), Vec::new())
+                .runtime_shape(&program.types),
+            RuntimeShape::Record
+        );
+        assert_eq!(
+            Type::Named(list, vec![Type::Int]).runtime_shape(&program.types),
+            RuntimeShape::List
+        );
     }
 
     #[test]
@@ -237,8 +278,8 @@ mod tests {
             "fn main() { let xs: std::dynamic::Vec<int> = std::dynamic::Vec.new(); return; };",
         );
         let vec = program
-            .vec_type
-            .expect("the compiler registers the Vec type");
+            .list_type()
+            .expect("the compiler registers the runtime list");
         let applied = Type::Named(vec, vec![Type::Int]);
         assert_eq!(applied.group(&program.types), Group::Rec);
         assert_eq!(applied.head(&program.types), TypeHead::Named(vec));

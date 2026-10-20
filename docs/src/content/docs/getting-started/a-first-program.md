@@ -160,8 +160,9 @@ the function that runs when the command is selected. Each method returns the
 command, so the calls chain. `parse(words)` descends the tree by the leading
 words and calls the selected command's action. An action takes a
 `std::cli::Context` — the parsed command line — and returns an `int`, which
-`main` returns as the exit status. A command that declares no flags ignores its
-`Context`; [std::cli](/stdlib/cli/) covers flags and the rest of the tree.
+`main` returns as the exit status. A command that adds no flags of its own can
+ignore its `Context`; [std::cli](/stdlib/cli/) covers flags and the rest of the
+tree.
 
 `build` and `test` are ordinary functions passed to `.action` as values. A
 function value must not be generic, so both are concrete.
@@ -179,6 +180,7 @@ $ ./tasks --help
 tasks: run a project task
   build  build the project
   test  run the tests
+  --help  show this help
 ```
 
 ## Capturing Output

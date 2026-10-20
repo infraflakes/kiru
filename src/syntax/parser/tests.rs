@@ -524,11 +524,6 @@ fn parser_errors() {
             "expected a declaration, found `foo`",
         ),
         (
-            "a use after a declaration",
-            "fn f() {};\nuse std;\n",
-            "`use` must come before any declaration",
-        ),
-        (
             "a bare import is not a form",
             "import \"b.kiru\";\n",
             "expected a declaration, found `import`",
@@ -584,7 +579,7 @@ fn parses_an_impl_block() {
     let block = declaration(&file, 0)
         .impl_block()
         .expect("expected an impl block");
-    assert_eq!(block.name, "Vec");
+    assert_eq!(block.ty.named_path(), Some(&["Vec".to_owned()][..]));
     assert_eq!(block.functions.len(), 2);
     assert_eq!(block.functions[0].name, "new");
     assert!(block.functions[0].public);
@@ -621,8 +616,8 @@ fn impl_block_errors() {
         "expected `;` after the impl block, found the end of the file"
     );
     assert_eq!(
-        parse_error("impl Vec<T> {};"),
-        "expected `{` to open the impl block, found `<`"
+        parse_error("impl Vec. {};"),
+        "expected `{` to open the impl block, found `.`"
     );
 }
 

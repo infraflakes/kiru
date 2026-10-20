@@ -17,19 +17,24 @@ mod verify_spans;
 mod visitors;
 
 pub(crate) use declarations::{
-    Declaration, DeclarationKind, Derived, TypeDecl, TypeFieldDecl, TypeKind, VariantDecl,
+    Declaration, DeclarationKind, Derived, RuntimeType, TypeDecl, TypeFieldDecl, TypeKind,
+    VariantDecl,
 };
 pub(crate) use expressions::{
     Expression, Field, Function, MatchArm, MatchBody, Pattern, Statement, StringPart,
 };
 pub(crate) use ids::{DeclarationId, FileId, NamespaceId};
+/// The name hash a test reads to pin the compiled image's bytes; nothing in
+/// the model itself reads it.
+#[cfg(test)]
+pub(crate) use program::name_hash;
 pub(crate) use program::{
-    File, MethodTable, NameTable, Namespace, Origin, Program, TypeTable, first_duplicate,
-    join_path, namespace_at, reachable, rec_field,
+    File, Interner, MethodTable, ModelView, NameTable, Namespace, Program, Symbol, TypeTable,
+    UseTarget, bound_reachable, first_duplicate, join_path, namespace_at, reachable, rec_field,
 };
 pub(crate) use types::{
-    Arity, Binding, Group, RuntimeShape, Shape, Type, TypeHead, TypeId, fits, has_parameter,
-    scalar_from_name, substitute, type_name, type_parameters_of, unify,
+    Arity, Binding, Finite, Group, RuntimeShape, Shape, Type, TypeHead, TypeId, finite, fits,
+    has_parameter, list_type, scalar_from_name, substitute, type_name, type_parameters_of, unify,
 };
 pub(crate) use verify_graph::verify_program;
 pub(crate) use visitors::{

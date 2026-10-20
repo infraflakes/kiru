@@ -131,3 +131,49 @@ fn retained_module_values_still_evaluate() {
         .expect("the retained module value evaluates");
     assert_eq!(value, Value::Text("ab".into()));
 }
+
+/// Reachability from `main` is the rule, not purity: a module value the entry
+/// never reaches is dropped even when its initializer has a side effect, and
+/// its instructions never run.
+#[test]
+fn prunes_an_unreached_module_value_with_a_side_effect() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let touched = directory.path().join("touched");
+    let source = format!(
+        "fn touch(path: txt) -> txt {{ std::fs::write(path, \"x\"); return \"done\"; }};\n\
+         let dead: txt = touch(\"{}\");\n\
+         fn main() {{}};",
+        touched.display()
+    );
+    let mut program = checked_program(&source);
+    prune_unreachable(&mut program);
+    let names = retained_names(&program);
+    assert!(!names.contains(&"dead"), "an unreached value is pruned");
+    assert!(!names.contains(&"touch"), "its initializer is pruned too");
+    let _runtime = Runtime::for_testing(program);
+    assert!(
+        !touched.exists(),
+        "a pruned initializer's instructions never run"
+    );
+}
+
+/// A module value reached only from `main` is kept: reachability, again, and
+/// its initializer runs at startup.
+#[test]
+fn keeps_a_module_value_only_main_reaches() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    let touched = directory.path().join("touched");
+    let source = format!(
+        "fn touch(path: txt) -> txt {{ std::fs::write(path, \"x\"); return \"done\"; }};\n\
+         let kept: txt = touch(\"{}\");\n\
+         fn main() {{ std::text::strlen(kept); }};",
+        touched.display()
+    );
+    let mut program = checked_program(&source);
+    prune_unreachable(&mut program);
+    let names = retained_names(&program);
+    assert!(names.contains(&"kept"), "a reached value is kept");
+    assert!(names.contains(&"touch"), "its initializer is kept");
+    let _runtime = Runtime::for_testing(program);
+    assert!(touched.exists(), "a kept initializer runs at startup");
+}

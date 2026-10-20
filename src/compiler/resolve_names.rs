@@ -9,7 +9,6 @@ mod body_linking;
 mod builder;
 mod captures;
 mod name_resolution;
-mod receiver_typing;
 mod register_builtins;
 mod register_declarations;
 mod scopes;
@@ -20,3 +19,4 @@ mod use_checking;
 mod tests;
 
 pub(crate) use body_linking::resolve_names;
+pub(crate) use select_entry::EntryShape;

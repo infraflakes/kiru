@@ -4,14 +4,12 @@
 //! arm body reads, and a `.member` that names an enum variant resolves to that
 //! variant rather than to a field.
 
-use crate::compiler::model::{
-    DeclarationId, DeclarationKind, NamespaceId, Pattern, TypeHead, TypeId, TypeKind,
-};
+use crate::compiler::model::{DeclarationId, DeclarationKind, NamespaceId, Pattern, TypeHead};
 use crate::compiler::{Diagnostic, duplicate_name};
 use crate::syntax::Expression as ParsedExpression;
 
 use super::body_linking::LocalDeclaration;
-use super::builder::{Builder, Skeleton, Slot};
+use super::builder::{Builder, Skeleton, Slot, Variant};
 use super::scopes::{Context, Scopes};
 
 impl Builder {
@@ -21,7 +19,7 @@ impl Builder {
     /// module name.
     pub(super) fn declare_local(
         &mut self,
-        scopes: &Scopes,
+        scopes: &mut Scopes,
         local: LocalDeclaration<'_>,
     ) -> Result<DeclarationId, Diagnostic> {
         let LocalDeclaration {
@@ -33,12 +31,13 @@ impl Builder {
             ty,
         } = local;
         let reported = &self.files[file.0].path;
-        if scopes.find(name).is_some() {
+        let symbol = self.intern.intern(name);
+        if scopes.find(symbol).is_some() {
             return Err(Diagnostic::new(reported, name_span, duplicate_name(name)));
         }
         let id = self.create_node(
             Skeleton {
-                kind: DeclarationKind::Let,
+                kind: DeclarationKind::Local,
                 name: name.to_owned(),
                 name_span,
                 public: false,
@@ -46,11 +45,11 @@ impl Builder {
                 associated_head: None,
                 file: None,
                 namespace,
-                syntax_index: None,
             },
             Some(owner),
             Some(Slot::Binding(ty)),
         );
+        scopes.declare(symbol, id);
         Ok(id)
     }
     /// Link a match pattern. A pattern that names an enum variant becomes a
@@ -75,7 +74,7 @@ impl Builder {
         context: &Context,
         receiver: &ParsedExpression,
         member: &str,
-    ) -> Result<Option<(TypeId, usize)>, Diagnostic> {
+    ) -> Result<Option<Variant<'_>>, Diagnostic> {
         let ParsedExpression::Name { path, span } = receiver else {
             return Ok(None);
         };
@@ -89,7 +88,7 @@ impl Builder {
         }
         // The receiver names an enum, but not this variant: say so precisely.
         if let Some(id) = self.find_type(context.namespace, path)
-            && matches!(self.types[id.0].kind, TypeKind::Enum(_))
+            && self.types[id.0].group().has_variants()
         {
             let (member, type_path) = full
                 .split_last()
@@ -155,9 +154,12 @@ impl Builder {
         member: &str,
         head: TypeHead,
     ) -> Vec<DeclarationId> {
+        let Some(symbol) = self.intern.resolve(member) else {
+            return Vec::new();
+        };
         let mut found = Vec::new();
         for (index, namespace) in self.namespaces.iter().enumerate() {
-            if let Some(declaration) = namespace.associate(head, member)
+            if let Some(declaration) = namespace.associates.get(head, symbol)
                 && self.bound_reachable(context.namespace, NamespaceId(index), declaration)
             {
                 found.push(declaration);
@@ -209,7 +211,7 @@ impl Builder {
         pattern: &ParsedExpression,
         context: &mut Context,
     ) -> Result<Option<Pattern>, Diagnostic> {
-        let (ty, index, arguments, span) = match pattern {
+        let (found, arguments, span) = match pattern {
             ParsedExpression::MethodCall {
                 receiver,
                 method,
@@ -217,75 +219,69 @@ impl Builder {
                 span,
                 ..
             } => {
-                let Some((ty, index)) = self.variant_member(context, receiver, method)? else {
+                let Some(found) = self.variant_member(context, receiver, method)? else {
                     return Ok(None);
                 };
-                (ty, index, arguments.as_slice(), *span)
+                (found, arguments.as_slice(), *span)
             }
             ParsedExpression::Field {
                 target, name, span, ..
             } => {
-                let Some((ty, index)) = self.variant_member(context, target, name)? else {
+                let Some(found) = self.variant_member(context, target, name)? else {
                     return Ok(None);
                 };
-                (ty, index, &[] as &[ParsedExpression], *span)
+                (found, &[] as &[ParsedExpression], *span)
             }
             _ => return Ok(None),
         };
         let reported = self.files[context.file.0].path.clone();
-        let (variant_name, declared) = {
-            let TypeKind::Enum(variants) = &self.types[ty.0].kind else {
-                unreachable!("resolve_variant only finds an enum");
-            };
-            (
-                variants[index].name.clone(),
-                variants[index].payload.clone(),
-            )
-        };
-        if arguments.len() != declared.len() {
-            return Err(Diagnostic::new(
-                reported,
-                span,
-                format!(
-                    "`{variant_name}` takes {} payload binding(s), found {}",
-                    declared.len(),
-                    arguments.len()
-                ),
-            ));
+        let variant_name = found.declaration.name.clone();
+        let declared = found.declaration.payload.clone();
+        let ty = found.ty;
+        let index = found.index;
+        if let Some(message) = crate::compiler::messages::variant_payload_count(
+            &variant_name,
+            declared.len(),
+            arguments.len(),
+            "payload binding",
+        ) {
+            return Err(Diagnostic::new(reported, span, message));
         }
         let mut linked = Vec::with_capacity(arguments.len());
         for (argument, field_type) in arguments.iter().zip(&declared) {
-            let ParsedExpression::Name { path, span } = argument else {
-                return Err(Diagnostic::new(
-                    &self.files[context.file.0].path,
-                    argument.span(),
-                    "a variant pattern binds a name or `_`",
-                ));
-            };
-            let [name] = path.as_slice() else {
-                return Err(Diagnostic::new(
-                    &self.files[context.file.0].path,
-                    *span,
-                    "a variant pattern binds a name or `_`",
-                ));
-            };
-            if name == "_" {
-                linked.push(None);
-                continue;
+            match argument {
+                // The wildcard payload binds nothing: the arm matches the
+                // variant without naming the position's value.
+                ParsedExpression::Wildcard { .. } => linked.push(None),
+                ParsedExpression::Name { path, span } => {
+                    let [name] = path.as_slice() else {
+                        return Err(Diagnostic::new(
+                            &self.files[context.file.0].path,
+                            *span,
+                            "a variant pattern binds a name or `_`",
+                        ));
+                    };
+                    let declaration = self.declare_local(
+                        context.scopes,
+                        LocalDeclaration {
+                            file: context.file,
+                            namespace: context.namespace,
+                            name,
+                            name_span: *span,
+                            owner: context.current,
+                            ty: field_type.clone(),
+                        },
+                    )?;
+                    linked.push(Some(declaration));
+                }
+                _ => {
+                    return Err(Diagnostic::new(
+                        &self.files[context.file.0].path,
+                        argument.span(),
+                        "a variant pattern binds a name or `_`",
+                    ));
+                }
             }
-            let declaration = self.declare_local(
-                context.scopes,
-                LocalDeclaration {
-                    file: context.file,
-                    namespace: context.namespace,
-                    name,
-                    name_span: *span,
-                    owner: context.current,
-                    ty: field_type.clone(),
-                },
-            )?;
-            context.scopes.declare(name, declaration);
-            linked.push(Some(declaration));
         }
         Ok(Some(Pattern::Variant {
             ty,

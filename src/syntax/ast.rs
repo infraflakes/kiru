@@ -5,8 +5,9 @@
 //! the file carries no namespace of its own. Statements exist only inside
 //! function and `match` bodies.
 
-use crate::compiler::model::DeclarationKind;
+use crate::compiler::model::{DeclarationKind, Type};
 use crate::syntax::Span;
+use crate::syntax::token::TokenKind;
 
 /// One parsed source file: its top-level items in order.
 #[derive(Debug, PartialEq, Eq)]
@@ -117,10 +118,9 @@ impl Declaration {
 /// associated function, reached as `Type.name(...)`.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct ImplBlock {
-    /// The name of the type the block's functions are filed under, resolved in
-    /// the file's directory namespace.
-    pub(crate) name: String,
-    pub(crate) name_span: Span,
+    /// The type the block's functions are filed under, written as any type
+    /// path: full, shortened, or bare.
+    pub(crate) ty: TypeExpr,
     /// The functions the block files under its type. Each is already marked
     /// with the impl kind, so a pass never re-derives its kind.
     pub(crate) functions: Vec<Declaration>,
@@ -214,6 +214,15 @@ impl TypeExpr {
     pub(crate) fn span(&self) -> Span {
         match self {
             TypeExpr::Function { span, .. } | TypeExpr::Named { span, .. } => *span,
+        }
+    }
+
+    /// The path a written type spells, when it names a type by path. A
+    /// function type is written structurally and names no path.
+    pub(crate) fn named_path(&self) -> Option<&[String]> {
+        match self {
+            TypeExpr::Named { path, .. } => Some(path),
+            TypeExpr::Function { .. } => None,
         }
     }
 }
@@ -352,7 +361,9 @@ pub(crate) enum Expression {
         value: bool,
         span: Span,
     },
-    /// An integer literal. A negative number is `Negate` over a literal.
+    /// An integer literal. A sign written directly before the digits is the
+    /// literal's own sign, so `-1` is one `Int`; `Negate` is for any other
+    /// operand.
     Int {
         value: i64,
         span: Span,
@@ -363,8 +374,15 @@ pub(crate) enum Expression {
         parts: Vec<StringPart>,
         span: Span,
     },
+    /// A bare name is a value: `x`, `std::run`.
     Name {
         path: Vec<String>,
+        span: Span,
+    },
+    /// The wildcard `_`, alone in expression position: a match's default arm
+    /// reads its kind, and a variant pattern's ignored payload names no
+    /// binding. One word, one kind, declared with the tokens.
+    Wildcard {
         span: Span,
     },
     Call {
@@ -432,6 +450,7 @@ impl Expression {
             | Expression::Int { span, .. }
             | Expression::Interpolated { span, .. }
             | Expression::Name { span, .. }
+            | Expression::Wildcard { span }
             | Expression::Call { span, .. }
             | Expression::Field { span, .. }
             | Expression::MethodCall { span, .. }
@@ -443,8 +462,11 @@ impl Expression {
     }
 }
 
-/// A binary operator. The set is fixed; the checker gives each one its operand
-/// and result types.
+/// A binary operator. The set is fixed, and every fact about one is declared
+/// beside it: the token that writes it, its binding power, the types its
+/// operands take, the type of its result, and the instruction it lowers to.
+/// The parser, the checker, the linker's receiver typing, and the lowering all
+/// read these facts rather than spelling an operator's behavior again.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BinaryOp {
     Add,
@@ -460,6 +482,186 @@ pub(crate) enum BinaryOp {
     NotEqual,
     And,
     Or,
+}
+
+/// What the two operands of a binary operator must be.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum BinaryOperands {
+    /// Both operands are this one type: arithmetic takes `int` and logic
+    /// takes `bool`.
+    Fixed(Type),
+    /// Both operands have the same type, which must be orderable: `int` or
+    /// `txt`.
+    Ordered,
+    /// Both operands have the same type, whatever it is.
+    Same,
+}
+
+/// The integer arithmetic an operator performs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Arithmetic {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+}
+
+/// The comparison an operator performs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Comparison {
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
+    Equal,
+    NotEqual,
+}
+
+/// How a binary operator lowers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BinaryInstruction {
+    /// Integer arithmetic over both operands.
+    Arithmetic(Arithmetic),
+    /// A comparison of both operands.
+    Comparison(Comparison),
+    /// `&&`: a false left operand decides the result.
+    ShortCircuitAnd,
+    /// `||`: a true left operand decides the result.
+    ShortCircuitOr,
+}
+
+/// Everything one binary operator is: how it is written, how tightly it binds,
+/// what it accepts, what it produces, and what it lowers to.
+pub(crate) struct BinaryOpFacts {
+    /// The token that writes the operator.
+    pub(crate) spelling: TokenKind,
+    /// The binding power: a higher number binds tighter.
+    pub(crate) precedence: u8,
+    /// What the two operands must be.
+    pub(crate) operands: BinaryOperands,
+    /// The type of the result.
+    pub(crate) result: Type,
+    /// The instruction the operator lowers to.
+    pub(crate) instruction: BinaryInstruction,
+}
+
+impl BinaryOp {
+    /// Every binary operator, in declaration order.
+    pub(crate) const ALL: &'static [BinaryOp] = &[
+        BinaryOp::Add,
+        BinaryOp::Subtract,
+        BinaryOp::Multiply,
+        BinaryOp::Divide,
+        BinaryOp::Remainder,
+        BinaryOp::Less,
+        BinaryOp::LessEqual,
+        BinaryOp::Greater,
+        BinaryOp::GreaterEqual,
+        BinaryOp::Equal,
+        BinaryOp::NotEqual,
+        BinaryOp::And,
+        BinaryOp::Or,
+    ];
+
+    /// The one table of binary operator facts. Every stage reads an operator's
+    /// spelling, precedence, operands, result, or instruction from here.
+    pub(crate) fn facts(self) -> BinaryOpFacts {
+        use BinaryOp::*;
+        match self {
+            Add => BinaryOpFacts {
+                spelling: TokenKind::Plus,
+                precedence: 5,
+                operands: BinaryOperands::Fixed(Type::Int),
+                result: Type::Int,
+                instruction: BinaryInstruction::Arithmetic(Arithmetic::Add),
+            },
+            Subtract => BinaryOpFacts {
+                spelling: TokenKind::Minus,
+                precedence: 5,
+                operands: BinaryOperands::Fixed(Type::Int),
+                result: Type::Int,
+                instruction: BinaryInstruction::Arithmetic(Arithmetic::Subtract),
+            },
+            Multiply => BinaryOpFacts {
+                spelling: TokenKind::Star,
+                precedence: 6,
+                operands: BinaryOperands::Fixed(Type::Int),
+                result: Type::Int,
+                instruction: BinaryInstruction::Arithmetic(Arithmetic::Multiply),
+            },
+            Divide => BinaryOpFacts {
+                spelling: TokenKind::Slash,
+                precedence: 6,
+                operands: BinaryOperands::Fixed(Type::Int),
+                result: Type::Int,
+                instruction: BinaryInstruction::Arithmetic(Arithmetic::Divide),
+            },
+            Remainder => BinaryOpFacts {
+                spelling: TokenKind::Percent,
+                precedence: 6,
+                operands: BinaryOperands::Fixed(Type::Int),
+                result: Type::Int,
+                instruction: BinaryInstruction::Arithmetic(Arithmetic::Remainder),
+            },
+            Less => BinaryOpFacts {
+                spelling: TokenKind::Less,
+                precedence: 4,
+                operands: BinaryOperands::Ordered,
+                result: Type::Bool,
+                instruction: BinaryInstruction::Comparison(Comparison::Less),
+            },
+            LessEqual => BinaryOpFacts {
+                spelling: TokenKind::LessEq,
+                precedence: 4,
+                operands: BinaryOperands::Ordered,
+                result: Type::Bool,
+                instruction: BinaryInstruction::Comparison(Comparison::LessEqual),
+            },
+            Greater => BinaryOpFacts {
+                spelling: TokenKind::Greater,
+                precedence: 4,
+                operands: BinaryOperands::Ordered,
+                result: Type::Bool,
+                instruction: BinaryInstruction::Comparison(Comparison::Greater),
+            },
+            GreaterEqual => BinaryOpFacts {
+                spelling: TokenKind::GreaterEq,
+                precedence: 4,
+                operands: BinaryOperands::Ordered,
+                result: Type::Bool,
+                instruction: BinaryInstruction::Comparison(Comparison::GreaterEqual),
+            },
+            Equal => BinaryOpFacts {
+                spelling: TokenKind::EqEq,
+                precedence: 3,
+                operands: BinaryOperands::Same,
+                result: Type::Bool,
+                instruction: BinaryInstruction::Comparison(Comparison::Equal),
+            },
+            NotEqual => BinaryOpFacts {
+                spelling: TokenKind::NotEq,
+                precedence: 3,
+                operands: BinaryOperands::Same,
+                result: Type::Bool,
+                instruction: BinaryInstruction::Comparison(Comparison::NotEqual),
+            },
+            And => BinaryOpFacts {
+                spelling: TokenKind::AndAnd,
+                precedence: 2,
+                operands: BinaryOperands::Fixed(Type::Bool),
+                result: Type::Bool,
+                instruction: BinaryInstruction::ShortCircuitAnd,
+            },
+            Or => BinaryOpFacts {
+                spelling: TokenKind::OrOr,
+                precedence: 1,
+                operands: BinaryOperands::Fixed(Type::Bool),
+                result: Type::Bool,
+                instruction: BinaryInstruction::ShortCircuitOr,
+            },
+        }
+    }
 }
 
 /// A prefix operator.

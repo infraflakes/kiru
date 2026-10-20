@@ -13,4 +13,4 @@ mod loader;
 mod tests;
 
 pub(crate) use loaded_program::{LoadedProgram, ScopedDeclaration};
-pub(crate) use loader::{PROGRAM_TREE, load_files};
+pub(crate) use loader::{PROGRAM_TREE, STD_TREE, load_files};

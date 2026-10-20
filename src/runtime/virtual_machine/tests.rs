@@ -39,6 +39,16 @@ fn expect_text_results(cases: &[(&str, &str, &str, &str)]) {
     );
 }
 
+fn call_int(runtime: &Runtime, name: &str) -> i64 {
+    match runtime
+        .call_root(name, Vec::new())
+        .expect("the call succeeds")
+    {
+        Value::Int(number) => number,
+        other => panic!("expected an integer, found {other:?}"),
+    }
+}
+
 fn call_bool(runtime: &Runtime, name: &str) -> bool {
     match runtime
         .call_root(name, Vec::new())
@@ -923,6 +933,59 @@ fn match_takes_the_first_match_then_default() {
         .call_root("f", vec![Value::Text("z".into())])
         .expect("the call succeeds");
     assert_eq!(fallback, Value::Text("other".into()));
+}
+
+/// A glob is the library's search over names: `*`, `?`, and a class all answer
+/// matches, and the helpers carry no `-1` convention.
+#[test]
+fn glob_matches_star_question_and_class() {
+    let directory = tempfile::tempdir().expect("temp dir");
+    for name in ["a.txt", "b.txt", "c.md"] {
+        std::fs::write(directory.path().join(name), "").expect("write file");
+    }
+    let source = format!(
+        "use std;\nuse std::text;\nuse std::dynamic;\n\
+         fn stars() -> int {{\n\
+           let matches: std::dynamic::Vec<txt> = std::fs::glob(\"{}/*.txt\");\n\
+           return std::dynamic::len(matches);\n\
+         }};\n\
+         fn class() -> int {{\n\
+           let matches: std::dynamic::Vec<txt> = std::fs::glob(\"{}/[ab].txt\");\n\
+           return std::dynamic::len(matches);\n\
+         }};\n\
+         fn question() -> int {{\n\
+           let matches: std::dynamic::Vec<txt> = std::fs::glob(\"{}/?.md\");\n\
+           return std::dynamic::len(matches);\n\
+         }};\n\
+         fn main() {{}};",
+        directory.path().display(),
+        directory.path().display(),
+        directory.path().display(),
+    );
+    let runtime = runtime(&source);
+    assert_eq!(call_int(&runtime, "stars"), 2, "`*` matched every .txt");
+    assert_eq!(call_int(&runtime, "class"), 2, "`[ab]` matched a and b");
+    assert_eq!(call_int(&runtime, "question"), 1, "`?` matched one byte");
+}
+
+/// `--help` and `-h` are flags the command tree declares, so the parser finds
+/// them through the model and returns before the action.
+#[test]
+fn a_command_tree_declares_help_as_a_flag() {
+    let runtime = runtime(
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::Option;\n\
+         fn long_help() -> int {\n\
+           let words: std::dynamic::Vec<txt> = std::dynamic::push(std::dynamic::Vec.new(), \"--help\");\n\
+           return std::cli::parse(std::cli::command(\"app\"), words);\n\
+         };\n\
+         fn short_help() -> int {\n\
+           let words: std::dynamic::Vec<txt> = std::dynamic::push(std::dynamic::Vec.new(), \"-h\");\n\
+           return std::cli::parse(std::cli::command(\"app\"), words);\n\
+         };\n\
+         fn main() {};",
+    );
+    assert_eq!(call_int(&runtime, "long_help"), 0);
+    assert_eq!(call_int(&runtime, "short_help"), 0);
 }
 
 #[test]

@@ -291,7 +291,7 @@ fn an_impl_bound_function_is_not_a_name() {
                 "use std::dynamic;\nuse std::dynamic::push;\nfn main() {};",
             )],
             "main.kiru",
-            "`std::dynamic::push` belongs to the type `Vec`; reach it through the type",
+            "`std::dynamic::push` names neither a namespace nor a declaration",
         ),
         (
             "a bare method call",
@@ -390,9 +390,7 @@ fn associated_functions_are_reached_through_the_type() {
         .expect("the program root exists");
     let main = program
         .namespace(root)
-        .get("main")
-        .first()
-        .copied()
+        .get(&program.intern, "main")
         .expect("main exists");
     let body = &program
         .declaration(main)
@@ -442,22 +440,34 @@ fn the_library_files_its_functions_under_their_types() {
         .namespace_at(&["std".to_owned(), "dynamic".to_owned()])
         .expect("std::dynamic exists");
     let namespace = program.namespace(dynamic);
-    let vec_type = program.vec_type.expect("the compiler registers Vec");
-    let head = TypeHead::Named(vec_type);
-    let new = namespace
-        .associate(head, "new")
+    let list_type = program
+        .list_type()
+        .expect("the compiler registers the runtime list");
+    let head = TypeHead::Named(list_type);
+    let new = program
+        .intern
+        .resolve("new")
+        .and_then(|symbol| namespace.associates.get(head, symbol))
         .expect("`new` is an associated function of Vec");
     assert_eq!(program.declaration(new).name, "new");
     assert!(
-        namespace.method(head, "new").is_none(),
+        namespace
+            .methods
+            .get(head, program.intern.resolve("new").expect("interned"))
+            .is_none(),
         "`new` is not a method"
     );
-    let push = namespace
-        .method(head, "push")
+    let push = program
+        .intern
+        .resolve("push")
+        .and_then(|symbol| namespace.methods.get(head, symbol))
         .expect("`push` is a method of Vec");
     assert_eq!(program.declaration(push).name, "push");
     assert!(
-        namespace.associate(head, "push").is_none(),
+        namespace
+            .associates
+            .get(head, program.intern.resolve("push").expect("interned"))
+            .is_none(),
         "`push` is not an associated function"
     );
 }
@@ -545,13 +555,9 @@ fn a_same_named_function_in_two_blocks_does_not_collide() {
 fn a_plain_function_is_not_a_method() {
     // A function outside an `impl` block is never reached through a value: its
     // first parameter's type is irrelevant.
-    expect_rejections(&[(
+    expect_checked_rejections(&[(
         "a plain function with a matching first parameter",
-        &[(
-            "main.kiru",
-            "use std;\nuse std::dynamic;\nuse std::dynamic::Vec;\nfn describe(xs: Vec<int>) -> int { return 0; };\nfn main() { let xs: Vec<int> = Vec.new(); xs.describe(); };",
-        )],
-        "main.kiru",
+        "use std;\nuse std::dynamic;\nuse std::dynamic::Vec;\nfn describe(xs: Vec<int>) -> int { return 0; };\nfn main() { let xs: Vec<int> = Vec.new(); xs.describe(); };",
         "no method `describe` for this value",
     )]);
 }
@@ -622,17 +628,17 @@ fn module_value_position(order: &[String], name: &str) -> usize {
 }
 
 #[test]
-fn a_closure_in_an_initializer_orders_the_value_after_what_it_reads() {
-    // A closure's body runs when it is called, but the shared walk still counts
-    // the module value the closure mentions as a dependency of the initializer
-    // that builds it, so `derived` is evaluated after `base`.
+fn a_closure_in_an_initializer_does_not_order_the_value_after_what_it_mentions() {
+    // A closure's body runs when it is called, not when the value that builds
+    // it is made, so the module value it mentions is not a dependency of the
+    // initializer. `derived` keeps its declaration position.
     let program = checked_program(
         "use std;\nfn apply(f: fn() -> int) -> int { return f(); };\nlet derived: int = apply(fn() -> int { return base; });\nlet base: int = 1;\nfn main() {};",
     );
     let order = module_value_order(&program);
     assert!(
-        module_value_position(&order, "base") < module_value_position(&order, "derived"),
-        "`derived` builds a closure that reads `base`, so it is ordered after it: {order:?}"
+        module_value_position(&order, "derived") < module_value_position(&order, "base"),
+        "the closure body is deferred, so `derived` is not ordered after `base`: {order:?}"
     );
 }
 
@@ -655,27 +661,24 @@ fn a_call_to_a_function_valued_value_orders_it_after_what_that_value_reads() {
 }
 
 #[test]
-fn a_module_value_cycle_through_a_closure_or_a_call_is_rejected() {
-    expect_rejections(&[
-        (
-            "a value that reads itself through a closure",
-            &[(
-                "main.kiru",
-                "use std;\nfn apply(f: fn() -> int) -> int { return f(); };\nlet x: int = apply(fn() -> int { return x; });\nfn main() {};",
-            )],
+fn a_module_value_cycle_through_a_deferred_body_is_legal() {
+    // A reference in a function literal body is evaluated when the value is
+    // called, not when its initializer runs, so it is not a module-value
+    // dependency and the mention creates no cycle.
+    accept(
+        &[(
             "main.kiru",
-            "`x` is part of a cycle among module values",
-        ),
-        (
-            "a value that reads itself through a call",
-            &[(
-                "main.kiru",
-                "use std;\nfn wrap(f: fn() -> int) -> fn() -> int { return f; };\nlet a: fn() -> int = wrap(fn() -> int { return b(); });\nlet b: fn() -> int = a;\nfn main() {};",
-            )],
+            "use std;\nfn apply(f: fn() -> int) -> int { return f(); };\nlet x: int = apply(fn() -> int { return x; });\nfn main() {};",
+        )],
+        "main.kiru",
+    );
+    accept(
+        &[(
             "main.kiru",
-            "`a` is part of a cycle among module values",
-        ),
-    ]);
+            "use std;\nfn wrap(f: fn() -> int) -> fn() -> int { return f; };\nlet a: fn() -> int = wrap(fn() -> int { return b(); });\nlet b: fn() -> int = a;\nfn main() {};",
+        )],
+        "main.kiru",
+    );
 }
 
 #[test]
@@ -686,22 +689,6 @@ fn an_order_free_forward_reference_resolves() {
             "use std;\nfn main() { std::print(banner()); };\nfn banner() -> txt { return \"x\"; };",
         )],
         "main.kiru",
-    );
-}
-
-#[test]
-fn a_use_after_a_declaration_is_a_parse_error() {
-    let directory = tempfile::tempdir().expect("temp dir");
-    let path = directory.path().join("main.kiru");
-    std::fs::write(&path, "fn f() {};\nuse std;\n").expect("write file");
-    let error = crate::compiler::load_files::load_files(&path)
-        .expect_err("a use after a declaration fails");
-    assert!(
-        error
-            .message
-            .contains("`use` must come before any declaration"),
-        "{}",
-        error.message
     );
 }
 
@@ -845,49 +832,28 @@ fn a_method_name_may_repeat_per_receiver_head() {
     // The two methods share the name `describe`: the receiver's head tells
     // them apart, and a bound function is not a namespace-level name.
     let namespace = program.namespace(root);
-    let a = namespace.type_id("A").expect("A is declared");
-    let b = namespace.type_id("B").expect("B is declared");
+    let a = namespace
+        .type_id(&program.intern, "A")
+        .expect("A is declared");
+    let b = namespace
+        .type_id(&program.intern, "B")
+        .expect("B is declared");
+    let a_symbol = program
+        .intern
+        .resolve("describe")
+        .expect("describe is interned");
     let a_method = namespace
-        .method(TypeHead::Named(a), "describe")
+        .methods
+        .get(TypeHead::Named(a), a_symbol)
         .expect("A has a describe method");
     let b_method = namespace
-        .method(TypeHead::Named(b), "describe")
+        .methods
+        .get(TypeHead::Named(b), a_symbol)
         .expect("B has a describe method");
     assert_ne!(a_method, b_method, "each head has its own method");
     assert!(
-        namespace.get("describe").is_empty(),
+        namespace.get(&program.intern, "describe").is_none(),
         "a bound function is not a name"
-    );
-    let main = program
-        .namespace(root)
-        .get("main")
-        .first()
-        .copied()
-        .expect("main exists");
-    let body = &program
-        .declaration(main)
-        .function()
-        .expect("main is a function")
-        .body;
-    // The last two statements print `a.describe()` and `b.describe()`. Each
-    // desugars to a call whose callee is one of the two methods.
-    let mut selected = Vec::new();
-    for statement in &body[2..] {
-        let Statement::Expression(Expression::Call { arguments, .. }) = statement else {
-            panic!("the statement is a print call");
-        };
-        let Expression::Call { callee, .. } = &arguments[0] else {
-            panic!("the print argument is a method call");
-        };
-        let Expression::Reference { declaration, .. } = callee.as_ref() else {
-            panic!("the method callee is a name");
-        };
-        selected.push(*declaration);
-    }
-    assert_eq!(
-        selected,
-        vec![a_method, b_method],
-        "each receiver selects its own method"
     );
     // A qualified call selects by its first argument's head, through the
     // namespace's method pool.
@@ -986,9 +952,7 @@ fn a_named_function_and_a_closure_are_the_same_value() {
         .expect("the program root exists");
     let double = program
         .namespace(root)
-        .get("double")
-        .first()
-        .copied()
+        .get(&program.intern, "double")
         .expect("double exists");
     assert!(
         program.declaration(double).function().is_some(),
@@ -996,9 +960,7 @@ fn a_named_function_and_a_closure_are_the_same_value() {
     );
     let main = program
         .namespace(root)
-        .get("main")
-        .first()
-        .copied()
+        .get(&program.intern, "main")
         .expect("main exists");
     let body = &program
         .declaration(main)
@@ -1123,7 +1085,7 @@ fn method_rules() {
         (
             "a use of a bound function",
             "use std::dynamic;\nuse std::dynamic::push;\nfn main() {};",
-            "`std::dynamic::push` belongs to the type `Vec`; reach it through the type",
+            "`std::dynamic::push` names neither a namespace nor a declaration",
         ),
         (
             "a duplicate name in one block",

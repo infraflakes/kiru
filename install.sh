@@ -12,8 +12,8 @@ if [ -z "$TAG" ]; then
 fi
 
 mkdir -p "$TARGET"
-echo "Fetching kc $TAG..."
+echo "Fetching Kiru Compiler $TAG..."
 
 curl -L -s -o "$TARGET/kc" "https://github.com/${REPO}/releases/download/${TAG}/kc-${TAG}-linux-x86_64"
 chmod +x "$TARGET/kc"
-echo "Installed kc $TAG to $TARGET/kc"
+echo "Installed Kiru Compiler $TAG to $TARGET/kc"

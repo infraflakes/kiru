@@ -8,5 +8,5 @@
 mod instruction;
 mod validation;
 
-pub(crate) use instruction::{Bytecode, Code, CompareOp, Instruction, NumberOp};
+pub(crate) use instruction::{Bytecode, Code, CompareOp, Instruction, ModuleValue, NumberOp};
 pub(crate) use validation::validate_bytecode_structure;

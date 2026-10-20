@@ -60,7 +60,7 @@ pub fn dir(path: txt) -> txt {
 };
 
 # The extension of a path, without the dot. A path whose last segment has no
-# dot has no extension, so it is the absence.
+# dot has no extension, so it is `std::Option.none`.
 pub fn ext(path: txt) -> std::Option<txt> {
   match std::text::strlen(path) {
     0 => { return std::Option.none; };

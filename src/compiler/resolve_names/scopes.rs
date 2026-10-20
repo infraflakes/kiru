@@ -1,8 +1,11 @@
 //! The scope stack and the context a body is linked in.
+//!
+//! A scope keys its bindings by the symbol the interner gave the name, so a
+//! body's lookups hash nothing.
 
 use std::collections::HashMap;
 
-use crate::compiler::model::{DeclarationId, FileId, NamespaceId};
+use crate::compiler::model::{DeclarationId, FileId, NamespaceId, Symbol};
 
 /// The context a body is linked in: the open scopes, the namespace and
 /// declaration being linked.
@@ -19,7 +22,7 @@ pub(super) struct Context<'a> {
 /// The open scopes of one function body.
 #[derive(Default)]
 pub(super) struct Scopes {
-    stack: Vec<HashMap<String, DeclarationId>>,
+    stack: Vec<HashMap<Symbol, DeclarationId>>,
 }
 
 impl Scopes {
@@ -31,17 +34,20 @@ impl Scopes {
         self.stack.pop();
     }
 
-    pub(super) fn declare(&mut self, name: &str, declaration: DeclarationId) {
+    /// Bind a local's symbol in the innermost scope. The caller interned the
+    /// name when it created the local's node, and binds the symbol here.
+    pub(super) fn declare(&mut self, symbol: Symbol, declaration: DeclarationId) {
         self.stack
             .last_mut()
             .expect("a scope is open while linking a body")
-            .insert(name.to_owned(), declaration);
+            .insert(symbol, declaration);
     }
 
-    pub(super) fn find(&self, name: &str) -> Option<DeclarationId> {
+    /// The innermost declaration bound under the symbol, if any.
+    pub(super) fn find(&self, symbol: Symbol) -> Option<DeclarationId> {
         self.stack
             .iter()
             .rev()
-            .find_map(|scope| scope.get(name).copied())
+            .find_map(|scope| scope.get(&symbol).copied())
     }
 }

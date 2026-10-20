@@ -82,6 +82,11 @@ tracked so they are settled before they block a phase.
 
 ## Decisions locked
 
+- **A `use` may stand anywhere among a file's top-level items.** Position
+  carries no meaning, for declarations and `use`s alike: a `use` shortens paths
+  for the whole file's namespace, and the written order between `use`s alone
+  decides what a delivered name is on a collision. (Deleted the parser's
+  first-declaration gate and its `use must come before any declaration` error.)
 - **Bindings are assignable by default; there is no `mut`.** A `let` local and
   every parameter may be reassigned, take field assignment (`r.a = v`), and
   change a vec in place (`xs = xs.replace(i, v)`). A module-level value is a
@@ -441,7 +446,7 @@ orchestration programs smaller and clearer?
 
 ## Intrinsic-surface budget
 
-The native surface is the rows in `src/native_registry.rs`, tagged by
+The native surface is the rows in `src/compiler/native_registry.rs`, tagged by
 disposition. The floor is the OS boundary; the rest moves into kiru as the core
 gains capability.
 

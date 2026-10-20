@@ -1,8 +1,10 @@
 //! Turning source text into tokens.
 
+use std::str::CharIndices;
+
 use crate::syntax::Span;
 
-use super::token::{Token, TokenKind};
+use super::token::{Token, TokenKind, WILDCARD};
 
 /// A lexical error, positioned at the offending source range.
 #[derive(Debug, PartialEq, Eq)]
@@ -18,25 +20,32 @@ pub(crate) fn lex(source: &str) -> Result<Vec<Token>, LexError> {
 
 struct Lexer<'a> {
     source: &'a str,
-    chars: Vec<(usize, char)>,
-    position: usize,
+    /// A cursor over the source's characters, walked in place: no character
+    /// table is materialized. The cursor sits on the next unread character
+    /// and the one at the cursor is cached, so the reads are plain field
+    /// reads and a lookahead copies the cursor over the borrowed slice.
+    cursor: CharIndices<'a>,
+    at: Option<(usize, char)>,
 }
 
 impl<'a> Lexer<'a> {
     fn new(source: &'a str) -> Self {
-        Self {
-            source,
-            chars: source.char_indices().collect(),
-            position: 0,
-        }
+        let mut cursor = source.char_indices();
+        let at = cursor.next();
+        Self { source, cursor, at }
     }
 
     fn current(&self) -> Option<(usize, char)> {
-        self.chars.get(self.position).copied()
+        self.at
     }
 
+    /// The character `ahead` positions past the cursor. The cursor's clone
+    /// walks over the same borrowed slice, so this allocates nothing.
     fn peek(&self, ahead: usize) -> Option<(usize, char)> {
-        self.chars.get(self.position + ahead).copied()
+        match ahead {
+            0 => self.at,
+            ahead => self.cursor.clone().nth(ahead - 1),
+        }
     }
 
     fn offset(&self) -> usize {
@@ -46,10 +55,8 @@ impl<'a> Lexer<'a> {
     }
 
     fn advance(&mut self) -> Option<(usize, char)> {
-        let current = self.current();
-        if current.is_some() {
-            self.position += 1;
-        }
+        let current = self.at;
+        self.at = self.cursor.next();
         current
     }
 
@@ -212,6 +219,7 @@ impl<'a> Lexer<'a> {
         }
         let text = &self.source[start..self.offset()];
         let kind = match text {
+            WILDCARD => TokenKind::Wildcard,
             "use" => TokenKind::Use,
             "pub" => TokenKind::Pub,
             "fn" => TokenKind::Fn,
@@ -228,7 +236,7 @@ impl<'a> Lexer<'a> {
             "break" => TokenKind::Break,
             "true" => TokenKind::True,
             "false" => TokenKind::False,
-            _ => TokenKind::Ident(text.to_owned()),
+            _ => TokenKind::Ident,
         };
         Token {
             kind,
@@ -369,17 +377,17 @@ mod tests {
             kinds("fn build(repo: txt) { return repo.dir; };"),
             vec![
                 TokenKind::Fn,
-                TokenKind::Ident("build".to_owned()),
+                TokenKind::Ident,
                 TokenKind::LParen,
-                TokenKind::Ident("repo".to_owned()),
+                TokenKind::Ident,
                 TokenKind::Colon,
-                TokenKind::Ident("txt".to_owned()),
+                TokenKind::Ident,
                 TokenKind::RParen,
                 TokenKind::LBrace,
                 TokenKind::Return,
-                TokenKind::Ident("repo".to_owned()),
+                TokenKind::Ident,
                 TokenKind::Dot,
-                TokenKind::Ident("dir".to_owned()),
+                TokenKind::Ident,
                 TokenKind::Semi,
                 TokenKind::RBrace,
                 TokenKind::Semi,
@@ -394,7 +402,7 @@ mod tests {
             kinds("impl Vec {};"),
             vec![
                 TokenKind::Impl,
-                TokenKind::Ident("Vec".to_owned()),
+                TokenKind::Ident,
                 TokenKind::LBrace,
                 TokenKind::RBrace,
                 TokenKind::Semi,
@@ -410,7 +418,7 @@ mod tests {
             vec![
                 TokenKind::Text("a".to_owned()),
                 TokenKind::InterpolationStart,
-                TokenKind::Ident("x".to_owned()),
+                TokenKind::Ident,
                 TokenKind::InterpolationEnd,
                 TokenKind::Text("b".to_owned()),
                 TokenKind::Eof,
@@ -424,9 +432,9 @@ mod tests {
             kinds("let x: txt = \"a\";"),
             vec![
                 TokenKind::Let,
-                TokenKind::Ident("x".to_owned()),
+                TokenKind::Ident,
                 TokenKind::Colon,
-                TokenKind::Ident("txt".to_owned()),
+                TokenKind::Ident,
                 TokenKind::Equals,
                 TokenKind::Text("a".to_owned()),
                 TokenKind::Semi,
@@ -441,7 +449,7 @@ mod tests {
             kinds("match s { \"a\" => {}; };"),
             vec![
                 TokenKind::Match,
-                TokenKind::Ident("s".to_owned()),
+                TokenKind::Ident,
                 TokenKind::LBrace,
                 TokenKind::Text("a".to_owned()),
                 TokenKind::FatArrow,
@@ -461,11 +469,11 @@ mod tests {
             kinds("fn f() -> txt { return \"x\"; };"),
             vec![
                 TokenKind::Fn,
-                TokenKind::Ident("f".to_owned()),
+                TokenKind::Ident,
                 TokenKind::LParen,
                 TokenKind::RParen,
                 TokenKind::Arrow,
-                TokenKind::Ident("txt".to_owned()),
+                TokenKind::Ident,
                 TokenKind::LBrace,
                 TokenKind::Return,
                 TokenKind::Text("x".to_owned()),
@@ -482,9 +490,9 @@ mod tests {
         assert_eq!(
             kinds("std::run(); # done"),
             vec![
-                TokenKind::Ident("std".to_owned()),
+                TokenKind::Ident,
                 TokenKind::PathSep,
-                TokenKind::Ident("run".to_owned()),
+                TokenKind::Ident,
                 TokenKind::LParen,
                 TokenKind::RParen,
                 TokenKind::Semi,
@@ -556,14 +564,14 @@ mod tests {
                 TokenKind::True,
                 TokenKind::False,
                 TokenKind::Int(42),
-                TokenKind::Ident("x".to_owned()),
+                TokenKind::Ident,
                 TokenKind::Plus,
-                TokenKind::Ident("y".to_owned()),
+                TokenKind::Ident,
                 TokenKind::EqEq,
-                TokenKind::Ident("z".to_owned()),
+                TokenKind::Ident,
                 TokenKind::AndAnd,
                 TokenKind::Bang,
-                TokenKind::Ident("w".to_owned()),
+                TokenKind::Ident,
                 TokenKind::Eof,
             ]
         );
@@ -575,13 +583,13 @@ mod tests {
             kinds("let x: txt = std::run();"),
             vec![
                 TokenKind::Let,
-                TokenKind::Ident("x".to_owned()),
+                TokenKind::Ident,
                 TokenKind::Colon,
-                TokenKind::Ident("txt".to_owned()),
+                TokenKind::Ident,
                 TokenKind::Equals,
-                TokenKind::Ident("std".to_owned()),
+                TokenKind::Ident,
                 TokenKind::PathSep,
-                TokenKind::Ident("run".to_owned()),
+                TokenKind::Ident,
                 TokenKind::LParen,
                 TokenKind::RParen,
                 TokenKind::Semi,
@@ -595,17 +603,17 @@ mod tests {
         assert_eq!(
             kinds("a<=b >= c != d - e -> f"),
             vec![
-                TokenKind::Ident("a".to_owned()),
+                TokenKind::Ident,
                 TokenKind::LessEq,
-                TokenKind::Ident("b".to_owned()),
+                TokenKind::Ident,
                 TokenKind::GreaterEq,
-                TokenKind::Ident("c".to_owned()),
+                TokenKind::Ident,
                 TokenKind::NotEq,
-                TokenKind::Ident("d".to_owned()),
+                TokenKind::Ident,
                 TokenKind::Minus,
-                TokenKind::Ident("e".to_owned()),
+                TokenKind::Ident,
                 TokenKind::Arrow,
-                TokenKind::Ident("f".to_owned()),
+                TokenKind::Ident,
                 TokenKind::Eof,
             ]
         );

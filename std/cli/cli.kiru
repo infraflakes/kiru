@@ -46,15 +46,22 @@ pub rec Subcommand {
   action: fn(std::cli::Context) -> int,
 };
 
-# Start a command: no about line, no flags, no children, and no action yet.
+# Start a command: no about line, no children, and no action yet. Every command
+# carries the help flag, so `--help` and `-h` are declared where the command is
+# declared and need no scan of their own.
 pub fn command(name: txt) -> std::cli::Subcommand {
   return {
     name = name,
     about = "",
-    flags = std::dynamic::Vec.new(),
+    flags = std::dynamic::push(std::dynamic::Vec.new(), std::cli::help_flag()),
     children = std::dynamic::Vec.new(),
     action = std::cli::Context.no_action,
   };
+};
+
+# The help flag every command carries.
+pub fn help_flag() -> std::cli::Flag {
+  return std::cli::short(std::cli::help(std::cli::bool_flag("--help"), "show this help"), "-h");
 };
 
 # Start a flag that is present or absent.
@@ -88,7 +95,7 @@ fn flag_named(flags: std::dynamic::Vec<std::cli::Flag>, word: txt) -> std::Optio
   for {
     match index < count { false => { break; }; true => {}; };
     let flag: std::cli::Flag = std::dynamic::at(flags, index);
-    match flag.name == word || flag.short == word {
+    match flag.named(word) {
       true => { return std::Option.some(flag); };
       _ => {};
     };
@@ -97,11 +104,21 @@ fn flag_named(flags: std::dynamic::Vec<std::cli::Flag>, word: txt) -> std::Optio
   return std::Option.none;
 };
 
-# The first flag in `words` that `flags` does not declare, or the absence
-# when every flag is known. A word that follows a value-taking flag is a
-# value, not a flag. One lookup finds the flag and reads whether it takes a
-# value, so the scan is not repeated per word.
-fn unknown(words: std::dynamic::Vec<txt>, flags: std::dynamic::Vec<std::cli::Flag>) -> std::Option<txt> {
+# The words a scan separates: flags the tree does not declare, and words that
+# are neither a flag nor a flag's value.
+rec WordScan {
+  unknown: std::dynamic::Vec<txt>,
+  args: std::dynamic::Vec<txt>,
+};
+
+# Walk `words` once, separating the flags `flags` does not declare from the
+# arguments. A word after a declared value-taking flag is that flag's value, so
+# it is neither a flag nor an argument.
+fn scan(words: std::dynamic::Vec<txt>, flags: std::dynamic::Vec<std::cli::Flag>) -> std::cli::WordScan {
+  let out: std::cli::WordScan = {
+    unknown = std::dynamic::Vec.new(),
+    args = std::dynamic::Vec.new(),
+  };
   let skip: bool = false;
   let index: int = 0;
   let count: int = std::dynamic::len(words);
@@ -120,14 +137,25 @@ fn unknown(words: std::dynamic::Vec<txt>, flags: std::dynamic::Vec<std::cli::Fla
                   _ => {};
                 };
               };
-              std::Option.none => { return std::Option.some(word); };
+              std::Option.none => { out.unknown = std::dynamic::push(out.unknown, word); };
             };
           };
-          _ => {};
+          _ => { out.args = std::dynamic::push(out.args, word); };
         };
       };
     };
     index = index + 1;
+  };
+  return out;
+};
+
+# The first flag in `words` that `flags` does not declare, or
+# `std::Option.none` when every flag is known.
+fn unknown(words: std::dynamic::Vec<txt>, flags: std::dynamic::Vec<std::cli::Flag>) -> std::Option<txt> {
+  let scanned: std::cli::WordScan = std::cli::scan(words, flags);
+  match std::dynamic::len(scanned.unknown) > 0 {
+    true => { return std::Option.some(std::dynamic::at(scanned.unknown, 0)); };
+    _ => {};
   };
   return std::Option.none;
 };
@@ -139,7 +167,7 @@ fn value_of(words: std::dynamic::Vec<txt>, flag: std::cli::Flag) -> txt {
   for {
     match index < count { false => { break; }; true => {}; };
     let word: txt = std::dynamic::at(words, index);
-    match word == flag.name || word == flag.short {
+    match flag.named(word) {
       true => {
         let next: int = index + 1;
         match next < count {
@@ -170,7 +198,7 @@ impl Context {
     for {
       match index < count { false => { break; }; true => {}; };
       let word: txt = std::dynamic::at(self.words, index);
-      match word == flag.name || word == flag.short {
+      match flag.named(word) {
         true => { return true; };
         _ => {};
       };
@@ -188,53 +216,25 @@ impl Context {
   # that is not a whole number stops the run.
   pub fn number(self: std::cli::Context, flag: std::cli::Flag) -> int {
     let raw: txt = std::cli::value_of(self.words, flag);
-    let parsed: std::Option<int> = std::text::number(raw);
-    match std::contains(parsed) {
-      true => {};
-      _ => { std::eprint("`@(flag.name)` needs a whole number, found `@(raw)`"); };
+    match std::text::number(raw) {
+      std::Option.some(value) => { return value; };
+      std::Option.none => { std::eprint("`@(flag.name)` needs a whole number, found `@(raw)`"); };
     };
-    let number: int = match parsed {
-      std::Option.some(value) => value;
-      std::Option.none => 0;
-    };
-    return number;
   };
 
   # The words that are neither flags nor flag values.
   pub fn args(self: std::cli::Context) -> std::dynamic::Vec<txt> {
-    let out: std::dynamic::Vec<txt> = std::dynamic::Vec.new();
-    let skip: bool = false;
-    let index: int = 0;
-    let count: int = std::dynamic::len(self.words);
-    for {
-      match index < count { false => { break; }; true => {}; };
-      let word: txt = std::dynamic::at(self.words, index);
-      match skip {
-        true => { skip = false; };
-        _ => {
-          match std::cli::is_flag(word) {
-            true => {
-              match std::cli::flag_named(self.flags, word) {
-                std::Option.some(flag) => {
-                  match flag.takes {
-                    true => { skip = true; };
-                    _ => {};
-                  };
-                };
-                std::Option.none => {};
-              };
-            };
-            _ => { out = std::dynamic::push(out, word); };
-          };
-        };
-      };
-      index = index + 1;
-    };
-    return out;
+    let scanned: std::cli::WordScan = std::cli::scan(self.words, self.flags);
+    return scanned.args;
   };
 };
 
 impl Flag {
+  # Whether `word` names this flag: its long name or its short form.
+  pub fn named(self: std::cli::Flag, word: txt) -> bool {
+    return self.name == word || self.short == word;
+  };
+
   # This flag with its short form.
   pub fn short(self: std::cli::Flag, short: txt) -> std::cli::Flag {
     let copy: std::cli::Flag = self;
@@ -358,16 +358,12 @@ impl Subcommand {
       match rest_index >= at { true => { rest = std::dynamic::push(rest, std::dynamic::at(words, rest_index)); }; _ => {}; };
       rest_index = rest_index + 1;
     };
-    let help: bool = false;
-    let help_index: int = 0;
-    let help_count: int = std::dynamic::len(rest);
-    for {
-      match help_index < help_count { false => { break; }; true => {}; };
-      let word: txt = std::dynamic::at(rest, help_index);
-      match word == "--help" || word == "-h" { true => { help = true; break; }; _ => {}; };
-      help_index = help_index + 1;
+    let context: std::cli::Context = {
+      path = path,
+      flags = flags,
+      words = rest,
     };
-    match help {
+    match context.contains(std::cli::help_flag()) {
       true => { std::print(std::cli::usage(current)); return 0; };
       _ => {};
     };
@@ -378,11 +374,6 @@ impl Subcommand {
         let line: txt = std::cli::usage(current);
         std::eprint("unknown flag `@(word)`\n@(line)");
       };
-    };
-    let context: std::cli::Context = {
-      path = path,
-      flags = flags,
-      words = rest,
     };
     let handler: fn(std::cli::Context) -> int = current.action;
     return handler(context);

@@ -17,9 +17,9 @@ pub fn temp_file() -> txt {
 };
 
 # Whether the `[...]` class starting at `p` matches `value`: the index just
-# after the closing `]`, or `-1`. A leading `!` or `^` negates, `a-z` is a
-# range, and `\` escapes the next byte.
-fn class_end(pattern: txt, p: int, value: int) -> int {
+# after the closing `]`, or `std::Option.none`. A leading `!` or `^` negates,
+# `a-z` is a range, and `\` escapes the next byte.
+fn class_end(pattern: txt, p: int, value: int) -> std::Option<int> {
   let count: int = std::text::strlen(pattern);
   let index: int = p + 1;
   let negate: bool = false;
@@ -69,32 +69,36 @@ fn class_end(pattern: txt, p: int, value: int) -> int {
     _ => {};
   };
   let answer: bool = match negate { true => !matched; false => matched; };
-  let result: int = match answer { true => index; false => -1; };
-  return result;
+  return match answer {
+    true => std::Option.some(index);
+    false => std::Option.none;
+  };
 };
 
 # Whether the token at `p` in `pattern` matches the byte `value`: the index
-# just after the token, or `-1` when it does not match.
-fn token_matches(pattern: txt, p: int, value: int) -> int {
+# just after the token, or `std::Option.none` when it does not match.
+fn token_matches(pattern: txt, p: int, value: int) -> std::Option<int> {
   let count: int = std::text::strlen(pattern);
   let code: int = std::text::byte_at(pattern, p);
   # 92 is `\`: the next byte is a literal.
   match code == 92 {
     true => {
-      let next: int = match p + 1 < count { true => p + 1; false => -1; };
-      match next < 0 {
-        true => { return -1; };
+      match p + 1 < count {
+        false => { return std::Option.none; };
         _ => {};
       };
+      let next: int = p + 1;
       let literal: int = std::text::byte_at(pattern, next);
-      let answer: int = match literal == value { true => next + 1; false => -1; };
-      return answer;
+      return match literal == value {
+        true => std::Option.some(next + 1);
+        false => std::Option.none;
+      };
     };
     _ => {};
   };
   # 63 is `?`: any one byte.
   match code == 63 {
-    true => { return p + 1; };
+    true => { return std::Option.some(p + 1); };
     _ => {};
   };
   # 91 is `[`: a class.
@@ -102,8 +106,10 @@ fn token_matches(pattern: txt, p: int, value: int) -> int {
     true => { return std::fs::class_end(pattern, p, value); };
     _ => {};
   };
-  let answer: int = match code == value { true => p + 1; false => -1; };
-  return answer;
+  return match code == value {
+    true => std::Option.some(p + 1);
+    false => std::Option.none;
+  };
 };
 
 # Whether `name` matches the wildcard `pattern`. `*` matches any run of bytes,
@@ -115,21 +121,24 @@ fn match_name(pattern: txt, name: txt) -> bool {
   let nlen: int = std::text::strlen(name);
   let p: int = 0;
   let n: int = 0;
-  let star: int = -1;
+  let star: std::Option<int> = std::Option.none;
   let mark: int = 0;
   for {
     match n < nlen { false => { break; }; true => {}; };
     # 42 is `*`: remember it and let it match a run.
     match p < plen && std::text::byte_at(pattern, p) == 42 {
-      true => { star = p; mark = n; p = p + 1; };
+      true => { star = std::Option.some(p); mark = n; p = p + 1; };
       _ => {
-        let next: int = match p < plen { true => std::fs::token_matches(pattern, p, std::text::byte_at(name, n)); false => -1; };
-        match next >= 0 {
-          true => { p = next; n = n + 1; };
-          _ => {
-            match star >= 0 {
-              true => { p = star + 1; mark = mark + 1; n = mark; };
-              _ => { return false; };
+        let next: std::Option<int> = match p < plen {
+          true => std::fs::token_matches(pattern, p, std::text::byte_at(name, n));
+          false => std::Option.none;
+        };
+        match next {
+          std::Option.some(after) => { p = after; n = n + 1; };
+          std::Option.none => {
+            match star {
+              std::Option.some(position) => { p = position + 1; mark = mark + 1; n = mark; };
+              std::Option.none => { return false; };
             };
           };
         };

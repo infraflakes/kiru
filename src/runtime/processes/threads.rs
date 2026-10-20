@@ -6,7 +6,7 @@
 use std::sync::Mutex;
 use std::thread::{JoinHandle, ThreadId};
 
-use crate::lock_recovery::MutexExt;
+use crate::cli::lock_recovery::MutexExt;
 
 /// The threads `async` has started, keyed by their spawner.
 pub(crate) struct ThreadTable {

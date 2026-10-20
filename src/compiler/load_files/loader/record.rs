@@ -6,7 +6,6 @@ use crate::compiler::load_files::load_error::LoadError;
 use crate::compiler::load_files::loaded_program::{
     ImplTarget, LoadedFile, ScopedDeclaration, ScopedUse,
 };
-use crate::compiler::model::Origin;
 use crate::syntax;
 use crate::syntax::{Declaration, Item};
 
@@ -36,7 +35,6 @@ impl Loader {
         &mut self,
         path: PathBuf,
         source: String,
-        origin: Origin,
         namespace: Vec<String>,
     ) -> Result<usize, LoadError> {
         let file = match syntax::parse_file(&source) {
@@ -51,11 +49,7 @@ impl Loader {
             }
         };
         let index = self.files.len();
-        self.files.push(LoadedFile {
-            path,
-            source,
-            origin,
-        });
+        self.files.push(LoadedFile { path, source });
         for item in file.items {
             match item {
                 Item::Declaration(declaration) => self.record(*declaration, index, &namespace),
@@ -88,21 +82,17 @@ impl Loader {
             });
             return;
         }
-        let target = ImplTarget {
-            name: declaration.name.clone(),
-            span: declaration.name_span,
-        };
         let block = declaration
             .into_impl()
             .expect("a bound declaration form carries its impl block");
+        let target = ImplTarget { ty: block.ty };
         for member in block.functions {
             self.items.push(ScopedDeclaration {
                 file,
                 namespace: namespace.to_owned(),
                 declaration: member,
                 impl_target: Some(ImplTarget {
-                    name: target.name.clone(),
-                    span: target.span,
+                    ty: target.ty.clone(),
                 }),
             });
         }

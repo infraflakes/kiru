@@ -2,17 +2,14 @@
 
 use crate::compiler::Diagnostic;
 use crate::compiler::load_files::{LoadedProgram, ScopedDeclaration};
-use crate::compiler::model::{File, FileId, NamespaceId, Origin, Type, TypeHead, scalar_from_name};
-use crate::native_registry::BUILTIN_NAMESPACE;
-use crate::syntax::Span;
+use crate::compiler::model::{File, FileId};
 
 use super::builder::{Builder, DeclarationSite, Pending};
 
 impl Builder {
-    /// Reserve every declared type and record every `use`, before any
-    /// declaration is registered. A model file is created for each loaded file,
-    /// for diagnostics. Reserving the types first lets a native see the
-    /// declared absence type when its row names it.
+    /// Reserve every declared type, before any declaration is registered. A
+    /// model file is created for each loaded file, for diagnostics. Reserving
+    /// the types first lets a native row name a declared type by its path.
     pub(in crate::compiler::resolve_names) fn reserve_items(
         &mut self,
         loaded: &LoadedProgram,
@@ -32,27 +29,13 @@ impl Builder {
                     .type_declaration()
                     .expect("a type declaration carries its body");
                 let namespace = self.ensure_namespace(&scoped.namespace);
-                let group = declaration
-                    .kind
-                    .group()
-                    .expect("a type declaration belongs to a type group");
                 self.reserve_type(
                     type_declaration,
                     declaration.public,
-                    group,
                     namespace,
                     &loaded.files[scoped.file].path,
                 )?;
             }
-        }
-        // Record every `use` on the namespace that wrote it, before any field
-        // is resolved: a field or a receiver type may name a type the namespace
-        // only `use`s. A `use` is namespace-scoped, so it covers every
-        // declaration of the namespace, and resolution is order-free, so there
-        // is no position to check.
-        for used in &loaded.uses {
-            let namespace = self.ensure_namespace(&used.namespace);
-            self.namespaces[namespace.0].uses.push(used.path.clone());
         }
         Ok(())
     }
@@ -82,15 +65,6 @@ impl Builder {
             declaration.kind.has_name(),
             "every registered declaration introduces a name"
         );
-        if loaded_file.origin != Origin::Embedded
-            && scoped.namespace.first().map(String::as_str) == BUILTIN_NAMESPACE.first().copied()
-        {
-            return Err(Diagnostic::new(
-                &loaded_file.path,
-                declaration.name_span,
-                "`std` is reserved and cannot be declared",
-            ));
-        }
         let namespace = self.ensure_namespace(&scoped.namespace);
         // A declared type has no body and no node; its name was reserved in the
         // first pass, so its fields fill in here.
@@ -98,9 +72,10 @@ impl Builder {
             let type_declaration = declaration
                 .type_declaration()
                 .expect("a type declaration carries its body");
-            let id = self.namespaces[namespace.0]
-                .types
-                .get(&declaration.name)
+            let id = self
+                .intern
+                .resolve(&declaration.name)
+                .and_then(|symbol| self.namespaces[namespace.0].types.get(symbol))
                 .expect("every declared type was reserved");
             let group = declaration
                 .kind
@@ -132,8 +107,7 @@ impl Builder {
                 .impl_target
                 .as_ref()
                 .expect("a bound declaration carries its impl target");
-            let block_head =
-                self.resolve_impl_target(&target.name, target.span, namespace, &loaded_file.path)?;
+            let block_head = self.resolve_impl_target(&target.ty, namespace, &loaded_file.path)?;
             let first_parameter = match function.parameters.first() {
                 Some(parameter) => Some(
                     self.resolve_type_expr(
@@ -164,54 +138,25 @@ impl Builder {
             receiver_head,
             associated_head,
             file: Some(file),
-            syntax_index: Some(item),
             reported_path: &loaded_file.path,
         })?;
-        self.pending.push(Pending {
-            declaration: id,
-            file,
-            syntax_index: item,
-            namespace,
-        });
-        self.files[file.0].declarations.push(id);
-        Ok(())
-    }
-
-    /// Resolve an `impl` block's target type name to the head every function
-    /// in the block is filed under. The name resolves as a written type does: a
-    /// scalar names the runtime's type, and a declared name is found in the
-    /// file's namespace and the names it `use`s. Only a kind whose group binds
-    /// methods may be an `impl` target.
-    fn resolve_impl_target(
-        &self,
-        name: &str,
-        span: Span,
-        namespace: NamespaceId,
-        reported_path: &std::path::Path,
-    ) -> Result<TypeHead, Diagnostic> {
-        let ty = match scalar_from_name(name) {
-            Some(scalar) => scalar,
-            None => {
-                let path = [name.to_owned()];
-                match self.find_type(namespace, &path) {
-                    Some(id) => Type::Named(id, Vec::new()),
-                    None => {
-                        return Err(Diagnostic::new(
-                            reported_path,
-                            span,
-                            format!("unknown type `{name}`"),
-                        ));
-                    }
-                }
+        let pending = if declaration.kind.callable() {
+            Pending::Callable {
+                declaration: id,
+                file,
+                item,
+                namespace,
+            }
+        } else {
+            Pending::ModuleValue {
+                declaration: id,
+                file,
+                item,
+                namespace,
             }
         };
-        if !ty.group(&self.types).binds_methods() {
-            return Err(Diagnostic::new(
-                reported_path,
-                span,
-                format!("`{name}` cannot carry methods"),
-            ));
-        }
-        Ok(ty.head(&self.types))
+        self.pending.push(pending);
+        self.files[file.0].declarations.push(id);
+        Ok(())
     }
 }

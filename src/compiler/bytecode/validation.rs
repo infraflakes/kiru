@@ -1,9 +1,13 @@
 //! Structural validation of a decoded payload.
 //!
 //! A program decoded from an executable is untrusted, so every id and index is
-//! checked before the VM touches it. Codes are numbered in declaration order,
-//! so a call must name a strictly smaller code: a decoded call chain cannot
-//! recurse without end.
+//! checked before the VM touches it. A code target must be in range; a closure
+//! built by `MakeFunction` may point forward to a code created after it, so a
+//! target is not required to be smaller. `CallValue` and `AsyncValue` name the
+//! register that holds the function value, not a code.
+
+use crate::compiler::EntryShape;
+use crate::compiler::native_registry::NativeSignature;
 
 use super::instruction::{Bytecode, Code, Instruction};
 
@@ -15,18 +19,27 @@ pub(crate) fn validate_bytecode_structure(bytecode: &Bytecode) -> Result<(), Str
     let global_count = bytecode.module_values.len();
 
     check_id(bytecode.entry as usize, code_count, "the entry")?;
-    // The runtime passes the entry at most one argument (the command-line
-    // words), so an entry with more parameters is not runnable.
-    if bytecode.codes[bytecode.entry as usize].arity > 1 {
+    // The entry's shape is one fact, declared where the entry is selected. The
+    // decode boundary can see the parameter count, so it validates that part of
+    // the fact: a decoded entry with more parameters is not runnable.
+    if !EntryShape::accepts_parameters(bytecode.codes[bytecode.entry as usize].arity as usize) {
         return Err("the entry takes more than one parameter".to_owned());
     }
-    for code in &bytecode.module_values {
-        check_id(*code as usize, code_count, "a module value")?;
+    for entry in &bytecode.module_values {
+        check_id(entry.code as usize, code_count, "a module value")?;
+        check_id(entry.global as usize, global_count, "a module value global")?;
     }
 
     for code in bytecode.codes.iter() {
         for instruction in &code.instructions {
-            validate_instruction(instruction, code, code_count, constant_count, global_count)?;
+            validate_instruction(
+                instruction,
+                code,
+                code_count,
+                constant_count,
+                global_count,
+                &bytecode.natives,
+            )?;
         }
     }
     Ok(())
@@ -38,6 +51,7 @@ fn validate_instruction(
     code_count: usize,
     constant_count: usize,
     global_count: usize,
+    natives: &[NativeSignature],
 ) -> Result<(), String> {
     let instruction_count = code.instructions.len();
     let slot = |slot: u16| check_id(slot as usize, code.registers as usize, "a register");
@@ -89,14 +103,6 @@ fn validate_instruction(
             target: t, jump, ..
         } => {
             slot(*t)?;
-            target(*jump)?;
-        }
-        Instruction::JumpIfNothing { value, jump } => {
-            slot(*value)?;
-            target(*jump)?;
-        }
-        Instruction::JumpIfNotNothing { value, jump } => {
-            slot(*value)?;
             target(*jump)?;
         }
         Instruction::GetVariantField { dst, variant, .. } => {
@@ -183,10 +189,11 @@ fn validate_instruction(
         }
         Instruction::CallNative {
             dst,
-            native: _,
+            native,
             arguments,
         } => {
             slot(*dst)?;
+            check_signature(*native, natives)?;
             for argument in arguments {
                 slot(*argument)?;
             }
@@ -203,16 +210,27 @@ fn validate_instruction(
             slot(*left)?;
             slot(*right)?;
         }
-        Instruction::AsyncNative {
-            native: _,
-            arguments,
-        } => {
+        Instruction::AsyncNative { native, arguments } => {
+            check_signature(*native, natives)?;
             for argument in arguments {
                 slot(*argument)?;
             }
         }
     }
     Ok(())
+}
+
+/// Every native a call names must carry its row's parameter shapes, so the
+/// decoder can read the call's arity and types from the image.
+fn check_signature(
+    native: crate::compiler::native_registry::Native,
+    natives: &[NativeSignature],
+) -> Result<(), String> {
+    if natives.iter().any(|signature| signature.native == native) {
+        Ok(())
+    } else {
+        Err("a native call has no declared signature".to_owned())
+    }
 }
 
 fn check_id(id: usize, count: usize, what: &str) -> Result<(), String> {

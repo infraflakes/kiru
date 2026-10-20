@@ -62,9 +62,9 @@ kind, the container's in `std::dynamic` and the text kernel's in `std::text`.
 
 ## use shortens a path
 
-A `use` is pure path-shortening. It sits at the top of a file, ahead of any
-declaration, and belongs to the namespace, not to the file. What the path ends
-at decides what it shortens, and there are three endings:
+A `use` is pure path-shortening. It may stand anywhere among a file's
+top-level items, and belongs to the namespace, not to the file. What the path
+ends at decides what it shortens, and there are three endings:
 
 - a **namespace** gives the qualifier its last segment spells:
 

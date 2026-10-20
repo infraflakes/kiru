@@ -2,13 +2,14 @@
 //!
 //! A function declares its return type; a binding and a parameter declare
 //! theirs; a literal is text, a record literal is its declared type, and a call
-//! takes the type its callee declares. The single validation walk then enforces
-//! where each type may stand and the flow rules: `return` is an early exit
-//! checked against the declared type, a value function must not fall through,
-//! and a call to a function that stops the run ends its caller's path.
+//! takes the type its callee declares. The check pass types every body once and
+//! enforces where each type may stand; the flow pass then settles which
+//! functions stop the run and enforces the fall-through, break-placement and
+//! return-placement rules.
 
 mod expression_typing;
 mod flow;
+mod flow_check;
 mod match_rules;
 mod statement_check;
 mod validate_declarations;

@@ -21,10 +21,9 @@
 //! - `lower_expressions`, which builds instructions from the model and gives
 //!   every expression a register.
 //!
-//! The checker in `validate_program` and link-time receiver typing in
-//! `resolve_names::receiver_typing` also read the model without rewriting it,
-//! but they interpret each kind — they derive a type or a flow — so they keep
-//! their own recursion instead of this observer.
+//! The checker in `validate_program` also reads the model without rewriting
+//! it, but it interprets each kind — it derives a type or a flow — so it keeps
+//! its own recursion instead of this observer.
 
 use super::expressions::{Expression, MatchBody, Pattern, Statement, StringPart};
 
@@ -38,6 +37,9 @@ pub(crate) trait Visitor {
     fn interpolated(&mut self, expression: &Expression);
     fn reference(&mut self, expression: &Expression);
     fn call(&mut self, expression: &Expression);
+    /// A family callee: a call whose bound function the check resolves. It
+    /// carries no edge, so only a pass that names the kinds acts on it.
+    fn method(&mut self, expression: &Expression);
     fn field(&mut self, expression: &Expression);
     fn binary(&mut self, expression: &Expression);
     fn unary(&mut self, expression: &Expression);
@@ -60,6 +62,12 @@ pub(crate) trait Visitor {
 
     fn expression_body(&mut self, body: &MatchBody);
     fn block_body(&mut self, body: &MatchBody);
+
+    /// Whether the walk descends into a function literal's body. A literal is
+    /// evaluated where it is written to make a closure value; its body runs only
+    /// when the value is called, so a pass that reads what an initializer
+    /// evaluates up front stops here and a pass that reads all code continues.
+    fn enters_deferred_body(&self) -> bool;
 }
 
 /// A rewriting walk over a body. One method per node kind, every one required.
@@ -72,6 +80,7 @@ pub(crate) trait VisitorMut {
     fn interpolated(&mut self, expression: &mut Expression);
     fn reference(&mut self, expression: &mut Expression);
     fn call(&mut self, expression: &mut Expression);
+    fn method(&mut self, expression: &mut Expression);
     fn field(&mut self, expression: &mut Expression);
     fn binary(&mut self, expression: &mut Expression);
     fn unary(&mut self, expression: &mut Expression);
@@ -169,6 +178,7 @@ fn observe_expression(visitor: &mut impl Visitor, expression: &Expression) {
         Expression::Interpolated { .. } => visitor.interpolated(expression),
         Expression::Reference { .. } => visitor.reference(expression),
         Expression::Call { .. } => visitor.call(expression),
+        Expression::Method { .. } => visitor.method(expression),
         Expression::Field { .. } => visitor.field(expression),
         Expression::Binary { .. } => visitor.binary(expression),
         Expression::Unary { .. } => visitor.unary(expression),
@@ -204,6 +214,7 @@ fn observe_expression_mut(visitor: &mut impl VisitorMut, expression: &mut Expres
         Expression::Interpolated { .. } => visitor.interpolated(expression),
         Expression::Reference { .. } => visitor.reference(expression),
         Expression::Call { .. } => visitor.call(expression),
+        Expression::Method { .. } => visitor.method(expression),
         Expression::Field { .. } => visitor.field(expression),
         Expression::Binary { .. } => visitor.binary(expression),
         Expression::Unary { .. } => visitor.unary(expression),
@@ -276,7 +287,8 @@ fn walk_expression_children(visitor: &mut impl Visitor, expression: &Expression)
         Expression::Text { .. }
         | Expression::Bool { .. }
         | Expression::Int { .. }
-        | Expression::Reference { .. } => {}
+        | Expression::Reference { .. }
+        | Expression::Method { .. } => {}
         Expression::Map { fields, .. } => {
             for field in fields {
                 walk_expression(visitor, &field.value);
@@ -309,7 +321,11 @@ fn walk_expression_children(visitor: &mut impl Visitor, expression: &Expression)
             walk_expression(visitor, right);
         }
         Expression::Unary { operand, .. } => walk_expression(visitor, operand),
-        Expression::Function(function) => walk_statements(visitor, &function.body),
+        Expression::Function(function) => {
+            if visitor.enters_deferred_body() {
+                walk_statements(visitor, &function.body);
+            }
+        }
         Expression::Match {
             subject,
             cases,
@@ -334,7 +350,8 @@ fn walk_expression_children_mut(visitor: &mut impl VisitorMut, expression: &mut 
         Expression::Text { .. }
         | Expression::Bool { .. }
         | Expression::Int { .. }
-        | Expression::Reference { .. } => {}
+        | Expression::Reference { .. }
+        | Expression::Method { .. } => {}
         Expression::Map { fields, .. } => {
             for field in fields {
                 walk_expression_mut(visitor, &mut field.value);
@@ -450,6 +467,7 @@ mod tests {
         fn interpolated(&mut self, _: &Expression) {}
         fn reference(&mut self, _: &Expression) {}
         fn call(&mut self, _: &Expression) {}
+        fn method(&mut self, _: &Expression) {}
         fn field(&mut self, _: &Expression) {}
         fn unary(&mut self, _: &Expression) {}
         fn match_expression(&mut self, _: &Expression) {}
@@ -468,6 +486,10 @@ mod tests {
         fn variant_pattern(&mut self, _: &Pattern) {}
         fn expression_body(&mut self, _: &MatchBody) {}
         fn block_body(&mut self, _: &MatchBody) {}
+
+        fn enters_deferred_body(&self) -> bool {
+            true
+        }
     }
 
     #[test]

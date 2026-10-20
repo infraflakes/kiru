@@ -1,6 +1,11 @@
 //! The runtime values: text, a map of values, a Vec of text, a boolean, an
 //! integer, or the no-value result of a call that returns nothing.
 //!
+//! The kinds of value are not the runtime's to invent: the compiler's group
+//! model declares the runtime shapes, and every `Value` carries one of them
+//! and reads it (`Value::runtime_shape`) instead of any pass re-deriving a
+//! kind. A new kind is a compile error at the declared shape first.
+//!
 //! The language has copy semantics: a value behaves as if it were copied on
 //! every assignment, pass, and write. The representation makes the copy cheap
 //! instead of eager — text, Vecs, maps, variant payloads, and closure
@@ -11,11 +16,13 @@
 use std::fmt;
 use std::sync::{Arc, OnceLock};
 
+use crate::compiler::model::RuntimeShape;
+
 /// A runtime value.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Value {
     Text(Text),
-    Map(Map),
+    Record(Map),
     Vec(Arc<Vec<Value>>),
     /// A constructed enum variant: its declared variant index and payload.
     Variant {
@@ -34,6 +41,163 @@ pub(crate) enum Value {
     /// The result of a call that returns nothing. The language never stores
     /// it; it only marks a call whose value a statement discards.
     Nothing,
+}
+
+impl Value {
+    /// The declared shape this value carries, read once from the shape set
+    /// the group model declares in `crate::compiler::model`. The runtime's
+    /// `Value` names storage only: every operation that needs to tell a kind
+    /// of value reads the shape below, so the runtime invents no kind beside
+    /// the model's, and a kind the runtime gains without the model declaring
+    /// it fails to compile here first.
+    pub(crate) fn runtime_shape(&self) -> RuntimeShape {
+        match self {
+            Value::Text(_) => RuntimeShape::Text,
+            Value::Record(_) => RuntimeShape::Record,
+            Value::Vec(_) => RuntimeShape::List,
+            Value::Variant { .. } => RuntimeShape::Variant,
+            Value::Function { .. } => RuntimeShape::Function,
+            Value::Bool(_) => RuntimeShape::Bool,
+            Value::Int(_) => RuntimeShape::Int,
+            Value::Nothing => RuntimeShape::Nothing,
+        }
+    }
+
+    /// The text this value stores, or `None` when its shape is not the text
+    /// shape.
+    pub(crate) fn text(&self) -> Option<&Text> {
+        if self.runtime_shape() != RuntimeShape::Text {
+            return None;
+        }
+        let Value::Text(text) = self else {
+            unreachable!("a value whose shape is the text shape stores a text");
+        };
+        Some(text)
+    }
+
+    /// The integer this value stores, or `None` when its shape is not the
+    /// integer shape.
+    pub(crate) fn integer(&self) -> Option<i64> {
+        if self.runtime_shape() != RuntimeShape::Int {
+            return None;
+        }
+        let Value::Int(number) = self else {
+            unreachable!("a value whose shape is the integer shape stores an integer");
+        };
+        Some(*number)
+    }
+
+    /// The boolean this value stores, or `None` when its shape is not the
+    /// boolean shape.
+    pub(crate) fn boolean(&self) -> Option<bool> {
+        if self.runtime_shape() != RuntimeShape::Bool {
+            return None;
+        }
+        let Value::Bool(value) = self else {
+            unreachable!("a value whose shape is the boolean shape stores a boolean");
+        };
+        Some(*value)
+    }
+
+    /// The record this value stores, or `None` when its shape is not the
+    /// record shape.
+    pub(crate) fn record(&self) -> Option<&Map> {
+        if self.runtime_shape() != RuntimeShape::Record {
+            return None;
+        }
+        let Value::Record(map) = self else {
+            unreachable!("a value whose shape is the record shape stores a map");
+        };
+        Some(map)
+    }
+
+    /// The record this value stores, to change it, or `None` when its shape is
+    /// not the record shape.
+    pub(crate) fn record_mut(&mut self) -> Option<&mut Map> {
+        if self.runtime_shape() != RuntimeShape::Record {
+            return None;
+        }
+        let Value::Record(map) = self else {
+            unreachable!("a value whose shape is the record shape stores a map");
+        };
+        Some(map)
+    }
+
+    /// The list this value stores, kept shared, or `None` when its shape is
+    /// not the list shape.
+    pub(crate) fn list(&self) -> Option<&Arc<Vec<Value>>> {
+        if self.runtime_shape() != RuntimeShape::List {
+            return None;
+        }
+        let Value::Vec(values) = self else {
+            unreachable!("a value whose shape is the list shape stores a Vec");
+        };
+        Some(values)
+    }
+
+    /// The variant this value is: its declared tag and its payload, copied as
+    /// a shared count, or `None` when its shape is not the variant shape.
+    pub(crate) fn variant(&self) -> Option<(u16, Arc<Vec<Value>>)> {
+        if self.runtime_shape() != RuntimeShape::Variant {
+            return None;
+        }
+        let Value::Variant { tag, payload } = self else {
+            unreachable!("a value whose shape is the variant shape stores a tag and payload");
+        };
+        Some((*tag, Arc::clone(payload)))
+    }
+
+    /// The function this value is: its lowered code id and the values it
+    /// captured, copied as a shared count, or `None` when its shape is not
+    /// the function shape.
+    pub(crate) fn function(&self) -> Option<(u32, Arc<Vec<Value>>)> {
+        if self.runtime_shape() != RuntimeShape::Function {
+            return None;
+        }
+        let Value::Function { code, captures } = self else {
+            unreachable!("a value whose shape is the function shape stores code and captures");
+        };
+        Some((*code, Arc::clone(captures)))
+    }
+
+    /// The text this value's shape renders: a text is itself, a boolean and an
+    /// integer are their words, and no other shape renders, because the
+    /// checker admits only these three into `@(…)`. The one reading the
+    /// `ToText` instruction and every interpolation goes through.
+    pub(crate) fn rendered(&self) -> Option<Text> {
+        match self.runtime_shape() {
+            RuntimeShape::Text => self.text().cloned(),
+            RuntimeShape::Int => self.integer().map(|number| Text::from(number.to_string())),
+            RuntimeShape::Bool => self.boolean().map(|value| Text::from(value.to_string())),
+            RuntimeShape::Record
+            | RuntimeShape::List
+            | RuntimeShape::Variant
+            | RuntimeShape::Function
+            | RuntimeShape::Nothing
+            | RuntimeShape::Parameter => None,
+        }
+    }
+
+    /// The ordering two values compare by: two integers or two texts order as
+    /// the one comparison the checker's admits, and every other pair orders
+    /// nothing, because the checker never compares across shapes. A pair the
+    /// facts leave unordered fails at the one reader of this.
+    pub(crate) fn ordering(&self, right: &Self) -> Option<std::cmp::Ordering> {
+        if let Some(left) = self.integer() {
+            return right.integer().map(|right| left.cmp(&right));
+        }
+        match self.text() {
+            Some(left) => right.text().map(|right| left.as_str().cmp(right.as_str())),
+            None => None,
+        }
+    }
+
+    /// Whether this value carries a value at all: the absence is the one
+    /// shape that names no value, so the operations whose parameters take any
+    /// value fit every shape but this one.
+    pub(crate) fn carries(&self) -> bool {
+        self.runtime_shape() != RuntimeShape::Nothing
+    }
 }
 
 /// Runtime text, immutable and shared. A value is either a flat string or a
@@ -240,9 +404,9 @@ fn piece_of(text: &Text) -> Piece<'_> {
     }
 }
 
-/// A map of named fields in insertion order. A field holds any value; the
-/// checker guarantees that an anonymous `rec` holds only text, while a
-/// declared type holds its field types. A missing key reads as absent.
+/// A map of named fields in insertion order. A field holds any value, and the
+/// checker types it from the declared `rec` whose literal produced the map. A
+/// missing key reads as absent.
 #[derive(Clone, Debug, Default, Eq)]
 pub(crate) struct Map {
     entries: Arc<Vec<(String, Value)>>,
@@ -277,5 +441,49 @@ impl Map {
             .iter()
             .find(|(name, _)| name == key)
             .map(|(_, value)| value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_value_carries_the_shape_the_model_declares() {
+        // The one reading between storage and the model: every shape the
+        // runtime can hold is declared, and the absence is the one shape
+        // that names no value. The type parameter is the only shape of the
+        // model's set no runtime value can carry.
+        let values = [
+            (Value::Text(Text::from("a")), RuntimeShape::Text),
+            (Value::Record(Map::default()), RuntimeShape::Record),
+            (Value::Vec(Arc::new(Vec::new())), RuntimeShape::List),
+            (
+                Value::Variant {
+                    tag: 0,
+                    payload: Arc::new(Vec::new()),
+                },
+                RuntimeShape::Variant,
+            ),
+            (
+                Value::Function {
+                    code: 0,
+                    captures: Arc::new(Vec::new()),
+                },
+                RuntimeShape::Function,
+            ),
+            (Value::Bool(true), RuntimeShape::Bool),
+            (Value::Int(1), RuntimeShape::Int),
+            (Value::Nothing, RuntimeShape::Nothing),
+        ];
+        assert_eq!(values.len(), 8, "the runtime stores eight shapes");
+        for (value, shape) in values {
+            assert_eq!(value.runtime_shape(), shape, "each shape read once");
+            assert_eq!(
+                value.carries(),
+                shape != RuntimeShape::Nothing,
+                "only the absence carries no value"
+            );
+        }
     }
 }

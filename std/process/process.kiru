@@ -32,22 +32,25 @@ pub fn wait_for(pid: int) -> int {
 
 # Send a named signal to the process group led by `pid`. The numbers are the
 # Linux ABI values, the only platform the runtime targets; the syscall takes
-# the number, the name is the convenience.
+# the number, the name is the convenience. An unknown name stops the run, so
+# no group is ever signalled with a signal number nobody named.
 pub fn signal(pid: int, name: txt) {
-  let number: int = 0;
-  match name {
-    "TERM" => { number = 15; };
-    "KILL" => { number = 9; };
-    "INT" => { number = 2; };
-    "HUP" => { number = 1; };
-    "QUIT" => { number = 3; };
-    "USR1" => { number = 10; };
-    "USR2" => { number = 12; };
-    "STOP" => { number = 19; };
-    "CONT" => { number = 18; };
-    _ => { std::eprint("unknown signal `@(name)`"); };
+  let number: std::Option<int> = match name {
+    "TERM" => std::Option.some(15);
+    "KILL" => std::Option.some(9);
+    "INT" => std::Option.some(2);
+    "HUP" => std::Option.some(1);
+    "QUIT" => std::Option.some(3);
+    "USR1" => std::Option.some(10);
+    "USR2" => std::Option.some(12);
+    "STOP" => std::Option.some(19);
+    "CONT" => std::Option.some(18);
+    _ => std::Option.none;
   };
-  std::syscalls::killpg(pid, number);
+  match number {
+    std::Option.some(value) => { std::syscalls::killpg(pid, value); };
+    std::Option.none => { std::eprint("unknown signal `@(name)`"); };
+  };
 };
 
 # Quote text as one POSIX shell word: wrap it in single quotes and replace an
@@ -58,6 +61,10 @@ pub fn quote(text: txt) -> txt {
   return "'@(std::text::replace(text, "'", "'\\''"))'";
 };
 
+# One of a command's three standard streams. The type carries the set, so a
+# call that names anything else is rejected where it is written.
+pub enum Stream { pub stdin, pub stdout, pub stderr };
+
 # What a captured run produced: its exit code and its two output streams.
 pub rec Output {
   pub code: int,
@@ -67,8 +74,8 @@ pub rec Output {
 
 # A command under construction. `std::process::command(line)` returns the
 # defaults and each setting method returns a new `Command`, so calls chain:
-# `std::process::stream(std::process::dir(std::process::command("cargo build"), "docs"), "stderr", "/dev/null")`.
-# An unset entry is the absence, not empty text. The type is `pub`, so a
+# `std::process::stream(std::process::dir(std::process::command("cargo build"), "docs"), std::process::Stream.stderr, "/dev/null")`.
+# An unset entry is `std::Option.none`, not empty text. The type is `pub`, so a
 # program can name a half-built command and configure it conditionally; the
 # fields stay private, so a program builds a command through the methods.
 pub rec Command {
@@ -162,16 +169,15 @@ impl Command {
     return copy;
   };
 
-  # Send one stream to `target`: `stream` is "stdin", "stdout", or "stderr" and
-  # `target` is the path the stream is attached to (`/dev/null` discards it).
-  # Not calling `stream` streams normally: the child inherits the stream.
-  pub fn stream(self: std::process::Command, stream: txt, target: txt) -> std::process::Command {
+  # Send one stream to `target`, the path the stream is attached to
+  # (`/dev/null` discards it). Not calling `stream` streams normally: the child
+  # inherits the stream.
+  pub fn stream(self: std::process::Command, stream: std::process::Stream, target: txt) -> std::process::Command {
     let copy: std::process::Command = self;
     match stream {
-      "stdin" => { copy.stdin = std::Option.some(target); };
-      "stdout" => { copy.stdout = std::Option.some(target); };
-      "stderr" => { copy.stderr = std::Option.some(target); };
-      _ => { std::eprint("command: `@(stream)` is not a stream; use stdin, stdout, or stderr"); };
+      std::process::Stream.stdin => { copy.stdin = std::Option.some(target); };
+      std::process::Stream.stdout => { copy.stdout = std::Option.some(target); };
+      std::process::Stream.stderr => { copy.stderr = std::Option.some(target); };
     };
     return copy;
   };

@@ -13,6 +13,19 @@ fn runtime(source: &str) -> Runtime {
     Runtime::for_testing(checked_program(source))
 }
 
+/// The process group table grows with the operating system's resources: no
+/// fixed slot count, so no spawn fails for filling it.
+#[test]
+fn the_process_group_table_has_no_fixed_cap() {
+    let state = super::state::RuntimeState::new();
+    for pgid in 1..=4096 {
+        state.processes.register(pgid);
+    }
+    assert_eq!(state.processes.group_count(), 4096);
+    state.processes.unregister(2048);
+    assert_eq!(state.processes.group_count(), 4095);
+}
+
 fn call_text(runtime: &Runtime, name: &str) -> String {
     match runtime
         .call_root(name, Vec::new())

@@ -1,99 +1,66 @@
 //! Checking one declaration body.
 //!
 //! Names are already edges, so the checker only reads and writes node types.
-//! The statement walk and the flow rules live here; the typing of an
+//! The statement walk and the typing rules live here; the typing of an
 //! expression lives in `expression_typing`, and the match rules live in
 //! `match_rules`. A function's return type is declared, so a return is checked
 //! against it rather than accumulated, and a call that produces no value may
 //! only stand as a statement.
+//!
+//! This pass only types. Whether a body falls through, breaks out of a loop, or
+//! returns where it may not is a fact about the statement walk alone, so the
+//! flow pass reads the tree after this one; the only fact it records here is a
+//! match's exhaustiveness, which needs the subject's type.
 
 use crate::compiler::model::Type;
 use crate::compiler::model::{
-    Binding, DeclarationId, Expression, FileId, Function, MatchArm, MatchBody, NamespaceId,
-    Program, Statement, TypeId, reachable, rec_field, substitute,
+    Binding, DeclarationId, Expression, FileId, Function, MatchArm, MatchBody, ModelView,
+    NamespaceId, Statement, TypeId, reachable, rec_field, substitute,
 };
 use crate::compiler::{Diagnostic, private_member};
 use crate::syntax::Span;
 
-use super::flow::Flow;
 use super::match_rules::is_exhaustive;
 
 /// The checker over one body. Names are already edges, so it only reads and
 /// writes node types.
 pub(in crate::compiler::validate_program) struct Checker<'a> {
-    pub(super) program: &'a Program,
-    file: FileId,
+    pub(super) model: ModelView<'a>,
+    pub(super) file: FileId,
     /// The namespace the body is written in. A field or variant is reached
     /// freely here and from another namespace only when it is `pub`.
-    namespace: NamespaceId,
-    /// The name of the function being walked. A module value walk has none,
-    /// and a `return` cannot occur in one.
-    function_name: Option<&'a str>,
+    pub(super) namespace: NamespaceId,
     /// The function's declared return type, or `None` when the function
-    /// declares none (and for a module value walk, which has no return). A
-    /// function with no return type produces no value, so no type names it.
-    return_type: Option<Type>,
-    /// Whether the walk is inside a `for` body, where `break` is allowed.
-    in_loop: bool,
-    /// The types of the loop variables and variant-pattern bindings whose
-    /// bodies are being walked. Their binding nodes are fixed at link time, so
-    /// a substituted type is kept here for the walk.
-    pub(super) overrides: Vec<(DeclarationId, Type)>,
+    /// declares none (and for a module value walk, which has no return).
+    pub(super) return_type: Option<Type>,
     /// The enclosing locals a closure captured by value. They are read-only in
     /// the closure body: an assignment would only change the copy.
     frozen: Vec<DeclarationId>,
 }
 impl<'a> Checker<'a> {
-    /// A walk over a module value initializer. It never visits a statement.
+    /// A walk over a body. A module value initializer sets no return type; a
+    /// function sets its declaration's.
     pub(in crate::compiler::validate_program) fn new(
-        program: &'a Program,
+        model: ModelView<'a>,
         file: FileId,
         namespace: NamespaceId,
     ) -> Self {
         Self {
-            program,
+            model,
             file,
             namespace,
-            function_name: None,
             return_type: None,
-            in_loop: false,
-            overrides: Vec::new(),
-            frozen: Vec::new(),
-        }
-    }
-
-    /// A walk over a function body. A return is checked against the declared
-    /// return type, or against no type when the function declares none.
-    pub(in crate::compiler::validate_program) fn for_function(
-        program: &'a Program,
-        file: FileId,
-        namespace: NamespaceId,
-        function_name: &'a str,
-        return_type: Option<Type>,
-    ) -> Self {
-        Self {
-            program,
-            file,
-            namespace,
-            function_name: Some(function_name),
-            return_type,
-            in_loop: false,
-            overrides: Vec::new(),
             frozen: Vec::new(),
         }
     }
 
     pub(super) fn error(&self, span: Span, message: impl Into<String>) -> Diagnostic {
-        Diagnostic::new(&self.program.file(self.file).path, span, message)
+        Diagnostic::new(&self.model.file(self.file).path, span, message)
     }
 
-    /// The type of a binding or a module value. A variant pattern binding
-    /// takes the type in `overrides`.
+    /// The type of a binding or a module value.
     pub(super) fn kind_of(&self, id: DeclarationId) -> Type {
-        if let Some((_, ty)) = self.overrides.iter().rev().find(|(item, _)| *item == id) {
-            return ty.clone();
-        }
-        self.program.declaration(id).ty.clone()
+        self.model.declaration(id).ty.clone()
     }
 
     /// Whether a member declared in `declaring` is reachable from the walk's
@@ -104,35 +71,18 @@ impl<'a> Checker<'a> {
         reachable(public, declaring, self.namespace)
     }
 
-    /// Reject reading, writing, or building a field of `type_id` when the field
-    /// is private to another namespace. One gate serves a field read, a field
-    /// in a `{ … }` literal, and a field assignment.
-    pub(super) fn check_field(
-        &self,
-        type_id: TypeId,
-        name: &str,
-        public: bool,
-        span: Span,
-    ) -> Result<(), Diagnostic> {
-        let declaration = self.program.type_decl(type_id);
-        if self.member_reachable(public, declaration.namespace) {
-            return Ok(());
-        }
-        let namespace = self.namespace_name(declaration.namespace);
-        Err(self.error(span, private_member(&declaration.name, name, &namespace)))
-    }
-
-    /// Reject constructing or matching a variant of `type_id` when the variant
-    /// is private to another namespace. One gate serves a construction and a
+    /// Reject reaching a member of `type_id` when the member is private to
+    /// another namespace. One gate serves a field read, a field in a `{ … }`
+    /// literal, a field assignment, a variant construction, and a variant
     /// pattern.
-    pub(super) fn check_variant(
+    pub(super) fn check_member(
         &self,
         type_id: TypeId,
         name: &str,
         public: bool,
         span: Span,
     ) -> Result<(), Diagnostic> {
-        let declaration = self.program.type_decl(type_id);
+        let declaration = self.model.type_decl(type_id);
         if self.member_reachable(public, declaration.namespace) {
             return Ok(());
         }
@@ -142,7 +92,7 @@ impl<'a> Checker<'a> {
 
     /// The namespace path for a diagnostic: the root namespace has no path.
     fn namespace_name(&self, namespace: NamespaceId) -> String {
-        let path = self.program.namespace_path(namespace);
+        let path = self.model.namespace_path(namespace);
         if path.is_empty() {
             "the root namespace".to_owned()
         } else {
@@ -150,119 +100,75 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Validate a sequence of statements and return its flow. Every statement
-    /// is validated, including the ones after a terminator; only the ones
-    /// reachable from the start contribute to the flow.
+    /// Type a sequence of statements. Every statement is typed, including the
+    /// ones after a terminator; whether a statement is reachable is a flow
+    /// fact, and the flow pass reads all of them too.
     pub(in crate::compiler::validate_program) fn statements(
         &mut self,
-        statements: &[Statement],
-    ) -> Result<Flow, Diagnostic> {
-        let mut flow = Flow::FALLS;
+        statements: &mut [Statement],
+    ) -> Result<(), Diagnostic> {
         for statement in statements {
-            let next = self.statement(statement)?;
-            if flow.falls {
-                flow = Flow {
-                    returns: flow.returns || next.returns,
-                    falls: next.falls,
-                    breaks: flow.breaks || next.breaks,
-                };
-            }
+            self.statement(statement)?;
         }
-        Ok(flow)
+        Ok(())
     }
 
-    /// Validate one statement and return its flow.
-    fn statement(&mut self, statement: &Statement) -> Result<Flow, Diagnostic> {
+    /// Type one statement.
+    fn statement(&mut self, statement: &mut Statement) -> Result<(), Diagnostic> {
         match statement {
             Statement::Bind {
                 declaration, value, ..
             } => {
                 let ty = self.kind_of(*declaration);
                 self.require(value, &ty)?;
-                Ok(Flow::FALLS)
+                Ok(())
             }
             Statement::Assign {
                 declaration,
                 name_span,
                 value,
                 ..
-            } => {
-                self.assign(*declaration, *name_span, value)?;
-                Ok(Flow::FALLS)
-            }
+            } => self.assign(*declaration, *name_span, value),
             Statement::FieldAssign {
                 declaration,
                 name_span,
                 field,
                 value,
                 ..
-            } => {
-                self.field_assign(*declaration, *name_span, field, value)?;
-                Ok(Flow::FALLS)
-            }
-            Statement::Expression(expression) => match expression {
-                // A bare call runs for its effect; a call that halts ends the
-                // path.
-                Expression::Call { .. } => {
-                    self.expression(expression, None)?;
-                    Ok(self.call_flow(expression))
-                }
-                // A bare match runs its taken arm; its flow is the arms' union.
-                Expression::Match {
+            } => self.field_assign(*declaration, *name_span, field, value),
+            // A bare call runs for its effect; a bare match runs its taken
+            // arm. Any other bare value is dead, so the shape is rejected.
+            Statement::Expression(expression) => {
+                if let Expression::Match {
                     subject,
                     cases,
                     default,
+                    exhaustive,
                     ..
-                } => self.match_statement(subject, cases, default),
-                // Any other bare value is dead, so the shape is rejected.
-                _ => Err(self.error(expression.span(), "a statement must be a call")),
-            },
-            Statement::Return { value, span } => {
-                self.return_statement(value.as_ref(), *span)?;
-                Ok(Flow::RETURNS)
+                } = &mut *expression
+                {
+                    return self.match_statement(subject, cases, default, exhaustive);
+                }
+                if !matches!(&*expression, Expression::Call { .. }) {
+                    return Err(self.error(expression.span(), "a statement must be a call"));
+                }
+                self.expression(expression, None)?;
+                Ok(())
             }
-            Statement::Panic { .. } => Ok(Flow::STOPS),
+            Statement::Return { value, .. } => self.return_statement(value.as_mut()),
+            Statement::Panic { .. } => Ok(()),
             Statement::Async { call, .. } => {
-                if !matches!(call, Expression::Call { .. }) {
+                if !matches!(&*call, Expression::Call { .. }) {
                     return Err(self.error(call.span(), "`async` takes a call"));
                 }
                 self.expression(call, None)?;
-                Ok(Flow::FALLS)
+                Ok(())
             }
-            Statement::Wait { .. } => Ok(Flow::FALLS),
-            Statement::Forever { body, .. } => {
-                let was_in_loop = self.in_loop;
-                self.in_loop = true;
-                let body_flow = self.statements(body);
-                self.in_loop = was_in_loop;
-                let body_flow = body_flow?;
-                // An unbounded `for` falls through only when its body can
-                // break; a returning path in the body still returns.
-                Ok(Flow {
-                    returns: body_flow.returns,
-                    falls: body_flow.breaks,
-                    breaks: false,
-                })
-            }
-            Statement::Break { span } => {
-                if !self.in_loop {
-                    return Err(self.error(*span, "`break` is only allowed inside a loop"));
-                }
-                Ok(Flow::BREAKS)
-            }
+            Statement::Wait { .. } => Ok(()),
+            Statement::Forever { body, .. } => self.statements(body),
+            // Whether a `break` has a loop to leave is a flow fact.
+            Statement::Break { .. } => Ok(()),
         }
-    }
-
-    /// The flow of a bare call statement: it stops the run when its callee
-    /// does.
-    fn call_flow(&self, expression: &Expression) -> Flow {
-        if let Expression::Call { callee, .. } = expression
-            && let Expression::Reference { declaration, .. } = callee.as_ref()
-            && self.program.declaration(*declaration).derived.halts
-        {
-            return Flow::STOPS;
-        }
-        Flow::FALLS
     }
 
     /// The declared type of an assignment target. Every target is a local
@@ -275,14 +181,14 @@ impl<'a> Checker<'a> {
         name_span: Span,
     ) -> Result<Type, Diagnostic> {
         if self.frozen.contains(&declaration) {
-            let name = &self.program.declaration(declaration).name;
+            let name = &self.model.declaration(declaration).name;
             return Err(self.error(
                 name_span,
                 format!("`{name}` is captured by a closure and cannot be assigned"),
             ));
         }
-        let node = self.program.declaration(declaration);
-        if !(node.kind.module_value() && node.owner.is_none()) {
+        let node = self.model.declaration(declaration);
+        if !node.kind.module_value() {
             return Ok(self.kind_of(declaration));
         }
         Err(self.error(
@@ -293,46 +199,29 @@ impl<'a> Checker<'a> {
             ),
         ))
     }
-    /// Prove a function body in the context where it is written, so a captured
+
+    /// Type a function body in the context where it is written, so a captured
     /// loop variable or variant-pattern binding keeps the type the enclosing
-    /// walk knows (those types live in `overrides`, not in the binding node),
-    /// and return its flow. A named function's body is proved here too, with
-    /// its declaration name for diagnostics.
+    /// walk knows, and so a nested literal's own annotation applies. A named
+    /// function's return type is its declaration's; a literal's is its own.
     pub(in crate::compiler::validate_program) fn check_function(
         &mut self,
-        function: &Function,
-        name: &'a str,
-    ) -> Result<Flow, Diagnostic> {
-        let span = function.span;
-        let return_type = function.ty.return_type(&self.program.types);
-        let saved_return = std::mem::replace(&mut self.return_type, return_type.clone());
-        let saved_name = self.function_name.replace(name);
-        let saved_loop = std::mem::replace(&mut self.in_loop, false);
+        function: &mut Function,
+        return_type: Option<Type>,
+    ) -> Result<(), Diagnostic> {
+        let saved_return = std::mem::replace(&mut self.return_type, return_type);
         let saved_frozen = std::mem::replace(&mut self.frozen, function.captures.clone());
-        let flow = self.statements(&function.body);
+        let result = self.statements(&mut function.body);
         self.return_type = saved_return;
-        self.function_name = saved_name;
-        self.in_loop = saved_loop;
         self.frozen = saved_frozen;
-        let flow = flow?;
-        if let Some(return_type) = &return_type
-            && flow.falls
-        {
-            return Err(self.error(
-                span,
-                format!(
-                    "`{name}` is declared to return {}, so every path must end with `return ...`, `panic;`, or a call that stops the run",
-                    self.type_name(return_type)
-                ),
-            ));
-        }
-        Ok(flow)
+        result
     }
+
     fn assign(
         &mut self,
         declaration: DeclarationId,
         name_span: Span,
-        value: &Expression,
+        value: &mut Expression,
     ) -> Result<(), Diagnostic> {
         let ty = self.assignment_target(declaration, name_span)?;
         self.require(value, &ty)?;
@@ -346,22 +235,22 @@ impl<'a> Checker<'a> {
         declaration: DeclarationId,
         name_span: Span,
         field: &str,
-        value: &Expression,
+        value: &mut Expression,
     ) -> Result<(), Diagnostic> {
-        let name = self.program.declaration(declaration).name.clone();
+        let name = self.model.declaration(declaration).name.clone();
         match self.assignment_target(declaration, name_span)? {
             Type::Named(id, arguments) => {
-                let declaration = self.program.type_decl(id);
+                let declaration = self.model.type_decl(id);
                 if declaration.group().has_variants() {
                     return Err(self.error(name_span, format!("`{name}` is an enum; match it")));
                 }
-                let Some(field_decl) = rec_field(&self.program.types, id, field) else {
+                let Some(field_decl) = rec_field(self.model.types(), id, field) else {
                     return Err(self.error(name_span, format!("`{name}` has no field `{field}`")));
                 };
-                self.check_field(id, field, field_decl.public, name_span)?;
+                self.check_member(id, field, field_decl.public, name_span)?;
                 let ty = substitute(
                     &field_decl.ty,
-                    &self.program.types,
+                    self.model.types(),
                     &declaration.parameters,
                     Binding::Complete(&arguments),
                 );
@@ -375,85 +264,57 @@ impl<'a> Checker<'a> {
         }
     }
 
-    /// Enforce the return rules of the enclosing function. A value return is
-    /// only for a function declared with a return type, and its value must fit
-    /// that type; a bare return is only for a function declared with no return
-    /// type.
-    fn return_statement(
-        &mut self,
-        value: Option<&Expression>,
-        span: Span,
-    ) -> Result<(), Diagnostic> {
-        let Some(name) = self.function_name else {
-            return Err(self.error(span, "`return` is not allowed here"));
-        };
-        let return_type = self.return_type.clone();
-        if let Some(value) = value {
-            if matches!(value, Expression::Match { .. }) {
-                return Err(self.error(
-                    value.span(),
-                    "`return` does not take a `match`; bind it first: `let name = match ...; return name;`",
-                ));
-            }
-            let Some(return_type) = return_type else {
-                return Err(self.error(
-                    value.span(),
-                    format!(
-                        "`{name}` is declared to return nothing, so `return` cannot carry a value"
-                    ),
-                ));
-            };
+    /// Type the value of a `return`, when the enclosing function declares a
+    /// return type. Whether the return is allowed at all is a flow fact.
+    fn return_statement(&mut self, value: Option<&mut Expression>) -> Result<(), Diagnostic> {
+        if let Some(value) = value
+            && let Some(return_type) = self.return_type.clone()
+        {
             self.require(value, &return_type)?;
-            return Ok(());
         }
-        match return_type {
-            Some(return_type) => Err(self.error(
-                span,
-                format!(
-                    "`{name}` is declared to return {}, so `return` must carry a value",
-                    self.type_name(&return_type)
-                ),
-            )),
-            None => Ok(()),
-        }
+        Ok(())
     }
+
     /// The name of a type for a diagnostic.
     pub(super) fn type_name(&self, ty: &Type) -> String {
-        self.program.type_name(ty)
+        self.model.type_name(ty)
     }
-    /// The flow of a match in statement position: the union of the taken arm's
-    /// flow, plus a fall-through when the match is not exhaustive.
+
+    /// Type a match in statement position and record whether its arms cover
+    /// every value. The flow pass reads that fact to know whether the match can
+    /// fall through.
     fn match_statement(
         &mut self,
-        subject: &Expression,
-        cases: &[MatchArm],
-        default: &Option<MatchBody>,
-    ) -> Result<Flow, Diagnostic> {
+        subject: &mut Expression,
+        cases: &mut [MatchArm],
+        default: &mut Option<MatchBody>,
+        exhaustive: &mut bool,
+    ) -> Result<(), Diagnostic> {
         let subject_type = self.match_subject(subject)?;
         let mut seen: Vec<&Expression> = Vec::new();
-        let mut covered = self.enum_coverage(&subject_type);
-        let mut flow = Flow::STOPS;
-        for arm in cases {
-            let pushed =
-                self.match_pattern(&arm.pattern, &subject_type, &mut seen, covered.as_mut())?;
-            flow = flow.union(self.match_body_flow(&arm.body)?);
-            for _ in 0..pushed {
-                self.overrides.pop();
-            }
+        let mut coverage = self.coverage(&subject_type);
+        for arm in cases.iter_mut() {
+            self.match_pattern(
+                &mut arm.pattern,
+                &subject_type,
+                &mut seen,
+                coverage.as_mut(),
+            )?;
+            self.match_body(&mut arm.body)?;
         }
-        match default {
-            Some(default) => flow = flow.union(self.match_body_flow(default)?),
-            None if is_exhaustive(default, &subject_type, cases, covered.as_deref()) => {}
-            None => flow = flow.union(Flow::FALLS),
+        if let Some(default) = default.as_mut() {
+            self.match_body(default)?;
         }
-        Ok(flow)
+        *exhaustive = is_exhaustive(default, coverage.as_ref());
+        Ok(())
     }
-    /// The flow of a match arm's body.
-    fn match_body_flow(&mut self, body: &MatchBody) -> Result<Flow, Diagnostic> {
+
+    /// Type one match arm's body.
+    pub(super) fn match_body(&mut self, body: &mut MatchBody) -> Result<(), Diagnostic> {
         match body {
             MatchBody::Expression(expression) => {
                 self.expression(expression, None)?;
-                Ok(Flow::FALLS)
+                Ok(())
             }
             MatchBody::Block(statements) => self.statements(statements),
         }
