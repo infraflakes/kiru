@@ -9,9 +9,10 @@
 # reached through its absolute path.
 
 impl txt {
-  # The byte index of the first occurrence of `needle`, or `none` when it is
-  # absent. The kernel native `std::text::memchr` is the absence itself,
-  # not a `-1` sentinel, so this is the kernel under the method's name.
+  # The byte index of the first occurrence of `needle`, or `std::Option.none`
+  # when it is not present. The kernel native `std::text::memchr` returns the
+  # option itself, not a `-1` sentinel, so this is the kernel under the
+  # method's name.
   pub fn find(self: txt, needle: txt) -> std::Option<int> {
     return std::text::memchr(self, needle);
   };

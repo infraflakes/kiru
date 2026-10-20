@@ -7,36 +7,14 @@ use crate::syntax::token::TokenKind;
 
 use super::{ParseError, Parser};
 
-/// The binary operator a token writes, or `None` when the token is not one.
+/// The binary operator a token writes, or `None` when the token is not one. The
+/// operator's own facts name the token, so the surface spelling is declared
+/// beside the operator and nowhere else.
 fn binary_operator(kind: &TokenKind) -> Option<BinaryOp> {
-    match kind {
-        TokenKind::Plus => Some(BinaryOp::Add),
-        TokenKind::Minus => Some(BinaryOp::Subtract),
-        TokenKind::Star => Some(BinaryOp::Multiply),
-        TokenKind::Slash => Some(BinaryOp::Divide),
-        TokenKind::Percent => Some(BinaryOp::Remainder),
-        TokenKind::Less => Some(BinaryOp::Less),
-        TokenKind::LessEq => Some(BinaryOp::LessEqual),
-        TokenKind::Greater => Some(BinaryOp::Greater),
-        TokenKind::GreaterEq => Some(BinaryOp::GreaterEqual),
-        TokenKind::EqEq => Some(BinaryOp::Equal),
-        TokenKind::NotEq => Some(BinaryOp::NotEqual),
-        TokenKind::AndAnd => Some(BinaryOp::And),
-        TokenKind::OrOr => Some(BinaryOp::Or),
-        _ => None,
-    }
-}
-
-/// The binding power of a binary operator: a higher number binds tighter.
-fn precedence(operator: BinaryOp) -> u8 {
-    match operator {
-        BinaryOp::Or => 1,
-        BinaryOp::And => 2,
-        BinaryOp::Equal | BinaryOp::NotEqual => 3,
-        BinaryOp::Less | BinaryOp::LessEqual | BinaryOp::Greater | BinaryOp::GreaterEqual => 4,
-        BinaryOp::Add | BinaryOp::Subtract => 5,
-        BinaryOp::Multiply | BinaryOp::Divide | BinaryOp::Remainder => 6,
-    }
+    BinaryOp::ALL
+        .iter()
+        .copied()
+        .find(|operator| operator.facts().spelling == *kind)
 }
 
 /// The prefix operator a token writes, or `None` when the token is not one.
@@ -48,7 +26,7 @@ fn unary_operator(kind: &TokenKind) -> Option<UnaryOp> {
     }
 }
 
-impl Parser {
+impl<'a> Parser<'a> {
     /// Parse an expression by precedence climbing.
     pub(super) fn parse_expression(&mut self) -> Result<Expression, ParseError> {
         self.enter_nesting()?;
@@ -65,7 +43,7 @@ impl Parser {
     fn parse_binary(&mut self, minimum: u8) -> Result<Expression, ParseError> {
         let mut left = self.parse_unary()?;
         while let Some(operator) = binary_operator(&self.current().kind) {
-            let binding = precedence(operator);
+            let binding = operator.facts().precedence;
             if binding < minimum {
                 break;
             }
@@ -89,6 +67,18 @@ impl Parser {
             return self.parse_postfix();
         };
         let start = self.advance().start;
+        // A sign written directly before an integer literal is the literal's
+        // own sign: `-1` is one integer, not a negate over a positive one, so a
+        // match arm and every other atom see one literal.
+        if operator == UnaryOp::Negate
+            && let TokenKind::Int(value) = self.current().kind
+        {
+            let end = self.advance().end;
+            return Ok(Expression::Int {
+                value: -value,
+                span: Span::new(start, end),
+            });
+        }
         let operand = self.parse_unary()?;
         let span = Span::new(start, operand.span().end);
         Ok(Expression::Unary {
@@ -105,6 +95,7 @@ impl Parser {
         loop {
             if self.eat(&TokenKind::Dot) {
                 let (name, name_span) = self.expect_identifier("after `.`")?;
+                let name = name.to_owned();
                 if self.check(&TokenKind::LParen) {
                     let (arguments, arguments_span) = self.parse_arguments()?;
                     let span = expression.span().merge(arguments_span);
@@ -163,27 +154,47 @@ impl Parser {
                 self.leave_nesting();
                 Ok(inner)
             }
-            TokenKind::Ident(_) => {
-                let (path, callee_span) = self.parse_path_segments("in an expression")?;
-                if self.check(&TokenKind::LParen) {
-                    let (arguments, arguments_span) = self.parse_arguments()?;
-                    Ok(Expression::Call {
-                        callee: path,
-                        callee_span,
-                        arguments,
-                        span: callee_span.merge(arguments_span),
-                    })
-                } else {
-                    Ok(Expression::Name {
-                        path,
-                        span: callee_span,
-                    })
-                }
+            TokenKind::Ident => self.parse_name_or_call(),
+            // A wildcard that opens a selection, a call, or a path reads
+            // exactly as a name would, so a wildcard in those positions fails
+            // at the same name resolution as before; alone it is the
+            // wildcard's own node.
+            TokenKind::Wildcard
+                if matches!(
+                    self.peek(1).kind,
+                    TokenKind::Dot | TokenKind::PathSep | TokenKind::LParen
+                ) =>
+            {
+                self.parse_name_or_call()
             }
-            other => Err(self.error_here(format!(
+            TokenKind::Wildcard => {
+                let span = self.advance();
+                Ok(Expression::Wildcard { span })
+            }
+            _ => Err(self.error_here(format!(
                 "expected an expression, found {}",
-                other.describe()
+                self.describe_current()
             ))),
+        }
+    }
+
+    /// Parse a name path, and a call whose callee is that path: `f()`,
+    /// `std::run(x)`.
+    fn parse_name_or_call(&mut self) -> Result<Expression, ParseError> {
+        let (path, callee_span) = self.parse_path_segments("in an expression")?;
+        if self.check(&TokenKind::LParen) {
+            let (arguments, arguments_span) = self.parse_arguments()?;
+            Ok(Expression::Call {
+                callee: path,
+                callee_span,
+                arguments,
+                span: callee_span.merge(arguments_span),
+            })
+        } else {
+            Ok(Expression::Name {
+                path,
+                span: callee_span,
+            })
         }
     }
 

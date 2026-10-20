@@ -27,9 +27,13 @@ private, reached only through its methods.
 | `command.dir(path: txt) -> Command` | the working directory |
 | `command.env(name: txt, value: txt) -> Command` | export one variable |
 | `command.timeout(seconds: int) -> Command` | bound the run |
-| `command.stream(stream: txt, target: txt) -> Command` | attach `stdin`, `stdout`, or `stderr` to a path |
+| `command.stream(stream: std::process::Stream, target: txt) -> Command` | attach `Stream.stdin`, `Stream.stdout`, or `Stream.stderr` to a path |
 | `command.run() -> int` | run and return the exit code |
 | `command.capture() -> std::process::Output` | run and return `code`, `out`, and `err` |
+
+A stream is the declared enum `std::process::Stream`, whose variants are
+`stdin`, `stdout`, and `stderr`; `stream` takes one of them, so a word that
+names no stream does not type-check.
 
 ```kiru
 use std;

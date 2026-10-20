@@ -18,8 +18,9 @@ use std::sync::{Arc, RwLock};
 #[cfg(test)]
 use std::collections::HashMap;
 
+use crate::cli::lock_recovery::RwLockExt;
+use crate::compiler::EntryShape;
 use crate::compiler::bytecode::{Bytecode, CompareOp, Instruction, NumberOp};
-use crate::lock_recovery::RwLockExt;
 use crate::runtime::Panic;
 use crate::runtime::{Map, Text, Value};
 
@@ -35,10 +36,9 @@ pub(crate) fn run(bytecode: Arc<Bytecode>, words: &[String]) -> i32 {
         .map(|word| Value::Text(word.into()))
         .collect();
     let state = Arc::new(RuntimeState::new());
-    // The signal handler keeps a raw pointer to the state, so the state must
-    // outlive the run, including a partially installed handler set.
-    std::mem::forget(Arc::clone(&state));
-    if let Err(error) = process::install_signal_handlers(&state) {
+    // The monitor thread owns a handle to the state for as long as a signal may
+    // arrive, so the state outlives the run and no raw pointer is needed.
+    if let Err(error) = process::install_signal_handlers(Arc::clone(&state)) {
         super::report_error(&format!("cannot install signal handlers: {error}"));
         return 1;
     }
@@ -72,9 +72,9 @@ pub(crate) fn run(bytecode: Arc<Bytecode>, words: &[String]) -> i32 {
 /// The process status a program's `main` returned: its `int` clamped to
 /// `0..=255`, and `0` when it returned nothing.
 fn exit_code(value: &Value) -> i32 {
-    match value {
-        Value::Int(code) => (*code).clamp(0, 255) as i32,
-        _ => 0,
+    match value.integer() {
+        Some(code) => code.clamp(0, 255) as i32,
+        None => 0,
     }
 }
 
@@ -96,12 +96,12 @@ struct Frame {
 }
 
 impl Runtime {
-    /// Evaluate every module value once, in declaration order, and store the
-    /// result in the globals table.
+    /// Evaluate every module value once, in evaluation order, and store each
+    /// result in the global its startup entry names.
     fn evaluate_module_values(&self) -> Result<(), Panic> {
-        for (index, code) in self.bytecode.module_values.iter().enumerate() {
-            let value = self.run_code(*code, Vec::new())?;
-            self.globals.write_unpoisoned()[index] = value;
+        for entry in &self.bytecode.module_values {
+            let value = self.run_code(entry.code, Vec::new())?;
+            self.globals.write_unpoisoned()[entry.global as usize] = value;
         }
         Ok(())
     }
@@ -111,7 +111,7 @@ impl Runtime {
     /// parameter.
     fn call_entry(&self, words: Vec<Value>) -> Result<Value, Panic> {
         let arity = self.bytecode.codes[self.bytecode.entry as usize].arity;
-        let arguments = if arity == 1 {
+        let arguments = if EntryShape::takes_words(arity) {
             vec![Value::Vec(Arc::new(words))]
         } else {
             Vec::new()
@@ -162,7 +162,7 @@ impl Runtime {
                         let value = frame.registers[*value as usize].clone();
                         map.set(key, value);
                     }
-                    frame.registers[*dst as usize] = Value::Map(map);
+                    frame.registers[*dst as usize] = Value::Record(map);
                 }
                 Instruction::MakeVariant { dst, tag, payload } => {
                     let mut values = Vec::with_capacity(payload.len());
@@ -178,23 +178,9 @@ impl Runtime {
                     frame.registers[*dst as usize] = Value::Nothing;
                 }
                 Instruction::JumpIfVariantNotEqual { target, tag, jump } => {
-                    let not_equal = match &frame.registers[*target as usize] {
-                        Value::Variant { tag: actual, .. } => actual != tag,
-                        _ => return Err(self.fail()),
-                    };
-                    if not_equal {
-                        pc = *jump as usize;
-                        continue;
-                    }
-                }
-                Instruction::JumpIfNothing { value, jump } => {
-                    if matches!(frame.registers[*value as usize], Value::Nothing) {
-                        pc = *jump as usize;
-                        continue;
-                    }
-                }
-                Instruction::JumpIfNotNothing { value, jump } => {
-                    if !matches!(frame.registers[*value as usize], Value::Nothing) {
+                    let (variant, _) =
+                        self.required(frame.registers[*target as usize].variant())?;
+                    if variant != *tag {
                         pc = *jump as usize;
                         continue;
                     }
@@ -204,13 +190,11 @@ impl Runtime {
                     variant,
                     index,
                 } => {
-                    let value = match &frame.registers[*variant as usize] {
-                        Value::Variant { payload, .. } => match payload.get(*index as usize) {
-                            Some(value) => value.clone(),
-                            None => return Err(self.fail()),
-                        },
-                        _ => return Err(self.fail()),
-                    };
+                    let value = self.required(
+                        frame.registers[*variant as usize]
+                            .variant()
+                            .and_then(|(_, payload)| payload.get(*index as usize).cloned()),
+                    )?;
                     frame.registers[*dst as usize] = value;
                 }
                 Instruction::MakeFunction {
@@ -232,11 +216,9 @@ impl Runtime {
                     callee,
                     arguments,
                 } => {
+                    let (code, captures) =
+                        self.required(frame.registers[*callee as usize].function())?;
                     let values = self.argument_values(frame, arguments);
-                    let (code, captures) = match &frame.registers[*callee as usize] {
-                        Value::Function { code, captures } => (*code, Arc::clone(captures)),
-                        _ => return Err(self.fail()),
-                    };
                     let mut arguments = captures.as_ref().clone();
                     arguments.extend(values);
                     let value = self.run_code(code, arguments)?;
@@ -254,24 +236,20 @@ impl Runtime {
                     left,
                     right,
                 } => {
-                    let (Value::Int(left), Value::Int(right)) = (
-                        &frame.registers[*left as usize],
-                        &frame.registers[*right as usize],
-                    ) else {
-                        return Err(self.fail());
-                    };
+                    let left = self.required(frame.registers[*left as usize].integer())?;
+                    let right = self.required(frame.registers[*right as usize].integer())?;
                     let value = match op {
                         NumberOp::Add => left + right,
                         NumberOp::Subtract => left - right,
                         NumberOp::Multiply => left * right,
                         NumberOp::Divide => {
-                            if *right == 0 {
+                            if right == 0 {
                                 return Err(self.fail());
                             }
                             left / right
                         }
                         NumberOp::Remainder => {
-                            if *right == 0 {
+                            if right == 0 {
                                 return Err(self.fail());
                             }
                             left % right
@@ -279,14 +257,14 @@ impl Runtime {
                     };
                     frame.registers[*dst as usize] = Value::Int(value);
                 }
-                Instruction::Negate { dst, src } => match &frame.registers[*src as usize] {
-                    Value::Int(value) => frame.registers[*dst as usize] = Value::Int(-value),
-                    _ => return Err(self.fail()),
-                },
-                Instruction::Not { dst, src } => match &frame.registers[*src as usize] {
-                    Value::Bool(value) => frame.registers[*dst as usize] = Value::Bool(!value),
-                    _ => return Err(self.fail()),
-                },
+                Instruction::Negate { dst, src } => {
+                    let number = self.required(frame.registers[*src as usize].integer())?;
+                    frame.registers[*dst as usize] = Value::Int(-number);
+                }
+                Instruction::Not { dst, src } => {
+                    let value = self.required(frame.registers[*src as usize].boolean())?;
+                    frame.registers[*dst as usize] = Value::Bool(!value);
+                }
                 Instruction::Compare {
                     op,
                     dst,
@@ -300,13 +278,7 @@ impl Runtime {
                         | CompareOp::LessEqual
                         | CompareOp::Greater
                         | CompareOp::GreaterEqual => {
-                            let ordering = match (left, right) {
-                                (Value::Int(left), Value::Int(right)) => left.cmp(right),
-                                (Value::Text(left), Value::Text(right)) => {
-                                    left.as_str().cmp(right.as_str())
-                                }
-                                _ => return Err(self.fail()),
-                            };
+                            let ordering = self.required(left.ordering(right))?;
                             match op {
                                 CompareOp::Less => ordering.is_lt(),
                                 CompareOp::LessEqual => ordering.is_le(),
@@ -325,50 +297,42 @@ impl Runtime {
                     frame.registers[*dst as usize] = Value::Bool(value);
                 }
                 Instruction::JumpIfFalse { target, condition } => {
-                    match &frame.registers[*condition as usize] {
-                        Value::Bool(false) => {
-                            pc = *target as usize;
-                            continue;
-                        }
-                        Value::Bool(true) => {}
-                        _ => return Err(self.fail()),
+                    if !self.required(frame.registers[*condition as usize].boolean())? {
+                        pc = *target as usize;
+                        continue;
                     }
                 }
                 Instruction::ToText { dst, src } => {
-                    let text = match &frame.registers[*src as usize] {
-                        Value::Text(text) => text.clone(),
-                        Value::Int(value) => Text::from(value.to_string()),
-                        Value::Bool(value) => Text::from(value.to_string()),
-                        _ => return Err(self.fail()),
-                    };
+                    let text = self.required(frame.registers[*src as usize].rendered())?;
                     frame.registers[*dst as usize] = Value::Text(text);
                 }
                 Instruction::SetField { map, key, value } => {
                     let key = self.bytecode.constants[*key as usize].clone();
                     let value = frame.registers[*value as usize].clone();
-                    match &mut frame.registers[*map as usize] {
-                        Value::Map(map) => map.set(key, value),
-                        _ => return Err(self.fail()),
+                    match frame.registers[*map as usize].record_mut() {
+                        Some(map) => map.set(key, value),
+                        None => return Err(self.fail()),
                     }
                 }
                 Instruction::GetField { dst, map, key } => {
                     let key = &self.bytecode.constants[*key as usize];
-                    // A missing key is the absence, never empty text.
-                    let value = match &frame.registers[*map as usize] {
-                        Value::Map(map) => map.get(key).cloned().unwrap_or(Value::Nothing),
-                        _ => return Err(self.fail()),
-                    };
+                    // A record literal always builds every declared field, so a
+                    // missing key is a violation of the checked model, not a
+                    // value.
+                    let value = self.required(
+                        frame.registers[*map as usize]
+                            .record()
+                            .and_then(|map| map.get(key).cloned()),
+                    )?;
                     frame.registers[*dst as usize] = value;
                 }
                 Instruction::Concat { dst, left, right } => {
-                    let left = match &frame.registers[*left as usize] {
-                        Value::Text(text) => text.clone(),
-                        _ => return Err(self.fail()),
-                    };
-                    let right = match &frame.registers[*right as usize] {
-                        Value::Text(text) => text.clone(),
-                        _ => return Err(self.fail()),
-                    };
+                    let left = self
+                        .required(frame.registers[*left as usize].text())?
+                        .clone();
+                    let right = self
+                        .required(frame.registers[*right as usize].text())?
+                        .clone();
                     frame.registers[*dst as usize] = Value::Text(Text::concat(left, right));
                 }
                 Instruction::CallNative {
@@ -415,10 +379,9 @@ impl Runtime {
                 }
                 Instruction::AsyncValue { callee, arguments } => {
                     let actual = self.argument_values(frame, arguments);
-                    let (code, mut values) = match &frame.registers[*callee as usize] {
-                        Value::Function { code, captures } => (*code, captures.as_ref().clone()),
-                        _ => return Err(self.fail()),
-                    };
+                    let (code, captures) =
+                        self.required(frame.registers[*callee as usize].function())?;
+                    let mut values = captures.as_ref().clone();
                     values.extend(actual);
                     let runtime = self.detached();
                     self.state.threads.spawn(move || {
@@ -447,17 +410,9 @@ impl Runtime {
     }
 
     /// The text of a value, or a failure when it is not text.
-    pub(super) fn text_value(&self, value: Value) -> Result<String, Panic> {
-        match value {
-            Value::Text(text) => Ok(text.as_str().to_owned()),
-            Value::Map(_)
-            | Value::Vec(_)
-            | Value::Variant { .. }
-            | Value::Function { .. }
-            | Value::Bool(_)
-            | Value::Int(_)
-            | Value::Nothing => Err(self.fail()),
-        }
+    pub(super) fn text_value(&self, value: &Value) -> Result<String, Panic> {
+        self.required(value.text())
+            .map(|text| text.as_str().to_owned())
     }
 
     /// A runtime handle that shares the bytecode, globals, and run state, for
@@ -478,14 +433,11 @@ impl Runtime {
         Panic
     }
 
-    /// The failure for an index outside a Vec. It names the operation, the
-    /// index, and the length, so an out-of-bounds `at` or `replace` reports
-    /// what went wrong.
-    fn index_failure(&self, operation: &str, index: i64, length: usize) -> Panic {
-        process::failure(
-            &self.state,
-            operation,
-            &format!("index {index} is outside a Vec of {length} element(s)"),
-        )
+    /// A value read through the shape an operation declares. The checked
+    /// model says a register holds the shape its instruction reads: when it
+    /// does not, this unwinds the body, with the one failure every operation
+    /// shares.
+    fn required<T>(&self, reading: Option<T>) -> Result<T, Panic> {
+        reading.ok_or_else(|| self.fail())
     }
 }

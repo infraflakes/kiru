@@ -62,6 +62,9 @@ impl Visitor for SpanCheck {
     fn reference(&mut self, expression: &Expression) {
         self.expression_span(expression);
     }
+    fn method(&mut self, expression: &Expression) {
+        self.expression_span(expression);
+    }
     fn call(&mut self, expression: &Expression) {
         self.expression_span(expression);
         let Expression::Call { callee_span, .. } = expression else {
@@ -138,6 +141,10 @@ impl Visitor for SpanCheck {
 
     fn expression_body(&mut self, _: &MatchBody) {}
     fn block_body(&mut self, _: &MatchBody) {}
+
+    fn enters_deferred_body(&self) -> bool {
+        true
+    }
 }
 
 /// The span checks shared by a map expression and a `rec` declaration.

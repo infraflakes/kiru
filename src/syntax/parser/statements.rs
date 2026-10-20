@@ -7,7 +7,7 @@ use crate::syntax::token::TokenKind;
 
 use super::{ParseError, Parser};
 
-impl Parser {
+impl<'a> Parser<'a> {
     /// Parse a `{ ... }` block into its statements.
     pub(super) fn parse_block(&mut self) -> Result<Vec<Statement>, ParseError> {
         self.enter_nesting()?;
@@ -41,12 +41,14 @@ impl Parser {
             }
             TokenKind::For => self.parse_for(),
             TokenKind::Break => self.parse_break(),
-            TokenKind::Ident(_) if matches!(self.peek(1).kind, TokenKind::Equals) => {
+            TokenKind::Ident | TokenKind::Wildcard
+                if matches!(self.peek(1).kind, TokenKind::Equals) =>
+            {
                 self.parse_assignment()
             }
-            TokenKind::Ident(_)
+            TokenKind::Ident | TokenKind::Wildcard
                 if matches!(self.peek(1).kind, TokenKind::Dot)
-                    && matches!(self.peek(2).kind, TokenKind::Ident(_))
+                    && matches!(self.peek(2).kind, TokenKind::Ident | TokenKind::Wildcard)
                     && matches!(self.peek(3).kind, TokenKind::Equals) =>
             {
                 self.parse_field_assignment()
@@ -117,7 +119,7 @@ impl Parser {
         let value = self.parse_expression()?;
         let span = self.span_through_semicolon(start, "after the assignment")?;
         Ok(Statement::Assignment {
-            name,
+            name: name.to_owned(),
             name_span,
             value,
             span,
@@ -134,9 +136,9 @@ impl Parser {
         let value = self.parse_expression()?;
         let span = self.span_through_semicolon(start, "after the field assignment")?;
         Ok(Statement::FieldAssignment {
-            name,
+            name: name.to_owned(),
             name_span,
-            field,
+            field: field.to_owned(),
             field_span,
             value,
             span,
@@ -200,7 +202,7 @@ impl Parser {
 
     /// Whether the cursor opens the `_ =>` default arm of a match.
     fn check_wildcard_arm(&self) -> bool {
-        matches!(&self.current().kind, TokenKind::Ident(name) if name == "_")
+        matches!(&self.current().kind, TokenKind::Wildcard)
             && matches!(self.peek(1).kind, TokenKind::FatArrow)
     }
 }

@@ -7,6 +7,10 @@ use unicode_width::UnicodeWidthChar;
 use crate::compiler::LoadedProgram;
 use crate::syntax::Span;
 
+/// The name the compiler reports under. The runtime reports under the
+/// program's own name instead.
+pub(crate) const DIAGNOSTIC_PREFIX: &str = "kc";
+
 /// One compiler error tied to a source file and byte range.
 #[derive(Debug)]
 pub(crate) struct Diagnostic {

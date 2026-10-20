@@ -101,7 +101,7 @@ use std;
 use std::text;
 
 fn check() {
-  std::process::command("echo noise").stream("stdout", "/dev/null").run();
+  std::process::command("echo noise").stream(std::process::Stream.stdout, "/dev/null").run();
 };
 
 fn main() {

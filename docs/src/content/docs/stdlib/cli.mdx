@@ -73,7 +73,8 @@ through the methods below, never by a field.
 
 | | |
 | --- | --- |
-| `std::cli::command(name: txt) -> Subcommand` | a command with no about line, flags, children, or action |
+| `std::cli::command(name: txt) -> Subcommand` | a command with no about line or children and no action yet; it starts with the help flag |
+| `std::cli::help_flag() -> Flag` | the `--help`/`-h` flag every command carries |
 | `std::cli::bool_flag(name: txt) -> Flag` | a flag that is present or absent |
 | `std::cli::value_flag(name: txt) -> Flag` | a flag that takes a value |
 | `command.about(text: txt) -> Subcommand` | this command with its about line |
@@ -105,6 +106,7 @@ use site is impossible.
 
 `command.parse(words: Vec<txt>) -> int` descends the tree by the leading words,
 accumulates the flags of the ancestors into the `Context`, and runs the leaf's
-action, whose `int` is the exit code. `--help` or `-h` prints the command's
-usage and succeeds; a flag the command does not declare stops the run with the
-usage. A command with no action reports that and fails.
+action, whose `int` is the exit code. Every command starts with the help flag,
+so `--help` or `-h` prints the command's usage and succeeds; a flag the command
+does not declare stops the run with the usage. A command with no action reports
+that and fails.

@@ -14,7 +14,12 @@ pub(crate) fn prune_unreachable(program: &mut Program) {
     let reachable = collect_reachable_declarations(program);
     let mapping = compact(program, &reachable);
     remap(program, &mapping);
-    crate::compiler::model::verify_program(program);
+    // Pruning is the one pass that rewrites every id, so the structural
+    // invariant is proved here, after the rewrite. A debug build checks it;
+    // a release build skips the walk.
+    if cfg!(debug_assertions) {
+        crate::compiler::model::verify_program(program);
+    }
 }
 
 /// Move the reachable declarations into a fresh Vector, in their old order,
@@ -138,6 +143,7 @@ impl VisitorMut for EdgeRemapper<'_> {
     fn variant(&mut self, _: &mut Expression) {}
     fn interpolated(&mut self, _: &mut Expression) {}
     fn call(&mut self, _: &mut Expression) {}
+    fn method(&mut self, _: &mut Expression) {}
     fn field(&mut self, _: &mut Expression) {}
     fn binary(&mut self, _: &mut Expression) {}
     fn unary(&mut self, _: &mut Expression) {}

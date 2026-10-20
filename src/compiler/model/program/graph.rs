@@ -1,14 +1,14 @@
 //! The program graph: the program, its files and namespaces, and the accessors
 //! over them.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use super::super::declarations::{Declaration, TypeDecl, TypeKind};
+use super::super::declarations::{Declaration, TypeDecl};
 use super::super::ids::{DeclarationId, FileId, NamespaceId};
-use super::namespace_paths::join_path;
+use super::interner::{Interner, Symbol};
 use super::tables::{MethodTable, NameTable, TypeTable};
-use crate::compiler::model::{TypeHead, TypeId};
+use crate::compiler::model::{TypeId, list_type};
 
 /// A whole program and the nodes it owns. It is compile-time only: the runtime
 /// runs the lowered bytecode, not this graph.
@@ -19,19 +19,14 @@ pub(crate) struct Program {
     pub(crate) declarations: Vec<Declaration>,
     /// The declared types, indexed by `TypeId`.
     pub(crate) types: Vec<TypeDecl>,
-    /// The declared absence type: the `std` category's `Option`. One absence
-    /// covers an unset environment variable, an absent search index, and a bare
-    /// return.
-    pub(crate) absence_type: Option<TypeId>,
-    /// The runtime's `Vec` type, registered by the compiler into the
-    /// `std::dynamic` namespace. Its representation is the runtime's, so the
-    /// lowering is the only compiler stage that reads this id.
-    pub(crate) vec_type: Option<TypeId>,
     /// The entry function: the entry file's own root `main`.
     pub(crate) entry: DeclarationId,
     /// The module values in dependency order: each is evaluated once at
     /// startup, after the values its initializer reads.
     pub(crate) module_values: Vec<DeclarationId>,
+    /// The one interner every name-table key came from. A table key is a
+    /// `Symbol`, so the spelling it names resolves through this.
+    pub(crate) intern: Interner,
 }
 
 impl Program {
@@ -44,14 +39,6 @@ impl Program {
     }
 
     /// A declared type by its id.
-    pub(crate) fn type_decl(&self, id: TypeId) -> &TypeDecl {
-        &self.types[id.0]
-    }
-
-    pub(crate) fn file(&self, id: FileId) -> &File {
-        &self.files[id.0]
-    }
-
     pub(crate) fn namespace(&self, id: NamespaceId) -> &Namespace {
         &self.namespaces[id.0]
     }
@@ -60,23 +47,11 @@ impl Program {
         NamespaceId(0)
     }
 
-    /// Whether `id` is the declared absence type.
-    pub(crate) fn is_absence_type(&self, id: TypeId) -> bool {
-        self.absence_type == Some(id)
-    }
-
-    /// The variant index of the absence within the declared absence type: the
-    /// payloadless variant (`none`). `None` for any other type.
-    pub(crate) fn absence_variant(&self, id: TypeId) -> Option<usize> {
-        if !self.is_absence_type(id) {
-            return None;
-        }
-        match &self.type_decl(id).kind {
-            TypeKind::Enum(variants) => variants
-                .iter()
-                .position(|variant| variant.payload.is_empty()),
-            TypeKind::Rec(_) => None,
-        }
+    /// The type the runtime represents itself, when the program has one: the
+    /// declaration that carries the runtime's marker. Every stage that needs
+    /// the runtime list reads its id from that marker rather than carrying it.
+    pub(crate) fn list_type(&self) -> Option<TypeId> {
+        list_type(&self.types)
     }
 
     /// The file a declaration came from. A native and a local binding have no
@@ -86,36 +61,26 @@ impl Program {
             .file
             .expect("a file declaration has a file")
     }
-
-    /// The display name of a declaration: a local binding shows its bare name,
-    /// and a file declaration shows its namespace path and name joined with
-    /// `::`.
-    pub(crate) fn display(&self, id: DeclarationId) -> String {
-        let declaration = self.declaration(id);
-        if declaration.owner.is_some() {
-            return declaration.name.clone();
-        }
-        let mut path = self.namespace_path(declaration.namespace);
-        path.push(declaration.name.clone());
-        join_path(&path)
-    }
 }
 
-/// Where a loaded file came from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Origin {
-    /// A file seeded from the compiler's own sources.
-    Embedded,
-    /// A file read from the filesystem.
-    File,
-}
-
-/// One loaded file and the declarations it holds. A file may span several
-/// namespaces through `mod` blocks, so it keeps no single namespace.
+/// One loaded file and the declarations it holds. A file belongs to exactly
+/// one namespace, the one its directory names; the namespace is recorded where
+/// each declaration joins it, so the file keeps only its path.
 #[derive(Debug)]
 pub(crate) struct File {
     pub(crate) path: PathBuf,
     pub(crate) declarations: Vec<DeclarationId>,
+}
+
+/// What a `use` path reaches. A use shortens a path to exactly one of these
+/// three things: a namespace, a type, or a plain function. A filed function is
+/// reached through its type, so it is never a use target; a module value is
+/// never a use target.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UseTarget {
+    Namespace(NamespaceId),
+    Type(TypeId),
+    Function(DeclarationId),
 }
 
 /// One namespace node: the name registry, the method and associated-function
@@ -127,7 +92,7 @@ pub(crate) struct File {
 pub(crate) struct Namespace {
     pub(crate) name: String,
     pub(crate) parent: Option<NamespaceId>,
-    pub(crate) children: HashMap<String, NamespaceId>,
+    pub(crate) children: HashMap<Symbol, NamespaceId>,
     pub(crate) names: NameTable,
     pub(crate) methods: MethodTable,
     /// The associated functions declared here, keyed by the type they are
@@ -135,32 +100,30 @@ pub(crate) struct Namespace {
     /// `Type.name(...)`, where a method is reached as `value.name(...)`.
     pub(crate) associates: MethodTable,
     pub(crate) types: TypeTable,
-    /// The `use` paths written in this namespace, whose public names it sees.
-    pub(crate) uses: Vec<Vec<String>>,
+    /// What each `use` this namespace wrote reaches, resolved once, keyed by
+    /// the name it delivers. Two `use`s may deliver one name, so the entries
+    /// keep the file's order and the reader takes the first that fits.
+    pub(crate) brought: HashMap<Symbol, Vec<UseTarget>>,
+    /// The names filed in any pool of this namespace: a filed function is not
+    /// a name, so the one-flat-map read replaces a walk over both pools.
+    pub(crate) filed: HashSet<Symbol>,
 }
 
 impl Namespace {
-    /// Every namespace-level declaration of this name in this namespace, in
-    /// registration order. A bare name resolves through this.
-    pub(crate) fn get(&self, name: &str) -> &[DeclarationId] {
-        self.names.get(name)
-    }
-
-    /// The method declared here for a receiver head and a name, if any. A
-    /// method call resolves through this.
-    pub(crate) fn method(&self, head: TypeHead, name: &str) -> Option<DeclarationId> {
-        self.methods.get(head, name)
-    }
-
-    /// The associated function declared here for a type head and a name, if
-    /// any. A `Type.name(...)` call resolves through this.
-    pub(crate) fn associate(&self, head: TypeHead, name: &str) -> Option<DeclarationId> {
-        self.associates.get(head, name)
+    /// The namespace-level declaration of this name in this namespace. A name
+    /// holds one declaration, so there is at most one. A bare name resolves
+    /// through this.
+    pub(crate) fn get(&self, intern: &Interner, name: &str) -> Option<DeclarationId> {
+        intern
+            .resolve(name)
+            .and_then(|symbol| self.names.get(symbol))
     }
 
     /// A type declared here, if any. A type annotation resolves through this.
-    pub(crate) fn type_id(&self, name: &str) -> Option<TypeId> {
-        self.types.get(name)
+    pub(crate) fn type_id(&self, intern: &Interner, name: &str) -> Option<TypeId> {
+        intern
+            .resolve(name)
+            .and_then(|symbol| self.types.get(symbol))
     }
 }
 

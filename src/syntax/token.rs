@@ -2,9 +2,18 @@
 
 use crate::syntax::Span;
 
+/// The wildcard's one written word. It is a word of its own kind: a pass reads
+/// the kind and never re-derives it from the identifier's spelling.
+pub(crate) const WILDCARD: &str = "_";
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum TokenKind {
-    Ident(String),
+    /// An identifier: its one word is its span in the source, so the token
+    /// owns no copy and the parser reads the spelling out of the source.
+    Ident,
+    /// The wildcard `_`: a match's default arm, and the payload binding a
+    /// variant pattern ignores.
+    Wildcard,
     Text(String),
     /// An integer literal.
     Int(i64),
@@ -73,7 +82,8 @@ impl TokenKind {
     /// A human readable name used in parser diagnostics.
     pub(crate) fn describe(&self) -> String {
         match self {
-            TokenKind::Ident(name) => format!("`{name}`"),
+            TokenKind::Ident => "a name".to_owned(),
+            TokenKind::Wildcard => "`_`".to_owned(),
             TokenKind::Text(_) => "a string".to_owned(),
             TokenKind::Int(value) => format!("`{value}`"),
             TokenKind::InterpolationStart => "`@(`".to_owned(),

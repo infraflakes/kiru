@@ -4,6 +4,7 @@
 //! byte streams. Everything above this byte kernel — trimming, splitting,
 //! matching — is kiru.
 
+use crate::runtime::natives::{option_none, option_some};
 use crate::runtime::{Text, Value};
 
 /// The byte at `index`, for `s.byte(index)`. An index outside the text, or a
@@ -20,13 +21,13 @@ pub(crate) fn byte(text: &str, index: i64) -> Result<Value, String> {
     Ok(Value::Int(bytes[index as usize] as i64))
 }
 
-/// The byte index of the first occurrence of `needle`, or the absence when it
-/// is not present. There is no `-1` sentinel: an absent index is `Value::Nothing`,
-/// the one absence, exactly as an absent map key or `Option.none`.
+/// The byte index of the first occurrence of `needle`, or `std::Option.none`
+/// when it is not present. There is no `-1` sentinel: a missing index is the
+/// `none` variant, exactly as a program writes it.
 pub(crate) fn find(text: &str, needle: &str) -> Value {
     match text.find(needle) {
-        Some(index) => Value::Int(index as i64),
-        None => Value::Nothing,
+        Some(index) => option_some(Value::Int(index as i64)),
+        None => option_none(),
     }
 }
 

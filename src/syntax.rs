@@ -7,8 +7,10 @@ mod span;
 mod token;
 
 pub(crate) use ast::{
-    BinaryOp, Declaration, Expression, Field, Function, Item, MatchBody, Parameter, Statement,
-    StringPart, TypeDeclaration, TypeExpr, UnaryOp,
+    Arithmetic, BinaryInstruction, BinaryOp, BinaryOperands, Comparison, Declaration, Expression,
+    Field, Function, Item, MatchBody, Parameter, Statement, StringPart, TypeDeclaration, TypeExpr,
+    UnaryOp,
 };
 pub(crate) use parser::parse_file;
 pub(crate) use span::Span;
+pub(crate) use token::WILDCARD;

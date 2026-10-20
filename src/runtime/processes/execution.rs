@@ -15,14 +15,14 @@ use std::time::{Duration, Instant};
 use nix::errno::Errno;
 #[cfg(target_os = "linux")]
 use nix::sys::prctl::set_pdeathsig;
-use nix::sys::signal::Signal;
+use nix::sys::signal::{SigSet, SigmaskHow, Signal, sigprocmask};
 use nix::unistd::Pid;
 #[cfg(target_os = "linux")]
 use nix::unistd::getppid;
 
 use crate::runtime::Panic;
 
-use super::signals::signal_group;
+use super::signals::{STOP_SIGNALS, signal_group};
 use super::state::RuntimeState;
 
 /// How long a stopping group is given before SIGKILL.
@@ -40,15 +40,11 @@ pub(crate) fn spawn(state: &RuntimeState, argv: &[String]) -> Result<i32, String
         return Err("`spawn` needs at least the program to run".to_owned());
     };
     let mut command = command_for(argv);
-    let mut child = command
+    let child = command
         .spawn()
         .map_err(|error| format!("{program}: {error}"))?;
     let pid = child.id() as i32;
-    if !state.register(pid) {
-        signal_group(pid, Signal::SIGKILL);
-        let _ = child.wait();
-        return Err("too many concurrent processes".to_owned());
-    }
+    state.processes.register(pid);
     state.processes.store_child(pid, child);
     Ok(pid)
 }
@@ -61,21 +57,22 @@ pub(crate) enum WaitFailure {
     Cancelled,
 }
 
-/// Reap the process `pid` and return its raw `wait` status. What the status
-/// means — `128 + signal` when a signal ended the process, its own code
-/// otherwise — is the standard library's rule, not the syscall's. A stop
-/// condition ends the wait early.
+/// Reap the process `pid` and return the kernel's raw `wait` status, untouched.
+/// What the status means — `128 + signal` when a signal ended the process, its
+/// own code otherwise — is the standard library's rule, decoded in
+/// `std::process::wait_for`; the runtime forwards the word and owns no second
+/// encoding. A stop condition ends the wait early.
 pub(crate) fn wait_for(state: &RuntimeState, pid: i32) -> Result<i32, WaitFailure> {
     let Some(mut child) = state.processes.take_child(pid) else {
         return Err(WaitFailure::Reported(format!("{pid}: no such process")));
     };
     let waited = wait_for_stop(state, &mut child, pid);
-    state.unregister(pid);
+    state.processes.unregister(pid);
     let status = waited?;
     if state.cancelled() {
         return Err(WaitFailure::Cancelled);
     }
-    Ok(raw_status(status))
+    Ok(status.into_raw())
 }
 
 /// Send the signal `number` to the process group `pid`. The number is the
@@ -136,16 +133,6 @@ fn wait_for_stop(
     }
 }
 
-/// The raw `wait` status a finished command encodes: the exit code in the high
-/// byte, the signal in the low seven bits, exactly as `waitpid` reports it.
-/// Decoding it into an exit code is the standard library's job.
-fn raw_status(status: ExitStatus) -> i32 {
-    if let Some(signal) = status.signal() {
-        return signal;
-    }
-    status.code().unwrap_or(1) << 8
-}
-
 fn command_for(argv: &[String]) -> ProcessCommand {
     let mut command = ProcessCommand::new(&argv[0]);
     command.args(&argv[1..]);
@@ -153,9 +140,20 @@ fn command_for(argv: &[String]) -> ProcessCommand {
     command.process_group(0);
     #[cfg(target_os = "linux")]
     // SAFETY: the closure runs between fork and exec, and only calls
-    // async-signal-safe functions (prctl, getppid, and an errno error).
+    // async-signal-safe functions (`sigprocmask`, prctl, getppid, and an errno
+    // error).
     unsafe {
         command.pre_exec(|| {
+            // The run blocks the stop signals so its monitor can read them from
+            // a signalfd; the child must not inherit that mask, or a stop would
+            // leave the signal pending instead of ending it. `signalfd(2)`
+            // documents unblocking before `execve` for exactly this case.
+            let mut stop = SigSet::empty();
+            for signal in STOP_SIGNALS {
+                stop.add(signal);
+            }
+            sigprocmask(SigmaskHow::SIG_UNBLOCK, Some(&stop), None)
+                .map_err(std::io::Error::from)?;
             set_pdeathsig(Signal::SIGKILL).map_err(std::io::Error::from)?;
             // The parent may have died between fork and prctl; in that case
             // the death signal was already delivered or never will be.

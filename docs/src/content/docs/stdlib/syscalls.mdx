@@ -11,6 +11,8 @@ builder, the signal-name table, the path helpers — are ordinary kiru in
 Commands](/commands/running-a-command/) shows how they fit together.
 
 A file descriptor is an `int`: `0` for stdin, `1` for stdout, `2` for stderr.
+`write` and `isatty` take any descriptor and hand it to the kernel, so a
+descriptor the process does not hold fails with the kernel's `EBADF`.
 
 <details>
 <summary><code>write</code> — write to a stream</summary>
@@ -19,9 +21,11 @@ A file descriptor is an `int`: `0` for stdin, `1` for stdout, `2` for stderr.
 std::syscalls::write(file_descriptor: int, text: txt)
 ```
 
-Writes `text` to one stream exactly, with no added newline.
+Writes `text` to one descriptor exactly, with no added newline.
 
-- `file_descriptor` — `1` for stdout or `2` for stderr.
+- `file_descriptor` — the descriptor to write to; `1` is stdout and `2` is
+  stderr, and any descriptor is accepted. A descriptor the process does not
+  hold fails with the kernel's `EBADF`.
 - `text` — the bytes to write.
 
 ```kiru
@@ -40,9 +44,11 @@ fn main() {
 std::syscalls::isatty(file_descriptor: int) -> bool
 ```
 
-Tells whether a stream is connected to a terminal.
+Tells whether a descriptor is connected to a terminal.
 
-- `file_descriptor` — `1` for stdout or `2` for stderr.
+- `file_descriptor` — the descriptor to ask about; `1` is stdout and `2` is
+  stderr, and any descriptor is accepted. A descriptor the process does not
+  hold fails with the kernel's `EBADF`.
 - Returns `true` or `false`.
 
 ```kiru

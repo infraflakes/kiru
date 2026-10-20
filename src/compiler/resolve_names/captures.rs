@@ -72,6 +72,7 @@ impl crate::compiler::model::Visitor for LocalCollector {
     fn interpolated(&mut self, _: &Expression) {}
     fn reference(&mut self, _: &Expression) {}
     fn call(&mut self, _: &Expression) {}
+    fn method(&mut self, _: &Expression) {}
     fn field(&mut self, _: &Expression) {}
     fn binary(&mut self, _: &Expression) {}
     fn unary(&mut self, _: &Expression) {}
@@ -88,12 +89,16 @@ impl crate::compiler::model::Visitor for LocalCollector {
     fn value_pattern(&mut self, _: &Pattern) {}
     fn expression_body(&mut self, _: &MatchBody) {}
     fn block_body(&mut self, _: &MatchBody) {}
+
+    fn enters_deferred_body(&self) -> bool {
+        true
+    }
 }
 
 /// Collects the enclosing locals a function literal body reads, following into
 /// nested literals so a value they need is present in this frame too.
 struct CaptureCollector<'a> {
-    declarations: &'a [Option<Declaration>],
+    declarations: &'a [Declaration],
     locals: &'a std::collections::HashSet<DeclarationId>,
     captures: Vec<DeclarationId>,
 }
@@ -103,9 +108,7 @@ impl crate::compiler::model::Visitor for CaptureCollector<'_> {
         let Expression::Reference { declaration, .. } = expression else {
             unreachable!("the walk names a reference");
         };
-        let is_local = self.declarations[declaration.0]
-            .as_ref()
-            .is_some_and(|node| node.owner.is_some());
+        let is_local = self.declarations[declaration.0].kind.local();
         if is_local && !self.locals.contains(declaration) && !self.captures.contains(declaration) {
             self.captures.push(*declaration);
         }
@@ -118,6 +121,7 @@ impl crate::compiler::model::Visitor for CaptureCollector<'_> {
     fn variant(&mut self, _: &Expression) {}
     fn interpolated(&mut self, _: &Expression) {}
     fn call(&mut self, _: &Expression) {}
+    fn method(&mut self, _: &Expression) {}
     fn field(&mut self, _: &Expression) {}
     fn binary(&mut self, _: &Expression) {}
     fn unary(&mut self, _: &Expression) {}
@@ -137,4 +141,8 @@ impl crate::compiler::model::Visitor for CaptureCollector<'_> {
     fn variant_pattern(&mut self, _: &Pattern) {}
     fn expression_body(&mut self, _: &MatchBody) {}
     fn block_body(&mut self, _: &MatchBody) {}
+
+    fn enters_deferred_body(&self) -> bool {
+        true
+    }
 }

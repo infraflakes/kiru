@@ -5,11 +5,11 @@
 //! called through a function value, a `match` becomes a compare-and-jump chain
 //! that keeps the first-match order, and a native call is dispatched by index.
 
-use crate::compiler::bytecode::{Code, CompareOp, Instruction, NumberOp};
+use crate::compiler::bytecode::{Code, Instruction};
 use crate::compiler::model::{
     DeclarationId, Expression, Function, MatchArm, MatchBody, Pattern, Statement, StringPart,
 };
-use crate::syntax::{BinaryOp, UnaryOp};
+use crate::syntax::{BinaryInstruction, BinaryOp, UnaryOp};
 
 use super::lower_bytecode::Lowerer;
 
@@ -146,8 +146,8 @@ impl Lowerer<'_> {
                 }
             }
             Statement::Return { value, .. } => {
-                // A bare `return;` returns the one absence, exactly as an
-                // `Option.none` or a missing map key produces it.
+                // A bare `return;` returns the no-value marker: it is not a
+                // value of any type, and no variant constructs it.
                 let value = match value {
                     Some(value) => self.expression(value),
                     None => {
@@ -220,6 +220,11 @@ impl Lowerer<'_> {
                 dst
             }
             Expression::Reference { declaration, .. } => self.lower_reference(*declaration),
+            // The check resolves every family callee it accepts, so lowering
+            // reads only the reference edge it wrote.
+            Expression::Method { .. } => {
+                unreachable!("the check resolved every call's callee");
+            }
             Expression::Function(function) => self.lower_function_expression(function),
             Expression::Call {
                 callee, arguments, ..
@@ -236,24 +241,7 @@ impl Lowerer<'_> {
                     .push(Instruction::GetField { dst, map, key });
                 dst
             }
-            Expression::Variant {
-                ty, index, payload, ..
-            } => {
-                // The declared absence type is untagged: its absence variant is
-                // the one absence, and its presence variant is the payload
-                // itself, so a missing map key and an absent value are the same.
-                if self.program.is_absence_type(*ty) {
-                    if self.program.absence_variant(*ty) == Some(*index) {
-                        let dst = self.fresh();
-                        self.instructions.push(Instruction::LoadNothing { dst });
-                        return dst;
-                    }
-                    return self.expression(
-                        payload
-                            .first()
-                            .expect("the presence variant carries its value"),
-                    );
-                }
+            Expression::Variant { index, payload, .. } => {
                 let mut slots = Vec::with_capacity(payload.len());
                 for element in payload {
                     slots.push(self.expression(element));
@@ -284,40 +272,44 @@ impl Lowerer<'_> {
         dst
     }
 
-    /// Lower a binary operator. `&&` and `||` short-circuit; every other
-    /// operator evaluates both operands and applies one instruction.
+    /// Lower a binary operator. The operator's own facts name the instruction
+    /// it becomes; `&&` and `||` short-circuit, and every other operator
+    /// evaluates both operands and applies one instruction.
     fn lower_binary(&mut self, op: BinaryOp, left: &Expression, right: &Expression) -> u16 {
-        if matches!(op, BinaryOp::And | BinaryOp::Or) {
-            return self.lower_short_circuit(op, left, right);
+        match op.facts().instruction {
+            BinaryInstruction::ShortCircuitOr => self.lower_short_circuit(true, left, right),
+            BinaryInstruction::ShortCircuitAnd => self.lower_short_circuit(false, left, right),
+            BinaryInstruction::Arithmetic(arithmetic) => {
+                let left = self.expression(left);
+                let right = self.expression(right);
+                let dst = self.fresh();
+                self.instructions.push(Instruction::NumberOp {
+                    op: arithmetic.into(),
+                    dst,
+                    left,
+                    right,
+                });
+                dst
+            }
+            BinaryInstruction::Comparison(comparison) => {
+                let left = self.expression(left);
+                let right = self.expression(right);
+                let dst = self.fresh();
+                self.instructions.push(Instruction::Compare {
+                    op: comparison.into(),
+                    dst,
+                    left,
+                    right,
+                });
+                dst
+            }
         }
-        let left = self.expression(left);
-        let right = self.expression(right);
-        let dst = self.fresh();
-        match op {
-            BinaryOp::Add
-            | BinaryOp::Subtract
-            | BinaryOp::Multiply
-            | BinaryOp::Divide
-            | BinaryOp::Remainder => self.instructions.push(Instruction::NumberOp {
-                op: number_op(op),
-                dst,
-                left,
-                right,
-            }),
-            _ => self.instructions.push(Instruction::Compare {
-                op: compare_op(op),
-                dst,
-                left,
-                right,
-            }),
-        }
-        dst
     }
 
     /// Lower `&&` and `||` with short-circuit: the right operand runs only when
     /// the left does not already decide the result. The result lands in one
     /// register, seeded with the left operand.
-    fn lower_short_circuit(&mut self, op: BinaryOp, left: &Expression, right: &Expression) -> u16 {
+    fn lower_short_circuit(&mut self, or: bool, left: &Expression, right: &Expression) -> u16 {
         let dst = self.fresh();
         let left = self.expression(left);
         self.instructions.push(Instruction::StoreLocal {
@@ -329,7 +321,7 @@ impl Lowerer<'_> {
             target: 0,
             condition: dst,
         });
-        if op == BinaryOp::Or {
+        if or {
             // A true left decides `||`, so skip the right operand.
             let skip = self.instructions.len();
             self.instructions.push(Instruction::Jump { target: 0 });
@@ -416,13 +408,18 @@ impl Lowerer<'_> {
                 .expect("a callable body is a function expression");
             let code = self.declaration_codes[declaration.0].expect("a function has a code");
             self.make_function(dst, code, function);
-        } else if node.kind.has_value() && node.owner.is_none() {
+        } else if node.kind.module_value() {
             let global =
                 self.declaration_globals[declaration.0].expect("a module value has a global");
             self.instructions
                 .push(Instruction::LoadGlobal { dst, global });
         } else {
-            debug_assert!(!node.kind.native());
+            // The checker rejects a native used as a value, because a native has
+            // no value form; the invariant is enforced in every build.
+            assert!(
+                !node.kind.native(),
+                "the checker rejects a native used as a value"
+            );
             let slot = self.slot(declaration);
             self.instructions.push(Instruction::LoadLocal { dst, slot });
         }
@@ -462,11 +459,13 @@ impl Lowerer<'_> {
     }
 
     fn lower_async(&mut self, call: &Expression) {
+        // The checker owns the shape rule: `async` takes a call. Lowering never
+        // sees any other expression, so a non-call is a compiler invariant.
         let Expression::Call {
             callee, arguments, ..
         } = call
         else {
-            return;
+            unreachable!("the checker rejects `async` without a call");
         };
         if let Expression::Reference { declaration, .. } = callee.as_ref()
             && let Some(native) = self.program.declaration(*declaration).native
@@ -519,54 +518,25 @@ impl Lowerer<'_> {
                     Patch::Value(jump_next)
                 }
                 Pattern::Variant {
-                    ty,
-                    index,
-                    bindings,
-                    ..
+                    index, bindings, ..
                 } => {
-                    // The absence type is untagged: the absence variant tests
-                    // the one absence, and the presence variant binds the value
-                    // itself.
-                    if self.program.is_absence_type(*ty) {
-                        let test = self.instructions.len();
-                        if self.program.absence_variant(*ty) == Some(*index) {
-                            self.instructions.push(Instruction::JumpIfNotNothing {
-                                value: subject,
-                                jump: 0,
+                    let test = self.instructions.len();
+                    self.instructions.push(Instruction::JumpIfVariantNotEqual {
+                        target: subject,
+                        tag: *index as u16,
+                        jump: 0,
+                    });
+                    for (position, binding) in bindings.iter().enumerate() {
+                        if let Some(declaration) = binding {
+                            let dst = self.slot(*declaration);
+                            self.instructions.push(Instruction::GetVariantField {
+                                dst,
+                                variant: subject,
+                                index: position as u16,
                             });
-                        } else {
-                            self.instructions.push(Instruction::JumpIfNothing {
-                                value: subject,
-                                jump: 0,
-                            });
-                            for declaration in bindings.iter().flatten() {
-                                let dst = self.slot(*declaration);
-                                self.instructions.push(Instruction::StoreLocal {
-                                    slot: dst,
-                                    src: subject,
-                                });
-                            }
                         }
-                        Patch::Variant(test)
-                    } else {
-                        let test = self.instructions.len();
-                        self.instructions.push(Instruction::JumpIfVariantNotEqual {
-                            target: subject,
-                            tag: *index as u16,
-                            jump: 0,
-                        });
-                        for (position, binding) in bindings.iter().enumerate() {
-                            if let Some(declaration) = binding {
-                                let dst = self.slot(*declaration);
-                                self.instructions.push(Instruction::GetVariantField {
-                                    dst,
-                                    variant: subject,
-                                    index: position as u16,
-                                });
-                            }
-                        }
-                        Patch::Variant(test)
                     }
+                    Patch::Variant(test)
                 }
             };
             self.lower_match_body(&arm.body, dst);
@@ -581,9 +551,7 @@ impl Lowerer<'_> {
                     }
                 }
                 Patch::Variant(at) => match &mut self.instructions[at] {
-                    Instruction::JumpIfVariantNotEqual { jump, .. }
-                    | Instruction::JumpIfNothing { jump, .. }
-                    | Instruction::JumpIfNotNothing { jump, .. } => *jump = next,
+                    Instruction::JumpIfVariantNotEqual { jump, .. } => *jump = next,
                     other => unreachable!("a variant arm tests a variant, found {other:?}"),
                 },
             }
@@ -657,30 +625,5 @@ impl Lowerer<'_> {
         self.constants.push(text.to_owned());
         self.constant_index.insert(text.to_owned(), index);
         index
-    }
-}
-
-/// The integer operation an arithmetic operator lowers to.
-fn number_op(op: BinaryOp) -> NumberOp {
-    match op {
-        BinaryOp::Add => NumberOp::Add,
-        BinaryOp::Subtract => NumberOp::Subtract,
-        BinaryOp::Multiply => NumberOp::Multiply,
-        BinaryOp::Divide => NumberOp::Divide,
-        BinaryOp::Remainder => NumberOp::Remainder,
-        _ => unreachable!("not an arithmetic operator"),
-    }
-}
-
-/// The comparison a comparison operator lowers to.
-fn compare_op(op: BinaryOp) -> CompareOp {
-    match op {
-        BinaryOp::Less => CompareOp::Less,
-        BinaryOp::LessEqual => CompareOp::LessEqual,
-        BinaryOp::Greater => CompareOp::Greater,
-        BinaryOp::GreaterEqual => CompareOp::GreaterEqual,
-        BinaryOp::Equal => CompareOp::Equal,
-        BinaryOp::NotEqual => CompareOp::NotEqual,
-        _ => unreachable!("not a comparison operator"),
     }
 }

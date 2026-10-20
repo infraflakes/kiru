@@ -3,7 +3,7 @@
 //! Each function, module value, and the entry becomes one `Code`; a call names
 //! a code id, a local reads a register, and a module value reads a global.
 
-use crate::native_registry::Native;
+use crate::compiler::native_registry::{Native, NativeSignature};
 
 /// A whole program as bytecode, ready to serialize and run.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -11,11 +11,25 @@ pub(crate) struct Bytecode {
     pub(crate) codes: Vec<Code>,
     /// The text literals and map keys the instructions reference.
     pub(crate) constants: Vec<String>,
-    /// The code id of each module value, in declaration order. The startup pass
-    /// runs them once and stores the result in the globals table.
-    pub(crate) module_values: Vec<u32>,
+    /// The startup plan for module values, in evaluation order. Each entry runs
+    /// its code once and stores the result in its global.
+    pub(crate) module_values: Vec<ModuleValue>,
     /// The code id of the entry function.
     pub(crate) entry: u32,
+    /// Every native's declared parameter shapes, in declaration order. The
+    /// runtime decodes a native call from its row rather than a per-handler
+    /// stack discipline.
+    pub(crate) natives: Vec<NativeSignature>,
+}
+
+/// One module value's startup entry: the code that evaluates its initializer
+/// and the global that receives the value. The code is chosen in evaluation
+/// order and the global in declaration order, so the two are one entry rather
+/// than one numbering forced to serve both.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ModuleValue {
+    pub(crate) code: u32,
+    pub(crate) global: u32,
 }
 
 /// One callable: a function body, a module value initializer, or a defer body.
@@ -57,9 +71,9 @@ pub(crate) enum Instruction {
         tag: u16,
         payload: Vec<u16>,
     },
-    /// Load the absence into `dst`: the `none` of the declared absence type and
-    /// the no-value result of a call that returns nothing. There is one
-    /// absence.
+    /// Load the no-value marker into `dst`: what a bare `return;` returns from
+    /// a function that declares no return type, and what a native with no
+    /// result produces. It is not a value of any type.
     LoadNothing {
         dst: u16,
     },
@@ -67,16 +81,6 @@ pub(crate) enum Instruction {
     JumpIfVariantNotEqual {
         target: u16,
         tag: u16,
-        jump: u32,
-    },
-    /// Jump when the value is the absence; the `none` arm of a match.
-    JumpIfNothing {
-        value: u16,
-        jump: u32,
-    },
-    /// Jump when the value is present; the `some` arm of a match.
-    JumpIfNotNothing {
-        value: u16,
         jump: u32,
     },
     /// Extract payload position `index` of a variant into `dst`.
@@ -165,7 +169,8 @@ pub(crate) enum Instruction {
         arguments: Vec<u16>,
     },
     /// Return the value in `value`. A `return;` in a function that returns
-    /// nothing loads the absence first, so a return always names one register.
+    /// nothing loads the no-value marker first, so a return always names one
+    /// register.
     Return {
         value: u16,
     },
@@ -210,4 +215,35 @@ pub(crate) enum CompareOp {
     GreaterEqual,
     Equal,
     NotEqual,
+}
+
+impl From<crate::syntax::Arithmetic> for NumberOp {
+    /// The instruction an operator's arithmetic fact names. The mapping lives
+    /// beside the instruction set, so the operator table names no instruction
+    /// variant itself.
+    fn from(arithmetic: crate::syntax::Arithmetic) -> Self {
+        use crate::syntax::Arithmetic;
+        match arithmetic {
+            Arithmetic::Add => NumberOp::Add,
+            Arithmetic::Subtract => NumberOp::Subtract,
+            Arithmetic::Multiply => NumberOp::Multiply,
+            Arithmetic::Divide => NumberOp::Divide,
+            Arithmetic::Remainder => NumberOp::Remainder,
+        }
+    }
+}
+
+impl From<crate::syntax::Comparison> for CompareOp {
+    /// The instruction an operator's comparison fact names.
+    fn from(comparison: crate::syntax::Comparison) -> Self {
+        use crate::syntax::Comparison;
+        match comparison {
+            Comparison::Less => CompareOp::Less,
+            Comparison::LessEqual => CompareOp::LessEqual,
+            Comparison::Greater => CompareOp::Greater,
+            Comparison::GreaterEqual => CompareOp::GreaterEqual,
+            Comparison::Equal => CompareOp::Equal,
+            Comparison::NotEqual => CompareOp::NotEqual,
+        }
+    }
 }

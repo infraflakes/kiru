@@ -13,6 +13,20 @@ pub(crate) fn count(count: usize, noun: &str) -> String {
     }
 }
 
+/// The message for a variant payload that does not carry one item per declared
+/// payload type, or `None` when it does. `subject` is how the site writes the
+/// variant and `noun` names its items there, so a construction and a pattern
+/// share the count check while each keeps its own noun.
+pub(crate) fn variant_payload_count(
+    subject: &str,
+    declared: usize,
+    found: usize,
+    noun: &str,
+) -> Option<String> {
+    (found != declared)
+        .then(|| format!("`{subject}` takes {}, found {found}", count(declared, noun)))
+}
+
 /// The message for a value of the wrong type: `expected <required>, found
 /// <actual>`, where both names come from the type system.
 pub(crate) fn expected_instead(required: &str, actual: &str) -> String {

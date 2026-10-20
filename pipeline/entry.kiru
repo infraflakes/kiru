@@ -1,3 +1,0 @@
-# The program tree's root: `main.kiru` declares `main`, and this file is a
-# placeholder for root-level declarations. The `kiru` directory is the
-# `root::kiru` namespace, loaded with the whole tree.

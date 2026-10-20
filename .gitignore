@@ -13,4 +13,4 @@ docs/dist/
 docs/.astro/
 test
 test.kiru
-rust-book/
+.codegraph

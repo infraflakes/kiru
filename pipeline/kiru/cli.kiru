@@ -32,12 +32,12 @@ ci      check and build both";
 pub fn usage() -> txt { return "@(usage_kiru)\n\n@(usage_docs)\n\n@(usage_all)"; };
 
 fn container_cmd() -> txt {
-  match std::process::command("command -v docker").stream("stdout", "/dev/null").stream("stderr", "/dev/null").run() {
+  match std::process::command("command -v docker").stream(std::process::Stream.stdout, "/dev/null").stream(std::process::Stream.stderr, "/dev/null").run() {
     0 => {
       return "docker";
     };
     _ => {
-      match std::process::command("command -v podman").stream("stdout", "/dev/null").stream("stderr", "/dev/null").run() {
+      match std::process::command("command -v podman").stream(std::process::Stream.stdout, "/dev/null").stream(std::process::Stream.stderr, "/dev/null").run() {
         0 => {
           return "podman";
         };

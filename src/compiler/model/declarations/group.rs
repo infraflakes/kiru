@@ -1,8 +1,8 @@
 //! The kinds a declaration can have, and every fact each kind declares.
 //!
 //! A declaration kind is the form a declaration is written in: a plain `fn`, a
-//! `let` module value, a `rec`, an `enum`, a function filed under a type by an
-//! `impl` block, or a native. Every fact about a kind is declared here, once,
+//! `let` module value, a `let` local binding, a `rec`, an `enum`, a function
+//! filed under a type by an `impl` block, or a native. Every fact about a kind is declared here, once,
 //! as one match over `DeclarationKind` with an arm for every kind and no
 //! wildcard: a kind that is not handled fails to compile, so a form can never
 //! fall through to a silent default. The loader, the resolver, the checker, and
@@ -17,9 +17,12 @@ use crate::compiler::model::Group;
 pub(crate) enum DeclarationKind {
     /// A plain `fn` declared at namespace level.
     Function,
-    /// A `let` declaration: a module value at the top level, or a local
-    /// binding inside a body.
-    Let,
+    /// A `let` declared at namespace level: a module value, evaluated once at
+    /// load and reached as a global.
+    ModuleValue,
+    /// A `let` inside a body: a local binding, or a parameter. It is storage
+    /// owned by the function that declares it.
+    Local,
     /// A `rec Name { ... }` type declaration.
     Rec,
     /// An `enum Name { ... }` type declaration.
@@ -36,7 +39,8 @@ impl DeclarationKind {
     pub(crate) fn has_name(self) -> bool {
         match self {
             DeclarationKind::Function => true,
-            DeclarationKind::Let => true,
+            DeclarationKind::ModuleValue => true,
+            DeclarationKind::Local => true,
             DeclarationKind::Rec => true,
             DeclarationKind::Enum => true,
             DeclarationKind::Impl => true,
@@ -50,7 +54,8 @@ impl DeclarationKind {
     pub(crate) fn has_body(self) -> bool {
         match self {
             DeclarationKind::Function => true,
-            DeclarationKind::Let => false,
+            DeclarationKind::ModuleValue => false,
+            DeclarationKind::Local => false,
             DeclarationKind::Rec => false,
             DeclarationKind::Enum => false,
             DeclarationKind::Impl => true,
@@ -58,17 +63,10 @@ impl DeclarationKind {
         }
     }
 
-    /// Whether the form is a value form: a `let`, which is a module value at
-    /// the top level and storage when owned by a function.
+    /// Whether the form is a value form: a `let`, whether it is a module value
+    /// or a local binding.
     pub(crate) fn has_value(self) -> bool {
-        match self {
-            DeclarationKind::Function => false,
-            DeclarationKind::Let => true,
-            DeclarationKind::Rec => false,
-            DeclarationKind::Enum => false,
-            DeclarationKind::Impl => false,
-            DeclarationKind::Native => false,
-        }
+        self.module_value() || self.local()
     }
 
     /// Whether the form may be written `pub`. A `let` and an `impl` block take
@@ -76,7 +74,8 @@ impl DeclarationKind {
     pub(crate) fn takes_visibility(self) -> bool {
         match self {
             DeclarationKind::Function => true,
-            DeclarationKind::Let => false,
+            DeclarationKind::ModuleValue => false,
+            DeclarationKind::Local => false,
             DeclarationKind::Rec => true,
             DeclarationKind::Enum => true,
             DeclarationKind::Impl => false,
@@ -85,11 +84,13 @@ impl DeclarationKind {
     }
 
     /// Whether the name is a namespace-level name. An `impl` member's name
-    /// belongs to its type, so it never joins the namespace name pool.
+    /// belongs to its type and a local binding's name belongs to its function,
+    /// so neither joins the namespace name pool.
     pub(crate) fn owns_name(self) -> bool {
         match self {
             DeclarationKind::Function => true,
-            DeclarationKind::Let => true,
+            DeclarationKind::ModuleValue => true,
+            DeclarationKind::Local => false,
             DeclarationKind::Rec => true,
             DeclarationKind::Enum => true,
             DeclarationKind::Impl => false,
@@ -102,7 +103,8 @@ impl DeclarationKind {
     pub(crate) fn is_bound(self) -> bool {
         match self {
             DeclarationKind::Function => false,
-            DeclarationKind::Let => false,
+            DeclarationKind::ModuleValue => false,
+            DeclarationKind::Local => false,
             DeclarationKind::Rec => false,
             DeclarationKind::Enum => false,
             DeclarationKind::Impl => true,
@@ -114,7 +116,8 @@ impl DeclarationKind {
     pub(crate) fn may_be_entry(self) -> bool {
         match self {
             DeclarationKind::Function => true,
-            DeclarationKind::Let => false,
+            DeclarationKind::ModuleValue => false,
+            DeclarationKind::Local => false,
             DeclarationKind::Rec => false,
             DeclarationKind::Enum => false,
             DeclarationKind::Impl => false,
@@ -122,12 +125,13 @@ impl DeclarationKind {
         }
     }
 
-    /// Whether a `use` may name the form. A module value and an `impl` member
-    /// are never namespace-level names a `use` may reach.
+    /// Whether a `use` may name the form. A module value, a local binding, and
+    /// an `impl` member are never namespace-level names a `use` may reach.
     pub(crate) fn useable(self) -> bool {
         match self {
             DeclarationKind::Function => true,
-            DeclarationKind::Let => false,
+            DeclarationKind::ModuleValue => false,
+            DeclarationKind::Local => false,
             DeclarationKind::Rec => true,
             DeclarationKind::Enum => true,
             DeclarationKind::Impl => false,
@@ -136,11 +140,26 @@ impl DeclarationKind {
     }
 
     /// Whether the form runs at load: a top-level `let` is evaluated once
-    /// before the entry.
+    /// before the entry, and a local binding is storage inside a body.
     pub(crate) fn module_value(self) -> bool {
         match self {
             DeclarationKind::Function => false,
-            DeclarationKind::Let => true,
+            DeclarationKind::ModuleValue => true,
+            DeclarationKind::Local => false,
+            DeclarationKind::Rec => false,
+            DeclarationKind::Enum => false,
+            DeclarationKind::Impl => false,
+            DeclarationKind::Native => false,
+        }
+    }
+
+    /// Whether the form is storage inside a function: a parameter or a local
+    /// binding. Its name is bare in the body that owns it.
+    pub(crate) fn local(self) -> bool {
+        match self {
+            DeclarationKind::Function => false,
+            DeclarationKind::ModuleValue => false,
+            DeclarationKind::Local => true,
             DeclarationKind::Rec => false,
             DeclarationKind::Enum => false,
             DeclarationKind::Impl => false,
@@ -152,7 +171,8 @@ impl DeclarationKind {
     pub(crate) fn callable(self) -> bool {
         match self {
             DeclarationKind::Function => true,
-            DeclarationKind::Let => false,
+            DeclarationKind::ModuleValue => false,
+            DeclarationKind::Local => false,
             DeclarationKind::Rec => false,
             DeclarationKind::Enum => false,
             DeclarationKind::Impl => true,
@@ -180,7 +200,8 @@ impl DeclarationKind {
             DeclarationKind::Rec => Some(Group::Rec),
             DeclarationKind::Enum => Some(Group::Enum),
             DeclarationKind::Function => None,
-            DeclarationKind::Let => None,
+            DeclarationKind::ModuleValue => None,
+            DeclarationKind::Local => None,
             DeclarationKind::Impl => None,
             DeclarationKind::Native => None,
         }
@@ -198,7 +219,8 @@ mod tests {
         // this file rather than a gap. The assertions name the facts.
         let kinds = [
             DeclarationKind::Function,
-            DeclarationKind::Let,
+            DeclarationKind::ModuleValue,
+            DeclarationKind::Local,
             DeclarationKind::Rec,
             DeclarationKind::Enum,
             DeclarationKind::Impl,
@@ -206,8 +228,8 @@ mod tests {
         ];
         assert_eq!(
             kinds.len(),
-            6,
-            "the model has exactly six declaration kinds"
+            7,
+            "the model has exactly seven declaration kinds"
         );
 
         for kind in kinds {
@@ -220,6 +242,7 @@ mod tests {
             let _ = kind.may_be_entry();
             let _ = kind.useable();
             let _ = kind.module_value();
+            let _ = kind.local();
             let _ = kind.callable();
             let _ = kind.declares_type();
             let _ = kind.native();
@@ -232,11 +255,20 @@ mod tests {
         assert!(DeclarationKind::Function.has_body());
         assert!(!DeclarationKind::Function.module_value());
 
-        assert!(DeclarationKind::Let.has_value());
-        assert!(DeclarationKind::Let.module_value());
-        assert!(!DeclarationKind::Let.takes_visibility());
-        assert!(!DeclarationKind::Let.useable());
-        assert!(!DeclarationKind::Let.callable());
+        assert!(DeclarationKind::ModuleValue.has_value());
+        assert!(DeclarationKind::ModuleValue.module_value());
+        assert!(!DeclarationKind::ModuleValue.local());
+        assert!(!DeclarationKind::ModuleValue.takes_visibility());
+        assert!(!DeclarationKind::ModuleValue.useable());
+        assert!(!DeclarationKind::ModuleValue.callable());
+
+        assert!(DeclarationKind::Local.has_value());
+        assert!(DeclarationKind::Local.local());
+        assert!(!DeclarationKind::Local.module_value());
+        assert!(!DeclarationKind::Local.owns_name());
+        assert!(!DeclarationKind::Local.takes_visibility());
+        assert!(!DeclarationKind::Local.useable());
+        assert!(!DeclarationKind::Local.callable());
 
         assert_eq!(DeclarationKind::Rec.group(), Some(Group::Rec));
         assert_eq!(DeclarationKind::Enum.group(), Some(Group::Enum));

@@ -254,6 +254,7 @@ mod tests {
                 public: true,
                 namespace: NamespaceId(0),
                 parameters: Vec::new(),
+                runtime: crate::compiler::model::RuntimeType::Declared,
                 kind: TypeKind::Rec(Vec::new()),
             })
             .collect()

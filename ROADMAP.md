@@ -441,7 +441,7 @@ orchestration programs smaller and clearer?
 
 ## Intrinsic-surface budget
 
-The native surface is the rows in `src/native_registry.rs`, tagged by
+The native surface is the rows in `src/compiler/native_registry.rs`, tagged by
 disposition. The floor is the OS boundary; the rest moves into kiru as the core
 gains capability.
 

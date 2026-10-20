@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 
 use crate::compiler::load_files::load_error::LoadError;
 use crate::compiler::load_files::loaded_program::LoadedProgram;
-use crate::compiler::model::Origin;
 
 use super::embedded::EMBEDDED;
 use super::record::Loader;
@@ -21,10 +20,7 @@ pub(crate) const PROGRAM_TREE: &str = "root";
 
 /// The standard library's tree name: the first namespace segment of every
 /// embedded file.
-const STD_TREE: &str = "std";
-
-/// The embedded path prefix the standard library's files are keyed under.
-const STD_PREFIX: &str = "<std>/";
+pub(crate) const STD_TREE: &str = "std";
 
 /// Load the standard library and the entry file's whole directory tree.
 pub(crate) fn load_files(entry: &Path) -> Result<LoadedProgram, LoadError> {
@@ -38,14 +34,12 @@ pub(crate) fn load_files(entry: &Path) -> Result<LoadedProgram, LoadError> {
 
     let mut loader = Loader::new();
 
-    for (path, source) in EMBEDDED {
-        let namespace = namespace_of(path, STD_PREFIX, STD_TREE);
-        loader.add(
-            PathBuf::from(path),
-            (*source).to_owned(),
-            Origin::Embedded,
-            namespace,
-        )?;
+    for (relative, source) in EMBEDDED {
+        let namespace = namespace_of(relative, STD_TREE);
+        // The loaded path carries the tree's name for diagnostics; the table
+        // itself is keyed by the file's path under the tree.
+        let path = format!("<{STD_TREE}>/{relative}");
+        loader.add(PathBuf::from(path), (*source).to_owned(), namespace)?;
     }
 
     let mut program_files = Vec::new();
@@ -60,7 +54,7 @@ pub(crate) fn load_files(entry: &Path) -> Result<LoadedProgram, LoadError> {
             message: format!("cannot read {}: {error}", canonical.display()),
             source: String::new(),
         })?;
-        let index = loader.add(canonical.clone(), source, Origin::File, namespace)?;
+        let index = loader.add(canonical.clone(), source, namespace)?;
         if canonical == entry_path {
             loader.entry = Some(index);
         }
@@ -82,10 +76,9 @@ pub(crate) fn load_files(entry: &Path) -> Result<LoadedProgram, LoadError> {
 
 /// The namespace a file's directory names, relative to a tree root: the tree's
 /// name, then every directory between the root and the file.
-fn namespace_of(path: &str, prefix: &str, tree: &str) -> Vec<String> {
-    let relative = path.strip_prefix(prefix).unwrap_or(path);
+fn namespace_of(path: &str, tree: &str) -> Vec<String> {
     let mut segments = vec![tree.to_owned()];
-    let mut components: Vec<&str> = relative.split('/').collect();
+    let mut components: Vec<&str> = path.split('/').collect();
     components.pop();
     for component in components {
         if !component.is_empty() {

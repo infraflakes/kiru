@@ -1,59 +1,65 @@
-//! Signal handling and the process-group table.
+//! Signal handling: a `signalfd` monitor thread, not an asynchronous handler.
 //!
-//! A signal handler may only touch atomics and `killpg`, which are
-//! async-signal-safe; escalation to SIGKILL happens in the waiting loop. The
-//! group table is claimed before an id is stored and released after it is
-//! zeroed, so a handler that sees a claimed slot reads either the current id or
-//! zero, never a recycled one.
+//! The interactive signals are blocked before the run starts, so they stay
+//! pending instead of being delivered to a handler. A dedicated monitor thread
+//! reads them from a `signalfd` and, on a normal thread, records the stop and
+//! signals every live process group. That makes the whole signal path
+//! async-signal-safe by construction: no handler runs, so the group table is an
+//! ordinary mutex-guarded Vec and needs no fixed size or lock-free claim
+//! protocol.
+//!
+//! This is the pattern the Linux `signalfd(2)` manual describes: a signal must
+//! be blocked in every thread, otherwise it is delivered to a handler and is
+//! not visible through the descriptor. Threads spawned by the run inherit the
+//! blocked mask from the thread that started them.
 
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
-use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, killpg, sigaction};
+use nix::errno::Errno;
+use nix::sys::signal::{SigSet, SigmaskHow, Signal, killpg, pthread_sigmask};
+use nix::sys::signalfd::{SfdFlags, SignalFd};
 use nix::unistd::Pid;
 
-use super::child_processes::MAX_GROUPS;
 use super::state::RuntimeState;
 
-static SIGNAL_HANDLER_TARGET: AtomicPtr<RuntimeState> = AtomicPtr::new(std::ptr::null_mut());
+/// The signals that stop a run.
+pub(super) const STOP_SIGNALS: [Signal; 3] = [Signal::SIGINT, Signal::SIGTERM, Signal::SIGHUP];
 
-/// Install handlers for the interactive signals. The state must outlive the
-/// process because the handler keeps a raw pointer to it.
-pub(crate) fn install_signal_handlers(state: &RuntimeState) -> std::io::Result<()> {
-    SIGNAL_HANDLER_TARGET.store(
-        state as *const RuntimeState as *mut RuntimeState,
-        Ordering::SeqCst,
-    );
-    let action = SigAction::new(
-        SigHandler::Handler(handle_signal),
-        SaFlags::empty(),
-        SigSet::empty(),
-    );
-    for signal in [Signal::SIGINT, Signal::SIGTERM, Signal::SIGHUP] {
-        // SAFETY: the action outlives this call, and the handler is a plain
-        // `extern "C"` function that only touches atomics and `killpg`.
-        unsafe {
-            sigaction(signal, &action).map_err(std::io::Error::from)?;
-        }
+/// Block the stop signals and start the monitor thread that reads them.
+///
+/// The caller must run on the thread that starts every other thread of the
+/// program, so they all inherit the blocked mask.
+pub(crate) fn install_signal_handlers(state: Arc<RuntimeState>) -> std::io::Result<()> {
+    let mut mask = SigSet::empty();
+    for signal in STOP_SIGNALS {
+        mask.add(signal);
     }
+    // Blocking the set is the process's own choice, and every thread the run
+    // starts inherits the mask.
+    pthread_sigmask(SigmaskHow::SIG_BLOCK, Some(&mask), None).map_err(std::io::Error::from)?;
+    let signals =
+        SignalFd::with_flags(&mask, SfdFlags::SFD_CLOEXEC).map_err(std::io::Error::from)?;
+    std::thread::spawn(move || monitor(state, signals));
     Ok(())
 }
 
-extern "C" fn handle_signal(signal: i32) {
-    let pointer = SIGNAL_HANDLER_TARGET.load(Ordering::SeqCst);
-    if !pointer.is_null() {
-        // SAFETY: `install_signal_handlers` sets the pointer once to a leaked
-        // `RuntimeState` that lives for the process lifetime and never clears
-        // it. `on_signal` only performs atomic stores and `killpg`, so the
-        // handler stays async-signal-safe.
-        unsafe {
-            (*pointer).on_signal(signal);
+/// Read stop signals for the life of the process. The thread owns both the
+/// state and the descriptor, so the state stays alive as long as a signal may
+/// arrive.
+fn monitor(state: Arc<RuntimeState>, signals: SignalFd) {
+    loop {
+        match signals.read_signal() {
+            Ok(Some(info)) => state.on_signal(info.ssi_signo as i32),
+            Ok(None) | Err(Errno::EINTR) => {}
+            Err(_) => return,
         }
     }
 }
 
 impl RuntimeState {
-    /// Called from a signal handler: only atomics and `killpg`, which are
-    /// async-signal-safe. Escalation to SIGKILL happens in the waiting loop.
+    /// Record a stop and signal every live process group. Only a normal thread
+    /// calls this, so it may lock the group table and run `killpg`.
     fn on_signal(&self, signal: i32) {
         self.interrupted.store(signal, Ordering::SeqCst);
         self.cancelled.store(true, Ordering::SeqCst);
@@ -69,42 +75,11 @@ impl RuntimeState {
         self.signal_all(Signal::SIGTERM);
     }
 
-    /// Publish a group. The slot is claimed before the id is stored, and the
-    /// id is zeroed before the slot is released, so a signal handler that sees
-    /// a claimed slot reads either the current id or zero, never a recycled
-    /// one.
-    pub(super) fn register(&self, pgid: i32) -> bool {
-        for slot in 0..MAX_GROUPS {
-            if self.processes.slots_in_use[slot]
-                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-                .is_ok()
-            {
-                self.processes.group_ids[slot].store(pgid, Ordering::SeqCst);
-                return true;
-            }
-        }
-        false
-    }
-
-    pub(super) fn unregister(&self, pgid: i32) {
-        for slot in 0..MAX_GROUPS {
-            if self.processes.slots_in_use[slot].load(Ordering::SeqCst)
-                && self.processes.group_ids[slot].load(Ordering::SeqCst) == pgid
-            {
-                self.processes.group_ids[slot].store(0, Ordering::SeqCst);
-                self.processes.slots_in_use[slot].store(false, Ordering::SeqCst);
-                return;
-            }
-        }
-    }
-
+    /// Send `signal` to every live process group.
     fn signal_all(&self, signal: Signal) {
-        for slot in 0..MAX_GROUPS {
-            if self.processes.slots_in_use[slot].load(Ordering::SeqCst) {
-                let pgid = self.processes.group_ids[slot].load(Ordering::SeqCst);
-                if pgid > 0 {
-                    signal_group(pgid, signal);
-                }
+        for pgid in self.processes.live_groups() {
+            if pgid > 0 {
+                signal_group(pgid, signal);
             }
         }
     }

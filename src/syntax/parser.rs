@@ -15,7 +15,7 @@ use crate::syntax::Span;
 
 use super::ast::{Expression, Field, File, Item};
 use super::lexer::lex;
-use super::token::{Token, TokenKind};
+use super::token::{Token, TokenKind, WILDCARD};
 
 /// A parse error, positioned at the offending source range.
 #[derive(Debug, PartialEq, Eq)]
@@ -30,24 +30,28 @@ pub(crate) fn parse_file(source: &str) -> Result<File, ParseError> {
         span: error.span,
         message: error.message,
     })?;
-    Parser::new(tokens).parse_file()
+    Parser::new(source, tokens).parse_file()
 }
 
 /// Cursor state over one lexed token stream.
-struct Parser {
+struct Parser<'a> {
+    /// The source the tokens were lexed from. An identifier token carries no
+    /// word of its own: its span is its word, read from here.
+    source: &'a str,
     tokens: Vec<Token>,
     position: usize,
     depth: usize,
 }
 
-impl Parser {
+impl<'a> Parser<'a> {
     /// The deepest nesting the parser accepts. A deeper block or map would
     /// exhaust the stack during the recursive descent.
     const MAX_NESTING: usize = 128;
 
     /// Build a parser over a token stream that ends with `Eof`.
-    fn new(tokens: Vec<Token>) -> Self {
+    fn new(source: &'a str, tokens: Vec<Token>) -> Self {
         Self {
+            source,
             tokens,
             position: 0,
             depth: 0,
@@ -88,6 +92,21 @@ impl Parser {
         std::mem::discriminant(&self.current().kind) == std::mem::discriminant(kind)
     }
 
+    /// The word an identifier token spells, out of the source: a token carries
+    /// no owned copy, so the span is the word.
+    fn word(&self, span: Span) -> &'a str {
+        &self.source[span.start..span.end]
+    }
+
+    /// The cursor token's diagnostic text. A keyword is its one word; an
+    /// identifier is the word it spells in the source.
+    fn describe_current(&self) -> String {
+        match &self.current().kind {
+            TokenKind::Ident => format!("`{}`", self.word(self.current().span)),
+            other => other.describe(),
+        }
+    }
+
     /// Consume the token at the cursor and return its span. The token stays in
     /// the buffer, which the cursor never revisits, so consuming moves the
     /// cursor alone and no token is copied.
@@ -118,18 +137,25 @@ impl Parser {
             Err(self.error_here(format!(
                 "expected {} {context}, found {}",
                 kind.describe(),
-                self.current().kind.describe()
+                self.describe_current()
             )))
         }
     }
 
-    /// Consume a name token, returning its text and span.
-    fn expect_identifier(&mut self, context: &str) -> Result<(String, Span), ParseError> {
+    /// Consume a name token, returning the word it spells in the source and
+    /// its span.
+    fn expect_identifier(&mut self, context: &str) -> Result<(&'a str, Span), ParseError> {
         match &self.current().kind {
-            TokenKind::Ident(name) => {
-                let name = name.clone();
+            TokenKind::Ident => {
+                let word = self.word(self.current().span);
                 let span = self.advance();
-                Ok((name, span))
+                Ok((word, span))
+            }
+            // A position a name may take accepts the wildcard as its own
+            // spelling: `let _ = …;` names a binding the wildcard's one word.
+            TokenKind::Wildcard => {
+                let span = self.advance();
+                Ok((WILDCARD, span))
             }
             other => Err(self.error_here(format!(
                 "expected a name {context}, found {}",
@@ -184,11 +210,11 @@ impl Parser {
     /// A path begins with a name; a leading `::` is not a form.
     fn parse_path_segments(&mut self, context: &str) -> Result<(Vec<String>, Span), ParseError> {
         let (first, first_span) = self.expect_identifier(context)?;
-        let mut segments = vec![first];
+        let mut segments = vec![first.to_owned()];
         let mut span = first_span;
         while self.eat(&TokenKind::PathSep) {
             let (segment, segment_span) = self.expect_identifier(context)?;
-            segments.push(segment);
+            segments.push(segment.to_owned());
             span = span.merge(segment_span);
         }
         Ok((segments, span))
@@ -212,7 +238,7 @@ impl Parser {
         let value = self.parse_expression()?;
         let span = name_span.merge(value.span());
         Ok(Field {
-            name,
+            name: name.to_owned(),
             name_span,
             value,
             span,

@@ -1,5 +1,7 @@
 use crate::compiler::model::Type;
-use crate::compiler::model::{DeclarationId, Program};
+use crate::compiler::model::{
+    DeclarationId, Expression, MatchBody, Pattern, Program, Statement, TypeHead, Visitor,
+};
 use crate::compiler::{checked_files, checked_program};
 
 fn check(files: &[(&str, &str)], entry: &str) -> Result<(), String> {
@@ -16,9 +18,7 @@ fn declaration(program: &Program, namespace: &[&str], name: &str) -> Declaration
     let namespace = program.namespace_at(&path).expect("the namespace exists");
     program
         .namespace(namespace)
-        .get(name)
-        .first()
-        .copied()
+        .get(&program.intern, name)
         .expect("the name exists")
 }
 
@@ -505,11 +505,12 @@ fn rec_fields_must_be_unique() {
 }
 
 #[test]
-fn return_does_not_take_a_match() {
-    expect_rejections(&[(
+fn return_takes_a_match() {
+    // A match is a value, so a return carries it like any expression and the
+    // return's declared type checks it.
+    expect_accepts(&[(
         "a match returned directly",
         "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f(n: int) -> txt { return match n { 1 => \"one\"; _ => \"other\"; }; };\nfn main() {};",
-        "`return` does not take a `match`; bind it first: `let name = match ...; return name;`",
     )]);
 }
 
@@ -901,7 +902,7 @@ fn enum_rules() {
         (
             "a wrong binding count",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nenum Shape { Circle(int) };\nfn main() { let s: Shape = Shape.Circle(1); match s { Shape.Circle(a, b) => {}; }; };",
-            "`Circle` takes 1 payload binding(s), found 2",
+            "`Circle` takes 1 payload binding, found 2",
         ),
         (
             "a wrong construction argument count",
@@ -1399,6 +1400,115 @@ fn rule_conformance_visibility() {
     );
 }
 
+/// Counts the family callees a walk observes and the callee edges the calls it
+/// passes name. The check's dispatch is total when no family survives it and
+/// every resolved call's callee is the reference the check wrote.
+#[derive(Default)]
+struct DispatchAudit {
+    families: usize,
+    callees: Vec<DeclarationId>,
+}
+
+impl Visitor for DispatchAudit {
+    fn call(&mut self, expression: &Expression) {
+        let Expression::Call { callee, .. } = expression else {
+            unreachable!("the walk names a call");
+        };
+        if let Expression::Reference { declaration, .. } = callee.as_ref() {
+            self.callees.push(*declaration);
+        }
+    }
+    fn method(&mut self, _: &Expression) {
+        self.families += 1;
+    }
+
+    fn text(&mut self, _: &Expression) {}
+    fn map(&mut self, _: &Expression) {}
+    fn boolean(&mut self, _: &Expression) {}
+    fn integer(&mut self, _: &Expression) {}
+    fn variant(&mut self, _: &Expression) {}
+    fn interpolated(&mut self, _: &Expression) {}
+    fn reference(&mut self, _: &Expression) {}
+    fn field(&mut self, _: &Expression) {}
+    fn binary(&mut self, _: &Expression) {}
+    fn unary(&mut self, _: &Expression) {}
+    fn match_expression(&mut self, _: &Expression) {}
+    fn function(&mut self, _: &Expression) {}
+    fn bind(&mut self, _: &Statement) {}
+    fn assign(&mut self, _: &Statement) {}
+    fn field_assign(&mut self, _: &Statement) {}
+    fn expression_statement(&mut self, _: &Statement) {}
+    fn return_statement(&mut self, _: &Statement) {}
+    fn panic(&mut self, _: &Statement) {}
+    fn asynchronous(&mut self, _: &Statement) {}
+    fn wait(&mut self, _: &Statement) {}
+    fn forever(&mut self, _: &Statement) {}
+    fn break_statement(&mut self, _: &Statement) {}
+    fn value_pattern(&mut self, _: &Pattern) {}
+    fn variant_pattern(&mut self, _: &Pattern) {}
+    fn expression_body(&mut self, _: &MatchBody) {}
+    fn block_body(&mut self, _: &MatchBody) {}
+
+    fn enters_deferred_body(&self) -> bool {
+        true
+    }
+}
+
+/// The check's method dispatch is total: a checked program carries no family
+/// callee, because the check resolved every one into the reference edge its
+/// receiver's head selected — the edge every later pass reads.
+#[test]
+fn the_check_writes_every_method_call_edge() {
+    let program = checked_program(
+        "use std;\nuse std::dynamic;\nuse std::dynamic::Vec;\n\
+         rec A { n: int };\nrec B { n: int };\n\
+         impl A { pub fn describe(self: A) -> txt { return \"a\"; }; };\n\
+         impl B { pub fn describe(self: B) -> txt { return \"b\"; }; };\n\
+         fn main() {\n\
+         let a: A = { n = 1 };\nlet b: B = { n = 2 };\n\
+         std::print(a.describe());\nstd::print(b.describe());\n\
+         std::print(root::describe(a));\n\
+         };",
+    );
+    let root = program
+        .namespace_at(&["root".to_owned()])
+        .expect("the program root exists");
+    let namespace = program.namespace(root);
+    let a = namespace
+        .type_id(&program.intern, "A")
+        .expect("A is declared");
+    let b = namespace
+        .type_id(&program.intern, "B")
+        .expect("B is declared");
+    let symbol = program
+        .intern
+        .resolve("describe")
+        .expect("describe is interned");
+    let a_method = namespace
+        .methods
+        .get(TypeHead::Named(a), symbol)
+        .expect("A has a describe method");
+    let b_method = namespace
+        .methods
+        .get(TypeHead::Named(b), symbol)
+        .expect("B has a describe method");
+    let print = declaration(&program, &["std"], "print");
+    let main = declaration(&program, &["root"], "main");
+    let body = &program
+        .declaration(main)
+        .function()
+        .expect("main is a function")
+        .body;
+    let mut audit = DispatchAudit::default();
+    crate::compiler::model::walk_statements(&mut audit, body);
+    assert_eq!(audit.families, 0, "the check resolved every family callee");
+    assert_eq!(
+        audit.callees,
+        vec![print, a_method, print, b_method, print, a_method],
+        "each receiver's head selected its own method's edge"
+    );
+}
+
 /// The audit's rule-conformance probes, declarations: The intrinsic types are built in, not declared, so a bodyless `type` is not a form; fields, variants, type parameters, and parameters are unique; a generic type is applied; and `main` has its one shape.
 ///
 /// Each case is the smallest program for one stated rule. The sources are the
@@ -1633,7 +1743,7 @@ fn rule_conformance_syntax() {
         (
             "a `use` of an impl-bound function",
             "use std::dynamic;\nuse std::dynamic::push;\nfn main() {};\n",
-            "`std::dynamic::push` belongs to the type `Vec`; reach it through the type",
+            "`std::dynamic::push` names neither a namespace nor a declaration",
         ),
         (
             "a `use` of a module value",
@@ -1691,4 +1801,19 @@ fn rule_conformance_syntax() {
             "unknown name `Option`",
         ),
     ]);
+}
+
+/// A stream is a declared enum, so the parameter's type carries the three
+/// streams and a text word is rejected where it is written.
+#[test]
+fn stream_is_a_declared_type() {
+    expect_accepts(&[(
+        "a declared stream",
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { std::process::command(\"echo hi\").stream(std::process::Stream.stdout, \"/dev/null\").run(); };",
+    )]);
+    expect_rejections(&[(
+        "a text word is not a stream",
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { std::process::command(\"echo hi\").stream(\"stdout\", \"/dev/null\").run(); };",
+        "expected Stream, found txt",
+    )]);
 }

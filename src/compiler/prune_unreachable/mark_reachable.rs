@@ -89,6 +89,7 @@ impl Visitor for ReachableCollector {
     fn variant(&mut self, _: &Expression) {}
     fn interpolated(&mut self, _: &Expression) {}
     fn call(&mut self, _: &Expression) {}
+    fn method(&mut self, _: &Expression) {}
     fn field(&mut self, _: &Expression) {}
     fn binary(&mut self, _: &Expression) {}
     fn unary(&mut self, _: &Expression) {}
@@ -103,4 +104,8 @@ impl Visitor for ReachableCollector {
     fn value_pattern(&mut self, _: &Pattern) {}
     fn expression_body(&mut self, _: &MatchBody) {}
     fn block_body(&mut self, _: &MatchBody) {}
+
+    fn enters_deferred_body(&self) -> bool {
+        true
+    }
 }

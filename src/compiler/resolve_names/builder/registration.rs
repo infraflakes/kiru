@@ -1,16 +1,16 @@
 //! Registering declaration nodes: reserving types, declaring names, and
 //! filling a type's fields.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::compiler::model::{
-    Declaration, DeclarationId, DeclarationKind, Derived, File, FileId, Group, MethodTable,
-    NameTable, Namespace, NamespaceId, Program, TypeDecl, TypeFieldDecl, TypeKind, TypeTable,
-    VariantDecl, first_duplicate, reachable,
+    Declaration, DeclarationId, DeclarationKind, Derived, File, FileId, Group, Interner,
+    MethodTable, NameTable, Namespace, NamespaceId, Program, TypeDecl, TypeFieldDecl, TypeKind,
+    TypeTable, VariantDecl, first_duplicate,
 };
 use crate::compiler::model::{Type, TypeHead, TypeId};
+use crate::compiler::native_registry::Native;
 use crate::compiler::{Diagnostic, duplicate_field, duplicate_in_namespace};
-use crate::native_registry::Native;
 use crate::syntax::{Span, TypeDeclaration};
 
 /// Where a file declaration is written, for registration.
@@ -30,7 +30,6 @@ pub(in crate::compiler::resolve_names) struct DeclarationSite<'a> {
     /// have the block's type. What a `Type.name(...)` call matches against.
     pub(in crate::compiler::resolve_names) associated_head: Option<TypeHead>,
     pub(in crate::compiler::resolve_names) file: Option<FileId>,
-    pub(in crate::compiler::resolve_names) syntax_index: Option<usize>,
     pub(in crate::compiler::resolve_names) reported_path: &'a std::path::Path,
 }
 
@@ -54,8 +53,6 @@ pub(in crate::compiler::resolve_names) struct Skeleton {
     pub(in crate::compiler::resolve_names) associated_head: Option<TypeHead>,
     pub(in crate::compiler::resolve_names) file: Option<FileId>,
     pub(in crate::compiler::resolve_names) namespace: NamespaceId,
-    /// The index of the parsed declaration in its file, when it came from one.
-    pub(in crate::compiler::resolve_names) syntax_index: Option<usize>,
 }
 
 impl Skeleton {
@@ -68,12 +65,48 @@ impl Skeleton {
     }
 }
 
-/// A worklist entry for the linking pass.
-pub(in crate::compiler::resolve_names) struct Pending {
-    pub(in crate::compiler::resolve_names) declaration: DeclarationId,
-    pub(in crate::compiler::resolve_names) file: FileId,
-    pub(in crate::compiler::resolve_names) syntax_index: usize,
-    pub(in crate::compiler::resolve_names) namespace: NamespaceId,
+/// A worklist entry for the linking pass: a declaration whose body comes from
+/// one parsed item. Only a callable and a module value own a body, so the two
+/// forms are the variants and the linking pass matches one instead of testing a
+/// kind and falling back to an unreachable arm.
+pub(in crate::compiler::resolve_names) enum Pending {
+    Callable {
+        declaration: DeclarationId,
+        file: FileId,
+        /// The parsed declaration in the loaded item stream.
+        item: usize,
+        namespace: NamespaceId,
+    },
+    ModuleValue {
+        declaration: DeclarationId,
+        file: FileId,
+        /// The parsed declaration in the loaded item stream.
+        item: usize,
+        namespace: NamespaceId,
+    },
+}
+
+impl Pending {
+    /// The declaration node the item fills, and the item's place in the loaded
+    /// stream.
+    pub(in crate::compiler::resolve_names) fn parts(
+        &self,
+    ) -> (DeclarationId, FileId, usize, NamespaceId) {
+        match self {
+            Pending::Callable {
+                declaration,
+                file,
+                item,
+                namespace,
+            }
+            | Pending::ModuleValue {
+                declaration,
+                file,
+                item,
+                namespace,
+            } => (*declaration, *file, *item, *namespace),
+        }
+    }
 }
 
 /// A filled declaration slot: a parameter/local binding (storage), or a native
@@ -89,16 +122,21 @@ pub(in crate::compiler::resolve_names) enum Slot {
 pub(in crate::compiler::resolve_names) struct Builder {
     pub(in crate::compiler::resolve_names) namespaces: Vec<Namespace>,
     pub(in crate::compiler::resolve_names) skeletons: Vec<Skeleton>,
-    pub(in crate::compiler::resolve_names) declarations: Vec<Option<Declaration>>,
+    /// A node for every declaration, indexed by `DeclarationId`. A callable or
+    /// module value starts as a placeholder that the first linking pass fills
+    /// before any body is linked, so every id a body can name has its node when
+    /// the body is typed. A parameter and a local are created with their type.
+    pub(in crate::compiler::resolve_names) declarations: Vec<Declaration>,
     pub(in crate::compiler::resolve_names) files: Vec<File>,
     pub(in crate::compiler::resolve_names) types: Vec<TypeDecl>,
     pub(in crate::compiler::resolve_names) pending: Vec<Pending>,
-    /// The declared absence type: the `std` category's `Option`, found while
-    /// reserving types. It types a map read and a missing value.
-    pub(in crate::compiler::resolve_names) absence_type: Option<TypeId>,
-    /// The runtime's `Vec` type, registered into `std::dynamic` before the
-    /// natives. The lowering reads it to lower the vec operations.
-    pub(in crate::compiler::resolve_names) vec_type: Option<TypeId>,
+    /// Every module value, in declaration order. Registration is the one place
+    /// that knows them, so ordering their initializers never scans the whole
+    /// declaration table.
+    pub(in crate::compiler::resolve_names) module_values: Vec<DeclarationId>,
+    /// The one interner every name-table key came from. Registration interns
+    /// a declaration's, a namespace's, and a type's name exactly once.
+    pub(in crate::compiler::resolve_names) intern: Interner,
 }
 
 impl Builder {
@@ -111,7 +149,8 @@ impl Builder {
             methods: MethodTable::default(),
             associates: MethodTable::default(),
             types: TypeTable::default(),
-            uses: Vec::new(),
+            brought: HashMap::new(),
+            filed: HashSet::new(),
         };
         Self {
             namespaces: vec![root],
@@ -120,8 +159,8 @@ impl Builder {
             files: Vec::new(),
             types: Vec::new(),
             pending: Vec::new(),
-            absence_type: None,
-            vec_type: None,
+            module_values: Vec::new(),
+            intern: Interner::default(),
         }
     }
 
@@ -133,27 +172,25 @@ impl Builder {
         Program {
             files: self.files,
             namespaces: self.namespaces,
-            declarations: self
-                .declarations
-                .into_iter()
-                .map(|declaration| declaration.expect("every node is built during linking"))
-                .collect(),
+            declarations: self.declarations,
             types: self.types,
-            absence_type: self.absence_type,
-            vec_type: self.vec_type,
             entry,
             module_values,
+            intern: self.intern,
         }
     }
 
-    /// The namespace node for a path, creating missing segments.
+    /// The namespace node for a path, creating missing segments. Each segment
+    /// names its parent's children by the symbol it is interned under, which
+    /// is also the key every walk over the tree reads.
     pub(in crate::compiler::resolve_names) fn ensure_namespace(
         &mut self,
         segments: &[String],
     ) -> NamespaceId {
         let mut current = NamespaceId(0);
         for segment in segments {
-            current = match self.namespaces[current.0].children.get(segment) {
+            let symbol = self.intern.intern(segment);
+            current = match self.namespaces[current.0].children.get(&symbol) {
                 Some(&child) => child,
                 None => {
                     let child = NamespaceId(self.namespaces.len());
@@ -165,11 +202,10 @@ impl Builder {
                         methods: MethodTable::default(),
                         associates: MethodTable::default(),
                         types: TypeTable::default(),
-                        uses: Vec::new(),
+                        brought: HashMap::new(),
+                        filed: HashSet::new(),
                     });
-                    self.namespaces[current.0]
-                        .children
-                        .insert(segment.clone(), child);
+                    self.namespaces[current.0].children.insert(symbol, child);
                     child
                 }
             };
@@ -193,24 +229,53 @@ impl Builder {
         let name = skeleton.name.clone();
         let file = skeleton.file;
         let namespace = skeleton.namespace;
+        let public = skeleton.public;
         self.skeletons.push(skeleton);
-        self.declarations.push(cell.map(|slot| {
-            let (ty, native) = match slot {
-                Slot::Binding(ty) => (ty, None),
-                Slot::Native(ty, native) => (ty, Some(native)),
-            };
-            Declaration {
+        let declaration = match cell {
+            Some(Slot::Binding(ty)) => Declaration {
                 kind,
                 name,
+                public,
                 file,
                 namespace,
                 owner,
                 ty,
                 value: None,
-                native,
+                native: None,
                 derived: Derived { halts: false },
-            }
-        }));
+            },
+            Some(Slot::Native(ty, native)) => Declaration {
+                kind,
+                name,
+                public,
+                file,
+                namespace,
+                owner,
+                ty,
+                value: None,
+                native: Some(native),
+                derived: Derived { halts: false },
+            },
+            // A callable or module value: its phase fills the real type and
+            // value. Until then it holds the placeholder type; no body is
+            // linked before the first pass settles every one of them.
+            None => Declaration {
+                kind,
+                name,
+                public,
+                file,
+                namespace,
+                owner,
+                ty: Type::Text,
+                value: None,
+                native: None,
+                derived: Derived { halts: false },
+            },
+        };
+        self.declarations.push(declaration);
+        if kind.module_value() {
+            self.module_values.push(id);
+        }
         id
     }
 
@@ -239,7 +304,6 @@ impl Builder {
             receiver_head,
             associated_head,
             file,
-            syntax_index,
             reported_path,
         } = site;
         let id = self.create_node(
@@ -252,25 +316,24 @@ impl Builder {
                 associated_head,
                 file,
                 namespace,
-                syntax_index,
             },
             None,
             None,
         );
         let filed = self.skeletons[id.0].filed();
+        let symbol = self.intern.intern(name);
         // A name-owning declaration may repeat a name only against nothing; a
         // filed declaration collides with it by name alone, because the filed
         // declaration is reached through its type, never by the name.
-        let owning = self.namespaces[namespace.0].names.contains(name);
-        let filed_name_taken = !filed && self.filed_named(namespace, name).is_some();
+        let owning = self.namespaces[namespace.0].names.get(symbol).is_some();
         let duplicate = {
             let table = &mut self.namespaces[namespace.0];
             if let Some(head) = receiver_head {
-                owning || table.methods.insert(head, name.to_owned(), id).is_err()
+                owning || table.methods.insert(head, symbol, id).is_err()
             } else if let Some(head) = associated_head {
-                owning || table.associates.insert(head, name.to_owned(), id).is_err()
+                owning || table.associates.insert(head, symbol, id).is_err()
             } else {
-                owning || filed_name_taken
+                owning || (!filed && table.filed.contains(&symbol))
             }
         };
         if duplicate {
@@ -280,47 +343,19 @@ impl Builder {
                 duplicate_in_namespace(name),
             ));
         }
-        if !filed {
-            self.namespaces[namespace.0]
-                .names
-                .insert(name.to_owned(), id);
+        let table = &mut self.namespaces[namespace.0];
+        if filed {
+            table.filed.insert(symbol);
+        } else {
+            table.names.insert(symbol, id);
         }
         Ok(id)
     }
 
-    /// A function filed under a type in `namespace`, whichever head. A filed
-    /// function is not a namespace-level name, so a bare name never reaches it
-    /// and a `use` of it is rejected.
-    pub(in crate::compiler::resolve_names) fn filed_named(
-        &self,
-        namespace: NamespaceId,
-        name: &str,
-    ) -> Option<DeclarationId> {
-        let table = &self.namespaces[namespace.0];
-        table
-            .methods
-            .iter()
-            .chain(table.associates.iter())
-            .copied()
-            .find(|declaration| self.skeletons[declaration.0].name == name)
-    }
-
-    /// The name of the type a filed function belongs to, for a diagnostic.
-    pub(in crate::compiler::resolve_names) fn bound_type_name(
-        &self,
-        declaration: DeclarationId,
-    ) -> String {
-        let skeleton = &self.skeletons[declaration.0];
-        match skeleton.receiver_head.or(skeleton.associated_head) {
-            Some(TypeHead::Named(id)) => self.types[id.0].name.clone(),
-            Some(TypeHead::Scalar(name)) => name.to_owned(),
-            _ => unreachable!("a filed function belongs to a named or scalar type"),
-        }
-    }
-
     /// Whether `caller` may reach a bound function filed in `owner`: in its own
     /// namespace always, and across namespaces only when the function is `pub`
-    /// and its type is `pub`. A bound function is never gated by a `use`.
+    /// and its type is `pub`. A bound function is never gated by a `use`. The
+    /// one rule is the model's; the skeletons supply its facts.
     pub(in crate::compiler::resolve_names) fn bound_reachable(
         &self,
         caller: NamespaceId,
@@ -328,13 +363,11 @@ impl Builder {
         declaration: DeclarationId,
     ) -> bool {
         let skeleton = &self.skeletons[declaration.0];
-        if !reachable(skeleton.public, owner, caller) {
-            return false;
-        }
-        match skeleton.receiver_head.or(skeleton.associated_head) {
-            Some(TypeHead::Named(id)) => reachable(self.types[id.0].public, owner, caller),
-            _ => true,
-        }
+        let type_public = match skeleton.receiver_head.or(skeleton.associated_head) {
+            Some(TypeHead::Named(id)) => Some(self.types[id.0].public),
+            _ => None,
+        };
+        crate::compiler::model::bound_reachable(skeleton.public, type_public, owner, caller)
     }
 
     /// Reject a repeated type parameter, whichever declaration carries it: a
@@ -364,7 +397,6 @@ impl Builder {
         &mut self,
         declaration: &TypeDeclaration,
         public: bool,
-        group: Group,
         namespace: NamespaceId,
         reported_path: &std::path::Path,
     ) -> Result<TypeId, Diagnostic> {
@@ -377,26 +409,17 @@ impl Builder {
         // keeps every reserved id valid while the remaining types are reserved.
         let kind = TypeKind::Rec(Vec::new());
         let id = TypeId(self.types.len());
-        // The declared absence type is the `std` category's `Option`: the one
-        // enum whose payloadless variant marks a missing value. A program may
-        // declare its own `Option`, but only the standard library's is the
-        // absence.
-        if declaration.name == "Option"
-            && group == Group::Enum
-            && self.namespaces[namespace.0].name == "std"
-        {
-            self.absence_type = Some(id);
-        }
         self.types.push(TypeDecl {
             name: declaration.name.clone(),
             public,
             namespace,
             parameters: declaration.parameters.clone(),
+            runtime: crate::compiler::model::RuntimeType::Declared,
             kind,
         });
         if self.namespaces[namespace.0]
             .types
-            .insert(declaration.name.clone(), id)
+            .insert(self.intern.intern(&declaration.name), id)
             .is_err()
         {
             return Err(Diagnostic::new(

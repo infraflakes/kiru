@@ -1,18 +1,20 @@
 //! The linked expressions and statements. Every name is already an edge to a
 //! declaration node.
 
-use crate::compiler::model::{Type, TypeId};
+use crate::compiler::model::{Shape, Type, TypeId};
 use crate::syntax::{BinaryOp, Span, UnaryOp};
 
-use super::ids::DeclarationId;
+use super::ids::{DeclarationId, NamespaceId};
 
-/// A function literal: the value of a named `fn` declaration, or a
-/// `fn(...) { .. }` written in expression position. The same node either way;
-/// only the name of the declaration that holds it differs.
+/// A function literal: a named `fn` declaration's body, or a `fn(...) { .. }`
+/// written in expression position. The same node either way; only the name of
+/// the declaration that holds it differs.
 #[derive(Debug)]
 pub(crate) struct Function {
-    /// The declared type of the function: a function type.
-    pub(crate) ty: Type,
+    /// The return type the literal declares in its own annotation. A named
+    /// function's return type is the one its declaration carries, so its node
+    /// declares none here; only a literal's own annotation is stored.
+    pub(crate) declared_return: Option<Type>,
     /// The parameter nodes, in order.
     pub(crate) parameters: Vec<DeclarationId>,
     pub(crate) body: Vec<Statement>,
@@ -46,7 +48,7 @@ pub(crate) enum Expression {
         value: i64,
         span: Span,
     },
-    /// A constructed enum variant: `Name::Variant(payload, ...)`.
+    /// A constructed enum variant: `Name.Variant(payload, ...)`.
     Variant {
         ty: TypeId,
         index: usize,
@@ -60,8 +62,9 @@ pub(crate) enum Expression {
         span: Span,
     },
     /// A reference to a declaration or a binding, which is also a function
-    /// value when the declaration's type is a function type. The leading `::`,
-    /// if any, was consumed by resolution and is not part of the edge.
+    /// value when the declaration's type is a function type. Resolution turns
+    /// the written path into this edge; a path begins with a name, since a
+    /// leading `::` is not a form.
     Reference {
         declaration: DeclarationId,
         span: Span,
@@ -72,6 +75,22 @@ pub(crate) enum Expression {
         callee: Box<Expression>,
         callee_span: Span,
         arguments: Vec<Expression>,
+        span: Span,
+    },
+    /// A call whose callee is a bound function named only by its family: the
+    /// receiver's type head selects the one declaration. The linker holds no
+    /// type facts, so it writes the family alone — the namespace a qualified
+    /// path named, the written path, and no more; the check resolves the
+    /// family while typing the call and rewrites this into the reference the
+    /// callee becomes. A family names no declaration before then, so this
+    /// node carries no edge.
+    Method {
+        /// The namespace a qualified family path named. `None` for a bare
+        /// method name, which every namespace's method pool answers.
+        namespace: Option<NamespaceId>,
+        /// The written path the family was named by: one segment for a method
+        /// call, the whole written path for a qualified one.
+        path: Vec<String>,
         span: Span,
     },
     Field {
@@ -97,6 +116,11 @@ pub(crate) enum Expression {
         subject: Box<Expression>,
         cases: Vec<MatchArm>,
         default: Option<MatchBody>,
+        /// Whether the arms and the default cover every value the subject can
+        /// take. The check pass writes it where it reads the subject's type,
+        /// and the flow pass reads it to know whether the term can fall
+        /// through.
+        exhaustive: bool,
         span: Span,
     },
     /// A function literal: a named function's value, or a `fn(...) { .. }`
@@ -105,6 +129,29 @@ pub(crate) enum Expression {
 }
 
 impl Expression {
+    /// The shape of value literal this expression writes, when it writes one.
+    /// A literal with no type of its own takes its type from the position it
+    /// is checked in; the shape says which literal form it is, so a checker
+    /// reads this fact rather than matching the expression form again.
+    pub(crate) fn shape(&self) -> Option<Shape> {
+        match self {
+            Expression::Text { .. }
+            | Expression::Bool { .. }
+            | Expression::Int { .. }
+            | Expression::Interpolated { .. } => Some(Shape::Word),
+            Expression::Map { .. } => Some(Shape::Record),
+            Expression::Variant { .. } => Some(Shape::Variant),
+            Expression::Function(_) => Some(Shape::Callable),
+            Expression::Reference { .. }
+            | Expression::Call { .. }
+            | Expression::Method { .. }
+            | Expression::Field { .. }
+            | Expression::Binary { .. }
+            | Expression::Unary { .. }
+            | Expression::Match { .. } => None,
+        }
+    }
+
     pub(crate) fn span(&self) -> Span {
         match self {
             Expression::Text { span, .. }
@@ -115,6 +162,7 @@ impl Expression {
             | Expression::Interpolated { span, .. }
             | Expression::Reference { span, .. }
             | Expression::Call { span, .. }
+            | Expression::Method { span, .. }
             | Expression::Field { span, .. }
             | Expression::Binary { span, .. }
             | Expression::Unary { span, .. }
@@ -229,7 +277,7 @@ pub(crate) enum Pattern {
     /// An equality atom: a literal, a name, a field path, or a payloadless
     /// variant.
     Value(Expression),
-    /// `Name::Variant(bind, ...)`: matches one enum variant. `bindings` has one
+    /// `Name.Variant(bind, ...)`: matches one enum variant. `bindings` has one
     /// entry per payload position: the local it binds, or `None` for `_`.
     Variant {
         ty: TypeId,

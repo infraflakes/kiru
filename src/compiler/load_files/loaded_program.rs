@@ -7,15 +7,13 @@
 
 use std::path::PathBuf;
 
-use crate::compiler::model::Origin;
-use crate::syntax::{Declaration, Span};
+use crate::syntax::{Declaration, Span, TypeExpr};
 
 /// One loaded source file, kept for diagnostics.
 #[derive(Debug)]
 pub(crate) struct LoadedFile {
     pub(crate) path: PathBuf,
     pub(crate) source: String,
-    pub(crate) origin: Origin,
 }
 
 /// One declaration in the joined stream, with the file it came from and the
@@ -31,12 +29,11 @@ pub(crate) struct ScopedDeclaration {
     pub(crate) impl_target: Option<ImplTarget>,
 }
 
-/// The type an `impl` block files its functions under: its name and the span
-/// the name was written at.
+/// The type an `impl` block files its functions under, written as a type
+/// expression so every path form resolves the one way a written type does.
 #[derive(Debug)]
 pub(crate) struct ImplTarget {
-    pub(crate) name: String,
-    pub(crate) span: Span,
+    pub(crate) ty: TypeExpr,
 }
 
 /// One `use` written in a namespace. What its path ends at decides what it

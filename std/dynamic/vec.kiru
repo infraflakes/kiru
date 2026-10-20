@@ -53,7 +53,7 @@ impl Vec {
     return found;
   };
 
-  # The first index of `item`, or the declared absence when it is not an
+  # The first index of `item`, or `std::Option.none` when it is not an
   # element. Equality is `==`.
   pub fn index_of<T>(self: std::dynamic::Vec<T>, item: T) -> std::Option<int> {
     let index: int = 0;

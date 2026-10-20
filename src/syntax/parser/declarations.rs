@@ -1,7 +1,7 @@
 //! Declaration level grammar: functions, variables, recs, and nominal type
 //! declarations.
 
-use crate::compiler::model::DeclarationKind;
+use crate::compiler::model::{DeclarationKind, join_path};
 use crate::syntax::ast::{
     Binding, Closure, Declaration, DeclarationForm, Expression, Function, ImplBlock, Parameter,
     TypeDeclaration, TypeDeclarationKind, TypeExpr, TypeField, Use, VariantDeclaration,
@@ -10,13 +10,13 @@ use crate::syntax::token::TokenKind;
 
 use super::{ParseError, Parser};
 
-impl Parser {
+impl<'a> Parser<'a> {
     /// The kind the current token opens, when it opens a declaration. The
     /// marking from the surface form to the model's kind lives here, once.
     fn declaration_kind(&self, lookahead: usize) -> Option<DeclarationKind> {
         match &self.peek(lookahead).kind {
             TokenKind::Fn => Some(DeclarationKind::Function),
-            TokenKind::Let => Some(DeclarationKind::Let),
+            TokenKind::Let => Some(DeclarationKind::ModuleValue),
             TokenKind::Rec => Some(DeclarationKind::Rec),
             TokenKind::Enum => Some(DeclarationKind::Enum),
             TokenKind::Impl => Some(DeclarationKind::Impl),
@@ -39,7 +39,7 @@ impl Parser {
             None => {
                 return Err(self.error_here(format!(
                     "expected a declaration, found {}",
-                    self.current().kind.describe()
+                    self.describe_current()
                 )));
             }
         };
@@ -49,23 +49,28 @@ impl Parser {
             TokenKind::Rec => DeclarationForm::Type(self.parse_type_declaration()?),
             TokenKind::Enum => DeclarationForm::Type(self.parse_enum_declaration()?),
             TokenKind::Impl => DeclarationForm::Impl(self.parse_impl_block()?),
-            other => {
+            _ => {
                 return Err(self.error_here(format!(
                     "expected a declaration, found {}",
-                    other.describe()
+                    self.describe_current()
                 )));
             }
         };
         let (name, name_span) = match &form {
-            DeclarationForm::Function(function) => (&function.name, function.name_span),
-            DeclarationForm::Binding(binding) => (&binding.name, binding.name_span),
-            DeclarationForm::Type(declaration) => (&declaration.name, declaration.name_span),
-            DeclarationForm::Impl(block) => (&block.name, block.name_span),
+            DeclarationForm::Function(function) => (function.name.clone(), function.name_span),
+            DeclarationForm::Binding(binding) => (binding.name.clone(), binding.name_span),
+            DeclarationForm::Type(declaration) => (declaration.name.clone(), declaration.name_span),
+            // An `impl` block introduces no name of its own: it files its
+            // members under the type it writes.
+            DeclarationForm::Impl(block) => (
+                block.ty.named_path().map(join_path).unwrap_or_default(),
+                block.ty.span(),
+            ),
         };
         Ok(Declaration {
             kind,
             public,
-            name: name.clone(),
+            name,
             name_span,
             form,
         })
@@ -73,10 +78,11 @@ impl Parser {
 
     /// Parse an `impl Type { fn ...; };` block. Every function in the block is
     /// filed under the block's type; a function's own `pub` lets another
-    /// namespace reach it.
+    /// namespace reach it. The target is a written type, resolved later as any
+    /// other written type is.
     fn parse_impl_block(&mut self) -> Result<ImplBlock, ParseError> {
         let start = self.advance().start;
-        let (name, name_span) = self.expect_identifier("in an impl block")?;
+        let ty = self.parse_type_expr("in an impl block")?;
         self.expect(&TokenKind::LBrace, "to open the impl block")?;
         let mut functions = Vec::new();
         while !self.check(&TokenKind::RBrace) {
@@ -84,7 +90,7 @@ impl Parser {
             if !self.check(&TokenKind::Fn) {
                 return Err(self.error_here(format!(
                     "expected a function in the impl block, found {}",
-                    self.current().kind.describe()
+                    self.describe_current()
                 )));
             }
             let function = self.parse_function()?;
@@ -99,8 +105,7 @@ impl Parser {
         self.expect(&TokenKind::RBrace, "to close the impl block")?;
         let span = self.span_through_semicolon(start, "after the impl block")?;
         Ok(ImplBlock {
-            name,
-            name_span,
+            ty,
             functions,
             span,
         })
@@ -113,7 +118,7 @@ impl Parser {
         // The path may end at `::{`, so the separator before a group is read
         // here rather than by the general path parser.
         let (first, _) = self.expect_identifier("in a use path")?;
-        let mut path = vec![first];
+        let mut path = vec![first.to_owned()];
         let mut group = false;
         while self.eat(&TokenKind::PathSep) {
             if self.check(&TokenKind::LBrace) {
@@ -121,7 +126,7 @@ impl Parser {
                 break;
             }
             let (segment, _) = self.expect_identifier("in a use path")?;
-            path.push(segment);
+            path.push(segment.to_owned());
         }
         let mut paths = Vec::new();
         if group {
@@ -133,7 +138,7 @@ impl Parser {
                 |parser| {
                     parser
                         .expect_identifier("in a use group")
-                        .map(|(name, _)| name)
+                        .map(|(name, _)| name.to_owned())
                 },
             )?;
             if names.is_empty() {
@@ -168,7 +173,7 @@ impl Parser {
         )?;
         let span = self.span_through_semicolon(start, "after the type declaration")?;
         Ok(TypeDeclaration {
-            name,
+            name: name.to_owned(),
             name_span,
             parameters,
             kind: TypeDeclarationKind::Rec(fields),
@@ -190,7 +195,7 @@ impl Parser {
         )?;
         let span = self.span_through_semicolon(start, "after the enum declaration")?;
         Ok(TypeDeclaration {
-            name,
+            name: name.to_owned(),
             name_span,
             parameters,
             kind: TypeDeclarationKind::Enum(variants),
@@ -240,7 +245,7 @@ impl Parser {
             |parser| {
                 parser
                     .expect_identifier("as a type parameter")
-                    .map(|(name, _)| name)
+                    .map(|(name, _)| name.to_owned())
             },
         )?;
         Ok(parameters)
@@ -267,7 +272,7 @@ impl Parser {
         };
         let span = name_span.merge(end);
         Ok(VariantDeclaration {
-            name,
+            name: name.to_owned(),
             name_span,
             public,
             payload,
@@ -283,7 +288,7 @@ impl Parser {
         let ty = self.parse_type_annotation("in a type field")?;
         let span = name_span.merge(ty.span());
         Ok(TypeField {
-            name,
+            name: name.to_owned(),
             name_span,
             public,
             ty,
@@ -307,7 +312,7 @@ impl Parser {
         let body = self.parse_block()?;
         let span = self.span_through_semicolon(start, "after the function body")?;
         Ok(Function {
-            name,
+            name: name.to_owned(),
             name_span,
             type_parameters,
             parameters,
@@ -343,7 +348,11 @@ impl Parser {
     fn parse_parameter(&mut self) -> Result<Parameter, ParseError> {
         let (name, span) = self.expect_identifier("in the parameter list")?;
         let ty = self.parse_type_annotation("in the parameter list")?;
-        Ok(Parameter { ty, name, span })
+        Ok(Parameter {
+            ty,
+            name: name.to_owned(),
+            span,
+        })
     }
 
     /// Parse an optional `-> type` return type after the parameter list. An
@@ -362,7 +371,7 @@ impl Parser {
         if self.check(&TokenKind::Fn) {
             return self.parse_function_type();
         }
-        if let TokenKind::Ident(_) = self.current().kind {
+        if let TokenKind::Ident = self.current().kind {
             let (path, path_span) = self.parse_path_segments(context)?;
             let mut span = path_span;
             let arguments = if self.check(&TokenKind::Less) {
@@ -386,7 +395,7 @@ impl Parser {
         }
         Err(self.error_here(format!(
             "expected a type {context}, found {}",
-            self.current().kind.describe()
+            self.describe_current()
         )))
     }
 
@@ -412,7 +421,7 @@ impl Parser {
         let span = self.span_through_semicolon(start, "after the initializer")?;
         Ok(Binding {
             ty,
-            name,
+            name: name.to_owned(),
             name_span,
             value,
             span,

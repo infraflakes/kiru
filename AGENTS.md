@@ -36,6 +36,10 @@
 - Brief a helper with absolute, specific steps and exact paths, and never leave a decision to it. Verify its work independently by running the checks yourself, and treat its report as a claim rather than a fact.
 - A task that changes no behaviour must leave the test count unchanged. State the expected number in the brief and check it.
 - Never change a rule's semantics without the owner's word. When a fix would need a rule widened, stop and ask instead of widening it.
+- CodeGraph is how this codebase is read. Run `codegraph sync` before using it and after every commit, then `codegraph explore "<symbols or question>"`, which returns the source of the relevant symbols and the call paths between them in one call.
+- Reading a file with a reader is permitted only after CodeGraph has returned nothing for that symbol, and searching with grep only to locate a symbol CodeGraph does not know. Opening files instead of asking the graph is doing the task wrong, not doing it differently.
+- Never claim a repository has no index without looking: check for its `.codegraph` directory first, and say it out loud when you fall back to reading. An asserted absence is a lie the next person acts on.
+- A helper's report states the `codegraph explore` queries it ran. A helper that read files without them repeated the work the graph exists to remove.
 
 ## Where things live
 
@@ -49,7 +53,7 @@
 
 ## Adding a native
 
-1. Add one row to the native_registry! table in src/native_registry.rs: its namespace path, its name, and its typed parameters and return. The macro generates the variant, the shape and the typed row together.
+1. Add one row to the native_registry! table in src/compiler/native_registry.rs: its namespace path, its name, and its typed parameters and return. The macro generates the variant, the shape and the typed row together.
 2. Add one arm to the handler match in src/runtime/virtual_machine/native_dispatch.rs. That match is exhaustive with no wildcard, so the compiler demands the arm.
 3. A native that touches the operating system goes in the syscalls namespace under its syscall or C library name. A pure one stays with its kind: the container's in the dynamic namespace, the text kernel's in the text namespace.
 4. Its namespace must be a directory under the library root, and that directory's natives.md must list it with what it takes, what it does and whether it returns.
@@ -66,6 +70,19 @@
 - A token goes in src/syntax/token.rs and src/syntax/lexer.rs. A form goes in the parser file for its category: declarations, statements or expressions. Its node goes in src/syntax/ast.rs.
 - No pass may decide kind by matching on the syntax tree. Every pass reads the model.
 
+## When the language changes
+
+A language change is not finished until every description of the language agrees with it. After any change to the syntax, the type model, the reference model, or the library's surface:
+
+1. `src/syntax` and the compiler's passes are the source of truth; they move first.
+2. `/home/nixenv/Projects/kiru-tree-sitter`: the grammar, the queries and the corpus. Regenerate, run the corpus, and parse every real `.kiru` file with no error node.
+3. `docs/`: every `kiru` block compiled and run, and the site built.
+4. `std/*/natives.md`: every native of that namespace.
+5. `ROADMAP.md`: the decisions.
+6. This file, when the model section moved.
+
+A change that lands without those is an unfinished change, whatever the test suite says.
+
 ## Checks
 
 Every change ends green on all four, and the count is stated in the brief and checked:
@@ -74,3 +91,14 @@ Every change ends green on all four, and the count is stated in the brief and ch
 2. cargo clippy --all-targets -- -D warnings
 3. cargo fmt --check
 4. cargo build, then the compiler on pipeline/main.kiru, which builds the project with itself.
+
+<!-- CODEGRAPH_START -->
+## CodeGraph
+
+In repositories indexed by CodeGraph (a `.codegraph/` directory exists at the repo root), reach for it BEFORE grep/find or reading files when you need to understand or locate code:
+
+- **MCP tool** (when available): `codegraph_explore` answers most code questions in one call — the relevant symbols' verbatim source plus the call paths between them, including dynamic-dispatch hops grep can't follow. Name a file or symbol in the query to read its current line-numbered source. If it's listed but deferred, load it by name via tool search.
+- **Shell** (always works): `codegraph explore "<symbol names or question>"` prints the same output.
+
+If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is the user's decision.
+<!-- CODEGRAPH_END -->

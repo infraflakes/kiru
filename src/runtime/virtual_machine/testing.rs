@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use crate::compiler::lower_bytecode;
 use crate::compiler::model::Program;
+use crate::compiler::{declaration_codes, lower_bytecode};
 use crate::runtime::Panic;
 use crate::runtime::Value;
 use crate::runtime::processes::RuntimeState;
@@ -38,25 +38,18 @@ impl Runtime {
 }
 
 /// The root-namespace function names and their code ids, for the tests that
-/// call by name. Lowering gives a code to every function, module value, and the
-/// entry, in declaration order, so the same walk recovers the ids.
+/// call by name. The code ids come from the one mapping lowering assigns, so
+/// the test helper never re-derives the numbering.
 fn root_symbols(program: &Program) -> HashMap<String, u32> {
-    let mut code_id = 0;
-    let mut symbols = HashMap::new();
     let root = program.declaration(program.entry).namespace;
-    for declaration in &program.declarations {
-        let has_code = (declaration.kind.has_body() && declaration.kind.callable())
-            || (declaration.kind.has_value() && declaration.owner.is_none());
-        if !has_code {
+    let mut symbols = HashMap::new();
+    for (declaration, code_id) in program.declarations.iter().zip(declaration_codes(program)) {
+        let Some(code_id) = code_id else {
             continue;
-        }
-        if declaration.namespace == root
-            && declaration.owner.is_none()
-            && declaration.kind.callable()
-        {
+        };
+        if declaration.namespace == root && declaration.kind.callable() {
             symbols.insert(declaration.name.clone(), code_id);
         }
-        code_id += 1;
     }
     symbols
 }
