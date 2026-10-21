@@ -196,9 +196,16 @@ tracked so they are settled before they block a phase.
   and its filename is arbitrary; nesting nests. The standard library is the
   `std` tree and a program is the `root` tree, so `std/dynamic/vec.kiru` is
   `std::dynamic` and `pipeline/kiru/cli.kiru` is `root::kiru`. A file is in the
-  program because it is under the entry file's directory, walked recursively;
-  there is no `import`. Files inside a directory may be renamed, split, or
+  program because it is under the manifest's `project.root`, walked
+  recursively; there is no `import`. Files inside a directory may be renamed, split, or
   merged freely, because only the directory names the namespace.
+- **A project is a `kiru.toml`.** The manifest names the program tree
+  (`project.root`) and the binary's path (`project.output`); the root
+  namespace's `main` is the entry. `kc` reads `./kiru.toml` or the manifest it is given, so
+  the compilation target is one file rather than a source file. The manifest
+  also decides the server's publication scope and which unused warning kinds
+  are reported. The standard library is not a project: it is embedded from
+  `std/**` and mounted as `std` for every program.
 - **A `use` shortens a path; it is namespace-scoped, and resolution is
   order-free.** `use <absolute path>;` is one grammar rule, and what the path
   ends at decides what it shortens: a namespace gives the qualifier its last

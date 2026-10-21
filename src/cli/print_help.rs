@@ -4,13 +4,14 @@
 pub(crate) fn print_help() {
     println!(
         "Kiru Compiler<The> compiler for Kiru programming language.\n\n\
-         Usage: kc [PATH] [-o PATH]\n\
+         Usage: kc [kiru.toml] [-o PATH]\n\
+         \x20      kc lsp\n\
          \x20      kc help\n\
          \x20      kc version\n\n\
          Arguments:\n\
-         \x20 [PATH]  Path to the entry file\n\n\
+         \x20 [kiru.toml]  Project manifest; defaults to ./kiru.toml\n\n\
          Options:\n\
-         \x20 -o <PATH>  Output path; defaults to the entry path without the `.kiru` suffix"
+         \x20 -o <PATH>  Output path; defaults to the manifest's project.output"
     );
 }
 

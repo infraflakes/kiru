@@ -1,13 +1,29 @@
-//! Compiling an entry file into a standalone executable.
+//! Compiling a project into a standalone executable.
 
 use std::path::Path;
 
 use crate::compiler;
+use crate::project::Project;
 
-/// Run the compile pipeline and print the message on failure. Returns the
-/// process exit code.
-pub(crate) fn compile(entry: &Path, output: Option<&Path>, executable: &Path) -> i32 {
-    match compiler::compile(entry, output, executable) {
+use super::source::DiskSource;
+
+/// Load the manifest, let `-o` override its output, and run the compile
+/// process. Returns the process exit code.
+pub(crate) fn compile(manifest: &Path, output: Option<&Path>, executable: &Path) -> i32 {
+    let mut project = match Project::load(manifest) {
+        Ok(project) => project,
+        Err(error) => {
+            eprintln!("{}: {error}", crate::compiler::DIAGNOSTIC_PREFIX);
+            return 1;
+        }
+    };
+    if let Some(output) = output
+        && let Err(error) = project.set_output(output.to_path_buf())
+    {
+        eprintln!("{}: {error}", crate::compiler::DIAGNOSTIC_PREFIX);
+        return 1;
+    }
+    match compiler::compile(&project, executable, &DiskSource) {
         Ok(()) => 0,
         Err(message) => {
             eprint!("{message}");

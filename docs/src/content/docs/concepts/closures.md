@@ -73,7 +73,7 @@ every path when it declares a return type. Because the closure holds a copy of
 each captured local, it cannot assign one:
 
 ```console
-$ kc main.kiru
+$ kc
 main.kiru:3:50: error: `total` is captured by a closure and cannot be assigned
   let bump: fn(int) -> int = fn(x: int) -> int { total = total + x; return total; };
                                                  ^^^^^

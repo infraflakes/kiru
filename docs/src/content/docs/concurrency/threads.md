@@ -42,7 +42,7 @@ so a thread cannot be bound, passed, or returned; a call that returns no value
 is likewise not a value:
 
 ```console
-$ kc main.kiru
+$ kc
 main.kiru:4:16: error: expected text, found no value
   let x: txt = work();
                ^^^^^^

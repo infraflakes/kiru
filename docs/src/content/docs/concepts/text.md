@@ -35,7 +35,7 @@ Seven escapes are recognized:
 Any other escape is an error:
 
 ```console
-$ kc main.kiru
+$ kc
 main.kiru:1:19: error: invalid escape `\q`; only \n, \t, \r, \e, \\, \", and \@ are allowed
 let s: txt = "bad \q";
                   ^^

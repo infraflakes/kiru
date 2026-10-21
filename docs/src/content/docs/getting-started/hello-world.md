@@ -17,6 +17,17 @@ $ mkdir hello
 $ cd hello
 ```
 
+A Kiru project is one manifest beside its tree. Make a `kiru.toml` that names
+this directory as the program tree and the binary `main`:
+
+<span class="filename">Filename: kiru.toml</span>
+
+```toml
+[project]
+root = "."
+output = "main"
+```
+
 Kiru source files end in `.kiru`. Make a file called `main.kiru` and enter this
 program:
 
@@ -31,7 +42,7 @@ fn main() {
 Compile it with `kc` and run the binary:
 
 ```console
-$ kc main.kiru
+$ kc
 $ ./main
 hello, world
 ```
@@ -74,38 +85,40 @@ argument is a string literal in double quotes.
 - a return type must be `int`, and the returned value becomes the program's exit
   status. [Panic and Failure](/failure/panic/) defines the status.
 
-An entry file with no `main`, a `main` with two parameters, or a parameter or
-return type other than the above is a compile error.
+A project whose root namespace declares no `main`, a `main` with two
+parameters, or a parameter or return type other than the above is a compile
+error.
 
 ## The kc Compiler
 
-`kc` compiles a program and has three commands:
+`kc` compiles a project and has three commands:
 
 ```console
-$ kc <path/to/entry> [-o <output>]
+$ kc [kiru.toml] [-o <output>]
 $ kc help
 $ kc version
 ```
 
-`kc <path>` checks the entry file and the whole tree under its directory, then
-writes a standalone executable next to the entry path with the `.kiru` suffix
-removed:
+`kc` reads `./kiru.toml`; `kc path/to/kiru.toml` reads that manifest. It checks
+the whole tree under `project.root`, finds the root namespace's `main`, and
+writes a standalone executable at `project.output`, a path settled against the
+manifest's directory:
 
 ```console
-$ kc tools/release.kiru
-$ ./tools/release
+$ kc
+$ ./main
 ```
 
 With `-o`, you choose the output path:
 
 ```console
-$ kc main.kiru -o app
+$ kc -o app
 $ ./app
 ```
 
 The output is one file. It holds the compiler and your program, so you can copy,
 rename, and ship it on its own. There is no linking step and no interpreter to
-install. The compiler refuses to overwrite the entry file.
+install. The compiler refuses to write over a `.kiru` file.
 
 ## What the Compiler Checks
 

@@ -2,7 +2,7 @@
 //!
 //! `run` first asks whether this executable carries a program trailer; when it
 //! does, the words name the program's arguments. Otherwise the words select
-//! help, version, or a compilation.
+//! help, version, a compilation, or the language server.
 
 use crate::compiler::DIAGNOSTIC_PREFIX;
 
@@ -11,14 +11,18 @@ use super::{compile_request, print_help, run_embedded};
 
 /// Interpret the process arguments and return the process exit code: zero on
 /// success, otherwise nonzero.
-pub(crate) fn run() -> i32 {
+pub fn run() -> i32 {
     let words: Vec<String> = std::env::args().skip(1).collect();
     let executable = std::env::current_exe().ok();
-    if let Some(bytes) = executable
+    // The bytes of the running executable are the command line's to read; the
+    // compiler names the format they carry.
+    if let Some(payload) = executable
         .as_deref()
-        .and_then(crate::compiler::read_trailer)
+        .and_then(|path| std::fs::read(path).ok())
+        .as_deref()
+        .and_then(crate::compiler::payload_in)
     {
-        return run_embedded::run(&bytes, &words);
+        return run_embedded::run(payload, &words);
     }
     match parse_arguments::parse(&words) {
         Ok(Request::Help) => {
@@ -29,8 +33,12 @@ pub(crate) fn run() -> i32 {
             print_help::print_version();
             0
         }
-        Ok(Request::Compile { entry, output }) => match &executable {
-            Some(executable) => compile_request::compile(&entry, output.as_deref(), executable),
+        Ok(Request::Serve) => {
+            crate::lsp::serve();
+            0
+        }
+        Ok(Request::Compile { manifest, output }) => match &executable {
+            Some(executable) => compile_request::compile(&manifest, output.as_deref(), executable),
             None => {
                 eprintln!("{DIAGNOSTIC_PREFIX}: cannot find the {DIAGNOSTIC_PREFIX} binary");
                 1

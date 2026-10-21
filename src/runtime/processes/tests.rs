@@ -5,12 +5,13 @@
 
 use std::time::{Duration, Instant};
 
-use crate::compiler::checked_program;
+use crate::compiler::checked_program_and_entry;
 use crate::runtime::Runtime;
 use crate::runtime::Value;
 
 fn runtime(source: &str) -> Runtime {
-    Runtime::for_testing(checked_program(source))
+    let (program, entry) = checked_program_and_entry(source);
+    Runtime::for_testing(program, entry)
 }
 
 /// The process group table grows with the operating system's resources: no

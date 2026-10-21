@@ -18,11 +18,11 @@ use std::sync::{Arc, RwLock};
 #[cfg(test)]
 use std::collections::HashMap;
 
-use crate::cli::lock_recovery::RwLockExt;
 use crate::compiler::EntryShape;
 use crate::compiler::bytecode::{Bytecode, CompareOp, Instruction, NumberOp};
 use crate::runtime::Panic;
 use crate::runtime::{Map, Text, Value};
+use crate::sync::RwLockExt;
 
 use super::processes::{self as process, RuntimeState};
 

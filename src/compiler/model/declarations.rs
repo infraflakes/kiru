@@ -15,6 +15,7 @@ use crate::compiler::native_registry::Native;
 use super::expressions::{Expression, Function};
 use super::ids::{DeclarationId, FileId, NamespaceId};
 use crate::compiler::model::Type;
+use crate::syntax::Span;
 
 /// One declaration node: its kind, its name, the type it holds, and the value
 /// it holds. The kind is the one place every form fact is read from; a pass
@@ -23,6 +24,9 @@ use crate::compiler::model::Type;
 pub(crate) struct Declaration {
     pub(crate) kind: DeclarationKind,
     pub(crate) name: String,
+    /// The span of the written name, for a query that asks where a
+    /// declaration's name stands. A native has none: its span is empty.
+    pub(crate) name_span: Span,
     /// Whether another namespace may reach this declaration. A name reached
     /// across namespaces and a bound function read it; a kind that takes no
     /// visibility never sets it.
@@ -100,6 +104,12 @@ pub(crate) struct Derived {
 #[derive(Debug)]
 pub(crate) struct TypeDecl {
     pub(crate) name: String,
+    /// The span of the type's written name. A type the compiler registers
+    /// itself is written in no file and carries an empty span.
+    pub(crate) name_span: Span,
+    /// The file the type is written in, or `None` for one the compiler
+    /// registers.
+    pub(crate) file: Option<FileId>,
     /// Whether another namespace may reach the type.
     pub(crate) public: bool,
     /// The namespace that declares the type. A field or variant is reached
@@ -139,15 +149,29 @@ pub(crate) enum TypeKind {
 #[derive(Debug)]
 pub(crate) struct TypeFieldDecl {
     pub(crate) name: String,
+    /// The span of the field's written name.
+    pub(crate) name_span: Span,
     /// Whether another namespace may read and write the field.
     pub(crate) public: bool,
     pub(crate) ty: Type,
+}
+
+/// A written type name in a file: the path it spells and the name the path
+/// ends at. A written type resolves to an id and leaves no node, so this is
+/// the fact that says where the name stands.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TypeUse {
+    pub(crate) file: FileId,
+    pub(crate) path: Span,
+    pub(crate) name: Span,
 }
 
 /// One variant of a declared enum type; `payload` holds its positional types.
 #[derive(Debug)]
 pub(crate) struct VariantDecl {
     pub(crate) name: String,
+    /// The span of the variant's written name.
+    pub(crate) name_span: Span,
     /// Whether another namespace may construct and match the variant.
     pub(crate) public: bool,
     pub(crate) payload: Vec<Type>,

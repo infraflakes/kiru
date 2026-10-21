@@ -33,7 +33,7 @@ left to right. The count must match exactly; there are no default or optional
 parameters:
 
 ```console
-$ kc main.kiru
+$ kc
 main.kiru:6:14: error: `banner` takes 1 argument, found 0
   std::print(banner());
              ^^^^^^
@@ -82,7 +82,7 @@ A bare statement must be a call. A literal, a name, a `{ … }` literal, or a
 concatenation as a statement is an error:
 
 ```console
-$ kc main.kiru
+$ kc
 main.kiru:2:3: error: a statement must be a call
   "x";
   ^^^

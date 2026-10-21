@@ -1,49 +1,56 @@
-//! The compiler engine: loading, name resolution, validation, pruning,
-//! lowering, and packaging.
+//! The compiler engine: one compile process and one analysis process over one
+//! model.
 //!
-//! A compile walks the stages in order, and this facade is the one place that
-//! names them. `load_files` walks the entry file's directory tree and the
-//! embedded library; `resolve_names` builds the program model and resolves
-//! every name into an edge; `validate_program` derives every type and enforces
-//! the body and flow rules; `prune_unreachable` keeps only what the entry
-//! reaches; `lower_bytecode` lowers the result to a compact instruction
-//! stream; and `package_binary` serializes that bytecode behind the binary
-//! trailer. The model it builds lives in `crate::compiler::model`, and the
-//! bytecode it produces lives in `crate::compiler::bytecode`.
+//! `compile` takes a project's tree to an executable: load, resolve, check,
+//! find the root `main`, prune, lower, package. `analyze` takes a tree to the
+//! facts an editor shows, grouped by file. Both read the same model and the
+//! same instruction set; neither reads a program source from disk, since the
+//! source is supplied by the command line, the server, or the tests.
+//!
+//! Every process and every shared fact is an entry file beside its directory:
+//! `compile` with its stages, `analyze` with the token projection, `model` with
+//! the graph, `bytecode` with the instruction set, `diagnostic` with the facts
+//! and their rendering, `warnings` with the unused facts, `native_registry`
+//! with the native table, and `test_support` with the fixtures.
 
+mod analyze;
 pub(crate) mod bytecode;
+pub(crate) mod compile;
 mod diagnostic;
-mod load_files;
-mod lower_bytecode;
-mod lower_expressions;
-mod messages;
 pub(crate) mod model;
 pub(crate) mod native_registry;
-mod output_file;
-mod package_binary;
-mod pipeline;
-mod prune_unreachable;
-mod resolve_names;
 #[cfg(test)]
 mod test_support;
-mod validate_program;
+mod warnings;
 
-pub(crate) use diagnostic::DIAGNOSTIC_PREFIX;
-pub(in crate::compiler) use diagnostic::Diagnostic;
-pub(crate) use load_files::{LoadedProgram, STD_TREE, load_files};
 #[cfg(test)]
-pub(crate) use lower_bytecode::declaration_codes;
-pub(crate) use lower_bytecode::lower_bytecode;
-pub(in crate::compiler) use messages::{
+pub(crate) use analyze::SemanticRole;
+pub(crate) use analyze::semantic_tokens;
+pub(crate) use analyze::{SemanticToken, TOKEN_MODIFIERS, TOKEN_TYPES};
+pub(crate) use analyze::{Tree, diagnostics as analyze_tree};
+pub(crate) use compile::build::build;
+pub use compile::build::{Build, BuildFailure};
+#[cfg(test)]
+pub(crate) use compile::check::validate_program;
+
+pub(crate) use compile::compile;
+pub use compile::load::ProgramSource;
+pub(crate) use compile::load::{EMBEDDED, LoadedProgram, STD_TREE};
+#[cfg(test)]
+pub(crate) use compile::lower::declaration_codes;
+pub(crate) use compile::lower::lower_bytecode;
+pub(crate) use compile::package::{
+    attach_trailer, deserialize_bytecode, payload_in, serialize_bytecode,
+};
+pub(crate) use compile::prune::{mark_reachable, prune_unreachable};
+pub(crate) use compile::resolve::{EntryShape, MISSING_MAIN, program_main};
+pub(crate) use diagnostic::DIAGNOSTIC_PREFIX;
+pub use diagnostic::{Diagnostic, RelatedSpan, Severity};
+pub(in crate::compiler) use diagnostic::{
     duplicate_field, duplicate_in_namespace, duplicate_name, expected_instead,
     native_used_as_value, private_member, value_called,
 };
-pub(crate) use package_binary::{
-    attach_trailer, deserialize_bytecode, read_trailer, serialize_bytecode,
-};
-pub(crate) use pipeline::compile;
-pub(crate) use prune_unreachable::prune_unreachable;
-pub(crate) use resolve_names::{EntryShape, resolve_names};
 #[cfg(test)]
-pub(crate) use test_support::{checked_files, checked_program};
-pub(crate) use validate_program::validate_program;
+pub(crate) use test_support::{
+    VirtualSource, checked_files, checked_program, checked_program_and_entry,
+};

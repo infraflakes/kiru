@@ -1,4 +1,9 @@
 //! Rendering compiler errors with their source location.
+//!
+//! A diagnostic is one fact: what is wrong or what is unused, and where. It
+//! carries a severity and, when one other place explains the fact, the span of
+//! that place. The terminal renders an error's own span; the language server
+//! publishes the structure as the client asks for it.
 
 use std::path::PathBuf;
 
@@ -11,12 +16,69 @@ use crate::syntax::Span;
 /// program's own name instead.
 pub(crate) const DIAGNOSTIC_PREFIX: &str = "kc";
 
-/// One compiler error tied to a source file and byte range.
-#[derive(Debug)]
-pub(crate) struct Diagnostic {
-    pub(crate) path: PathBuf,
-    pub(crate) span: Span,
-    pub(crate) message: String,
+/// How a diagnostic weighs. An error stops the compile; a warning states a
+/// fact about the source and lets it pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Severity {
+    Error,
+    Warning,
+}
+
+/// One other place a diagnostic points at: the span and the fact it states.
+#[derive(Clone, Debug)]
+pub struct RelatedSpan {
+    pub path: PathBuf,
+    pub span: Span,
+    pub message: String,
+}
+
+/// The diagnostics of one file, with the source the spans name. A terminal
+/// renders from it; the server converts its spans against it.
+#[derive(Clone, Debug)]
+pub struct FileDiagnostics {
+    pub path: PathBuf,
+    pub source: String,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+/// Group facts by the file they name, keeping the source the spans convert
+/// against and the order they were gathered in. One grouping serves the
+/// terminal's failure and the server's publication.
+pub(crate) fn group(
+    loaded: &LoadedProgram,
+    diagnostics: impl IntoIterator<Item = Diagnostic>,
+) -> Vec<FileDiagnostics> {
+    let mut files: Vec<FileDiagnostics> = Vec::new();
+    for diagnostic in diagnostics {
+        if let Some(file) = files.iter_mut().find(|file| file.path == diagnostic.path) {
+            file.diagnostics.push(diagnostic);
+            continue;
+        }
+        let source = loaded
+            .files
+            .iter()
+            .find(|file| file.path == diagnostic.path)
+            .map(|file| file.source.clone())
+            .unwrap_or_default();
+        files.push(FileDiagnostics {
+            path: diagnostic.path.clone(),
+            source,
+            diagnostics: vec![diagnostic],
+        });
+    }
+    files
+}
+
+/// One compiler fact tied to a source file and byte range.
+#[derive(Clone, Debug)]
+pub struct Diagnostic {
+    pub path: PathBuf,
+    pub span: Span,
+    pub message: String,
+    pub severity: Severity,
+    /// The places that explain this fact, when one exists. The first
+    /// declaration behind a duplicate carries its span here.
+    pub related: Vec<RelatedSpan>,
 }
 
 impl Diagnostic {
@@ -25,12 +87,52 @@ impl Diagnostic {
             path: path.into(),
             span,
             message: message.into(),
+            severity: Severity::Error,
+            related: Vec::new(),
         }
     }
+
+    /// The same fact, weighed as a warning.
+    pub(crate) fn warning(
+        path: impl Into<PathBuf>,
+        span: Span,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            severity: Severity::Warning,
+            ..Self::new(path, span, message)
+        }
+    }
+
+    /// Point at one other place that explains the fact.
+    pub(crate) fn with_related(
+        mut self,
+        path: impl Into<PathBuf>,
+        span: Span,
+        message: impl Into<String>,
+    ) -> Self {
+        self.related.push(RelatedSpan {
+            path: path.into(),
+            span,
+            message: message.into(),
+        });
+        self
+    }
+
+    /// The word the terminal renders for the severity.
+    fn severity_word(&self) -> &'static str {
+        match self.severity {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+        }
+    }
+
     /// Render as `path:line:column: error: message`, followed by every line
     /// the span covers and a caret underline. Tabs are expanded to four-column
     /// stops and characters take their Unicode display width, so the underline
-    /// stays aligned.
+    /// stays aligned. Related spans are structure, not rendering: a terminal
+    /// reads the one fact at its own place, and a client that wants the related
+    /// places reads the diagnostic's fields.
     pub(crate) fn render(&self, source: &str) -> String {
         let start = self.span.start.min(source.len());
         let end = self.span.end.min(source.len()).max(start);
@@ -42,8 +144,10 @@ impl Diagnostic {
         let column = display_width(&source[line_start..start]) + 1;
 
         let mut rendered = format!(
-            "{}:{line_number}:{column}: error: {}\n",
+            "{}:{line_number}:{}: {}: {}\n",
             self.path.display(),
+            column,
+            self.severity_word(),
             self.message
         );
 
@@ -119,6 +223,76 @@ pub(in crate::compiler) fn render(program: &LoadedProgram, diagnostic: &Diagnost
         .map(|file| file.source.as_str())
         .unwrap_or("");
     diagnostic.render(source)
+}
+
+/// A count and its noun, pluralized: `1 argument`, `2 arguments`. Every arity
+/// diagnostic reads through this, so the singular is never wrong.
+pub(crate) fn count(count: usize, noun: &str) -> String {
+    if count == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{count} {noun}s")
+    }
+}
+
+/// The message for a variant payload that does not carry one item per declared
+/// payload type, or `None` when it does. `subject` is how the site writes the
+/// variant and `noun` names its items there, so a construction and a pattern
+/// share the count check while each keeps its own noun.
+pub(crate) fn variant_payload_count(
+    subject: &str,
+    declared: usize,
+    found: usize,
+    noun: &str,
+) -> Option<String> {
+    (found != declared)
+        .then(|| format!("`{subject}` takes {}, found {found}", count(declared, noun)))
+}
+
+/// The message for a value of the wrong type: `expected <required>, found
+/// <actual>`, where both names come from the type system.
+pub(crate) fn expected_instead(required: &str, actual: &str) -> String {
+    format!("expected {required}, found {actual}")
+}
+
+/// The message for a native named where a value is required. A native has no
+/// runtime value yet: a function value is a code pointer, and a native is
+/// dispatched by index.
+pub(crate) fn native_used_as_value(name: &str) -> String {
+    format!("`{name}` is a native and has no value form; call it")
+}
+
+/// The message for a value called as a function.
+pub(crate) fn value_called(name: &str) -> String {
+    format!("`{name}` is a value and cannot be called")
+}
+
+/// The message for a name declared more than once in one scope.
+pub(crate) fn duplicate_name(name: &str) -> String {
+    format!("`{name}` is declared more than once")
+}
+
+/// The message for a record literal that repeats a field name.
+pub(crate) fn duplicate_field(name: &str) -> String {
+    format!("duplicate field `{name}`")
+}
+
+/// The message for a name declared more than once in one namespace.
+pub(crate) fn duplicate_in_namespace(name: &str) -> String {
+    format!("`{name}` is declared more than once in this namespace")
+}
+
+/// The message a duplicate points back with: the fact that the place it
+/// names is the first declaration of the name.
+pub(crate) fn first_declaration(name: &str) -> String {
+    format!("first declaration of `{name}`")
+}
+
+/// The message for a field or variant reached across a namespace that does not
+/// mark it `pub`. A member is private to its own namespace, exactly like a
+/// declaration.
+pub(crate) fn private_member(owner: &str, member: &str, namespace: &str) -> String {
+    format!("`{owner}.{member}` is private to `{namespace}`; mark it `pub` to reach it")
 }
 
 #[cfg(test)]

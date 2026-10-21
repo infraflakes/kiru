@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use super::super::declarations::{Declaration, TypeDecl};
+use super::super::declarations::{Declaration, TypeDecl, TypeUse};
 use super::super::ids::{DeclarationId, FileId, NamespaceId};
 use super::interner::{Interner, Symbol};
 use super::tables::{MethodTable, NameTable, TypeTable};
@@ -19,14 +19,14 @@ pub(crate) struct Program {
     pub(crate) declarations: Vec<Declaration>,
     /// The declared types, indexed by `TypeId`.
     pub(crate) types: Vec<TypeDecl>,
-    /// The entry function: the entry file's own root `main`.
-    pub(crate) entry: DeclarationId,
     /// The module values in dependency order: each is evaluated once at
     /// startup, after the values its initializer reads.
     pub(crate) module_values: Vec<DeclarationId>,
     /// The one interner every name-table key came from. A table key is a
     /// `Symbol`, so the spelling it names resolves through this.
     pub(crate) intern: Interner,
+    /// Every written type name, in the order the resolution met them.
+    pub(crate) type_uses: Vec<TypeUse>,
 }
 
 impl Program {
@@ -64,8 +64,8 @@ impl Program {
 }
 
 /// One loaded file and the declarations it holds. A file belongs to exactly
-/// one namespace, the one its directory names; the namespace is recorded where
-/// each declaration joins it, so the file keeps only its path.
+/// one namespace, the one its directory names; the namespace is recorded
+/// here, and where each declaration joins it is recorded on the declaration.
 #[derive(Debug)]
 pub(crate) struct File {
     pub(crate) path: PathBuf,
@@ -81,6 +81,16 @@ pub(crate) enum UseTarget {
     Namespace(NamespaceId),
     Type(TypeId),
     Function(DeclarationId),
+}
+
+/// One delivery a namespace's `use`s recorded: the target the delivered name
+/// reaches and the `use` item that delivered it. The index names the item in
+/// the loaded program's stream, which is how the unused-`use` fact reads back
+/// which deliveries a resolution actually took.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Delivery {
+    pub(crate) target: UseTarget,
+    pub(crate) use_index: usize,
 }
 
 /// One namespace node: the name registry, the method and associated-function
@@ -103,7 +113,7 @@ pub(crate) struct Namespace {
     /// What each `use` this namespace wrote reaches, resolved once, keyed by
     /// the name it delivers. Two `use`s may deliver one name, so the entries
     /// keep the file's order and the reader takes the first that fits.
-    pub(crate) brought: HashMap<Symbol, Vec<UseTarget>>,
+    pub(crate) brought: HashMap<Symbol, Vec<Delivery>>,
     /// The names filed in any pool of this namespace: a filed function is not
     /// a name, so the one-flat-map read replaces a walk over both pools.
     pub(crate) filed: HashSet<Symbol>,

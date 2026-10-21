@@ -176,7 +176,7 @@ no subtyping and no group of types.
 A disagreement is an error at the operator or expression:
 
 ```console
-$ kc main.kiru
+$ kc
 main.kiru:2:31: error: expected int, found text
 use std;
 fn main() { let total: int = "1" + "2"; };

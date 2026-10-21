@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use crate::compiler::model::Program;
+use crate::compiler::model::{DeclarationId, Program};
 use crate::compiler::{declaration_codes, lower_bytecode};
 use crate::runtime::Panic;
 use crate::runtime::Value;
@@ -14,9 +14,9 @@ use super::Runtime;
 impl Runtime {
     /// Build a runtime over a checked program and evaluate its module values,
     /// exactly as the compiled binary does at startup.
-    pub(crate) fn for_testing(program: Program) -> Self {
-        let bytecode = lower_bytecode(&program);
-        let symbols = root_symbols(&program);
+    pub(crate) fn for_testing(program: Program, entry: DeclarationId) -> Self {
+        let bytecode = lower_bytecode(&program, entry);
+        let symbols = root_symbols(&program, entry);
         let global_count = bytecode.module_values.len();
         let runtime = Self {
             bytecode: Arc::new(bytecode),
@@ -40,8 +40,8 @@ impl Runtime {
 /// The root-namespace function names and their code ids, for the tests that
 /// call by name. The code ids come from the one mapping lowering assigns, so
 /// the test helper never re-derives the numbering.
-fn root_symbols(program: &Program) -> HashMap<String, u32> {
-    let root = program.declaration(program.entry).namespace;
+fn root_symbols(program: &Program, entry: DeclarationId) -> HashMap<String, u32> {
+    let root = program.declaration(entry).namespace;
     let mut symbols = HashMap::new();
     for (declaration, code_id) in program.declarations.iter().zip(declaration_codes(program)) {
         let Some(code_id) = code_id else {

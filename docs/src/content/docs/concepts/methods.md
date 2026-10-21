@@ -124,7 +124,7 @@ Two functions bound to the same type, or two plain declarations of one name, are
 still an error. A call whose receiver has no method of that name is an error:
 
 ```console
-$ kc main.kiru
+$ kc
 main.kiru:3:6: error: no method `nope` for this value
   xs.nope();
      ^^^^

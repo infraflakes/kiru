@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use crate::cli::lock_recovery::MutexExt;
+use crate::sync::MutexExt;
 
 /// The live process groups and the spawned processes waiting to be reaped by
 /// `wait_for`.
