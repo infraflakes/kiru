@@ -6,7 +6,13 @@ use crate::syntax::ast::{
 };
 
 fn parse(source: &str) -> File {
-    parse_file(source).expect("source parses")
+    let parsed = parse_file(source).expect("source lexes");
+    assert!(
+        parsed.errors.is_empty(),
+        "source parses: {:?}",
+        parsed.errors
+    );
+    parsed.file
 }
 
 /// The name a written type names: a bare, unapplied single-segment path. A
@@ -34,8 +40,18 @@ fn vec_element(ty: &TypeExpr) -> &TypeExpr {
     &arguments[0]
 }
 
+/// The first syntax error a source earns, whether the lexer rejected it or
+/// recovery recorded it. A lexer error is the only `Err`.
 fn parse_error(source: &str) -> String {
-    parse_file(source).expect_err("source is rejected").message
+    match parse_file(source) {
+        Err(error) => error.message,
+        Ok(parsed) => parsed
+            .errors
+            .first()
+            .expect("source is rejected")
+            .message
+            .clone(),
+    }
 }
 
 /// The declaration at a top-level item, for the cases that write one.
@@ -633,4 +649,69 @@ fn parses_a_function_with_a_receiver_parameter() {
     assert_eq!(function.type_parameters, vec!["T".to_owned()]);
     assert_eq!(function.parameters[0].name, "self");
     assert_eq!(function.name, "len");
+}
+
+#[test]
+fn recovers_between_malformed_declarations() {
+    let parsed = parse_file(
+        "fn broken() -> {};\n\
+         fn kept() {};\n\
+         fn also_broken() -> {};",
+    )
+    .expect("source lexes");
+    assert_eq!(parsed.errors.len(), 2, "both declarations are reported");
+    assert!(
+        parsed.file.items.iter().any(|item| matches!(
+            item,
+            Item::Declaration(declaration) if declaration.name == "kept"
+        )),
+        "the declaration between the errors is kept"
+    );
+}
+
+#[test]
+fn recovers_a_malformed_statement_and_keeps_the_rest() {
+    let parsed = parse_file("fn main() { let broken: int = ; let kept: int = 1; broken(); };")
+        .expect("source lexes");
+    assert_eq!(parsed.errors.len(), 1);
+    let function = declaration(&parsed.file, 0)
+        .function()
+        .expect("expected a function");
+    assert_eq!(
+        function.body.len(),
+        2,
+        "the statements after the broken one"
+    );
+    let Statement::Binding(binding) = &function.body[0] else {
+        panic!("expected a binding");
+    };
+    assert_eq!(binding.name, "kept");
+}
+
+#[test]
+fn recovers_past_an_error_inside_a_nested_block() {
+    let parsed = parse_file(
+        "fn before() {};\n\
+         fn broken() { let value: int = ; };\n\
+         fn after() {};",
+    )
+    .expect("source lexes");
+    assert_eq!(parsed.errors.len(), 1);
+    let names: Vec<&str> = parsed
+        .file
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Declaration(declaration) => Some(declaration.name.as_str()),
+            Item::Use(_) => None,
+        })
+        .collect();
+    assert_eq!(names, vec!["before", "broken", "after"]);
+}
+
+#[test]
+fn an_unterminated_string_fails_the_lexer() {
+    let error = parse_file("fn main() { let text: txt = \"unterminated; };")
+        .expect_err("an unterminated string has no token boundary to recover to");
+    assert_eq!(error.message, "unterminated string");
 }

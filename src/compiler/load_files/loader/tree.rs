@@ -73,6 +73,7 @@ pub(crate) fn load_files(
         files: loader.files,
         items: loader.items,
         uses: loader.uses,
+        syntax: loader.syntax,
     })
 }
 
@@ -119,6 +120,7 @@ pub(crate) fn load_single(
         files: loader.files,
         items: loader.items,
         uses: loader.uses,
+        syntax: loader.syntax,
     })
 }
 

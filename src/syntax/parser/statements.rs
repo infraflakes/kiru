@@ -8,7 +8,9 @@ use crate::syntax::token::TokenKind;
 use super::{ParseError, Parser};
 
 impl<'a> Parser<'a> {
-    /// Parse a `{ ... }` block into its statements.
+    /// Parse a `{ ... }` block into its statements. A statement that fails is
+    /// dropped and its error recorded, and the statements after it are still
+    /// read: one malformed statement does not hide the rest of the body.
     pub(super) fn parse_block(&mut self) -> Result<Vec<Statement>, ParseError> {
         self.enter_nesting()?;
         self.expect(&TokenKind::LBrace, "to open a block")?;
@@ -19,11 +21,43 @@ impl<'a> Parser<'a> {
                     self.error_here("expected `}` to close the block, found the end of the file")
                 );
             }
-            statements.push(self.parse_statement()?);
+            match self.parse_statement() {
+                Ok(statement) => statements.push(statement),
+                Err(error) => {
+                    self.errors.push(error);
+                    self.synchronize_statement();
+                }
+            }
         }
         self.expect(&TokenKind::RBrace, "to close the block")?;
         self.leave_nesting();
         Ok(statements)
+    }
+
+    /// Skip the remains of a malformed statement: stop after the `;` that
+    /// closes it at the body's own nesting, or before the `}` that closes the
+    /// body, which the block parser consumes. A `;` inside a nested block,
+    /// argument list, or map belongs to that construct, not to this body.
+    fn synchronize_statement(&mut self) {
+        let mut nesting = 0usize;
+        loop {
+            if self.check(&TokenKind::Eof) {
+                return;
+            }
+            if nesting == 0 && self.check(&TokenKind::RBrace) {
+                return;
+            }
+            if nesting == 0 && self.check(&TokenKind::Semi) {
+                self.advance();
+                return;
+            }
+            match self.current().kind {
+                TokenKind::LBrace | TokenKind::LParen => nesting += 1,
+                TokenKind::RBrace | TokenKind::RParen => nesting = nesting.saturating_sub(1),
+                _ => {}
+            }
+            self.advance();
+        }
     }
 
     /// Dispatch on the cursor token to parse one statement.

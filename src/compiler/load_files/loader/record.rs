@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use super::embedded::EMBEDDED;
 use super::tree::{STD_TREE, namespace_of};
+use crate::compiler::Diagnostic;
 use crate::compiler::load_files::load_error::LoadError;
 use crate::compiler::load_files::loaded_program::{
     ImplTarget, LoadedFile, ScopedDeclaration, ScopedUse,
@@ -12,12 +13,13 @@ use crate::syntax;
 use crate::syntax::{Declaration, Item};
 
 /// The accumulating state of a load: the files read so far, their joined
-/// declarations and uses, and the index of the entry file once the walk
-/// reaches it.
+/// declarations and uses, the syntax errors recovery found, and the index of
+/// the entry file once the walk reaches it.
 pub(super) struct Loader {
     pub(super) files: Vec<LoadedFile>,
     pub(super) items: Vec<ScopedDeclaration>,
     pub(super) uses: Vec<ScopedUse>,
+    pub(super) syntax: Vec<Diagnostic>,
     /// The index of the entry file once the walk reaches it.
     pub(super) entry: Option<usize>,
 }
@@ -28,6 +30,7 @@ impl Loader {
             files: Vec::new(),
             items: Vec::new(),
             uses: Vec::new(),
+            syntax: Vec::new(),
             entry: None,
         }
     }
@@ -49,14 +52,17 @@ impl Loader {
     }
 
     /// Parse one file and record its declarations and uses in its namespace.
+    /// The items that parsed are recorded even when recovery found syntax
+    /// errors; a lexer error fails the load, because there is no token
+    /// boundary to recover to.
     pub(super) fn add(
         &mut self,
         path: PathBuf,
         source: String,
         namespace: Vec<String>,
     ) -> Result<usize, LoadError> {
-        let file = match syntax::parse_file(&source) {
-            Ok(file) => file,
+        let parsed = match syntax::parse_file(&source) {
+            Ok(parsed) => parsed,
             Err(error) => {
                 return Err(LoadError {
                     path,
@@ -67,12 +73,16 @@ impl Loader {
             }
         };
         let index = self.files.len();
+        for error in parsed.errors {
+            self.syntax
+                .push(Diagnostic::new(&path, error.span, error.message));
+        }
         self.files.push(LoadedFile {
             path,
             source,
             namespace: namespace.clone(),
         });
-        for item in file.items {
+        for item in parsed.file.items {
             match item {
                 Item::Declaration(declaration) => self.record(*declaration, index, &namespace),
                 Item::Use(use_item) => {

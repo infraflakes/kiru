@@ -125,6 +125,24 @@ pub fn analyze_file(
         return Vec::new();
     };
     let file = FileId(file);
+    // A recovered tree is not checked: a dropped statement leaves a body the
+    // checker would reject for reasons the author never wrote. Its syntax
+    // errors and its unused facts are still the file's own, and those are
+    // read from what recovery kept.
+    let mut syntax: Vec<Diagnostic> = loaded
+        .syntax
+        .iter()
+        .filter(|diagnostic| diagnostic.path == path)
+        .cloned()
+        .collect();
+    if !syntax.is_empty() {
+        if let Ok(Analysis { program, warnings }) = resolve_file(&loaded, file) {
+            syntax.extend(warnings);
+            syntax.extend(unused_bindings(&program));
+        }
+        syntax.retain(|diagnostic| diagnostic.path == path);
+        return syntax;
+    }
     let Analysis {
         mut program,
         mut warnings,
@@ -151,6 +169,12 @@ pub fn build(entry: &Path, source: &impl ProgramSource) -> Result<Build, BuildFa
         Ok(loaded) => loaded,
         Err(error) => return Err(failure(vec![error], None)),
     };
+    // A recovered tree is never resolved: the syntax errors are reported in
+    // full before any semantic stage can turn a dropped item into a second,
+    // misleading failure.
+    if !loaded.syntax.is_empty() {
+        return Err(syntax_failure(&loaded));
+    }
     let Resolved {
         program,
         entry,
@@ -171,6 +195,42 @@ pub fn build(entry: &Path, source: &impl ProgramSource) -> Result<Build, BuildFa
         entry,
         warnings,
     })
+}
+
+/// Assemble the failure a recovered program stops on: every syntax error the
+/// load found, rendered at its place in the order the loader met it. The
+/// program's files carry the sources the spans name.
+fn syntax_failure(loaded: &LoadedProgram) -> BuildFailure {
+    let rendered = loaded
+        .syntax
+        .iter()
+        .map(|diagnostic| render(loaded, diagnostic))
+        .collect();
+    let mut diagnostics: Vec<FileDiagnostics> = Vec::new();
+    for diagnostic in &loaded.syntax {
+        if let Some(file) = diagnostics
+            .iter_mut()
+            .find(|file| file.path == diagnostic.path)
+        {
+            file.diagnostics.push(diagnostic.clone());
+            continue;
+        }
+        let source = loaded
+            .files
+            .iter()
+            .find(|file| file.path == diagnostic.path)
+            .map(|file| file.source.clone())
+            .unwrap_or_default();
+        diagnostics.push(FileDiagnostics {
+            path: diagnostic.path.clone(),
+            source,
+            diagnostics: vec![diagnostic.clone()],
+        });
+    }
+    BuildFailure {
+        diagnostics,
+        rendered,
+    }
 }
 
 /// Assemble the failure a build stopped on: the diagnostics placed in their
@@ -275,6 +335,64 @@ mod tests {
                 "{case}: expected a {severity} naming `{message}`, found {facts:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_syntax_error_reports_the_files_unused_facts_without_checking() {
+        let source = "use std::text;\nfn main() { let unused: int = 1; let broken: int = ; };";
+        let diagnostics = analyze_file(
+            Path::new("/virtual/main.kiru"),
+            &VirtualSource::new(&[("main.kiru", source)]),
+            None,
+        );
+        let facts: Vec<(String, String)> = diagnostics
+            .iter()
+            .map(|diagnostic| {
+                (
+                    format!("{:?}", diagnostic.severity),
+                    diagnostic.message.clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            facts.len(),
+            3,
+            "the syntax error and both unused facts: {facts:?}"
+        );
+        assert!(
+            facts
+                .iter()
+                .any(|(level, text)| level == "Error" && text.contains("expected an expression")),
+            "{facts:?}"
+        );
+        assert!(
+            facts
+                .iter()
+                .any(|(level, text)| level == "Warning" && text == "unused use `std::text`"),
+            "{facts:?}"
+        );
+        assert!(
+            facts
+                .iter()
+                .any(|(level, text)| level == "Warning"
+                    && text == "the local `unused` is never read"),
+            "{facts:?}"
+        );
+    }
+
+    #[test]
+    fn a_clean_file_still_reports_its_type_error() {
+        let diagnostics = analyze_file(
+            Path::new("/virtual/main.kiru"),
+            &VirtualSource::new(&[("main.kiru", "fn main() { let x: int = \"t\"; };")]),
+            None,
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.message == "expected int, found txt"),
+            "{diagnostics:?}"
+        );
     }
 
     #[test]

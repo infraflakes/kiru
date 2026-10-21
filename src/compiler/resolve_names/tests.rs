@@ -19,6 +19,11 @@ fn linked_with_entry(files: &[(&str, &str)], entry: &str) -> Result<Resolved, St
         &crate::cli::DiskSource,
     )
     .map_err(|error| error.message)?;
+    // A recovered file never reaches resolution: its syntax errors stop the
+    // build before any semantic stage reads the tree.
+    if let Some(diagnostic) = program.syntax.first() {
+        return Err(diagnostic.message.clone());
+    }
     resolve_program(&program).map_err(|diagnostic| diagnostic.message)
 }
 

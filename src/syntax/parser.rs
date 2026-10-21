@@ -24,13 +24,23 @@ pub(crate) struct ParseError {
     pub(crate) message: String,
 }
 
-/// Parse one source file.
-pub(crate) fn parse_file(source: &str) -> Result<File, ParseError> {
+/// One parsed source file: the items that parsed and every syntax error the
+/// recovery found among the items it dropped.
+#[derive(Debug)]
+pub(crate) struct Parsed {
+    pub(crate) file: File,
+    pub(crate) errors: Vec<ParseError>,
+}
+
+/// Parse one source file. A lexer error is the one failure that stops parsing:
+/// an unterminated string or comment leaves no token boundary to recover to.
+/// A syntax error is recorded and the parser resumes at the next item.
+pub(crate) fn parse_file(source: &str) -> Result<Parsed, ParseError> {
     let tokens = lex(source).map_err(|error| ParseError {
         span: error.span,
         message: error.message,
     })?;
-    Parser::new(source, tokens).parse_file()
+    Ok(Parser::new(source, tokens).parse_file())
 }
 
 /// Cursor state over one lexed token stream.
@@ -41,6 +51,8 @@ struct Parser<'a> {
     tokens: Vec<Token>,
     position: usize,
     depth: usize,
+    /// Every syntax error found while parsing, in the order recovery met them.
+    errors: Vec<ParseError>,
 }
 
 impl<'a> Parser<'a> {
@@ -55,6 +67,7 @@ impl<'a> Parser<'a> {
             tokens,
             position: 0,
             depth: 0,
+            errors: Vec::new(),
         }
     }
 
@@ -175,13 +188,81 @@ impl<'a> Parser<'a> {
     /// Parse the token stream into a file: its top-level items in order. A
     /// `use` may stand anywhere among them: it shortens paths for the whole
     /// file's namespace, and the written order between `use`s decides what a
-    /// delivered name is on a collision.
-    fn parse_file(mut self) -> Result<File, ParseError> {
+    /// delivered name is on a collision. An item that fails is dropped and
+    /// parsing resumes at the next one, so one malformed item never hides the
+    /// items after it.
+    fn parse_file(mut self) -> Parsed {
         let mut items = Vec::new();
         while !self.check(&TokenKind::Eof) {
-            items.push(self.parse_item()?);
+            let item_start = self.position;
+            match self.parse_item() {
+                Ok(item) => items.push(item),
+                Err(error) => {
+                    self.errors.push(error);
+                    self.synchronize_item(item_start);
+                }
+            }
         }
-        Ok(File { items })
+        Parsed {
+            file: File { items },
+            errors: self.errors,
+        }
+    }
+
+    /// Whether the cursor token can begin a top-level item.
+    fn starts_item(&self) -> bool {
+        matches!(
+            self.current().kind,
+            TokenKind::Use
+                | TokenKind::Pub
+                | TokenKind::Fn
+                | TokenKind::Rec
+                | TokenKind::Enum
+                | TokenKind::Impl
+                | TokenKind::Let
+        )
+    }
+
+    /// Skip the remains of a malformed item that began at `item_start`. The
+    /// delimiters the item opened are counted, so a `fn` inside its body is
+    /// not mistaken for the next item: recovery stops only at an item keyword
+    /// once the item's own nesting has closed, or at the end of the stream.
+    /// The token that begins the next item is never consumed.
+    fn synchronize_item(&mut self, item_start: usize) {
+        // An item that failed on its first token consumed nothing, and that
+        // token cannot begin a valid item; consuming it keeps recovery from
+        // stopping where it started.
+        if self.position == item_start {
+            self.advance();
+        }
+        let mut nesting = self.item_nesting(item_start);
+        loop {
+            if self.check(&TokenKind::Eof) {
+                return;
+            }
+            if nesting <= 0 && self.starts_item() {
+                return;
+            }
+            match self.current().kind {
+                TokenKind::LBrace | TokenKind::LParen => nesting += 1,
+                TokenKind::RBrace | TokenKind::RParen => nesting -= 1,
+                _ => {}
+            }
+            self.advance();
+        }
+    }
+
+    /// The delimiter nesting of the tokens an item consumed, counted from the
+    /// item's first token.
+    fn item_nesting(&self, item_start: usize) -> isize {
+        self.tokens[item_start..self.position]
+            .iter()
+            .map(|token| match token.kind {
+                TokenKind::LBrace | TokenKind::LParen => 1,
+                TokenKind::RBrace | TokenKind::RParen => -1,
+                _ => 0,
+            })
+            .sum()
     }
 
     /// Parse one top-level item: a `use` or a declaration.

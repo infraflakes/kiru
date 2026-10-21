@@ -7,6 +7,7 @@
 
 use std::path::PathBuf;
 
+use crate::compiler::Diagnostic;
 use crate::syntax::{Declaration, Span, TypeExpr};
 
 /// One loaded source file, kept for diagnostics.
@@ -57,4 +58,7 @@ pub(crate) struct LoadedProgram {
     pub(crate) files: Vec<LoadedFile>,
     pub(crate) items: Vec<ScopedDeclaration>,
     pub(crate) uses: Vec<ScopedUse>,
+    /// The syntax errors recovery found, positioned in the files they came
+    /// from. A lexer error fails the load instead of filling this list.
+    pub(crate) syntax: Vec<Diagnostic>,
 }

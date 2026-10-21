@@ -26,8 +26,13 @@ fn namespace_of(program: &super::LoadedProgram, name: &str) -> Vec<String> {
 #[test]
 fn embedded_standard_library_parses() {
     for (path, source) in EMBEDDED {
-        syntax::parse_file(source)
+        let parsed = syntax::parse_file(source)
             .unwrap_or_else(|error| panic!("{path} must parse: {}", error.message));
+        assert!(
+            parsed.errors.is_empty(),
+            "{path} must parse: {:?}",
+            parsed.errors
+        );
     }
 }
 
@@ -135,11 +140,19 @@ fn walks_the_entry_directory_recursively() {
 fn reports_parse_error_with_file_and_position() {
     let directory = tempfile::tempdir().expect("temp dir");
     let entry = write(directory.path(), "main.kiru", "fn f( {\n");
-    let error = load_files(&entry, &DiskSource).expect_err("parse error fails");
+    let program = load_files(&entry, &DiskSource).expect("the recovered file loads");
+    let diagnostic = program.syntax.first().expect("one syntax error");
+    let source = program
+        .files
+        .iter()
+        .find(|file| file.path == diagnostic.path)
+        .expect("the error names a loaded file")
+        .source
+        .clone();
     assert!(
-        error.render().contains("main.kiru:1:7"),
+        diagnostic.render(&source).contains("main.kiru:1:7"),
         "{}",
-        error.render()
+        diagnostic.render(&source)
     );
 }
 
