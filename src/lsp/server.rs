@@ -580,6 +580,75 @@ mod tests {
         response.map(|response| response.result().cloned().expect("the answer is a result"))
     }
 
+    /// Deliver one notification and let the service handle it.
+    async fn notify(
+        service: &mut tower_lsp_server::LspService<Backend>,
+        method: &str,
+        params: serde_json::Value,
+    ) {
+        let request = Request::build(method.to_owned()).params(params).finish();
+        tower::Service::call(service, request)
+            .await
+            .expect("the service answers");
+    }
+
+    #[tokio::test]
+    async fn a_definition_answers_after_a_document_opens() {
+        let directory = tempfile::tempdir().expect("a temporary directory");
+        let inner = directory.path().join("inner");
+        std::fs::create_dir(&inner).expect("the inner directory");
+        std::fs::write(
+            inner.join("help.kiru"),
+            "pub fn help() -> txt { return \"helper\"; };\n",
+        )
+        .expect("the help file");
+        let entry = directory.path().join("main.kiru");
+        let text = "use root::inner::help;\nfn main() { help(); };\n";
+        std::fs::write(&entry, text).expect("the entry file");
+        let mut service = service(&entry);
+        call(
+            &mut service,
+            1,
+            "initialize",
+            serde_json::json!({"capabilities": {}}),
+        )
+        .await;
+        notify(
+            &mut service,
+            "textDocument/didOpen",
+            serde_json::json!({
+                "textDocument": {
+                    "uri": Uri::from_file_path(&entry).expect("the entry uri").as_str(),
+                    "languageId": "kiru",
+                    "version": 1,
+                    "text": text,
+                }
+            }),
+        )
+        .await;
+        let answer = call(
+            &mut service,
+            2,
+            "textDocument/definition",
+            serde_json::json!({
+                "textDocument": {"uri": Uri::from_file_path(&entry).expect("the entry uri").as_str()},
+                "position": {"line": 1, "character": 13},
+            }),
+        )
+        .await
+        .expect("the definition answers");
+        assert!(
+            answer["uri"]
+                .as_str()
+                .is_some_and(|uri| uri.ends_with("inner/help.kiru")),
+            "the definition stands in the file the name is written in: {answer}"
+        );
+        assert_eq!(
+            answer["range"]["start"]["character"], 7,
+            "the name's own span"
+        );
+    }
+
     #[tokio::test]
     async fn initialize_declares_every_capability() {
         let entry = std::env::temp_dir().join("kls-test-entry.kiru");
