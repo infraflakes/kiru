@@ -222,20 +222,8 @@ fn failure(errors: Vec<LoadError>, checked: Option<(LoadedProgram, Diagnostic)>)
 mod tests {
     use super::*;
     use crate::compiler::Severity;
-    use crate::compiler::VirtualSource;
+    use crate::compiler::{OverlayOnDisk, VirtualSource};
     use crate::syntax::Span;
-
-    /// The facts one analyzed source earns, as (severity, message) pairs.
-    fn analyzed(source: &str) -> Vec<(String, String)> {
-        analyze_file(
-            Path::new("/virtual/main.kiru"),
-            &VirtualSource::new(&[("main.kiru", source)]),
-            None,
-        )
-        .into_iter()
-        .map(|diagnostic| (format!("{:?}", diagnostic.severity), diagnostic.message))
-        .collect()
-    }
 
     #[test]
     fn a_file_is_checked_in_its_own_context() {
@@ -272,7 +260,14 @@ mod tests {
             ),
         ];
         for (case, source, severity, message) in cases {
-            let facts = analyzed(source);
+            let facts: Vec<(String, String)> = analyze_file(
+                Path::new("/virtual/main.kiru"),
+                &VirtualSource::new(&[("main.kiru", source)]),
+                None,
+            )
+            .into_iter()
+            .map(|diagnostic| (format!("{:?}", diagnostic.severity), diagnostic.message))
+            .collect();
             assert!(
                 facts
                     .iter()
@@ -285,10 +280,19 @@ mod tests {
     #[test]
     fn a_library_file_is_checked_against_its_library() {
         // The library's own file: it joins the namespace its directories
-        // name, so `impl Vec` resolves without an entry or a program.
+        // name, so `impl Vec` resolves without an entry or a program. The
+        // source holds its text in memory; the file on disk is not edited.
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
         let path = root.join("dynamic/vec.kiru");
-        let facts = analyze_file(&path, &crate::cli::DiskSource, Some(&root));
+        let source = std::fs::read_to_string(&path).expect("the library file is readable");
+        let facts = analyze_file(
+            &path,
+            &OverlayOnDisk {
+                path: path.clone(),
+                source,
+            },
+            Some(&root),
+        );
         assert!(
             facts
                 .iter()

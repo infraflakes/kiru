@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::cli::DiskSource;
 use crate::compiler::model::{DeclarationId, Program};
 use crate::compiler::{BuildFailure, ProgramSource, build};
 
@@ -55,6 +56,32 @@ impl ProgramSource for VirtualSource {
         self.files.get(path).cloned().ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::NotFound, format!("{}", path.display()))
         })
+    }
+}
+
+/// A file on the disk with one buffer in place of its content: the
+/// single-file analysis of a real file, without editing the file. Every other
+/// file is read from the disk.
+#[derive(Debug)]
+pub(crate) struct OverlayOnDisk {
+    pub(crate) path: PathBuf,
+    pub(crate) source: String,
+}
+
+impl ProgramSource for OverlayOnDisk {
+    fn locate(&self, target: &Path) -> std::io::Result<(Option<PathBuf>, PathBuf)> {
+        DiskSource.locate(target)
+    }
+
+    fn collect(&self, tree_root: &Path) -> std::io::Result<Vec<PathBuf>> {
+        DiskSource.collect(tree_root)
+    }
+
+    fn read(&self, path: &Path) -> std::io::Result<String> {
+        if path == self.path {
+            return Ok(self.source.clone());
+        }
+        DiskSource.read(path)
     }
 }
 

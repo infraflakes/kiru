@@ -59,7 +59,7 @@ pub(crate) use resolve_names::EntryShape;
 pub use sources::ProgramSource;
 #[cfg(test)]
 pub(crate) use test_support::{
-    VirtualSource, checked_files, checked_program, checked_program_and_entry,
+    OverlayOnDisk, VirtualSource, checked_files, checked_program, checked_program_and_entry,
 };
 pub(crate) use validate_program::{validate_file, validate_program};
 pub(crate) use warnings::unused_declarations;
