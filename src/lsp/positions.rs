@@ -6,7 +6,7 @@
 //! columns count code units. The conversion lives here, once, and nothing in
 //! the compiler names a protocol type.
 
-use lsp_types::{Position, Range};
+use tower_lsp_server::ls_types::{Position, Range};
 
 use crate::syntax::Span;
 
