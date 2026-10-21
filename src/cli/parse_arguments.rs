@@ -15,9 +15,8 @@ pub(crate) enum Request {
         entry: PathBuf,
         output: Option<PathBuf>,
     },
-    /// Serve the language protocol on standard input and output for one
-    /// compilation target.
-    Serve { entry: PathBuf },
+    /// Serve the language protocol on standard input and output.
+    Serve,
 }
 
 /// Parse the words after the program name. `help` and `version` win wherever
@@ -27,21 +26,12 @@ pub(crate) fn parse(words: &[String]) -> Result<Request, CliError> {
     // The server takes the first word, so a path named `help` after it is a
     // path, not a request for usage.
     if words.first().map(String::as_str) == Some("lsp") {
-        let mut rest = words[1..].iter();
-        let Some(entry) = rest.next() else {
-            return Err(CliError(
-                "the server needs the entry file, the one declaring `main`; run `kc help` for usage"
-                    .to_owned(),
-            ));
-        };
-        if let Some(word) = rest.next() {
+        if let Some(word) = words.get(1) {
             return Err(CliError(format!(
-                "unexpected argument `{word}`; run `kc help` for usage"
+                "unexpected argument `{word}`; the server takes no arguments; run `kc help` for usage"
             )));
         }
-        return Ok(Request::Serve {
-            entry: PathBuf::from(entry),
-        });
+        return Ok(Request::Serve);
     }
     let mut entry = None;
     let mut output = None;
@@ -91,15 +81,11 @@ mod tests {
     }
 
     #[test]
-    fn the_server_takes_the_entry_the_compiler_would() {
-        assert!(parsed(&["lsp"]).is_err(), "the entry file is required");
-        assert!(matches!(
-            parsed(&["lsp", "app.kiru"]),
-            Ok(Request::Serve { entry }) if entry == std::path::Path::new("app.kiru")
-        ));
+    fn the_server_takes_no_arguments() {
+        assert!(matches!(parsed(&["lsp"]), Ok(Request::Serve)));
         assert!(
-            parsed(&["lsp", "a.kiru", "b.kiru"]).is_err(),
-            "one entry at most"
+            parsed(&["lsp", "a.kiru"]).is_err(),
+            "the file is the one the editor opens"
         );
     }
 

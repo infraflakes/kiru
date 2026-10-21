@@ -43,7 +43,7 @@ fn compact(
 /// Rewrite every `DeclarationId` occurrence through the mapping, and drop the
 /// names and file entries that point at dropped declarations.
 fn remap(program: &mut Program, mapping: &[Option<DeclarationId>]) {
-    program.entry = mapped(mapping, program.entry);
+    program.entry = program.entry.map(|entry| mapped(mapping, entry));
     program.module_values.retain(|id| mapping[id.0].is_some());
     for id in &mut program.module_values {
         *id = mapped(mapping, *id);

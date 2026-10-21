@@ -34,7 +34,9 @@ pub(crate) fn validate_program_structure(program: &Program) -> Result<(), String
 
     // `resolve_entry` is the one place that decides the entry, and it selects
     // the program root's `main` function; only its id is checked here.
-    check_id(program.entry.0, declaration_count, "the entry")?;
+    if let Some(entry) = program.entry {
+        check_id(entry.0, declaration_count, "the entry")?;
+    }
     for id in &program.module_values {
         check_id(id.0, declaration_count, "a module value")?;
     }

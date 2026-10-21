@@ -1,10 +1,9 @@
-//! The language server's glue: the session loop over the protocol, the
-//! position encoding at the boundary, and nothing else. The compiler stays
-//! protocol-free; the answers the editor asks for are the build's queries.
+//! The language server's glue: the protocol session, the position encoding at
+//! the boundary, and nothing else. The compiler stays protocol-free; the
+//! answer the editor asks for is the single-file check.
 
 mod positions;
 mod server;
-mod tokens;
 
 pub use positions::Encoding;
 pub use server::serve;

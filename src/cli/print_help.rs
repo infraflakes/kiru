@@ -5,7 +5,7 @@ pub(crate) fn print_help() {
     println!(
         "Kiru Compiler<The> compiler for Kiru programming language.\n\n\
          Usage: kc [PATH] [-o PATH]\n\
-         \x20      kc lsp <PATH>\n\
+         \x20      kc lsp\n\
          \x20      kc help\n\
          \x20      kc version\n\n\
          Arguments:\n\

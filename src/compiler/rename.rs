@@ -26,11 +26,11 @@ struct RenamedTree {
 }
 
 impl ProgramSource for RenamedTree {
-    fn locate(&self, entry: &Path) -> io::Result<(PathBuf, PathBuf)> {
+    fn locate(&self, entry: &Path) -> io::Result<(Option<PathBuf>, PathBuf)> {
         self.files
             .iter()
             .find(|(path, _)| path == entry)
-            .map(|_| (entry.to_path_buf(), self.tree_root.clone()))
+            .map(|_| (Some(entry.to_path_buf()), self.tree_root.clone()))
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("{}", entry.display())))
     }
 
@@ -160,7 +160,11 @@ impl Build {
                 )
             })
             .collect();
-        let entry = self.loaded.files[self.loaded.entry].path.clone();
+        let entry_file = self
+            .loaded
+            .entry
+            .expect("a rename validates a program with an entry");
+        let entry = self.loaded.files[entry_file].path.clone();
         let source = RenamedTree {
             files: renamed,
             tree_root: entry.parent().unwrap_or(Path::new(".")).to_path_buf(),
@@ -220,7 +224,9 @@ mod tests {
 
     /// The file the build read the entry by.
     fn entry(built: &Build) -> PathBuf {
-        built.loaded.files[built.loaded.entry].path.clone()
+        built.loaded.files[built.loaded.entry.expect("a built program names its entry")]
+            .path
+            .clone()
     }
 
     /// The renamed places: each file and the written names it holds.

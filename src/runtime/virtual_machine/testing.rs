@@ -41,7 +41,9 @@ impl Runtime {
 /// call by name. The code ids come from the one mapping lowering assigns, so
 /// the test helper never re-derives the numbering.
 fn root_symbols(program: &Program) -> HashMap<String, u32> {
-    let root = program.declaration(program.entry).namespace;
+    let root = program
+        .declaration(program.entry.expect("a compiled program names its entry"))
+        .namespace;
     let mut symbols = HashMap::new();
     for (declaration, code_id) in program.declarations.iter().zip(declaration_codes(program)) {
         let Some(code_id) = code_id else {

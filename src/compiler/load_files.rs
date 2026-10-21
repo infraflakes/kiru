@@ -15,4 +15,4 @@ mod tests;
 pub(crate) use load_error::LoadError;
 pub(crate) use loaded_program::{LoadedProgram, ScopedDeclaration};
 pub(in crate::compiler) use loader::collect_kiru_files;
-pub(crate) use loader::{PROGRAM_TREE, STD_TREE, load_files};
+pub(crate) use loader::{PROGRAM_TREE, STD_TREE, load_files, load_single};

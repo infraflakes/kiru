@@ -36,7 +36,8 @@ pub(crate) fn compile(
     let output_path = output
         .map(Path::to_path_buf)
         .unwrap_or_else(|| entry.with_extension(""));
-    if same_file(&loaded.files[loaded.entry].path, &output_path) {
+    let entry = loaded.entry.expect("a compilation names its entry file");
+    if same_file(&loaded.files[entry].path, &output_path) {
         return Err(format!(
             "{DIAGNOSTIC_PREFIX}: the output path would overwrite the entry file\n"
         ));

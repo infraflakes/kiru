@@ -936,7 +936,7 @@ fn calls_are_edges_to_the_callee() {
         ],
         "main.kiru",
     );
-    let entry = program.declaration(program.entry);
+    let entry = program.declaration(program.entry.expect("a linked program names its entry"));
     let function = entry.function().expect("the entry is a function");
     let Statement::Expression(Expression::Call { callee, .. }) = &function.body[0] else {
         panic!("the body calls a function");

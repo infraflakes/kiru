@@ -181,7 +181,7 @@ impl Builder {
 
     pub(in crate::compiler::resolve_names) fn finish(
         self,
-        entry: DeclarationId,
+        entry: Option<DeclarationId>,
         module_values: Vec<DeclarationId>,
     ) -> Program {
         Program {

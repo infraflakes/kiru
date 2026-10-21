@@ -61,8 +61,11 @@ impl Builder {
         // The entry is a plain function: a function filed under a type by an
         // `impl` block is not a namespace-level name, so the name pool holds
         // only the program's `main`.
+        let entry_file = loaded
+            .entry
+            .expect("an entry is resolved only for a named compilation target");
         let Some(index) = self.namespaces[root.0].get(&self.intern, ENTRY_FUNCTION) else {
-            let path = &loaded.files[loaded.entry].path;
+            let path = &loaded.files[entry_file].path;
             return Err(Diagnostic::new(
                 path,
                 Span::new(0, 0),
@@ -77,8 +80,8 @@ impl Builder {
         // from must stand in that file, so a tree whose `main` lives beside
         // the named target is rejected rather than silently run from another
         // file.
-        if file.0 != loaded.entry {
-            let path = &loaded.files[loaded.entry].path;
+        if file.0 != entry_file {
+            let path = &loaded.files[entry_file].path;
             return Err(Diagnostic::new(
                 path,
                 Span::new(0, 0),

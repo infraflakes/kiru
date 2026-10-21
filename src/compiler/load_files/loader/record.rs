@@ -2,6 +2,8 @@
 
 use std::path::PathBuf;
 
+use super::embedded::EMBEDDED;
+use super::tree::{STD_TREE, namespace_of};
 use crate::compiler::load_files::load_error::LoadError;
 use crate::compiler::load_files::loaded_program::{
     ImplTarget, LoadedFile, ScopedDeclaration, ScopedUse,
@@ -28,6 +30,22 @@ impl Loader {
             uses: Vec::new(),
             entry: None,
         }
+    }
+
+    /// Add the standard library from the table compiled into the binary.
+    pub(super) fn add_embedded(&mut self) -> Result<(), LoadError> {
+        for (relative, embedded_source) in EMBEDDED {
+            let namespace = namespace_of(relative, STD_TREE);
+            // The loaded path carries the tree's name for diagnostics; the
+            // table itself is keyed by the file's path under the tree.
+            let path = format!("<{STD_TREE}>/{relative}");
+            self.add(
+                PathBuf::from(path),
+                (*embedded_source).to_owned(),
+                namespace,
+            )?;
+        }
+        Ok(())
     }
 
     /// Parse one file and record its declarations and uses in its namespace.

@@ -104,7 +104,8 @@ pub(crate) fn lower_bytecode(program: &Program) -> Bytecode {
     };
     lowerer.assign_layout(DeclarationLayout::of(program));
     lowerer.lower_all();
-    let entry = lowerer.declaration_codes[program.entry.0].expect("the entry has a code");
+    let entry_file = program.entry.expect("a compilation lowers from its entry");
+    let entry = lowerer.declaration_codes[entry_file.0].expect("the entry has a code");
     Bytecode {
         codes: lowerer.codes,
         constants: lowerer.constants,

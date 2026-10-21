@@ -14,9 +14,10 @@ use std::path::{Path, PathBuf};
 /// holds, and what one file's source is. Every answer is a plain path or
 /// text; the loader owns the namespaces and the parsing.
 pub trait ProgramSource {
-    /// The entry file's path the loader records, and the tree root the
-    /// program's namespaces derive from.
-    fn locate(&self, entry: &Path) -> std::io::Result<(PathBuf, PathBuf)>;
+    /// The target: a file is the entry the loader records, beside the tree
+    /// root the program's namespaces derive from; a directory is the tree
+    /// itself, with no entry.
+    fn locate(&self, target: &Path) -> std::io::Result<(Option<PathBuf>, PathBuf)>;
     /// Every `.kiru` file of the program tree under the tree root.
     fn collect(&self, tree_root: &Path) -> std::io::Result<Vec<PathBuf>>;
     /// The source of one program file.
@@ -27,10 +28,13 @@ pub trait ProgramSource {
 pub struct DiskSource;
 
 impl ProgramSource for DiskSource {
-    fn locate(&self, entry: &Path) -> std::io::Result<(PathBuf, PathBuf)> {
-        let entry_path = entry.canonicalize()?;
-        let tree_root = entry_path.parent().unwrap_or(Path::new(".")).to_path_buf();
-        Ok((entry_path, tree_root))
+    fn locate(&self, target: &Path) -> std::io::Result<(Option<PathBuf>, PathBuf)> {
+        let canonical = target.canonicalize()?;
+        if canonical.is_dir() {
+            return Ok((None, canonical));
+        }
+        let tree_root = canonical.parent().unwrap_or(Path::new(".")).to_path_buf();
+        Ok((Some(canonical), tree_root))
     }
 
     fn collect(&self, tree_root: &Path) -> std::io::Result<Vec<PathBuf>> {
@@ -73,8 +77,8 @@ impl OverlaySource {
 }
 
 impl ProgramSource for OverlaySource {
-    fn locate(&self, entry: &Path) -> std::io::Result<(PathBuf, PathBuf)> {
-        DiskSource.locate(entry)
+    fn locate(&self, target: &Path) -> std::io::Result<(Option<PathBuf>, PathBuf)> {
+        DiskSource.locate(target)
     }
 
     fn collect(&self, tree_root: &Path) -> std::io::Result<Vec<PathBuf>> {
@@ -117,15 +121,15 @@ impl VirtualSource {
 }
 
 impl ProgramSource for VirtualSource {
-    fn locate(&self, entry: &Path) -> std::io::Result<(PathBuf, PathBuf)> {
-        let entry_path = self.root.join(entry);
+    fn locate(&self, target: &Path) -> std::io::Result<(Option<PathBuf>, PathBuf)> {
+        let entry_path = self.root.join(target);
         if !self.files.contains_key(&entry_path) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                format!("{}", entry.display()),
+                format!("{}", target.display()),
             ));
         }
-        Ok((entry_path, self.root.clone()))
+        Ok((Some(entry_path), self.root.clone()))
     }
 
     fn collect(&self, tree_root: &Path) -> std::io::Result<Vec<PathBuf>> {

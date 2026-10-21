@@ -12,7 +12,7 @@ use crate::compiler::model::{
 pub(super) fn collect_reachable_declarations(program: &Program) -> HashSet<DeclarationId> {
     let mut reachable = HashSet::new();
     let mut collector = ReachableCollector {
-        pending: vec![program.entry],
+        pending: vec![program.entry.expect("a compilation prunes from its entry")],
     };
     while let Some(id) = collector.pending.pop() {
         if !reachable.insert(id) {

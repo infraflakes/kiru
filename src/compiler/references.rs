@@ -70,7 +70,9 @@ mod tests {
 
     /// The file the build read the entry by.
     fn entry(built: &Build) -> PathBuf {
-        built.loaded.files[built.loaded.entry].path.clone()
+        built.loaded.files[built.loaded.entry.expect("a built program names its entry")]
+            .path
+            .clone()
     }
 
     /// The references of `needle`'s first place, as (file, text) pairs.

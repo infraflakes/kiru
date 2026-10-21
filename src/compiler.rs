@@ -40,7 +40,7 @@ mod test_support;
 mod validate_program;
 mod warnings;
 
-pub use build::{Build, BuildFailure, FileDiagnostics, build};
+pub use build::{Build, BuildFailure, FileDiagnostics, build, check};
 pub use completions::{Completion, CompletionKind};
 pub(crate) use diagnostic::DIAGNOSTIC_PREFIX;
 pub use diagnostic::{Diagnostic, RelatedSpan, Severity};

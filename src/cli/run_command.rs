@@ -29,8 +29,8 @@ pub fn run() -> i32 {
             print_help::print_version();
             0
         }
-        Ok(Request::Serve { entry }) => {
-            crate::lsp::serve(entry);
+        Ok(Request::Serve) => {
+            crate::lsp::serve();
             0
         }
         Ok(Request::Compile { entry, output }) => match &executable {

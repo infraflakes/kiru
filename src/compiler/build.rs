@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::compiler::diagnostic::{Diagnostic, render};
-use crate::compiler::load_files::{LoadError, LoadedProgram, load_files};
+use crate::compiler::load_files::{LoadError, LoadedProgram, load_files, load_single};
 use crate::compiler::model::{
     DeclarationId, FileId, Program, UseTarget, join_path, namespace_path, type_name,
 };
@@ -224,6 +224,34 @@ impl BuildFailure {
     }
 }
 
+/// Check one file by itself: the facts it earns, its unused declaration and
+/// use warnings and the first error the checker meets. The file is checked in
+/// its own context: the embedded library is mounted, nothing else on disk
+/// joins it, and no entry is named, so a client asks this for the buffer the
+/// editor holds whatever the file is called and wherever it stands.
+pub fn check(path: &Path, source: &str) -> Vec<Diagnostic> {
+    let loaded = match load_single(path, source) {
+        Ok(loaded) => loaded,
+        Err(error) => return vec![Diagnostic::new(error.path, error.span, error.message)],
+    };
+    let Resolved {
+        mut program,
+        mut warnings,
+        ..
+    } = match resolve_names(&loaded) {
+        Ok(resolved) => resolved,
+        Err(diagnostic) => return vec![diagnostic],
+    };
+    warnings.extend(unused_bindings(&program));
+    if let Err(diagnostic) = validate_program(&mut program) {
+        warnings.push(diagnostic);
+    }
+    // The checked file's facts alone: the embedded library is checked with
+    // it, and its own warnings name files the client did not ask about.
+    warnings.retain(|diagnostic| diagnostic.path == path);
+    warnings
+}
+
 /// Run the build: load the program tree and the embedded library through
 /// `source`, resolve every name into an edge, and check every body. The one
 /// pipeline the compiler has; the source decides only what the files read as.
@@ -301,6 +329,74 @@ fn failure(errors: Vec<LoadError>, checked: Option<(LoadedProgram, Diagnostic)>)
 
 #[cfg(test)]
 mod tests {
+    /// The facts one checked source earns, as (severity, message) pairs.
+    fn checked(source: &str) -> Vec<(String, String)> {
+        check(Path::new("/single/file.kiru"), source)
+            .into_iter()
+            .map(|diagnostic| (format!("{:?}", diagnostic.severity), diagnostic.message))
+            .collect()
+    }
+
+    #[test]
+    fn a_file_is_checked_in_its_own_context() {
+        let cases = [
+            (
+                "an unused local",
+                "fn main() { let x: int = 1; };",
+                "Warning",
+                "the local `x` is never read",
+            ),
+            (
+                "an unused use",
+                "use std::text;\nfn main() {};",
+                "Warning",
+                "unused use `std::text`",
+            ),
+            (
+                "a wrong type",
+                "fn main() { let x: int = \"t\"; };",
+                "Error",
+                "expected int, found txt",
+            ),
+            (
+                "a wrong arity",
+                "fn f(a: int) {};\nfn main() { f(1, 2); };",
+                "Error",
+                "`root::f` takes 1 argument, found 2",
+            ),
+            (
+                "a syntax error",
+                "fn main() {",
+                "Error",
+                "expected `}` to close the block",
+            ),
+        ];
+        for (case, source, severity, message) in cases {
+            let facts = checked(source);
+            assert!(
+                facts
+                    .iter()
+                    .any(|(level, text)| level == severity && text.contains(message)),
+                "{case}: expected a {severity} naming `{message}`, found {facts:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_library_file_is_checked_against_its_library() {
+        // The library's own file: it joins the namespace its directories
+        // name, so `impl Vec` resolves without an entry or a program.
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("std/dynamic/vec.kiru");
+        let source = std::fs::read_to_string(&path).expect("the library file is readable");
+        let facts = check(&path, &source);
+        assert!(
+            facts
+                .iter()
+                .all(|diagnostic| !matches!(diagnostic.severity, Severity::Error)),
+            "the library's own file checks without errors: {facts:?}"
+        );
+    }
+
     use super::*;
     use crate::compiler::Severity;
     use crate::compiler::sources::VirtualSource;

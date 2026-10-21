@@ -54,7 +54,12 @@ pub(crate) fn resolve_names(loaded: &LoadedProgram) -> Result<Resolved, Diagnost
     // A declaration's type is settled before the entry reads it: the entry is
     // an ordinary declaration, and its shape is a fact about that type.
     builder.settle_types(loaded)?;
-    let entry = builder.resolve_entry(loaded)?;
+    // A program names its entry; a single checked file or a tree carries no
+    // entry, and no stage below needs one.
+    let entry = match loaded.entry {
+        Some(_) => Some(builder.resolve_entry(loaded)?),
+        None => None,
+    };
     builder.link_bodies(loaded)?;
     let module_values = builder.order_module_values(&builder.module_values)?;
     // The unused-`use` fact is settled: every body is linked and every read

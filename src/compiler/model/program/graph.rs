@@ -20,7 +20,7 @@ pub(crate) struct Program {
     /// The declared types, indexed by `TypeId`.
     pub(crate) types: Vec<TypeDecl>,
     /// The entry function: the entry file's own root `main`.
-    pub(crate) entry: DeclarationId,
+    pub(crate) entry: Option<DeclarationId>,
     /// The module values in dependency order: each is evaluated once at
     /// startup, after the values its initializer reads.
     pub(crate) module_values: Vec<DeclarationId>,
