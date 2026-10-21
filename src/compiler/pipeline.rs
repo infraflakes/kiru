@@ -1,19 +1,21 @@
 //! The compile pipeline, in order.
 //!
 //! This is the one place the engine's stages are named in sequence: the build
-//! loads the files, resolves names into edges, and validates types and flow;
-//! then prune what the entry cannot reach, lower the result to bytecode, and
-//! copy this executable and attach the serialized bytecode behind the binary
-//! trailer. The command line layer only parses arguments and prints the
-//! message this returns.
+//! loads the files, resolves names into edges, selects the entry, and validates
+//! types and flow; its warnings print to the terminal; then mark what the
+//! entry reaches, prune the rest, lower the result to bytecode, and copy this
+//! executable and attach the serialized bytecode behind the binary trailer. The
+//! command line layer only parses arguments and prints the message this
+//! returns.
 
 use std::path::Path;
 
 use super::output_file::{make_writable_executable, same_file};
+use crate::compiler::diagnostic::render;
 use crate::compiler::sources::DiskSource;
 use crate::compiler::{
-    Build, DIAGNOSTIC_PREFIX, attach_trailer, build, lower_bytecode, prune_unreachable,
-    serialize_bytecode,
+    Build, DIAGNOSTIC_PREFIX, attach_trailer, build, lower_bytecode, mark_reachable,
+    prune_unreachable, serialize_bytecode, unused_declarations,
 };
 
 /// Compile `entry` to `output`, or to the entry path without its extension,
@@ -25,19 +27,29 @@ pub(crate) fn compile(
     executable: &Path,
 ) -> Result<(), String> {
     let Build {
-        loaded, program, ..
+        loaded,
+        mut program,
+        entry: entry_id,
+        warnings,
     } = build(entry, &DiskSource).map_err(|failure| failure.rendered().to_owned())?;
-    let mut program = program;
-    prune_unreachable(&mut program);
-    let bytecode = lower_bytecode(&program);
+    // The reachable set is the compile's second reading of the graph: what no
+    // reachable body reads is a warning, then it is dropped before lowering.
+    let reachable = mark_reachable(&program, entry_id);
+    let mut warnings = warnings;
+    warnings.extend(unused_declarations(&program, &reachable));
+    for warning in &warnings {
+        eprint!("{}", render(&loaded, warning));
+    }
+    let entry_id = prune_unreachable(&mut program, entry_id, &reachable);
+    let bytecode = lower_bytecode(&program, entry_id);
 
     let bytes = serialize_bytecode(&bytecode)
         .map_err(|error| format!("{DIAGNOSTIC_PREFIX}: cannot serialize the program: {error}\n"))?;
+    let entry_file = loaded.entry.expect("a compilation names its entry file");
     let output_path = output
         .map(Path::to_path_buf)
         .unwrap_or_else(|| entry.with_extension(""));
-    let entry = loaded.entry.expect("a compilation names its entry file");
-    if same_file(&loaded.files[entry].path, &output_path) {
+    if same_file(&loaded.files[entry_file].path, &output_path) {
         return Err(format!(
             "{DIAGNOSTIC_PREFIX}: the output path would overwrite the entry file\n"
         ));

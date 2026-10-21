@@ -1,8 +1,13 @@
-use super::resolve_names;
+use super::{Resolved, resolve_program};
 use crate::compiler::checked_program;
 use crate::compiler::model::{Expression, Program, Statement, TypeHead};
 
 fn linked(files: &[(&str, &str)], entry: &str) -> Result<Program, String> {
+    linked_with_entry(files, entry).map(|resolved| resolved.program)
+}
+
+/// Link the files and keep the entry the resolution selected.
+fn linked_with_entry(files: &[(&str, &str)], entry: &str) -> Result<Resolved, String> {
     let directory = tempfile::tempdir().expect("temp dir");
     for (name, source) in files {
         let path = directory.path().join(name);
@@ -14,9 +19,7 @@ fn linked(files: &[(&str, &str)], entry: &str) -> Result<Program, String> {
         &crate::compiler::sources::DiskSource,
     )
     .map_err(|error| error.message)?;
-    resolve_names(&program)
-        .map_err(|diagnostic| diagnostic.message)
-        .map(|resolved| resolved.program)
+    resolve_program(&program).map_err(|diagnostic| diagnostic.message)
 }
 
 fn accept(files: &[(&str, &str)], entry: &str) -> Program {
@@ -709,7 +712,7 @@ fn an_unresolvable_use_is_rejected_at_its_span() {
     let loaded =
         crate::compiler::load_files::load_files(&path, &crate::compiler::sources::DiskSource)
             .expect("loads");
-    let diagnostic = match resolve_names(&loaded) {
+    let diagnostic = match resolve_program(&loaded) {
         Ok(_) => panic!("the use is rejected"),
         Err(diagnostic) => diagnostic,
     };
@@ -926,7 +929,7 @@ fn a_method_name_may_repeat_per_receiver_head() {
 
 #[test]
 fn calls_are_edges_to_the_callee() {
-    let program = accept(
+    let resolved = linked_with_entry(
         &[
             (
                 "main.kiru",
@@ -935,8 +938,10 @@ fn calls_are_edges_to_the_callee() {
             ("tasks/go.kiru", "pub fn go() {};"),
         ],
         "main.kiru",
-    );
-    let entry = program.declaration(program.entry.expect("a linked program names its entry"));
+    )
+    .expect("links");
+    let program = &resolved.program;
+    let entry = program.declaration(resolved.entry);
     let function = entry.function().expect("the entry is a function");
     let Statement::Expression(Expression::Call { callee, .. }) = &function.body[0] else {
         panic!("the body calls a function");

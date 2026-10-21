@@ -174,7 +174,6 @@ impl Builder {
 
     pub(in crate::compiler::resolve_names) fn finish(
         self,
-        entry: Option<DeclarationId>,
         module_values: Vec<DeclarationId>,
     ) -> Program {
         Program {
@@ -182,7 +181,6 @@ impl Builder {
             namespaces: self.namespaces,
             declarations: self.declarations,
             types: self.types,
-            entry,
             module_values,
             intern: self.intern,
         }

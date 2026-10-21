@@ -18,5 +18,5 @@ mod use_checking;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use body_linking::{Resolved, resolve_names};
+pub(crate) use body_linking::{Analysis, Resolved, resolve_file, resolve_program};
 pub(crate) use select_entry::EntryShape;

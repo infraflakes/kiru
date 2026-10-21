@@ -86,8 +86,8 @@ pub(crate) fn declaration_codes(program: &Program) -> Vec<Option<u32>> {
     DeclarationLayout::of(program).codes
 }
 
-/// Lower a validated, pruned program to bytecode.
-pub(crate) fn lower_bytecode(program: &Program) -> Bytecode {
+/// Lower a validated, pruned program to bytecode, starting from the entry.
+pub(crate) fn lower_bytecode(program: &Program, entry: DeclarationId) -> Bytecode {
     let mut lowerer = Lowerer {
         program,
         codes: Vec::new(),
@@ -104,8 +104,7 @@ pub(crate) fn lower_bytecode(program: &Program) -> Bytecode {
     };
     lowerer.assign_layout(DeclarationLayout::of(program));
     lowerer.lower_all();
-    let entry_file = program.entry.expect("a compilation lowers from its entry");
-    let entry = lowerer.declaration_codes[entry_file.0].expect("the entry has a code");
+    let entry = lowerer.declaration_codes[entry.0].expect("the entry has a code");
     Bytecode {
         codes: lowerer.codes,
         constants: lowerer.constants,

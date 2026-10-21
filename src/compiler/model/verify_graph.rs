@@ -32,11 +32,8 @@ pub(crate) fn validate_program_structure(program: &Program) -> Result<(), String
     let namespace_count = program.namespaces.len();
     let type_count = program.types.len();
 
-    // `resolve_entry` is the one place that decides the entry, and it selects
-    // the program root's `main` function; only its id is checked here.
-    if let Some(entry) = program.entry {
-        check_id(entry.0, declaration_count, "the entry")?;
-    }
+    // The entry's own id is guaranteed by selection, so only the table-wide
+    // edges are checked here.
     for id in &program.module_values {
         check_id(id.0, declaration_count, "a module value")?;
     }

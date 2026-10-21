@@ -15,7 +15,7 @@ pub(crate) fn deserialize_bytecode(bytes: &[u8]) -> Result<Bytecode, String> {
 #[cfg(test)]
 mod tests {
     use crate::compiler::model::name_hash;
-    use crate::compiler::{checked_program, lower_bytecode};
+    use crate::compiler::{checked_program_and_entry, lower_bytecode};
 
     /// The same source as the round-trip test, so one program is pinned twice:
     /// its bytes and their count.
@@ -27,8 +27,8 @@ mod tests {
 
     #[test]
     fn bytecode_round_trips_through_bytes() {
-        let program = checked_program(SOURCE);
-        let bytecode = lower_bytecode(&program);
+        let (program, entry) = checked_program_and_entry(SOURCE);
+        let bytecode = lower_bytecode(&program, entry);
 
         let bytes = super::serialize_bytecode(&bytecode).expect("serializes");
         let restored = super::deserialize_bytecode(&bytes).expect("deserializes");
@@ -41,8 +41,9 @@ mod tests {
     /// serialization is the contract the runtime reads, so it pins here.
     #[test]
     fn the_compiled_image_is_byte_identical() {
-        let bytes = super::serialize_bytecode(&lower_bytecode(&checked_program(SOURCE)))
-            .expect("serializes");
+        let (program, entry) = checked_program_and_entry(SOURCE);
+        let bytes =
+            super::serialize_bytecode(&lower_bytecode(&program, entry)).expect("serializes");
         assert_eq!(bytes.len(), 17675);
         assert_eq!(name_hash(&bytes), 12749693456951739665);
     }

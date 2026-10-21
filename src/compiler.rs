@@ -51,9 +51,10 @@ pub(crate) use package_binary::{
     attach_trailer, deserialize_bytecode, read_trailer, serialize_bytecode,
 };
 pub(crate) use pipeline::compile;
-pub(crate) use prune_unreachable::prune_unreachable;
-pub(crate) use resolve_names::{EntryShape, resolve_names};
+pub(crate) use prune_unreachable::{mark_reachable, prune_unreachable};
+pub(crate) use resolve_names::EntryShape;
 pub use sources::{DiskSource, OverlaySource, ProgramSource, VirtualSource};
 #[cfg(test)]
-pub(crate) use test_support::{checked_files, checked_program};
-pub(crate) use validate_program::validate_program;
+pub(crate) use test_support::{checked_files, checked_program, checked_program_and_entry};
+pub(crate) use validate_program::{validate_file, validate_program};
+pub(crate) use warnings::unused_declarations;

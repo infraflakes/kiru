@@ -18,15 +18,65 @@ use super::builder::{Builder, Pending};
 use super::name_resolution::CalleeLink;
 use super::scopes::{Context, Scopes};
 
-/// The program a build resolves: the model and the warnings its unused
-/// syntax earned.
+/// The program a compilation resolves: the model, the entry it starts from,
+/// and the warnings its unused syntax earned.
 pub(crate) struct Resolved {
+    pub(crate) program: Program,
+    pub(crate) entry: DeclarationId,
+    pub(crate) warnings: Vec<Diagnostic>,
+}
+
+/// The program a single-file analysis resolves: the model and the warnings its
+/// unused syntax earned. No entry is selected.
+pub(crate) struct Analysis {
     pub(crate) program: Program,
     pub(crate) warnings: Vec<Diagnostic>,
 }
 
-/// Build the program model from the joined item stream.
-pub(crate) fn resolve_names(loaded: &LoadedProgram) -> Result<Resolved, Diagnostic> {
+/// Build the program model from the joined item stream of a compilation and
+/// select the entry it starts from.
+pub(crate) fn resolve_program(loaded: &LoadedProgram) -> Result<Resolved, Diagnostic> {
+    let mut builder = prepare(loaded)?;
+    // A declaration's type is settled before the entry reads it: the entry is
+    // an ordinary declaration, and its shape is a fact about that type.
+    builder.settle_types(loaded)?;
+    let entry = builder.resolve_entry(loaded)?;
+    builder.link_bodies(loaded, None)?;
+    let module_values = builder.order_module_values(&builder.module_values)?;
+    // The unused-`use` fact is settled: every body is linked and every read
+    // recorded itself. It is read before `finish` takes the builder apart.
+    let warnings = builder.unused_use_warnings(loaded);
+    let program = builder.finish(module_values);
+    Ok(Resolved {
+        program,
+        entry,
+        warnings,
+    })
+}
+
+/// Build the program model for one file, linking only the bodies that file
+/// declares. No entry is selected: a file is analyzed in its own context.
+pub(crate) fn resolve_file(loaded: &LoadedProgram, file: FileId) -> Result<Analysis, Diagnostic> {
+    let mut builder = prepare(loaded)?;
+    builder.settle_types(loaded)?;
+    builder.link_bodies(loaded, Some(file))?;
+    // The program carries only this file's values: the rest of the tree is not
+    // linked, so it has no initializer to order or lower.
+    let values: Vec<DeclarationId> = builder
+        .module_values
+        .iter()
+        .copied()
+        .filter(|id| builder.declarations[id.0].file == Some(file))
+        .collect();
+    let module_values = builder.order_module_values(&values)?;
+    let warnings = builder.unused_use_warnings(loaded);
+    let program = builder.finish(module_values);
+    Ok(Analysis { program, warnings })
+}
+
+/// Register the model's skeleton: the declared types, the natives, the
+/// declarations, and the `use`s they bring. Both resolutions share this order.
+fn prepare(loaded: &LoadedProgram) -> Result<Builder, Diagnostic> {
     let mut builder = Builder::new();
     // Reserve the declared types first, so a native row can name one by path,
     // then register the natives before the declarations that call them.
@@ -40,22 +90,7 @@ pub(crate) fn resolve_names(loaded: &LoadedProgram) -> Result<Resolved, Diagnost
     // The plain functions a `use` brings are registered by now, so the second
     // pass records the `use`s that reached nothing above.
     builder.index_uses(loaded);
-    // A declaration's type is settled before the entry reads it: the entry is
-    // an ordinary declaration, and its shape is a fact about that type.
-    builder.settle_types(loaded)?;
-    // A program names its entry; a single checked file or a tree carries no
-    // entry, and no stage below needs one.
-    let entry = match loaded.entry {
-        Some(_) => Some(builder.resolve_entry(loaded)?),
-        None => None,
-    };
-    builder.link_bodies(loaded)?;
-    let module_values = builder.order_module_values(&builder.module_values)?;
-    // The unused-`use` fact is settled: every body is linked and every read
-    // recorded itself. It is read before `finish` takes the builder apart.
-    let warnings = builder.unused_use_warnings(loaded);
-    let program = builder.finish(entry, module_values);
-    Ok(Resolved { program, warnings })
+    Ok(builder)
 }
 
 impl Builder {
@@ -99,11 +134,21 @@ impl Builder {
         Ok(())
     }
 
-    /// Link every declaration's body. Every declaration's type is already
-    /// settled, so a body reads any callee's signature regardless of order.
-    fn link_bodies(&mut self, loaded: &LoadedProgram) -> Result<(), Diagnostic> {
+    /// Link every body, or only the bodies the file `only` declares. Every
+    /// declaration's type is already settled, so a body reads any callee's
+    /// signature regardless of order.
+    fn link_bodies(
+        &mut self,
+        loaded: &LoadedProgram,
+        only: Option<FileId>,
+    ) -> Result<(), Diagnostic> {
         for pending in std::mem::take(&mut self.pending) {
             let (declaration_id, file, item, namespace) = pending.parts();
+            // A single-file analysis links only the bodies that file owns; the
+            // settled signatures of every other declaration stay readable.
+            if only.is_some_and(|only| only != file) {
+                continue;
+            }
             let declaration = &loaded.items[item].declaration;
             let value = match &pending {
                 Pending::Callable { .. } => {

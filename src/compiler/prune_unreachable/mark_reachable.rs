@@ -9,10 +9,10 @@ use crate::compiler::model::{
 /// The declarations reachable from the entry: every function's parameters and
 /// the bindings, references, and callees in the bodies and initializers it
 /// reaches. Visited nodes are recorded, so a shared callee is walked once.
-pub(super) fn collect_reachable_declarations(program: &Program) -> HashSet<DeclarationId> {
+pub(crate) fn mark_reachable(program: &Program, entry: DeclarationId) -> HashSet<DeclarationId> {
     let mut reachable = HashSet::new();
     let mut collector = ReachableCollector {
-        pending: vec![program.entry.expect("a compilation prunes from its entry")],
+        pending: vec![entry],
     };
     while let Some(id) = collector.pending.pop() {
         if !reachable.insert(id) {

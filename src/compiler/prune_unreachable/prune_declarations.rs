@@ -7,12 +7,15 @@ use crate::compiler::model::{
     walk_expression_mut,
 };
 
-use super::mark_reachable::collect_reachable_declarations;
-
-/// Keep only the declarations the entry reaches, remapping every id.
-pub(crate) fn prune_unreachable(program: &mut Program) {
-    let reachable = collect_reachable_declarations(program);
-    let mapping = compact(program, &reachable);
+/// Keep only the declarations the entry reaches, remapping every id, and
+/// return the entry's new id.
+pub(crate) fn prune_unreachable(
+    program: &mut Program,
+    entry: DeclarationId,
+    reachable: &HashSet<DeclarationId>,
+) -> DeclarationId {
+    let mapping = compact(program, reachable);
+    let entry = mapped(&mapping, entry);
     remap(program, &mapping);
     // Pruning is the one pass that rewrites every id, so the structural
     // invariant is proved here, after the rewrite. A debug build checks it;
@@ -20,6 +23,7 @@ pub(crate) fn prune_unreachable(program: &mut Program) {
     if cfg!(debug_assertions) {
         crate::compiler::model::verify_program(program);
     }
+    entry
 }
 
 /// Move the reachable declarations into a fresh Vector, in their old order,
@@ -43,7 +47,6 @@ fn compact(
 /// Rewrite every `DeclarationId` occurrence through the mapping, and drop the
 /// names and file entries that point at dropped declarations.
 fn remap(program: &mut Program, mapping: &[Option<DeclarationId>]) {
-    program.entry = program.entry.map(|entry| mapped(mapping, entry));
     program.module_values.retain(|id| mapping[id.0].is_some());
     for id in &mut program.module_values {
         *id = mapped(mapping, *id);

@@ -16,17 +16,18 @@ use std::path::{Path, PathBuf};
 
 use crate::compiler::diagnostic::{Diagnostic, render};
 use crate::compiler::load_files::{LoadError, LoadedProgram, load_files, load_single};
-use crate::compiler::model::Program;
-use crate::compiler::resolve_names::Resolved;
+use crate::compiler::model::{DeclarationId, FileId, Program};
+use crate::compiler::resolve_names::{Analysis, Resolved, resolve_file, resolve_program};
 use crate::compiler::sources::ProgramSource;
 use crate::compiler::warnings::unused_bindings;
-use crate::compiler::{resolve_names, validate_program};
+use crate::compiler::{validate_file, validate_program};
 
 /// One build that checked: the loaded program, the model the check settled,
-/// and the warnings the unused syntax earned.
+/// the entry it starts from, and the warnings the unused syntax earned.
 pub struct Build {
     pub(crate) loaded: LoadedProgram,
     pub(crate) program: Program,
+    pub(crate) entry: DeclarationId,
     pub(crate) warnings: Vec<Diagnostic>,
 }
 
@@ -107,7 +108,7 @@ impl BuildFailure {
 
 /// Check one file by itself: the facts it earns, its unused declaration and
 /// use warnings and the first error the checker meets. The file is checked in
-/// its own context: the embedded library is mounted, nothing else on disk
+/// its own context: the library it belongs to is mounted, nothing else on disk
 /// joins it, and no entry is named, so a client asks this for the buffer the
 /// editor holds whatever the file is called and wherever it stands.
 pub fn check(path: &Path, source: &str) -> Vec<Diagnostic> {
@@ -115,33 +116,41 @@ pub fn check(path: &Path, source: &str) -> Vec<Diagnostic> {
         Ok(loaded) => loaded,
         Err(error) => return vec![Diagnostic::new(error.path, error.span, error.message)],
     };
-    let Resolved {
+    let Some(file) = loaded.files.iter().position(|file| file.path == path) else {
+        return Vec::new();
+    };
+    let file = FileId(file);
+    let Analysis {
         mut program,
         mut warnings,
-        ..
-    } = match resolve_names(&loaded) {
+    } = match resolve_file(&loaded, file) {
         Ok(resolved) => resolved,
         Err(diagnostic) => return vec![diagnostic],
     };
     warnings.extend(unused_bindings(&program));
-    if let Err(diagnostic) = validate_program(&mut program) {
+    if let Err(diagnostic) = validate_file(&mut program, file) {
         warnings.push(diagnostic);
     }
-    // The checked file's facts alone: the embedded library is checked with
-    // it, and its own warnings name files the client did not ask about.
+    // The checked file's facts alone: the library is checked with it, and its
+    // own warnings name files the client did not ask about.
     warnings.retain(|diagnostic| diagnostic.path == path);
     warnings
 }
 
-/// Run the build: load the program tree and the embedded library through
-/// `source`, resolve every name into an edge, and check every body. The one
-/// pipeline the compiler has; the source decides only what the files read as.
+/// Run the build: load the program tree and the library through `source`,
+/// resolve every name into an edge, select the entry, and check every body.
+/// The one pipeline the compiler has; the source decides only what the files
+/// read as.
 pub fn build(entry: &Path, source: &impl ProgramSource) -> Result<Build, BuildFailure> {
     let loaded = match load_files(entry, source) {
         Ok(loaded) => loaded,
         Err(error) => return Err(failure(vec![error], None)),
     };
-    let Resolved { program, warnings } = match resolve_names(&loaded) {
+    let Resolved {
+        program,
+        entry,
+        warnings,
+    } = match resolve_program(&loaded) {
         Ok(resolved) => resolved,
         Err(diagnostic) => return Err(failure(vec![], Some((loaded, diagnostic)))),
     };
@@ -154,6 +163,7 @@ pub fn build(entry: &Path, source: &impl ProgramSource) -> Result<Build, BuildFa
     Ok(Build {
         loaded,
         program,
+        entry,
         warnings,
     })
 }

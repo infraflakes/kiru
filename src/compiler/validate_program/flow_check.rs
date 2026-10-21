@@ -15,21 +15,28 @@ use crate::syntax::Span;
 
 use super::flow::Flow;
 
-/// Settle every function's halting fact, then report the flow diagnostics once.
-pub(super) fn check_flow(program: &mut Program) -> Result<(), Diagnostic> {
-    settle_halts(program)?;
-    report_flow(program)
+/// Settle every admitted function's halting fact, then report the flow
+/// diagnostics once.
+pub(super) fn check_flow(
+    program: &mut Program,
+    only_file: Option<FileId>,
+) -> Result<(), Diagnostic> {
+    settle_halts(program, only_file)?;
+    report_flow(program, only_file)
 }
 
-/// Raise every function's `halts` fact until a whole pass changes nothing. The
-/// walk reads the facts of the pass before it, so a forward call and a cycle
-/// settle the same way a reachability walk does.
-fn settle_halts(program: &mut Program) -> Result<(), Diagnostic> {
+/// Raise every admitted function's `halts` fact until a whole pass changes
+/// nothing. The walk reads the facts of the pass before it, so a forward call
+/// and a cycle settle the same way a reachability walk does.
+fn settle_halts(program: &mut Program, only_file: Option<FileId>) -> Result<(), Diagnostic> {
     let mut model = ModelView::from(program);
     loop {
         let mut changed = false;
         for index in 0..model.declarations().len() {
             let id = DeclarationId(index);
+            if !in_file(&model, id, only_file) {
+                continue;
+            }
             let kind = model.declaration(id).kind;
             if !(kind.callable() && kind.has_body()) {
                 continue;
@@ -47,12 +54,15 @@ fn settle_halts(program: &mut Program) -> Result<(), Diagnostic> {
     }
 }
 
-/// Walk every body once against the settled halting facts and report the first
-/// flow diagnostic.
-fn report_flow(program: &mut Program) -> Result<(), Diagnostic> {
+/// Walk every admitted body once against the settled halting facts and report
+/// the first flow diagnostic.
+fn report_flow(program: &mut Program, only_file: Option<FileId>) -> Result<(), Diagnostic> {
     let model = ModelView::from(program);
     for index in 0..model.declarations().len() {
         let id = DeclarationId(index);
+        if !in_file(&model, id, only_file) {
+            continue;
+        }
         let kind = model.declaration(id).kind;
         if kind.callable() && kind.has_body() {
             let walk = FlowWalk::for_declaration(&model, id, true);
@@ -94,6 +104,15 @@ fn body_flow(model: &ModelView<'_>, id: DeclarationId, report: bool) -> Result<F
         .function()
         .expect("a callable body is a function expression");
     walk.statements(&function.body, false)
+}
+
+/// Whether the declaration's body is in the checked set: all bodies, or only
+/// the ones the file declares.
+fn in_file(model: &ModelView<'_>, id: DeclarationId, only_file: Option<FileId>) -> bool {
+    match only_file {
+        Some(file) => model.declaration(id).file == Some(file),
+        None => true,
+    }
 }
 
 /// The name a body reports under in a diagnostic.

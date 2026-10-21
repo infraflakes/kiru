@@ -4,13 +4,24 @@
 //! Every compiler and runtime test drives the same build through a virtual
 //! tree, so the fixture is the facade and no test writes a directory.
 
-use crate::compiler::model::Program;
+use crate::compiler::model::{DeclarationId, Program};
 use crate::compiler::sources::VirtualSource;
 use crate::compiler::{BuildFailure, build};
 
 /// Build one source file, returning the checked program.
 pub(crate) fn checked_program(source: &str) -> Program {
     checked_files(&[("main.kiru", source)], "main.kiru").expect("the program checks")
+}
+
+/// Build one source file, returning the checked program and the entry it
+/// starts from.
+pub(crate) fn checked_program_and_entry(source: &str) -> (Program, DeclarationId) {
+    let built = build(
+        std::path::Path::new("main.kiru"),
+        &VirtualSource::new(&[("main.kiru", source)]),
+    )
+    .expect("the program checks");
+    (built.program, built.entry)
 }
 
 /// Build a set of named files with the given entry, returning the checked

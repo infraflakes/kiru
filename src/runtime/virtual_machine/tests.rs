@@ -2,13 +2,14 @@
 //! so no command output is captured. Only the tests that build commands
 //! spawn processes.
 
-use crate::compiler::checked_program;
+use crate::compiler::checked_program_and_entry;
 use crate::runtime::Value;
 
 use super::Runtime;
 
 fn runtime(source: &str) -> Runtime {
-    Runtime::for_testing(checked_program(source))
+    let (program, entry) = checked_program_and_entry(source);
+    Runtime::for_testing(program, entry)
 }
 
 fn call_text(runtime: &Runtime, name: &str) -> String {
