@@ -11,7 +11,7 @@ use crate::compiler::model::{
 };
 use crate::syntax::{BinaryInstruction, BinaryOp, UnaryOp};
 
-use super::lower_bytecode::Lowerer;
+use super::bytecode::Lowerer;
 
 impl Lowerer<'_> {
     /// Lower one function body into a `Code`: its captures then its parameters

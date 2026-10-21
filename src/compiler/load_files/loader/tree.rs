@@ -9,9 +9,9 @@
 
 use std::path::Path;
 
+use super::super::sources::ProgramSource;
 use crate::compiler::load_files::load_error::LoadError;
 use crate::compiler::load_files::loaded_program::LoadedProgram;
-use crate::compiler::sources::ProgramSource;
 
 use super::record::Loader;
 

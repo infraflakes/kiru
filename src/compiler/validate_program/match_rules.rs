@@ -6,7 +6,7 @@
 //! that produces a value must cover every case; a statement match need not.
 
 use crate::compiler::Diagnostic;
-use crate::compiler::messages::expected_instead;
+use crate::compiler::diagnostic::expected_instead;
 use crate::compiler::model::{
     Binding, Expression, Finite, MatchArm, MatchBody, Pattern, Type, TypeKind, finite, substitute,
 };

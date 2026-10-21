@@ -771,7 +771,7 @@ impl<'a> Checker<'a> {
                 callee.span(),
                 format!(
                     "a function value takes {}, found {}",
-                    crate::compiler::messages::count(parameters.len(), "argument"),
+                    crate::compiler::diagnostic::count(parameters.len(), "argument"),
                     arguments.len()
                 ),
             ));
@@ -795,7 +795,7 @@ impl<'a> Checker<'a> {
                 format!(
                     "`{}` takes {}, found {}",
                     self.model.display(callee),
-                    crate::compiler::messages::count(expected, "argument"),
+                    crate::compiler::diagnostic::count(expected, "argument"),
                     arguments.len()
                 ),
             ));
@@ -904,7 +904,7 @@ impl<'a> Checker<'a> {
         };
         self.check_member(id, &variant_name, public, span)?;
         let subject = format!("{name}.{variant_name}");
-        if let Some(message) = crate::compiler::messages::variant_payload_count(
+        if let Some(message) = crate::compiler::diagnostic::variant_payload_count(
             &subject,
             declared.len(),
             payload.len(),

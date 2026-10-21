@@ -6,7 +6,9 @@
 //! part of the payload: the binary evaluates them at startup.
 
 mod binary_trailer;
+mod output_file;
 mod serialize_bytecode;
 
 pub(crate) use binary_trailer::{attach_trailer, payload_in};
+pub(crate) use output_file::{make_writable_executable, same_file};
 pub(crate) use serialize_bytecode::{deserialize_bytecode, serialize_bytecode};

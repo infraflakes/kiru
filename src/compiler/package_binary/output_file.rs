@@ -5,14 +5,14 @@ use std::path::Path;
 
 /// Give a file the mode of a normal executable, so the trailer can be
 /// appended to a copy of a read-only `kc`.
-pub(in crate::compiler) fn make_writable_executable(path: &Path) -> std::io::Result<()> {
+pub(crate) fn make_writable_executable(path: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
 }
 
 /// Whether `output` names the same file as `entry`, following symlinks and
 /// `..` when the output already exists.
-pub(in crate::compiler) fn same_file(entry: &Path, output: &Path) -> bool {
+pub(crate) fn same_file(entry: &Path, output: &Path) -> bool {
     let entry = entry.canonicalize().unwrap_or_else(|_| entry.to_path_buf());
     let output = match output.canonicalize() {
         Ok(canonical) => canonical,

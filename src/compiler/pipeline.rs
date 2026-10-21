@@ -10,9 +10,9 @@
 
 use std::path::Path;
 
-use super::output_file::{make_writable_executable, same_file};
+use super::build::is_program_file;
+use super::package_binary::{make_writable_executable, same_file};
 use crate::compiler::diagnostic::render;
-use crate::compiler::warnings::is_program_file;
 use crate::compiler::{
     Build, DIAGNOSTIC_PREFIX, ProgramSource, attach_trailer, build, lower_bytecode, mark_reachable,
     prune_unreachable, serialize_bytecode, unused_declarations,

@@ -11,9 +11,11 @@
 mod load_error;
 mod loaded_program;
 mod loader;
+mod sources;
 #[cfg(test)]
 mod tests;
 
 pub(crate) use load_error::LoadError;
 pub(crate) use loaded_program::{LoadedProgram, ScopedDeclaration};
 pub(crate) use loader::{PROGRAM_TREE, STD_TREE, load_files, load_single};
+pub use sources::ProgramSource;

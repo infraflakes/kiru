@@ -138,7 +138,7 @@ impl Builder {
                     format!(
                         "`{}` takes {}, found {}",
                         path[0],
-                        crate::compiler::messages::count(parameter_count, "type argument"),
+                        crate::compiler::diagnostic::count(parameter_count, "type argument"),
                         arguments.len()
                     ),
                 ));
@@ -168,7 +168,7 @@ impl Builder {
                         format!(
                             "`{}` takes {}, found {}",
                             declared.name,
-                            crate::compiler::messages::count(parameter_count, "type argument"),
+                            crate::compiler::diagnostic::count(parameter_count, "type argument"),
                             arguments.len()
                         ),
                     ));
@@ -293,7 +293,7 @@ impl Builder {
                 *span,
                 format!(
                     "`{name}` takes {}, found {}",
-                    crate::compiler::messages::count(parameter_count, "type argument"),
+                    crate::compiler::diagnostic::count(parameter_count, "type argument"),
                     arguments.len()
                 ),
             ));

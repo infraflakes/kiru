@@ -13,10 +13,10 @@ use std::collections::HashSet;
 
 use crate::compiler::Diagnostic;
 use crate::compiler::STD_TREE;
+use crate::compiler::model::collect_reads;
 use crate::compiler::model::{
     DeclarationId, DeclarationKind, FileId, Program, join_path, namespace_path,
 };
-use crate::compiler::reads::collect_reads;
 
 /// The warnings for the program declarations no reachable body reads. Only a
 /// namespace-level function and a module value are named: a filed function

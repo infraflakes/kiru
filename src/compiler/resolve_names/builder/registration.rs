@@ -364,7 +364,7 @@ impl Builder {
                 diagnostic = diagnostic.with_related(
                     self.files[related_file.0].path.clone(),
                     self.skeletons[existing.0].name_span,
-                    crate::compiler::messages::first_declaration(name),
+                    crate::compiler::diagnostic::first_declaration(name),
                 );
             }
             return Err(diagnostic);

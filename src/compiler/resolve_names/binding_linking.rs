@@ -37,7 +37,7 @@ impl Builder {
                 Diagnostic::new(reported, name_span, duplicate_name(name)).with_related(
                     reported,
                     self.declarations[existing.0].name_span,
-                    crate::compiler::messages::first_declaration(name),
+                    crate::compiler::diagnostic::first_declaration(name),
                 ),
             );
         }
@@ -245,7 +245,7 @@ impl Builder {
         let declared = found.declaration.payload.clone();
         let ty = found.ty;
         let index = found.index;
-        if let Some(message) = crate::compiler::messages::variant_payload_count(
+        if let Some(message) = crate::compiler::diagnostic::variant_payload_count(
             &variant_name,
             declared.len(),
             arguments.len(),
