@@ -524,11 +524,6 @@ fn parser_errors() {
             "expected a declaration, found `foo`",
         ),
         (
-            "a use after a declaration",
-            "fn f() {};\nuse std;\n",
-            "`use` must come before any declaration",
-        ),
-        (
             "a bare import is not a form",
             "import \"b.kiru\";\n",
             "expected a declaration, found `import`",

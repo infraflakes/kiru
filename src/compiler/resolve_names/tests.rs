@@ -693,22 +693,6 @@ fn an_order_free_forward_reference_resolves() {
 }
 
 #[test]
-fn a_use_after_a_declaration_is_a_parse_error() {
-    let directory = tempfile::tempdir().expect("temp dir");
-    let path = directory.path().join("main.kiru");
-    std::fs::write(&path, "fn f() {};\nuse std;\n").expect("write file");
-    let error = crate::compiler::load_files::load_files(&path)
-        .expect_err("a use after a declaration fails");
-    assert!(
-        error
-            .message
-            .contains("`use` must come before any declaration"),
-        "{}",
-        error.message
-    );
-}
-
-#[test]
 fn an_unresolvable_use_is_rejected_at_its_span() {
     // A `use` names a namespace or a declaration; a path that reaches neither
     // is a compile error naming the path and pointing at the `use`.

@@ -172,20 +172,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse the token stream into a file: its top-level items in order. Every
-    /// `use` must come before the first declaration; a `use` after one is a
-    /// parse error, since a `use` reads at the top of its file.
+    /// Parse the token stream into a file: its top-level items in order. A
+    /// `use` may stand anywhere among them: it shortens paths for the whole
+    /// file's namespace, and the written order between `use`s decides what a
+    /// delivered name is on a collision.
     fn parse_file(mut self) -> Result<File, ParseError> {
         let mut items = Vec::new();
-        let mut declared = false;
         while !self.check(&TokenKind::Eof) {
-            if self.check(&TokenKind::Use) {
-                if declared {
-                    return Err(self.error_here("`use` must come before any declaration"));
-                }
-            } else {
-                declared = true;
-            }
             items.push(self.parse_item()?);
         }
         Ok(File { items })
