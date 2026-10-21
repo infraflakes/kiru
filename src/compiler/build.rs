@@ -12,15 +12,16 @@
 //! The second half of the compile — pruning, lowering, packaging — belongs to
 //! the pipeline, because only a compiled program needs it.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::compiler::diagnostic::{Diagnostic, render};
 use crate::compiler::load_files::{LoadError, LoadedProgram, load_files};
 use crate::compiler::model::{
-    DeclarationId, FileId, Program, join_path, namespace_path, type_name,
+    DeclarationId, FileId, Program, UseTarget, join_path, namespace_path, type_name,
 };
 use crate::compiler::reads::collect_reads;
-use crate::compiler::resolve_names::Resolved;
+use crate::compiler::resolve_names::{Resolved, TypeUse};
 use crate::compiler::sources::ProgramSource;
 use crate::compiler::warnings::unused_bindings;
 use crate::compiler::{resolve_names, validate_program};
@@ -32,6 +33,9 @@ pub struct Build {
     pub(crate) loaded: LoadedProgram,
     pub(crate) program: Program,
     pub(crate) warnings: Vec<Diagnostic>,
+    /// The written named types the resolution met: where each stands and the
+    /// declared type it names.
+    pub(crate) type_uses: Vec<TypeUse>,
 }
 
 impl std::fmt::Debug for Build {
@@ -86,13 +90,8 @@ impl Build {
     /// the body it is written in.
     pub fn definition(&self, path: &Path, offset: usize) -> Option<(PathBuf, Span)> {
         let (target, read_file) = self.declaration_at(path, offset)?;
-        let declaration = self.program.declaration(target);
-        // A local's file is the file of the body it is read in, which is the
-        // read's own file; a parameter's owner is written there too. A native
-        // is written in no file of the program, so it answers no place.
-        let owned = declaration.kind.local() || declaration.owner.is_some();
-        let file = declaration.file.or(owned.then_some(read_file))?;
-        let span = declaration.name_span;
+        let file = self.name_file(target, read_file)?;
+        let span = self.program.declaration(target).name_span;
         Some((self.program.files[file.0].path.clone(), span))
     }
 
@@ -116,7 +115,11 @@ impl Build {
     }
 
     /// The declaration a position stands on, and the file the read stands in.
-    fn declaration_at(&self, path: &Path, offset: usize) -> Option<(DeclarationId, FileId)> {
+    pub(crate) fn declaration_at(
+        &self,
+        path: &Path,
+        offset: usize,
+    ) -> Option<(DeclarationId, FileId)> {
         let file = self
             .program
             .files
@@ -156,6 +159,29 @@ impl Build {
             })
             .map(|(index, _)| DeclarationId(index));
         local.or(declared).map(|target| (target, file))
+    }
+
+    /// The file the declaration's own name is written in: a namespace-level
+    /// declaration's file, or the file of the body a local binding is written
+    /// in. A native is written in no file of the program, so it answers none.
+    pub(crate) fn name_file(&self, declaration: DeclarationId, at_file: FileId) -> Option<FileId> {
+        let node = self.program.declaration(declaration);
+        let owned = node.kind.local() || node.owner.is_some();
+        node.file.or(owned.then_some(at_file))
+    }
+
+    /// The target each `use` item delivered, by the item's index in the
+    /// loaded stream: the namespaces' delivery records, read back once.
+    pub(crate) fn deliveries(&self) -> HashMap<usize, UseTarget> {
+        let mut deliveries = HashMap::new();
+        for namespace in &self.program.namespaces {
+            for entries in namespace.brought.values() {
+                for delivery in entries {
+                    deliveries.insert(delivery.use_index, delivery.target);
+                }
+            }
+        }
+        deliveries
     }
 }
 
@@ -206,7 +232,11 @@ pub fn build(entry: &Path, source: &impl ProgramSource) -> Result<Build, BuildFa
         Ok(loaded) => loaded,
         Err(error) => return Err(failure(vec![error], None)),
     };
-    let Resolved { program, warnings } = match resolve_names(&loaded) {
+    let Resolved {
+        program,
+        warnings,
+        type_uses,
+    } = match resolve_names(&loaded) {
         Ok(resolved) => resolved,
         Err(diagnostic) => return Err(failure(vec![], Some((loaded, diagnostic)))),
     };
@@ -220,6 +250,7 @@ pub fn build(entry: &Path, source: &impl ProgramSource) -> Result<Build, BuildFa
         loaded,
         program,
         warnings,
+        type_uses,
     })
 }
 

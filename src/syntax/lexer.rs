@@ -15,7 +15,16 @@ pub(crate) struct LexError {
 
 /// Lex a whole source file.
 pub(crate) fn lex(source: &str) -> Result<Vec<Token>, LexError> {
-    Lexer::new(source).run()
+    Ok(lex_with_comments(source)?.0)
+}
+
+/// Lex a source file and record the comments the tokens skip: a comment is
+/// trivia the parser never sees, and a client that paints the source reads
+/// the spans the lexer skipped over.
+pub(crate) fn lex_with_comments(source: &str) -> Result<(Vec<Token>, Vec<Span>), LexError> {
+    let mut lexer = Lexer::new(source);
+    let tokens = lexer.run()?;
+    Ok((tokens, std::mem::take(&mut lexer.comments)))
 }
 
 struct Lexer<'a> {
@@ -26,13 +35,20 @@ struct Lexer<'a> {
     /// reads and a lookahead copies the cursor over the borrowed slice.
     cursor: CharIndices<'a>,
     at: Option<(usize, char)>,
+    /// The comments the trivia skipping passed over, in source order.
+    comments: Vec<Span>,
 }
 
 impl<'a> Lexer<'a> {
     fn new(source: &'a str) -> Self {
         let mut cursor = source.char_indices();
         let at = cursor.next();
-        Self { source, cursor, at }
+        Self {
+            source,
+            cursor,
+            at,
+            comments: Vec::new(),
+        }
     }
 
     fn current(&self) -> Option<(usize, char)> {
@@ -67,7 +83,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn run(mut self) -> Result<Vec<Token>, LexError> {
+    fn run(&mut self) -> Result<Vec<Token>, LexError> {
         let mut tokens = Vec::new();
         loop {
             let next = self.next_tokens()?;
@@ -197,12 +213,14 @@ impl<'a> Lexer<'a> {
                     self.advance();
                 }
                 Some((_, '#')) => {
+                    let start = self.offset();
                     while let Some((_, character)) = self.current() {
                         if character == '\n' {
                             break;
                         }
                         self.advance();
                     }
+                    self.comments.push(Span::new(start, self.offset()));
                 }
                 _ => return,
             }
@@ -252,7 +270,10 @@ impl<'a> Lexer<'a> {
         self.advance();
         let mut tokens = Vec::new();
         let mut value = String::new();
-        let mut segment_start = self.offset();
+        // The first segment's span opens at the quote, so a literal's written
+        // span covers its delimiters and a later segment's opening
+        // interpolation does the same for the closing one.
+        let mut segment_start = start;
         loop {
             let Some((position, character)) = self.current() else {
                 return Err(self.error(Span::new(start, self.source.len()), "unterminated string"));
@@ -355,7 +376,8 @@ fn is_identifier_start(character: char) -> bool {
     character == '_' || character.is_alphabetic()
 }
 
-fn is_identifier_continue(character: char) -> bool {
+/// Whether a character may continue an identifier, after its first.
+pub(crate) fn is_identifier_continue(character: char) -> bool {
     character == '_' || character.is_alphanumeric()
 }
 

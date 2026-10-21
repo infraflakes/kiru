@@ -14,6 +14,8 @@ use crate::syntax::{Declaration, Span, TypeExpr};
 pub(crate) struct LoadedFile {
     pub(crate) path: PathBuf,
     pub(crate) source: String,
+    /// The namespace the file's directory names, as the loader derived it.
+    pub(crate) namespace: Vec<String>,
 }
 
 /// One declaration in the joined stream, with the file it came from and the
@@ -44,6 +46,8 @@ pub(crate) struct ScopedUse {
     pub(crate) file: usize,
     pub(crate) namespace: Vec<String>,
     pub(crate) path: Vec<String>,
+    /// The span of the name the path delivers.
+    pub(crate) delivered: Span,
     /// The span of the `use` item, for diagnostics.
     pub(crate) span: Span,
 }

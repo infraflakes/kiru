@@ -5,7 +5,10 @@
 //! collects those edges and the bindings they can name — a parameter, a
 //! `let`, a match-pattern binding — so the facts that already exist answer the
 //! questions about them once: whether a local is ever read, and which
-//! declaration a position in a file stands on. The walk reads the model
+//! declaration a position in a file stands on. The writes it records beside
+//! them are the edges an assignment writes the name by, and the fields are
+//! the names a field access reads by; both carry no read edge, so they ride
+//! the same walk instead of a second one. The walk reads the model
 //! through the one structural visitor, so a new node kind fails to compile
 //! until this walk names it.
 
@@ -26,6 +29,35 @@ pub(crate) struct Read {
     pub(crate) span: Span,
 }
 
+impl Read {
+    /// The span of the name the read names: a read may be written as a path,
+    /// and the path ends at the name, so the name is the text after the last
+    /// path separator the path wrote.
+    pub(crate) fn name_span(self, source: &str) -> Span {
+        let path = &source[self.span.start..self.span.end];
+        let name = path.rfind("::").map(|separator| separator + 2).unwrap_or(0);
+        Span::new(self.span.start + name, self.span.end)
+    }
+}
+
+/// One write the program records: the binding an assignment names, the file
+/// it is written in, and the span of the written name. A write is not a read:
+/// a binding only assigned is still never read.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Write {
+    pub(crate) declaration: DeclarationId,
+    pub(crate) file: FileId,
+    pub(crate) span: Span,
+}
+
+/// One field access the program records: the name the access reads by, and
+/// the file it is written in.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Property {
+    pub(crate) file: FileId,
+    pub(crate) span: Span,
+}
+
 /// One binding a body declares: a parameter, a `let`, or a match-pattern
 /// binding, with the file the body is written in.
 #[derive(Clone, Copy, Debug)]
@@ -40,6 +72,8 @@ pub(crate) struct Reads {
     /// The declarations some reference names. A name in here was read.
     pub(crate) referenced: HashSet<DeclarationId>,
     pub(crate) reads: Vec<Read>,
+    pub(crate) writes: Vec<Write>,
+    pub(crate) properties: Vec<Property>,
     pub(crate) bindings: Vec<Bound>,
 }
 
@@ -146,19 +180,65 @@ impl Visitor for Collector<'_> {
     // Every other kind carries no binding and no edge of its own; its
     // children carry the walk.
     fn text(&mut self, _: &Expression) {}
-    fn map(&mut self, _: &Expression) {}
+    fn map(&mut self, expression: &Expression) {
+        let Expression::Map { fields, .. } = expression else {
+            unreachable!("the walk names a map");
+        };
+        for field in fields {
+            self.reads.properties.push(Property {
+                file: self.file,
+                span: field.name_span,
+            });
+        }
+    }
     fn boolean(&mut self, _: &Expression) {}
     fn integer(&mut self, _: &Expression) {}
     fn variant(&mut self, _: &Expression) {}
     fn interpolated(&mut self, _: &Expression) {}
     fn call(&mut self, _: &Expression) {}
     fn method(&mut self, _: &Expression) {}
-    fn field(&mut self, _: &Expression) {}
+    fn field(&mut self, expression: &Expression) {
+        let Expression::Field { name_span, .. } = expression else {
+            unreachable!("the walk names a field access");
+        };
+        self.reads.properties.push(Property {
+            file: self.file,
+            span: *name_span,
+        });
+    }
     fn binary(&mut self, _: &Expression) {}
     fn unary(&mut self, _: &Expression) {}
     fn match_expression(&mut self, _: &Expression) {}
-    fn assign(&mut self, _: &Statement) {}
-    fn field_assign(&mut self, _: &Statement) {}
+    fn assign(&mut self, statement: &Statement) {
+        let Statement::Assign {
+            declaration,
+            name_span,
+            ..
+        } = statement
+        else {
+            unreachable!("the walk names an assignment");
+        };
+        self.reads.writes.push(Write {
+            declaration: *declaration,
+            file: self.file,
+            span: *name_span,
+        });
+    }
+    fn field_assign(&mut self, statement: &Statement) {
+        let Statement::FieldAssign {
+            declaration,
+            name_span,
+            ..
+        } = statement
+        else {
+            unreachable!("the walk names a field assignment");
+        };
+        self.reads.writes.push(Write {
+            declaration: *declaration,
+            file: self.file,
+            span: *name_span,
+        });
+    }
     fn expression_statement(&mut self, _: &Statement) {}
     fn return_statement(&mut self, _: &Statement) {}
     fn panic(&mut self, _: &Statement) {}

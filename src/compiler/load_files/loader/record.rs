@@ -49,16 +49,21 @@ impl Loader {
             }
         };
         let index = self.files.len();
-        self.files.push(LoadedFile { path, source });
+        self.files.push(LoadedFile {
+            path,
+            source,
+            namespace: namespace.clone(),
+        });
         for item in file.items {
             match item {
                 Item::Declaration(declaration) => self.record(*declaration, index, &namespace),
                 Item::Use(use_item) => {
-                    for path in use_item.paths {
+                    for (path, delivered) in use_item.paths.into_iter().zip(use_item.delivered) {
                         self.uses.push(ScopedUse {
                             file: index,
                             namespace: namespace.clone(),
                             path,
+                            delivered,
                             span: use_item.span,
                         });
                     }

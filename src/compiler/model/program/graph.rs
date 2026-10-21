@@ -64,11 +64,12 @@ impl Program {
 }
 
 /// One loaded file and the declarations it holds. A file belongs to exactly
-/// one namespace, the one its directory names; the namespace is recorded where
-/// each declaration joins it, so the file keeps only its path.
+/// one namespace, the one its directory names; the namespace is recorded
+/// here, and where each declaration joins it is recorded on the declaration.
 #[derive(Debug)]
 pub(crate) struct File {
     pub(crate) path: PathBuf,
+    pub(crate) namespace: NamespaceId,
     pub(crate) declarations: Vec<DeclarationId>,
 }
 

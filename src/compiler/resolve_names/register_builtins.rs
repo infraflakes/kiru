@@ -25,8 +25,10 @@ impl Builder {
         let id = TypeId(self.types.len());
         self.types.push(TypeDecl {
             name: "Vec".to_owned(),
+            name_span: Span::new(0, 0),
             public: true,
             namespace,
+            file: None,
             parameters: vec!["T".to_owned()],
             runtime: RuntimeType::List,
             kind: TypeKind::Rec(Vec::new()),

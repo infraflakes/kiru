@@ -23,6 +23,17 @@ use super::scopes::{Context, Scopes};
 pub(crate) struct Resolved {
     pub(crate) program: Program,
     pub(crate) warnings: Vec<Diagnostic>,
+    pub(crate) type_uses: Vec<TypeUse>,
+}
+
+/// One written named type the resolution met: the path it wrote and the name
+/// the path ends at. A written type resolves to an id and leaves no node, so
+/// this is the one fact that says where a type name stands.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TypeUse {
+    pub(crate) file: FileId,
+    pub(crate) path: Span,
+    pub(crate) name: Span,
 }
 
 /// Build the program model from the joined item stream.
@@ -49,8 +60,13 @@ pub(crate) fn resolve_names(loaded: &LoadedProgram) -> Result<Resolved, Diagnost
     // The unused-`use` fact is settled: every body is linked and every read
     // recorded itself. It is read before `finish` takes the builder apart.
     let warnings = builder.unused_use_warnings(loaded);
+    let type_uses = std::mem::take(&mut *builder.type_uses.borrow_mut());
     let program = builder.finish(entry, module_values);
-    Ok(Resolved { program, warnings })
+    Ok(Resolved {
+        program,
+        warnings,
+        type_uses,
+    })
 }
 
 impl Builder {
@@ -203,7 +219,7 @@ impl Builder {
         file: FileId,
         parameters: &[String],
     ) -> Result<Type, Diagnostic> {
-        self.resolve_type_expr(expr, namespace, parameters, &self.files[file.0].path)
+        self.resolve_type_expr(expr, namespace, file, parameters, &self.files[file.0].path)
     }
     fn link_statements(
         &mut self,

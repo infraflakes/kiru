@@ -2,11 +2,12 @@
 
 use crate::compiler::Diagnostic;
 use crate::compiler::model::{
-    Arity, Group, NamespaceId, Type, TypeHead, TypeId, TypeKind, UseTarget, VariantDecl, join_path,
-    reachable, scalar_from_name,
+    Arity, FileId, Group, NamespaceId, Type, TypeHead, TypeId, TypeKind, UseTarget, VariantDecl,
+    join_path, reachable, scalar_from_name,
 };
 use crate::syntax::{Span, TypeExpr};
 
+use super::super::body_linking::TypeUse;
 use super::registration::Builder;
 
 /// One enum variant a written path names: the enum's type, the variant's index,
@@ -43,6 +44,7 @@ impl Builder {
         &self,
         expr: &TypeExpr,
         namespace: NamespaceId,
+        file: FileId,
         parameters: &[String],
         reported_path: &std::path::Path,
     ) -> Result<Type, Diagnostic> {
@@ -57,6 +59,7 @@ impl Builder {
                     resolved.push(self.resolve_type_expr(
                         parameter,
                         namespace,
+                        file,
                         parameters,
                         reported_path,
                     )?);
@@ -67,6 +70,7 @@ impl Builder {
                     Some(returns) => Some(Box::new(self.resolve_type_expr(
                         returns,
                         namespace,
+                        file,
                         parameters,
                         reported_path,
                     )?)),
@@ -79,6 +83,7 @@ impl Builder {
             }
             TypeExpr::Named {
                 path,
+                path_span,
                 arguments,
                 span,
             } => {
@@ -88,13 +93,26 @@ impl Builder {
                 {
                     return Ok(Type::Parameter(path[0].clone()));
                 }
-                self.resolve_named_type(
+                let resolved = self.resolve_named_type(
                     WrittenType { path, span },
                     arguments,
                     namespace,
+                    file,
                     parameters,
                     reported_path,
-                )
+                )?;
+                // A written declared type is a fact: the model records the
+                // path it wrote and the name the path ends at, so a client
+                // painting the source reads it without re-deriving a type.
+                if matches!(resolved, Type::Named(..)) {
+                    let last = path.last().expect("a written name has a segment");
+                    self.type_uses.borrow_mut().push(TypeUse {
+                        file,
+                        path: *path_span,
+                        name: Span::new(path_span.end - last.len(), path_span.end),
+                    });
+                }
+                Ok(resolved)
             }
         }
     }
@@ -107,6 +125,7 @@ impl Builder {
         written: WrittenType<'_>,
         arguments: &[TypeExpr],
         namespace: NamespaceId,
+        file: FileId,
         parameters: &[String],
         reported_path: &std::path::Path,
     ) -> Result<Type, Diagnostic> {
@@ -135,6 +154,7 @@ impl Builder {
             resolved.push(self.resolve_type_expr(
                 argument,
                 namespace,
+                file,
                 parameters,
                 reported_path,
             )?);
@@ -204,10 +224,11 @@ impl Builder {
         &self,
         ty: &TypeExpr,
         namespace: NamespaceId,
+        file: FileId,
         reported_path: &std::path::Path,
     ) -> Result<TypeHead, Diagnostic> {
         let TypeExpr::Named { path, span, .. } = ty else {
-            let resolved = self.resolve_type_expr(ty, namespace, &[], reported_path)?;
+            let resolved = self.resolve_type_expr(ty, namespace, file, &[], reported_path)?;
             return Err(Diagnostic::new(
                 reported_path,
                 ty.span(),

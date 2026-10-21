@@ -117,18 +117,21 @@ impl<'a> Parser<'a> {
         let start = self.advance().start;
         // The path may end at `::{`, so the separator before a group is read
         // here rather than by the general path parser.
-        let (first, _) = self.expect_identifier("in a use path")?;
+        let (first, first_span) = self.expect_identifier("in a use path")?;
         let mut path = vec![first.to_owned()];
+        let mut delivered = first_span;
         let mut group = false;
         while self.eat(&TokenKind::PathSep) {
             if self.check(&TokenKind::LBrace) {
                 group = true;
                 break;
             }
-            let (segment, _) = self.expect_identifier("in a use path")?;
+            let (segment, span) = self.expect_identifier("in a use path")?;
             path.push(segment.to_owned());
+            delivered = span;
         }
         let mut paths = Vec::new();
+        let mut delivered_spans = Vec::new();
         if group {
             let (names, group_span) = self.parse_delimited(
                 &TokenKind::LBrace,
@@ -138,7 +141,7 @@ impl<'a> Parser<'a> {
                 |parser| {
                     parser
                         .expect_identifier("in a use group")
-                        .map(|(name, _)| name.to_owned())
+                        .map(|(name, span)| (name.to_owned(), span))
                 },
             )?;
             if names.is_empty() {
@@ -147,16 +150,22 @@ impl<'a> Parser<'a> {
                     message: "a use group must name at least one thing".to_owned(),
                 });
             }
-            for name in names {
+            for (name, span) in names {
                 let mut full = path.clone();
                 full.push(name);
                 paths.push(full);
+                delivered_spans.push(span);
             }
         } else {
             paths.push(path);
+            delivered_spans.push(delivered);
         }
         let span = self.span_through_semicolon(start, "after the use path")?;
-        Ok(Use { paths, span })
+        Ok(Use {
+            paths,
+            delivered: delivered_spans,
+            span,
+        })
     }
 
     /// Parse a `rec Name { field: Type, ... };` type declaration.
@@ -389,6 +398,7 @@ impl<'a> Parser<'a> {
             };
             return Ok(TypeExpr::Named {
                 path,
+                path_span,
                 arguments,
                 span,
             });

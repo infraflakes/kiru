@@ -104,11 +104,18 @@ pub(crate) struct Derived {
 #[derive(Debug)]
 pub(crate) struct TypeDecl {
     pub(crate) name: String,
+    /// The span of the written name, for a query that asks where the type's
+    /// name stands. The runtime's own declarations are written in no file,
+    /// so theirs is empty.
+    pub(crate) name_span: Span,
     /// Whether another namespace may reach the type.
     pub(crate) public: bool,
     /// The namespace that declares the type. A field or variant is reached
     /// from here freely and from another namespace only when it is `pub`.
     pub(crate) namespace: NamespaceId,
+    /// The file that declared the type. The runtime's own declarations have
+    /// none.
+    pub(crate) file: Option<FileId>,
     /// The type parameters in `Name<A, B>`, in order; empty when there are
     /// none.
     pub(crate) parameters: Vec<String>,
@@ -143,6 +150,9 @@ pub(crate) enum TypeKind {
 #[derive(Debug)]
 pub(crate) struct TypeFieldDecl {
     pub(crate) name: String,
+    /// The span of the written name, for a query that asks where the field's
+    /// name stands.
+    pub(crate) name_span: Span,
     /// Whether another namespace may read and write the field.
     pub(crate) public: bool,
     pub(crate) ty: Type,
@@ -152,6 +162,9 @@ pub(crate) struct TypeFieldDecl {
 #[derive(Debug)]
 pub(crate) struct VariantDecl {
     pub(crate) name: String,
+    /// The span of the written name, for a query that asks where the
+    /// variant's name stands.
+    pub(crate) name_span: Span,
     /// Whether another namespace may construct and match the variant.
     pub(crate) public: bool,
     pub(crate) payload: Vec<Type>,

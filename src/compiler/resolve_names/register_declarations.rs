@@ -15,8 +15,10 @@ impl Builder {
         loaded: &LoadedProgram,
     ) -> Result<(), Diagnostic> {
         for file in &loaded.files {
+            let namespace = self.ensure_namespace(&file.namespace);
             self.files.push(File {
                 path: file.path.clone(),
+                namespace,
                 declarations: Vec::new(),
             });
         }
@@ -33,6 +35,7 @@ impl Builder {
                     type_declaration,
                     declaration.public,
                     namespace,
+                    Some(FileId(scoped.file)),
                     &loaded.files[scoped.file].path,
                 )?;
             }
@@ -81,7 +84,14 @@ impl Builder {
                 .kind
                 .group()
                 .expect("a type declaration belongs to a type group");
-            self.fill_type(type_declaration, id, group, namespace, &loaded_file.path)?;
+            self.fill_type(
+                FileId(scoped.file),
+                type_declaration,
+                id,
+                group,
+                namespace,
+                &loaded_file.path,
+            )?;
             return Ok(());
         }
         // A function inside an `impl` block is filed under the block's type: a
@@ -107,12 +117,18 @@ impl Builder {
                 .impl_target
                 .as_ref()
                 .expect("a bound declaration carries its impl target");
-            let block_head = self.resolve_impl_target(&target.ty, namespace, &loaded_file.path)?;
+            let block_head = self.resolve_impl_target(
+                &target.ty,
+                namespace,
+                FileId(scoped.file),
+                &loaded_file.path,
+            )?;
             let first_parameter = match function.parameters.first() {
                 Some(parameter) => Some(
                     self.resolve_type_expr(
                         &parameter.ty,
                         namespace,
+                        FileId(scoped.file),
                         &function.type_parameters,
                         &loaded_file.path,
                     )?

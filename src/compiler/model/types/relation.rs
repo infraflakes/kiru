@@ -244,6 +244,7 @@ mod tests {
     use crate::compiler::model::{NamespaceId, TypeDecl, TypeId, TypeKind};
 
     use super::{Binding, Type, fits, substitute};
+    use crate::syntax::Span;
 
     /// A table of `rec` declarations, one per index, so a named type has a
     /// group to read.
@@ -251,8 +252,10 @@ mod tests {
         (0..count)
             .map(|index| TypeDecl {
                 name: format!("T{index}"),
+                name_span: Span::new(0, 0),
                 public: true,
                 namespace: NamespaceId(0),
+                file: None,
                 parameters: Vec::new(),
                 runtime: crate::compiler::model::RuntimeType::Declared,
                 kind: TypeKind::Rec(Vec::new()),

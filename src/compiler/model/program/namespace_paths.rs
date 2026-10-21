@@ -1,13 +1,47 @@
 //! Walking and rendering namespace paths.
 
 use super::super::ids::NamespaceId;
-use super::graph::{Namespace, Program};
+use super::graph::{Namespace, Program, UseTarget};
 use super::interner::Interner;
 
 impl Program {
     /// The namespace at a path, when one exists.
     pub(crate) fn namespace_at(&self, path: &[String]) -> Option<NamespaceId> {
         namespace_at(&self.intern, &self.namespaces, path)
+    }
+
+    /// The namespace a written path's prefix names, as it is resolved from
+    /// `from`: the first segment is a tree name walked from the root, else the
+    /// qualifier a namespace-`use` shortens, and the rest descends the
+    /// children. The one resolution a qualified path's prefix gets.
+    pub(crate) fn qualified_namespace(
+        &self,
+        from: NamespaceId,
+        segments: &[String],
+    ) -> Option<NamespaceId> {
+        let (first, rest) = segments.split_first()?;
+        if let Some(base) =
+            namespace_at(&self.intern, &self.namespaces, std::slice::from_ref(first))
+        {
+            return self.namespace_children(base, rest);
+        }
+        let symbol = self.intern.resolve(first)?;
+        let entries = self.namespaces[from.0].brought.get(&symbol)?;
+        let base = entries.iter().find_map(|entry| match entry.target {
+            UseTarget::Namespace(namespace) => Some(namespace),
+            _ => None,
+        })?;
+        self.namespace_children(base, rest)
+    }
+
+    /// The namespace the remaining segments descend to, from `base`.
+    fn namespace_children(&self, base: NamespaceId, segments: &[String]) -> Option<NamespaceId> {
+        let mut current = base;
+        for segment in segments {
+            let symbol = self.intern.resolve(segment)?;
+            current = *self.namespaces[current.0].children.get(&symbol)?;
+        }
+        Some(current)
     }
 }
 
