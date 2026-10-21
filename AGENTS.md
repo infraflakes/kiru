@@ -3,7 +3,7 @@
 - Centralized patterns are reused across the codebase instead of imperatively modified per function
 - Do not have the "build on top of old things" mentality, if its fundamentally wrong, break it.
 - Do not abuse .clone(), .unwrap(), and Arc:: in general
-- src/*.rs re-export module entry points; src/<dir>/ files are internal logic.
+- src/*.rs re-export module entry points; src/<dir>/ files are internal logic. Applies for every sub directories that followed. 
 - Functions are preferable to be doing its own task, import many functions instead of doing everything themselves, only after verifying that the task itself, can be reused by others without variants.
 - src/cli/ crates are the main input of external data for `kiru` whereas other crates are the engine for it.
 - Variable names should be self explanatory, named after what it does so anyone who isn't familiar with the codebase can understand, recommends verbose semantic terms then academic terms when matched complexity.
@@ -22,11 +22,13 @@
 - The type model is a graph of groups: scalar, rec, enum, function, parameter. Each group declares everything about its kind - arity, written name, display name, whether methods may bind to it, whether it has fields, what shape it fits, how it unifies and substitutes, its runtime shape. Every type, whether intrinsic, declared, or provided by a native, is marked with a group and inherits its facts. Relations read the group; nothing re-derives a kind by matching on it, and an unmarked kind is a compile error rather than a wildcard arm that silently swallows it.
 - The intrinsics are txt, bool and int. Vec is a declared rec named type in the std dynamic namespace, not an intrinsic, and it has no brackets: a value is built and changed through its new, push, replace, at and len operations.
 - A namespace is a directory. A file belongs to its directory's namespace and its filename is arbitrary. There is no mod and no import. Resolution is order free: every declaration is collected first, then references resolve, so a forward reference and a cycle inside one namespace are both legal.
+- A compilation names one entry file. That file must declare the root main: reachability starts at that main, the relation graph is built from it, and every declaration the graph never reaches is pruned before lowering. A named file without main, or a main declared beside it in another file, does not compile.
+- Unused facts are warnings, never silence: an unused use, an unused local binding, and a program declaration no reachable body reads. A warning names its file, line and column in the diagnostic format and never stops a compilation. An error stops it: no output is written and the diagnostic is reported.
 - Every absolute path resolves on its own, with no use: std::dynamic::Vec.new(), root::kiru::usage(). A use only shortens a path, and may end at a namespace, at a type, or at a plain function. A type brings its bound functions with it. There is no as form. A use sits anywhere in the file and belongs to the namespace, not to the file.
 - A bound function is declared inside an impl block for its type and is never a namespace level name, so a use cannot name it. A function whose first parameter is its own type is a method, and is reached as a value call or as a namespace qualified call with the receiver written out. A function without such a first parameter is an associated function, reached only through its type: a Type.name call, or Type.name as a value. Its reachability is pub on the type and pub on the function, never a use.
 - A name is unique inside its namespace, always. Only functions bound to different types may share one.
 - Module values are never pub.
-- A call always carries parentheses; a bare name is always a value.
+- A call always carries parentheses; a bare name is always a variable.
 - Natives are the runtime's floor and are public. A native that touches the operating system lives in the syscalls namespace and carries its syscall or C library name; a pure one stays with its kind, the container's in the dynamic namespace and the text kernel's in the text namespace. A native is bound to a type when its first parameter is that type, or when it takes no parameters and returns a declared type.
 - Every directory under the library root carries a natives.md listing that namespace's natives: what each takes, what it does, and whether it returns a value.
 
@@ -43,12 +45,19 @@
 
 ## Where things live
 
-- src/compiler/ is the engine. Its stages run in this order: load_files walks the entry file's directory tree and the embedded library and derives a namespace from each file's directory; resolve_names collects every declaration, then resolves references and links bodies; validate_program types and checks every body; prune_unreachable drops what the entry never reaches; lower_bytecode turns bodies into instructions; package_binary writes the image.
+- src/compiler/ is the engine. Its stages run in this order: load_files reads the entry file's directory tree and the embedded library through the program source and derives a namespace from each file's directory; resolve_names collects every declaration, resolves references and links bodies; validate_program types and checks every body; prune_unreachable drops what the entry never reaches; lower_bytecode turns bodies into instructions; package_binary writes the image. The checked program holds no entry: the entry is the compilation's input, is selected and validated where the program is resolved, and is passed to the stages that start from it.
+- src/compiler/ reads no disk. A program source provides the files: the command line supplies the disk's source, the language server supplies the editor's buffers, and the tests supply a virtual tree.
 - src/compiler/model/ is the graph and holds no stage logic: ids, declarations, expressions, types (the group model), program (the graph, the name and method and type tables, type naming, namespace paths, field lookup), visitors, verify_graph, verify_spans.
 - src/compiler/bytecode/ defines the instruction set and its validation. Nothing outside it names an instruction variant.
 - src/runtime/ executes: the virtual machine, its native dispatch, values, and the process, thread and signal pools.
 - src/syntax/ is the surface: tokens, lexer, parser, syntax tree, spans.
-- src/cli/ is the only place external data enters and the only place a diagnostic is rendered for a terminal.
+- src/cli/ is the only place a terminal is spoken to, and the only place the compiler's disk input enters: it supplies the disk source and renders diagnostics for a terminal.
+- src/lsp/ is the language server's client: the protocol session and the position encoding. It supplies the editor's buffers as a program source and publishes the single-file analysis's diagnostics.
+
+## The language server
+
+- `kc lsp` serves diagnostics for the one file the editor holds. It parses that file, resolves its names against the library's declarations, and checks only that file's bodies. It selects no entry, builds no program graph, prunes nothing, lowers nothing: it shares the resolver and never runs the compile pipeline.
+- The analysis reports that file's warnings and its errors, and nothing from any other file. A file under the library root is analyzed in the library's namespace; any other file is analyzed in the root namespace.
 - The library is std/. A directory is a namespace and a file name is arbitrary. A file's own declarations belong to its directory's namespace, an impl block binds functions to a type, and a natives.md in each directory lists that namespace's natives.
 
 ## Adding a native
