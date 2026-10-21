@@ -12,6 +12,7 @@ use std::path::Path;
 
 use super::output_file::{make_writable_executable, same_file};
 use crate::compiler::diagnostic::render;
+use crate::compiler::warnings::is_program_file;
 use crate::compiler::{
     Build, DIAGNOSTIC_PREFIX, ProgramSource, attach_trailer, build, lower_bytecode, mark_reachable,
     prune_unreachable, serialize_bytecode, unused_declarations,
@@ -38,6 +39,9 @@ pub(crate) fn compile(
     let reachable = mark_reachable(&program, entry_id);
     let mut warnings = warnings;
     warnings.extend(unused_declarations(&program, &reachable));
+    // The program's facts alone: the library the compiler carries is not the
+    // program and never warns for it.
+    warnings.retain(|warning| is_program_file(&warning.path));
     for warning in &warnings {
         eprint!("{}", render(&loaded, warning));
     }

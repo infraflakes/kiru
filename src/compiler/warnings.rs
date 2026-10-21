@@ -62,6 +62,12 @@ pub(crate) fn unused_declarations(
     warnings
 }
 
+/// Whether a file is the program's own. The embedded library's files are the
+/// compiler's, not the program's, so the program's warnings leave them out.
+pub(crate) fn is_program_file(path: &std::path::Path) -> bool {
+    !path.to_string_lossy().starts_with("<std>/")
+}
+
 /// The warnings for the local bindings the program declares but never reads.
 /// A read is an edge: a `Reference` node the program's bodies hold. Writing
 /// the binding (`x = …`) and matching it (`Name.variant(x, …)`) write the
@@ -111,6 +117,14 @@ mod tests {
         assert_eq!(warning.path, std::path::PathBuf::from("/virtual/main.kiru"));
         assert_eq!(warning.severity, crate::compiler::Severity::Warning);
         assert_eq!(warning.message, "`root::helper` is unused");
+    }
+
+    #[test]
+    fn the_librarys_files_are_not_the_programs() {
+        assert!(is_program_file(std::path::Path::new("/program/main.kiru")));
+        assert!(!is_program_file(std::path::Path::new(
+            "<std>/dynamic/vec.kiru"
+        )));
     }
 
     #[test]
