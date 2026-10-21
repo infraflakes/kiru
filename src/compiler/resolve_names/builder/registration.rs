@@ -9,7 +9,7 @@ use crate::compiler::model::{
     MethodTable, NameTable, Namespace, NamespaceId, Program, TypeDecl, TypeFieldDecl, TypeKind,
     TypeTable, VariantDecl, first_duplicate,
 };
-use crate::compiler::model::{Type, TypeHead, TypeId};
+use crate::compiler::model::{Type, TypeHead, TypeId, TypeUse};
 use crate::compiler::native_registry::Native;
 use crate::compiler::{Diagnostic, duplicate_field, duplicate_in_namespace};
 use crate::syntax::{Span, TypeDeclaration};
@@ -144,6 +144,8 @@ pub(in crate::compiler::resolve_names) struct Builder {
     /// methods take `&self`, so the set keeps to the cell until the read
     /// sites collect it.
     pub(in crate::compiler::resolve_names) used_uses: RefCell<HashSet<usize>>,
+    /// Every written type name the resolution met, in source order.
+    pub(in crate::compiler::resolve_names) type_uses: RefCell<Vec<TypeUse>>,
 }
 
 impl Builder {
@@ -169,6 +171,7 @@ impl Builder {
             module_values: Vec::new(),
             intern: Interner::default(),
             used_uses: RefCell::new(HashSet::new()),
+            type_uses: RefCell::new(Vec::new()),
         }
     }
 
@@ -183,6 +186,7 @@ impl Builder {
             types: self.types,
             module_values,
             intern: self.intern,
+            type_uses: self.type_uses.into_inner(),
         }
     }
 
@@ -420,6 +424,7 @@ impl Builder {
         declaration: &TypeDeclaration,
         public: bool,
         namespace: NamespaceId,
+        file: FileId,
         reported_path: &std::path::Path,
     ) -> Result<TypeId, Diagnostic> {
         self.check_type_parameters(
@@ -433,6 +438,8 @@ impl Builder {
         let id = TypeId(self.types.len());
         self.types.push(TypeDecl {
             name: declaration.name.clone(),
+            name_span: declaration.name_span,
+            file: Some(file),
             public,
             namespace,
             parameters: declaration.parameters.clone(),
@@ -483,6 +490,7 @@ impl Builder {
                     self.resolve_type_expr(&field.ty, namespace, file, &parameters, reported_path)?;
                 declared.push(TypeFieldDecl {
                     name: field.name.clone(),
+                    name_span: field.name_span,
                     public: field.public,
                     ty,
                 });
@@ -516,6 +524,7 @@ impl Builder {
                 }
                 declared.push(VariantDecl {
                     name: variant.name.clone(),
+                    name_span: variant.name_span,
                     public: variant.public,
                     payload,
                 });

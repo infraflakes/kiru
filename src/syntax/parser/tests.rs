@@ -146,10 +146,12 @@ fn parses_a_use_of_a_namespace() {
     let Item::Use(use_item) = &file.items[0] else {
         panic!("expected a use");
     };
-    assert_eq!(
-        use_item.paths,
-        vec![vec!["std".to_owned(), "dynamic".to_owned()]]
-    );
+    let segments: Vec<Vec<String>> = use_item
+        .paths
+        .iter()
+        .map(|path| path.segments.clone())
+        .collect();
+    assert_eq!(segments, vec![vec!["std".to_owned(), "dynamic".to_owned()]]);
 }
 
 #[test]
@@ -158,8 +160,13 @@ fn parses_a_use_of_a_name() {
     let Item::Use(use_item) = &file.items[0] else {
         panic!("expected a use");
     };
+    let segments: Vec<Vec<String>> = use_item
+        .paths
+        .iter()
+        .map(|path| path.segments.clone())
+        .collect();
     assert_eq!(
-        use_item.paths,
+        segments,
         vec![vec![
             "std".to_owned(),
             "dynamic".to_owned(),
@@ -177,8 +184,13 @@ fn parses_a_use_group() {
     let Item::Use(use_item) = &file.items[0] else {
         panic!("expected a use");
     };
+    let segments: Vec<Vec<String>> = use_item
+        .paths
+        .iter()
+        .map(|path| path.segments.clone())
+        .collect();
     assert_eq!(
-        use_item.paths,
+        segments,
         vec![
             vec!["std".to_owned(), "dynamic".to_owned(), "Map".to_owned()],
             vec![

@@ -90,7 +90,9 @@ impl Loader {
                         self.uses.push(ScopedUse {
                             file: index,
                             namespace: namespace.clone(),
-                            path,
+                            path: path.segments,
+                            path_span: path.span,
+                            delivered: path.delivered,
                             span: use_item.span,
                         });
                     }

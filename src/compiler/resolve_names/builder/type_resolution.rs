@@ -2,8 +2,8 @@
 
 use crate::compiler::Diagnostic;
 use crate::compiler::model::{
-    Arity, FileId, Group, NamespaceId, Type, TypeHead, TypeId, TypeKind, UseTarget, VariantDecl,
-    join_path, reachable, scalar_from_name,
+    Arity, FileId, Group, NamespaceId, Type, TypeHead, TypeId, TypeKind, TypeUse, UseTarget,
+    VariantDecl, join_path, reachable, scalar_from_name,
 };
 use crate::syntax::{Span, TypeExpr};
 
@@ -82,6 +82,7 @@ impl Builder {
             }
             TypeExpr::Named {
                 path,
+                path_span,
                 arguments,
                 span,
             } => {
@@ -90,6 +91,15 @@ impl Builder {
                     && parameters.iter().any(|parameter| parameter == &path[0])
                 {
                     return Ok(Type::Parameter(path[0].clone()));
+                }
+                // The written name is a fact of the source: the path it
+                // spells and the name the path ends at.
+                if let Some(last) = path.last() {
+                    self.type_uses.borrow_mut().push(TypeUse {
+                        file,
+                        path: *path_span,
+                        name: Span::new(path_span.end - last.len(), path_span.end),
+                    });
                 }
                 self.resolve_named_type(
                     WrittenType { path, span },

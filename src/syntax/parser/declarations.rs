@@ -3,6 +3,7 @@
 
 use crate::compiler::model::{DeclarationKind, join_path};
 use crate::syntax::ast::{
+    UsePath,
     Binding, Closure, Declaration, DeclarationForm, Expression, Function, ImplBlock, Parameter,
     TypeDeclaration, TypeDeclarationKind, TypeExpr, TypeField, Use, VariantDeclaration,
 };
@@ -117,16 +118,20 @@ impl<'a> Parser<'a> {
         let start = self.advance().start;
         // The path may end at `::{`, so the separator before a group is read
         // here rather than by the general path parser.
-        let (first, _) = self.expect_identifier("in a use path")?;
-        let mut path = vec![first.to_owned()];
+        let (first, first_span) = self.expect_identifier("in a use path")?;
+        let mut segments = vec![first.to_owned()];
+        let mut path_span = first_span;
+        let mut delivered = first_span;
         let mut group = false;
         while self.eat(&TokenKind::PathSep) {
             if self.check(&TokenKind::LBrace) {
                 group = true;
                 break;
             }
-            let (segment, _) = self.expect_identifier("in a use path")?;
-            path.push(segment.to_owned());
+            let (segment, segment_span) = self.expect_identifier("in a use path")?;
+            segments.push(segment.to_owned());
+            path_span = path_span.merge(segment_span);
+            delivered = segment_span;
         }
         let mut paths = Vec::new();
         if group {
@@ -138,7 +143,7 @@ impl<'a> Parser<'a> {
                 |parser| {
                     parser
                         .expect_identifier("in a use group")
-                        .map(|(name, _)| name.to_owned())
+                        .map(|(name, span)| (name.to_owned(), span))
                 },
             )?;
             if names.is_empty() {
@@ -147,13 +152,21 @@ impl<'a> Parser<'a> {
                     message: "a use group must name at least one thing".to_owned(),
                 });
             }
-            for name in names {
-                let mut full = path.clone();
+            for (name, name_span) in names {
+                let mut full = segments.clone();
                 full.push(name);
-                paths.push(full);
+                paths.push(UsePath {
+                    segments: full,
+                    span: path_span.merge(name_span),
+                    delivered: name_span,
+                });
             }
         } else {
-            paths.push(path);
+            paths.push(UsePath {
+                segments,
+                span: path_span,
+                delivered,
+            });
         }
         let span = self.span_through_semicolon(start, "after the use path")?;
         Ok(Use { paths, span })
@@ -389,6 +402,7 @@ impl<'a> Parser<'a> {
             };
             return Ok(TypeExpr::Named {
                 path,
+                path_span,
                 arguments,
                 span,
             });

@@ -21,6 +21,16 @@ pub(crate) fn lex(source: &str) -> Result<Vec<Token>, LexError> {
     Ok(tokens)
 }
 
+/// Lex a whole source file, returning its tokens and the spans of its
+/// comments. A comment is trivia the parser never sees; a reader that paints
+/// the source reads the spans here.
+pub(crate) fn lex_with_comments(source: &str) -> Result<(Vec<Token>, Vec<Span>), LexError> {
+    let mut lexer = Lexer::new(source);
+    let mut tokens = Vec::new();
+    lexer.run(&mut tokens)?;
+    Ok((tokens, lexer.comments))
+}
+
 struct Lexer<'a> {
     source: &'a str,
     /// A cursor over the source's characters, walked in place: no character
@@ -29,13 +39,20 @@ struct Lexer<'a> {
     /// reads and a lookahead copies the cursor over the borrowed slice.
     cursor: CharIndices<'a>,
     at: Option<(usize, char)>,
+    /// The spans of the comments skipped as trivia, in source order.
+    comments: Vec<Span>,
 }
 
 impl<'a> Lexer<'a> {
     fn new(source: &'a str) -> Self {
         let mut cursor = source.char_indices();
         let at = cursor.next();
-        Self { source, cursor, at }
+        Self {
+            source,
+            cursor,
+            at,
+            comments: Vec::new(),
+        }
     }
 
     fn current(&self) -> Option<(usize, char)> {
@@ -206,13 +223,14 @@ impl<'a> Lexer<'a> {
                 Some((_, ' ' | '\t' | '\r' | '\n')) => {
                     self.advance();
                 }
-                Some((_, '#')) => {
+                Some((start, '#')) => {
                     while let Some((_, character)) = self.current() {
                         if character == '\n' {
                             break;
                         }
                         self.advance();
                     }
+                    self.comments.push(Span::new(start, self.offset()));
                 }
                 _ => return,
             }

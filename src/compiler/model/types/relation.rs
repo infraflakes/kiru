@@ -251,6 +251,8 @@ mod tests {
         (0..count)
             .map(|index| TypeDecl {
                 name: format!("T{index}"),
+                name_span: crate::syntax::Span::new(0, 0),
+                file: None,
                 public: true,
                 namespace: NamespaceId(0),
                 parameters: Vec::new(),

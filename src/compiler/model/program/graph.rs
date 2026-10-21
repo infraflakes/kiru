@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use super::super::declarations::{Declaration, TypeDecl};
+use super::super::declarations::{Declaration, TypeDecl, TypeUse};
 use super::super::ids::{DeclarationId, FileId, NamespaceId};
 use super::interner::{Interner, Symbol};
 use super::tables::{MethodTable, NameTable, TypeTable};
@@ -25,6 +25,8 @@ pub(crate) struct Program {
     /// The one interner every name-table key came from. A table key is a
     /// `Symbol`, so the spelling it names resolves through this.
     pub(crate) intern: Interner,
+    /// Every written type name, in the order the resolution met them.
+    pub(crate) type_uses: Vec<TypeUse>,
 }
 
 impl Program {

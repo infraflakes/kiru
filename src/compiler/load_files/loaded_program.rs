@@ -47,6 +47,10 @@ pub(crate) struct ScopedUse {
     pub(crate) file: usize,
     pub(crate) namespace: Vec<String>,
     pub(crate) path: Vec<String>,
+    /// The span the path covers.
+    pub(crate) path_span: Span,
+    /// The span of the name the path delivers.
+    pub(crate) delivered: Span,
     /// The span of the `use` item, for diagnostics.
     pub(crate) span: Span,
 }

@@ -34,6 +34,7 @@ impl Builder {
                     type_declaration,
                     declaration.public,
                     namespace,
+                    FileId(scoped.file),
                     &loaded.files[scoped.file].path,
                 )?;
             }

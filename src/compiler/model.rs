@@ -17,7 +17,7 @@ mod verify_spans;
 mod visitors;
 
 pub(crate) use declarations::{
-    Declaration, DeclarationKind, Derived, RuntimeType, TypeDecl, TypeFieldDecl, TypeKind,
+    Declaration, DeclarationKind, Derived, RuntimeType, TypeDecl, TypeFieldDecl, TypeKind, TypeUse,
     VariantDecl,
 };
 pub(crate) use expressions::{

@@ -25,6 +25,8 @@ impl Builder {
         let id = TypeId(self.types.len());
         self.types.push(TypeDecl {
             name: "Vec".to_owned(),
+            name_span: Span::new(0, 0),
+            file: None,
             public: true,
             namespace,
             parameters: vec!["T".to_owned()],
