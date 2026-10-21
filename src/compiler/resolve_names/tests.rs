@@ -9,9 +9,14 @@ fn linked(files: &[(&str, &str)], entry: &str) -> Result<Program, String> {
         std::fs::create_dir_all(path.parent().expect("has a parent")).expect("create directory");
         std::fs::write(&path, source).expect("write file");
     }
-    let program = crate::compiler::load_files::load_files(&directory.path().join(entry))
-        .map_err(|error| error.message)?;
-    resolve_names(&program).map_err(|diagnostic| diagnostic.message)
+    let program = crate::compiler::load_files::load_files(
+        &directory.path().join(entry),
+        &crate::compiler::sources::DiskSource,
+    )
+    .map_err(|error| error.message)?;
+    resolve_names(&program)
+        .map_err(|diagnostic| diagnostic.message)
+        .map(|resolved| resolved.program)
 }
 
 fn accept(files: &[(&str, &str)], entry: &str) -> Program {
@@ -700,8 +705,13 @@ fn an_unresolvable_use_is_rejected_at_its_span() {
     let directory = tempfile::tempdir().expect("temp dir");
     let path = directory.path().join("main.kiru");
     std::fs::write(&path, source).expect("write file");
-    let loaded = crate::compiler::load_files::load_files(&path).expect("loads");
-    let diagnostic = resolve_names(&loaded).expect_err("the use is rejected");
+    let loaded =
+        crate::compiler::load_files::load_files(&path, &crate::compiler::sources::DiskSource)
+            .expect("loads");
+    let diagnostic = match resolve_names(&loaded) {
+        Ok(_) => panic!("the use is rejected"),
+        Err(diagnostic) => diagnostic,
+    };
     assert_eq!(
         diagnostic.message,
         "`std::tex` names neither a namespace nor a declaration"

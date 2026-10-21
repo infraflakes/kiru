@@ -1,6 +1,7 @@
 //! Registering declaration nodes: reserving types, declaring names, and
 //! filling a type's fields.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 use crate::compiler::model::{
@@ -137,6 +138,12 @@ pub(in crate::compiler::resolve_names) struct Builder {
     /// The one interner every name-table key came from. Registration interns
     /// a declaration's, a namespace's, and a type's name exactly once.
     pub(in crate::compiler::resolve_names) intern: Interner,
+    /// Which `use` items a resolution actually read, as the loaded stream's
+    /// indices. The reads record themselves where they happen, so this is the
+    /// one fact the unused-`use` warning reads. The resolution's lookup
+    /// methods take `&self`, so the set keeps to the cell until the read
+    /// sites collect it.
+    pub(in crate::compiler::resolve_names) used_uses: RefCell<HashSet<usize>>,
 }
 
 impl Builder {
@@ -161,6 +168,7 @@ impl Builder {
             pending: Vec::new(),
             module_values: Vec::new(),
             intern: Interner::default(),
+            used_uses: RefCell::new(HashSet::new()),
         }
     }
 
@@ -227,6 +235,7 @@ impl Builder {
         let id = DeclarationId(self.skeletons.len());
         let kind = skeleton.kind;
         let name = skeleton.name.clone();
+        let name_span = skeleton.name_span;
         let file = skeleton.file;
         let namespace = skeleton.namespace;
         let public = skeleton.public;
@@ -235,6 +244,7 @@ impl Builder {
             Some(Slot::Binding(ty)) => Declaration {
                 kind,
                 name,
+                name_span,
                 public,
                 file,
                 namespace,
@@ -247,6 +257,7 @@ impl Builder {
             Some(Slot::Native(ty, native)) => Declaration {
                 kind,
                 name,
+                name_span,
                 public,
                 file,
                 namespace,
@@ -262,6 +273,7 @@ impl Builder {
             None => Declaration {
                 kind,
                 name,
+                name_span,
                 public,
                 file,
                 namespace,
@@ -325,23 +337,35 @@ impl Builder {
         // A name-owning declaration may repeat a name only against nothing; a
         // filed declaration collides with it by name alone, because the filed
         // declaration is reached through its type, never by the name.
-        let owning = self.namespaces[namespace.0].names.get(symbol).is_some();
-        let duplicate = {
+        let owning = self.namespaces[namespace.0].names.get(symbol);
+        let duplicate = if let Some(existing) = owning {
+            Err(existing)
+        } else {
             let table = &mut self.namespaces[namespace.0];
-            if let Some(head) = receiver_head {
-                owning || table.methods.insert(head, symbol, id).is_err()
-            } else if let Some(head) = associated_head {
-                owning || table.associates.insert(head, symbol, id).is_err()
-            } else {
-                owning || (!filed && table.filed.contains(&symbol))
+            match receiver_head {
+                Some(head) => table.methods.insert(head, symbol, id),
+                None => match associated_head {
+                    Some(head) => table.associates.insert(head, symbol, id),
+                    None if !filed && table.filed.contains(&symbol) => Err(id),
+                    None => Ok(()),
+                },
             }
         };
-        if duplicate {
-            return Err(Diagnostic::new(
-                reported_path,
-                name_span,
-                duplicate_in_namespace(name),
-            ));
+        if let Err(existing) = duplicate {
+            let mut diagnostic =
+                Diagnostic::new(reported_path, name_span, duplicate_in_namespace(name));
+            // The filed pool knows a name was taken, not by which node, so the
+            // first place is attached only when it is known.
+            if existing != id
+                && let Some(related_file) = self.skeletons[existing.0].file
+            {
+                diagnostic = diagnostic.with_related(
+                    self.files[related_file.0].path.clone(),
+                    self.skeletons[existing.0].name_span,
+                    crate::compiler::messages::first_declaration(name),
+                );
+            }
+            return Err(diagnostic);
         }
         let table = &mut self.namespaces[namespace.0];
         if filed {

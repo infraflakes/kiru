@@ -1,27 +1,34 @@
-//! Shared test fixtures: load, link, and check a program from source.
+//! Shared test fixtures: build, and read a program through the same facade
+//! the binaries use.
 //!
-//! Every compiler and runtime test drives the same pipeline, so the fixture
-//! lives here once instead of being rebuilt per test module.
+//! Every compiler and runtime test drives the same build through a virtual
+//! tree, so the fixture is the facade and no test writes a directory.
 
 use crate::compiler::model::Program;
-use crate::compiler::{load_files, resolve_names, validate_program};
+use crate::compiler::sources::VirtualSource;
+use crate::compiler::{BuildFailure, build};
 
-/// Load, link, and check one source file, returning the checked program.
+/// Build one source file, returning the checked program.
 pub(crate) fn checked_program(source: &str) -> Program {
     checked_files(&[("main.kiru", source)], "main.kiru").expect("the program checks")
 }
 
-/// Load, link, and check a set of named files with the given entry, returning
-/// the checked program or the first diagnostic message.
+/// Build a set of named files with the given entry, returning the checked
+/// program or the first diagnostic message.
 pub(crate) fn checked_files(files: &[(&str, &str)], entry: &str) -> Result<Program, String> {
-    let directory = tempfile::tempdir().expect("temp dir");
-    for (name, source) in files {
-        let path = directory.path().join(name);
-        std::fs::create_dir_all(path.parent().expect("has a parent")).expect("create directory");
-        std::fs::write(&path, source).expect("write file");
+    match build(std::path::Path::new(entry), &VirtualSource::new(files)) {
+        Ok(built) => Ok(built.program),
+        Err(failure) => Err(first_message(&failure)),
     }
-    let loaded = load_files(&directory.path().join(entry)).map_err(|error| error.message)?;
-    let mut program = resolve_names(&loaded).map_err(|diagnostic| diagnostic.message)?;
-    validate_program(&mut program).map_err(|diagnostic| diagnostic.message)?;
-    Ok(program)
+}
+
+/// The first diagnostic message the failure names, as the older message-only
+/// fixtures expect.
+fn first_message(failure: &BuildFailure) -> String {
+    failure
+        .diagnostics()
+        .iter()
+        .find_map(|file| file.diagnostics.first())
+        .map(|diagnostic| diagnostic.message.clone())
+        .unwrap_or_else(|| failure.rendered().to_owned())
 }

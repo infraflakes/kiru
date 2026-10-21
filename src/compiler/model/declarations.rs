@@ -15,6 +15,7 @@ use crate::compiler::native_registry::Native;
 use super::expressions::{Expression, Function};
 use super::ids::{DeclarationId, FileId, NamespaceId};
 use crate::compiler::model::Type;
+use crate::syntax::Span;
 
 /// One declaration node: its kind, its name, the type it holds, and the value
 /// it holds. The kind is the one place every form fact is read from; a pass
@@ -23,6 +24,9 @@ use crate::compiler::model::Type;
 pub(crate) struct Declaration {
     pub(crate) kind: DeclarationKind,
     pub(crate) name: String,
+    /// The span of the written name, for a query that asks where a
+    /// declaration's name stands. A native has none: its span is empty.
+    pub(crate) name_span: Span,
     /// Whether another namespace may reach this declaration. A name reached
     /// across namespaces and a bound function read it; a kind that takes no
     /// visibility never sets it.

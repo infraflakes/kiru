@@ -12,5 +12,5 @@ pub(crate) use ast::{
     UnaryOp,
 };
 pub(crate) use parser::parse_file;
-pub(crate) use span::Span;
+pub use span::Span;
 pub(crate) use token::WILDCARD;

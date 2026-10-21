@@ -83,6 +83,16 @@ pub(crate) enum UseTarget {
     Function(DeclarationId),
 }
 
+/// One delivery a namespace's `use`s recorded: the target the delivered name
+/// reaches and the `use` item that delivered it. The index names the item in
+/// the loaded program's stream, which is how the unused-`use` fact reads back
+/// which deliveries a resolution actually took.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Delivery {
+    pub(crate) target: UseTarget,
+    pub(crate) use_index: usize,
+}
+
 /// One namespace node: the name registry, the method and associated-function
 /// registries, plus the parent and child edges. A name is a name: a function
 /// and a value share one namespace. A function filed under a type by an `impl`
@@ -103,7 +113,7 @@ pub(crate) struct Namespace {
     /// What each `use` this namespace wrote reaches, resolved once, keyed by
     /// the name it delivers. Two `use`s may deliver one name, so the entries
     /// keep the file's order and the reader takes the first that fits.
-    pub(crate) brought: HashMap<Symbol, Vec<UseTarget>>,
+    pub(crate) brought: HashMap<Symbol, Vec<Delivery>>,
     /// The names filed in any pool of this namespace: a filed function is not
     /// a name, so the one-flat-map read replaces a walk over both pools.
     pub(crate) filed: HashSet<Symbol>,

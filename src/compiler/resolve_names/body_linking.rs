@@ -18,8 +18,15 @@ use super::builder::{Builder, Pending};
 use super::name_resolution::CalleeLink;
 use super::scopes::{Context, Scopes};
 
+/// The program a build resolves: the model and the warnings its unused
+/// syntax earned.
+pub(crate) struct Resolved {
+    pub(crate) program: Program,
+    pub(crate) warnings: Vec<Diagnostic>,
+}
+
 /// Build the program model from the joined item stream.
-pub(crate) fn resolve_names(loaded: &LoadedProgram) -> Result<Program, Diagnostic> {
+pub(crate) fn resolve_names(loaded: &LoadedProgram) -> Result<Resolved, Diagnostic> {
     let mut builder = Builder::new();
     // Reserve the declared types first, so a native row can name one by path,
     // then register the natives before the declarations that call them.
@@ -39,7 +46,11 @@ pub(crate) fn resolve_names(loaded: &LoadedProgram) -> Result<Program, Diagnosti
     let entry = builder.resolve_entry(loaded)?;
     builder.link_bodies(loaded)?;
     let module_values = builder.order_module_values(&builder.module_values)?;
-    Ok(builder.finish(entry, module_values))
+    // The unused-`use` fact is settled: every body is linked and every read
+    // recorded itself. It is read before `finish` takes the builder apart.
+    let warnings = builder.unused_use_warnings(loaded);
+    let program = builder.finish(entry, module_values);
+    Ok(Resolved { program, warnings })
 }
 
 impl Builder {
@@ -69,6 +80,7 @@ impl Builder {
             self.declarations[declaration_id.0] = Declaration {
                 kind: declaration.kind,
                 name,
+                name_span: skeleton.name_span,
                 public: skeleton.public,
                 file: Some(file),
                 namespace,

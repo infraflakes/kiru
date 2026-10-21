@@ -60,6 +60,12 @@ pub(crate) fn duplicate_in_namespace(name: &str) -> String {
     format!("`{name}` is declared more than once in this namespace")
 }
 
+/// The message a duplicate points back with: the fact that the place it
+/// names is the first declaration of the name.
+pub(crate) fn first_declaration(name: &str) -> String {
+    format!("first declaration of `{name}`")
+}
+
 /// The message for a field or variant reached across a namespace that does not
 /// mark it `pub`. A member is private to its own namespace, exactly like a
 /// declaration.

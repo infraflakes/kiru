@@ -6,7 +6,9 @@
 //! rather than resolving the path again.
 
 use crate::compiler::load_files::LoadedProgram;
-use crate::compiler::model::{DeclarationId, NamespaceId, UseTarget, namespace_at, reachable};
+use crate::compiler::model::{
+    DeclarationId, Delivery, NamespaceId, UseTarget, namespace_at, reachable,
+};
 
 use super::registration::Builder;
 
@@ -26,7 +28,7 @@ impl Builder {
     /// waits until the function is registered, which is what the second call
     /// of this method covers.
     pub(in crate::compiler::resolve_names) fn index_uses(&mut self, loaded: &LoadedProgram) {
-        for used in &loaded.uses {
+        for (use_index, used) in loaded.uses.iter().enumerate() {
             let Ok(target) = self.resolve_use(&used.path) else {
                 continue;
             };
@@ -37,10 +39,21 @@ impl Builder {
             let entries = brought.entry(symbol).or_default();
             // A use recorded above is never recorded again: the reader takes
             // the first entry that fits, and one target twice is that entry.
-            if !entries.contains(&target) {
-                entries.push(target);
+            if !entries.iter().any(|entry| entry.target == target) {
+                entries.push(Delivery { target, use_index });
             }
         }
+    }
+
+    /// Mark the `use` item that delivered a read resolution as used. The
+    /// recording happens where the read happens: the reader takes the first
+    /// entry that fits, and that entry's `use` is the one the resolution used.
+    pub(in crate::compiler::resolve_names) fn record_delivery(
+        &self,
+        entries: &[Delivery],
+        taken: usize,
+    ) {
+        self.used_uses.borrow_mut().insert(entries[taken].use_index);
     }
 
     /// Resolve a `use` path to the one thing it reaches. The path is absolute:
@@ -88,14 +101,15 @@ impl Builder {
         first: &str,
     ) -> Option<NamespaceId> {
         let symbol = self.intern.resolve(first)?;
-        self.namespaces[namespace.0]
-            .brought
-            .get(&symbol)?
+        let entries = self.namespaces[namespace.0].brought.get(&symbol)?;
+        let taken = entries
             .iter()
-            .find_map(|target| match target {
-                UseTarget::Namespace(base) => Some(*base),
-                _ => None,
-            })
+            .position(|entry| matches!(entry.target, UseTarget::Namespace(_)))?;
+        self.record_delivery(entries, taken);
+        match entries[taken].target {
+            UseTarget::Namespace(base) => Some(base),
+            _ => unreachable!("the position names a namespace entry"),
+        }
     }
 
     /// Walk a namespace path from `base`, not from the root.
@@ -144,17 +158,18 @@ impl Builder {
         if let Some(found) = namespace_table.names.get(symbol) {
             return Some(found);
         }
-        namespace_table
-            .brought
-            .get(&symbol)?
-            .iter()
-            .find_map(|target| match target {
-                UseTarget::Function(declaration) => {
-                    let skeleton = &self.skeletons[declaration.0];
-                    reachable(skeleton.public, skeleton.namespace, namespace)
-                        .then_some(*declaration)
-                }
-                _ => None,
-            })
+        let entries = namespace_table.brought.get(&symbol)?;
+        let taken = entries.iter().position(|entry| match entry.target {
+            UseTarget::Function(declaration) => {
+                let skeleton = &self.skeletons[declaration.0];
+                reachable(skeleton.public, skeleton.namespace, namespace)
+            }
+            _ => false,
+        })?;
+        self.record_delivery(entries, taken);
+        match entries[taken].target {
+            UseTarget::Function(declaration) => Some(declaration),
+            _ => unreachable!("the position names a function entry"),
+        }
     }
 }

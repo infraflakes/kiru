@@ -309,19 +309,20 @@ impl Builder {
         if let Some(found) = namespace_table.types.get(symbol) {
             return Some(found);
         }
-        namespace_table
-            .brought
-            .get(&symbol)?
-            .iter()
-            .find_map(|target| match target {
-                UseTarget::Type(found) => reachable(
-                    self.types[found.0].public,
-                    self.types[found.0].namespace,
-                    namespace,
-                )
-                .then_some(*found),
-                _ => None,
-            })
+        let entries = namespace_table.brought.get(&symbol)?;
+        let taken = entries.iter().position(|entry| match entry.target {
+            UseTarget::Type(found) => reachable(
+                self.types[found.0].public,
+                self.types[found.0].namespace,
+                namespace,
+            ),
+            _ => false,
+        })?;
+        self.record_delivery(entries, taken);
+        match entries[taken].target {
+            UseTarget::Type(found) => Some(found),
+            _ => unreachable!("the position names a type entry"),
+        }
     }
 
     /// Find a declared type by a path. A bare single segment reads the current

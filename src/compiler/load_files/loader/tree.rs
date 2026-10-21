@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::compiler::load_files::load_error::LoadError;
 use crate::compiler::load_files::loaded_program::LoadedProgram;
+use crate::compiler::sources::ProgramSource;
 
 use super::embedded::EMBEDDED;
 use super::record::Loader;
@@ -22,33 +23,46 @@ pub(crate) const PROGRAM_TREE: &str = "root";
 /// embedded file.
 pub(crate) const STD_TREE: &str = "std";
 
-/// Load the standard library and the entry file's whole directory tree.
-pub(crate) fn load_files(entry: &Path) -> Result<LoadedProgram, LoadError> {
-    let entry_path = entry.canonicalize().map_err(|_| LoadError {
+/// Load the standard library and the entry file's whole program tree, read
+/// through the source the caller names.
+pub(crate) fn load_files(
+    entry: &Path,
+    program_source: &impl ProgramSource,
+) -> Result<LoadedProgram, LoadError> {
+    let (entry_path, tree_root) = program_source.locate(entry).map_err(|_| LoadError {
         path: entry.to_path_buf(),
         span: crate::syntax::Span::new(0, 0),
         message: format!("cannot find {}", entry.display()),
         source: String::new(),
     })?;
-    let tree_root = entry_path.parent().unwrap_or(Path::new(".")).to_path_buf();
 
     let mut loader = Loader::new();
 
-    for (relative, source) in EMBEDDED {
+    for (relative, embedded_source) in EMBEDDED {
         let namespace = namespace_of(relative, STD_TREE);
         // The loaded path carries the tree's name for diagnostics; the table
         // itself is keyed by the file's path under the tree.
         let path = format!("<{STD_TREE}>/{relative}");
-        loader.add(PathBuf::from(path), (*source).to_owned(), namespace)?;
+        loader.add(
+            PathBuf::from(path),
+            (*embedded_source).to_owned(),
+            namespace,
+        )?;
     }
 
-    let mut program_files = Vec::new();
-    collect_kiru_files(&tree_root, &mut program_files)?;
+    let mut program_files = program_source
+        .collect(&tree_root)
+        .map_err(|error| LoadError {
+            path: tree_root.clone(),
+            span: crate::syntax::Span::new(0, 0),
+            message: format!("cannot read {}: {error}", tree_root.display()),
+            source: String::new(),
+        })?;
     program_files.sort();
     for path in program_files {
         let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
         let namespace = program_namespace(&tree_root, &canonical);
-        let source = std::fs::read_to_string(&canonical).map_err(|error| LoadError {
+        let source = program_source.read(&canonical).map_err(|error| LoadError {
             path: canonical.clone(),
             span: crate::syntax::Span::new(0, 0),
             message: format!("cannot read {}: {error}", canonical.display()),
@@ -102,30 +116,20 @@ fn program_namespace(tree_root: &Path, path: &Path) -> Vec<String> {
     segments
 }
 
-/// Every `.kiru` file under `directory`, recursively.
-fn collect_kiru_files(directory: &Path, out: &mut Vec<PathBuf>) -> Result<(), LoadError> {
-    let entries = std::fs::read_dir(directory).map_err(|error| LoadError {
-        path: directory.to_path_buf(),
-        span: crate::syntax::Span::new(0, 0),
-        message: format!("cannot read {}: {error}", directory.display()),
-        source: String::new(),
-    })?;
-    for entry in entries {
-        let entry = entry.map_err(|error| LoadError {
-            path: directory.to_path_buf(),
-            span: crate::syntax::Span::new(0, 0),
-            message: format!("cannot read {}: {error}", directory.display()),
-            source: String::new(),
-        })?;
-        let path = entry.path();
+/// Every `.kiru` file under `directory`, recursively. The disk source's
+/// program tree is this walk; the loader reads what it names.
+pub(in crate::compiler) fn collect_kiru_files(directory: &Path) -> std::io::Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(directory)? {
+        let path = entry?.path();
         if path.is_dir() {
-            collect_kiru_files(&path, out)?;
+            files.extend(collect_kiru_files(&path)?);
         } else if path
             .extension()
             .is_some_and(|extension| extension == "kiru")
         {
-            out.push(path);
+            files.push(path);
         }
     }
-    Ok(())
+    Ok(files)
 }

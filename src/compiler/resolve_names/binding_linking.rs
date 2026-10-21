@@ -32,8 +32,14 @@ impl Builder {
         } = local;
         let reported = &self.files[file.0].path;
         let symbol = self.intern.intern(name);
-        if scopes.find(symbol).is_some() {
-            return Err(Diagnostic::new(reported, name_span, duplicate_name(name)));
+        if let Some(existing) = scopes.find(symbol) {
+            return Err(
+                Diagnostic::new(reported, name_span, duplicate_name(name)).with_related(
+                    reported,
+                    self.declarations[existing.0].name_span,
+                    crate::compiler::messages::first_declaration(name),
+                ),
+            );
         }
         let id = self.create_node(
             Skeleton {

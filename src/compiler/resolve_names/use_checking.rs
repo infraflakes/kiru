@@ -11,6 +11,30 @@ use crate::compiler::model::join_path;
 use super::builder::{Builder, UseMiss};
 
 impl Builder {
+    /// The warnings for the `use`s a namespace wrote but no body of the
+    /// namespace ever read. A read is a resolution that took one delivery of
+    /// the name: the reader records it where it reads, so a `use` absent from
+    /// the recordings delivered nothing this namespace's bodies read.
+    pub(in crate::compiler::resolve_names) fn unused_use_warnings(
+        &self,
+        loaded: &LoadedProgram,
+    ) -> Vec<Diagnostic> {
+        let used = self.used_uses.borrow();
+        loaded
+            .uses
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !used.contains(index))
+            .map(|(_, unused)| {
+                Diagnostic::warning(
+                    &loaded.files[unused.file].path,
+                    unused.span,
+                    format!("unused use `{}`", join_path(&unused.path)),
+                )
+            })
+            .collect()
+    }
+
     /// Reject a `use` whose path may not end where it does: a `use` reaches a
     /// namespace, a type, or a plain function, and nothing else. Every
     /// namespace and declaration is registered by the time this runs.

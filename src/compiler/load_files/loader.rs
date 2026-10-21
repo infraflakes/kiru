@@ -11,4 +11,5 @@ pub(super) mod embedded;
 mod record;
 mod tree;
 
+pub(in crate::compiler) use tree::collect_kiru_files;
 pub(crate) use tree::{PROGRAM_TREE, STD_TREE, load_files};

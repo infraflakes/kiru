@@ -11,7 +11,7 @@ use super::{compile_request, print_help, run_embedded};
 
 /// Interpret the process arguments and return the process exit code: zero on
 /// success, otherwise nonzero.
-pub(crate) fn run() -> i32 {
+pub fn run() -> i32 {
     let words: Vec<String> = std::env::args().skip(1).collect();
     let executable = std::env::current_exe().ok();
     if let Some(bytes) = executable

@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use super::STD_TREE;
 use super::loader::embedded::EMBEDDED;
 use super::loader::load_files;
+use crate::compiler::sources::DiskSource;
 use crate::syntax::{self};
 
 fn write(directory: &Path, name: &str, contents: &str) -> PathBuf {
@@ -81,7 +82,7 @@ fn the_embedded_table_mirrors_the_std_directory() {
 
     let directory = tempfile::tempdir().expect("temp dir");
     let entry = write(directory.path(), "main.kiru", "fn main() {};\n");
-    let program = load_files(&entry).expect("loads");
+    let program = load_files(&entry, &DiskSource).expect("loads");
     let prefix = format!("<{STD_TREE}>/");
     let mut loaded: Vec<String> = program
         .files
@@ -107,7 +108,7 @@ fn a_file_belongs_to_its_directory_namespace() {
     write(directory.path(), "task.kiru", "fn task() {};\n");
     write(directory.path(), "sub/worker.kiru", "fn worker() {};\n");
 
-    let program = load_files(&entry).expect("loads");
+    let program = load_files(&entry, &DiskSource).expect("loads");
     assert_eq!(namespace_of(&program, "main"), vec!["root".to_owned()]);
     // A sibling file shares the root namespace; a file in a directory nests.
     assert_eq!(namespace_of(&program, "task"), vec!["root".to_owned()]);
@@ -123,7 +124,7 @@ fn walks_the_entry_directory_recursively() {
     let entry = write(directory.path(), "main.kiru", "fn main() {};\n");
     write(directory.path(), "a/b/deep.kiru", "fn deep() {};\n");
 
-    let program = load_files(&entry).expect("loads");
+    let program = load_files(&entry, &DiskSource).expect("loads");
     assert_eq!(
         namespace_of(&program, "deep"),
         vec!["root".to_owned(), "a".to_owned(), "b".to_owned()]
@@ -134,7 +135,7 @@ fn walks_the_entry_directory_recursively() {
 fn reports_parse_error_with_file_and_position() {
     let directory = tempfile::tempdir().expect("temp dir");
     let entry = write(directory.path(), "main.kiru", "fn f( {\n");
-    let error = load_files(&entry).expect_err("parse error fails");
+    let error = load_files(&entry, &DiskSource).expect_err("parse error fails");
     assert!(
         error.render().contains("main.kiru:1:7"),
         "{}",

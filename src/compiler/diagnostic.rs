@@ -1,4 +1,9 @@
 //! Rendering compiler errors with their source location.
+//!
+//! A diagnostic is one fact: what is wrong or what is unused, and where. It
+//! carries a severity and, when one other place explains the fact, the span of
+//! that place. The terminal renders an error's own span; the language server
+//! publishes the structure as the client asks for it.
 
 use std::path::PathBuf;
 
@@ -11,12 +16,32 @@ use crate::syntax::Span;
 /// program's own name instead.
 pub(crate) const DIAGNOSTIC_PREFIX: &str = "kc";
 
-/// One compiler error tied to a source file and byte range.
-#[derive(Debug)]
-pub(crate) struct Diagnostic {
-    pub(crate) path: PathBuf,
-    pub(crate) span: Span,
-    pub(crate) message: String,
+/// How a diagnostic weighs. An error stops the compile; a warning states a
+/// fact about the source and lets it pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Severity {
+    Error,
+    Warning,
+}
+
+/// One other place a diagnostic points at: the span and the fact it states.
+#[derive(Clone, Debug)]
+pub struct RelatedSpan {
+    pub path: PathBuf,
+    pub span: Span,
+    pub message: String,
+}
+
+/// One compiler fact tied to a source file and byte range.
+#[derive(Clone, Debug)]
+pub struct Diagnostic {
+    pub path: PathBuf,
+    pub span: Span,
+    pub message: String,
+    pub severity: Severity,
+    /// The places that explain this fact, when one exists. The first
+    /// declaration behind a duplicate carries its span here.
+    pub related: Vec<RelatedSpan>,
 }
 
 impl Diagnostic {
@@ -25,12 +50,52 @@ impl Diagnostic {
             path: path.into(),
             span,
             message: message.into(),
+            severity: Severity::Error,
+            related: Vec::new(),
         }
     }
+
+    /// The same fact, weighed as a warning.
+    pub(crate) fn warning(
+        path: impl Into<PathBuf>,
+        span: Span,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            severity: Severity::Warning,
+            ..Self::new(path, span, message)
+        }
+    }
+
+    /// Point at one other place that explains the fact.
+    pub(crate) fn with_related(
+        mut self,
+        path: impl Into<PathBuf>,
+        span: Span,
+        message: impl Into<String>,
+    ) -> Self {
+        self.related.push(RelatedSpan {
+            path: path.into(),
+            span,
+            message: message.into(),
+        });
+        self
+    }
+
+    /// The word the terminal renders for the severity.
+    fn severity_word(&self) -> &'static str {
+        match self.severity {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+        }
+    }
+
     /// Render as `path:line:column: error: message`, followed by every line
     /// the span covers and a caret underline. Tabs are expanded to four-column
     /// stops and characters take their Unicode display width, so the underline
-    /// stays aligned.
+    /// stays aligned. Related spans are structure, not rendering: a terminal
+    /// reads the one fact at its own place, and a client that wants the related
+    /// places reads the diagnostic's fields.
     pub(crate) fn render(&self, source: &str) -> String {
         let start = self.span.start.min(source.len());
         let end = self.span.end.min(source.len()).max(start);
@@ -42,8 +107,10 @@ impl Diagnostic {
         let column = display_width(&source[line_start..start]) + 1;
 
         let mut rendered = format!(
-            "{}:{line_number}:{column}: error: {}\n",
+            "{}:{line_number}:{}: {}: {}\n",
             self.path.display(),
+            column,
+            self.severity_word(),
             self.message
         );
 

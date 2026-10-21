@@ -14,4 +14,4 @@ mod run_command;
 mod run_embedded;
 
 pub(crate) use error::CliError;
-pub(crate) use run_command::run;
+pub use run_command::run;
