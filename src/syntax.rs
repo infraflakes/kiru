@@ -11,8 +11,6 @@ pub(crate) use ast::{
     Field, Function, Item, MatchBody, Parameter, Statement, StringPart, TypeDeclaration, TypeExpr,
     UnaryOp,
 };
-pub(crate) use lexer::{is_identifier_continue, lex, lex_with_comments};
 pub(crate) use parser::parse_file;
 pub use span::Span;
 pub(crate) use token::WILDCARD;
-pub(crate) use token::{Token, TokenKind};

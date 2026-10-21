@@ -18,5 +18,5 @@ mod use_checking;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use body_linking::{Resolved, TypeUse, resolve_names};
+pub(crate) use body_linking::{Resolved, resolve_names};
 pub(crate) use select_entry::EntryShape;

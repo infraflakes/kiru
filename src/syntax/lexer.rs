@@ -15,16 +15,7 @@ pub(crate) struct LexError {
 
 /// Lex a whole source file.
 pub(crate) fn lex(source: &str) -> Result<Vec<Token>, LexError> {
-    Ok(lex_with_comments(source)?.0)
-}
-
-/// Lex a source file and record the comments the tokens skip: a comment is
-/// trivia the parser never sees, and a client that paints the source reads
-/// the spans the lexer skipped over.
-pub(crate) fn lex_with_comments(source: &str) -> Result<(Vec<Token>, Vec<Span>), LexError> {
-    let mut lexer = Lexer::new(source);
-    let tokens = lexer.run()?;
-    Ok((tokens, std::mem::take(&mut lexer.comments)))
+    Lexer::new(source).run()
 }
 
 struct Lexer<'a> {
@@ -35,20 +26,13 @@ struct Lexer<'a> {
     /// reads and a lookahead copies the cursor over the borrowed slice.
     cursor: CharIndices<'a>,
     at: Option<(usize, char)>,
-    /// The comments the trivia skipping passed over, in source order.
-    comments: Vec<Span>,
 }
 
 impl<'a> Lexer<'a> {
     fn new(source: &'a str) -> Self {
         let mut cursor = source.char_indices();
         let at = cursor.next();
-        Self {
-            source,
-            cursor,
-            at,
-            comments: Vec::new(),
-        }
+        Self { source, cursor, at }
     }
 
     fn current(&self) -> Option<(usize, char)> {
@@ -206,6 +190,8 @@ impl<'a> Lexer<'a> {
         })
     }
 
+    /// Skip whitespace and comments: a comment is trivia the parser never
+    /// sees.
     fn skip_trivia(&mut self) {
         loop {
             match self.current() {
@@ -213,14 +199,12 @@ impl<'a> Lexer<'a> {
                     self.advance();
                 }
                 Some((_, '#')) => {
-                    let start = self.offset();
                     while let Some((_, character)) = self.current() {
                         if character == '\n' {
                             break;
                         }
                         self.advance();
                     }
-                    self.comments.push(Span::new(start, self.offset()));
                 }
                 _ => return,
             }
@@ -377,7 +361,7 @@ fn is_identifier_start(character: char) -> bool {
 }
 
 /// Whether a character may continue an identifier, after its first.
-pub(crate) fn is_identifier_continue(character: char) -> bool {
+fn is_identifier_continue(character: char) -> bool {
     character == '_' || character.is_alphanumeric()
 }
 

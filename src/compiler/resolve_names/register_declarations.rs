@@ -15,10 +15,9 @@ impl Builder {
         loaded: &LoadedProgram,
     ) -> Result<(), Diagnostic> {
         for file in &loaded.files {
-            let namespace = self.ensure_namespace(&file.namespace);
+            self.ensure_namespace(&file.namespace);
             self.files.push(File {
                 path: file.path.clone(),
-                namespace,
                 declarations: Vec::new(),
             });
         }
@@ -35,7 +34,6 @@ impl Builder {
                     type_declaration,
                     declaration.public,
                     namespace,
-                    Some(FileId(scoped.file)),
                     &loaded.files[scoped.file].path,
                 )?;
             }

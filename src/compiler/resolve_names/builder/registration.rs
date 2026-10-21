@@ -4,7 +4,6 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
-use super::super::body_linking::TypeUse;
 use crate::compiler::model::{
     Declaration, DeclarationId, DeclarationKind, Derived, File, FileId, Group, Interner,
     MethodTable, NameTable, Namespace, NamespaceId, Program, TypeDecl, TypeFieldDecl, TypeKind,
@@ -145,11 +144,6 @@ pub(in crate::compiler::resolve_names) struct Builder {
     /// methods take `&self`, so the set keeps to the cell until the read
     /// sites collect it.
     pub(in crate::compiler::resolve_names) used_uses: RefCell<HashSet<usize>>,
-    /// Every written named type the resolution met: its path's span, the
-    /// name the path ends at, and the declared type it resolved to. A type
-    /// resolves to an id, not to a span, so this is the one fact a client
-    /// painting written type names reads.
-    pub(in crate::compiler::resolve_names) type_uses: RefCell<Vec<TypeUse>>,
 }
 
 impl Builder {
@@ -175,7 +169,6 @@ impl Builder {
             module_values: Vec::new(),
             intern: Interner::default(),
             used_uses: RefCell::new(HashSet::new()),
-            type_uses: RefCell::new(Vec::new()),
         }
     }
 
@@ -429,7 +422,6 @@ impl Builder {
         declaration: &TypeDeclaration,
         public: bool,
         namespace: NamespaceId,
-        file: Option<FileId>,
         reported_path: &std::path::Path,
     ) -> Result<TypeId, Diagnostic> {
         self.check_type_parameters(
@@ -443,10 +435,8 @@ impl Builder {
         let id = TypeId(self.types.len());
         self.types.push(TypeDecl {
             name: declaration.name.clone(),
-            name_span: declaration.name_span,
             public,
             namespace,
-            file,
             parameters: declaration.parameters.clone(),
             runtime: crate::compiler::model::RuntimeType::Declared,
             kind,
@@ -495,7 +485,6 @@ impl Builder {
                     self.resolve_type_expr(&field.ty, namespace, file, &parameters, reported_path)?;
                 declared.push(TypeFieldDecl {
                     name: field.name.clone(),
-                    name_span: field.name_span,
                     public: field.public,
                     ty,
                 });
@@ -529,7 +518,6 @@ impl Builder {
                 }
                 declared.push(VariantDecl {
                     name: variant.name.clone(),
-                    name_span: variant.name_span,
                     public: variant.public,
                     payload,
                 });

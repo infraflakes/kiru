@@ -7,7 +7,6 @@ use crate::compiler::model::{
 };
 use crate::syntax::{Span, TypeExpr};
 
-use super::super::body_linking::TypeUse;
 use super::registration::Builder;
 
 /// One enum variant a written path names: the enum's type, the variant's index,
@@ -83,7 +82,6 @@ impl Builder {
             }
             TypeExpr::Named {
                 path,
-                path_span,
                 arguments,
                 span,
             } => {
@@ -93,26 +91,14 @@ impl Builder {
                 {
                     return Ok(Type::Parameter(path[0].clone()));
                 }
-                let resolved = self.resolve_named_type(
+                self.resolve_named_type(
                     WrittenType { path, span },
                     arguments,
                     namespace,
                     file,
                     parameters,
                     reported_path,
-                )?;
-                // A written declared type is a fact: the model records the
-                // path it wrote and the name the path ends at, so a client
-                // painting the source reads it without re-deriving a type.
-                if matches!(resolved, Type::Named(..)) {
-                    let last = path.last().expect("a written name has a segment");
-                    self.type_uses.borrow_mut().push(TypeUse {
-                        file,
-                        path: *path_span,
-                        name: Span::new(path_span.end - last.len(), path_span.end),
-                    });
-                }
-                Ok(resolved)
+                )
             }
         }
     }

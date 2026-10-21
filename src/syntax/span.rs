@@ -16,9 +16,4 @@ impl Span {
     pub(crate) fn merge(self, other: Span) -> Span {
         Span::new(self.start.min(other.start), self.end.max(other.end))
     }
-
-    /// Whether the position stands inside the span.
-    pub fn contains(self, position: usize) -> bool {
-        self.start <= position && position < self.end
-    }
 }

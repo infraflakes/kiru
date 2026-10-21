@@ -30,8 +30,8 @@ pub(crate) use ids::{DeclarationId, FileId, NamespaceId};
 pub(crate) use program::name_hash;
 pub(crate) use program::{
     Delivery, File, Interner, MethodTable, ModelView, NameTable, Namespace, Program, Symbol,
-    TypeTable, UseTarget, bound_reachable, first_duplicate, join_path, namespace_at,
-    namespace_path, reachable, rec_field,
+    TypeTable, UseTarget, bound_reachable, first_duplicate, join_path, namespace_at, reachable,
+    rec_field,
 };
 pub(crate) use types::{
     Arity, Binding, Finite, Group, RuntimeShape, Shape, Type, TypeHead, TypeId, finite, fits,

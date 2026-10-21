@@ -12,20 +12,15 @@
 //! The second half of the compile — pruning, lowering, packaging — belongs to
 //! the pipeline, because only a compiled program needs it.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::compiler::diagnostic::{Diagnostic, render};
 use crate::compiler::load_files::{LoadError, LoadedProgram, load_files, load_single};
-use crate::compiler::model::{
-    DeclarationId, FileId, Program, UseTarget, join_path, namespace_path, type_name,
-};
-use crate::compiler::reads::collect_reads;
-use crate::compiler::resolve_names::{Resolved, TypeUse};
+use crate::compiler::model::Program;
+use crate::compiler::resolve_names::Resolved;
 use crate::compiler::sources::ProgramSource;
 use crate::compiler::warnings::unused_bindings;
 use crate::compiler::{resolve_names, validate_program};
-use crate::syntax::Span;
 
 /// One build that checked: the loaded program, the model the check settled,
 /// and the warnings the unused syntax earned.
@@ -33,9 +28,6 @@ pub struct Build {
     pub(crate) loaded: LoadedProgram,
     pub(crate) program: Program,
     pub(crate) warnings: Vec<Diagnostic>,
-    /// The written named types the resolution met: where each stands and the
-    /// declared type it names.
-    pub(crate) type_uses: Vec<TypeUse>,
 }
 
 impl std::fmt::Debug for Build {
@@ -71,117 +63,6 @@ impl Build {
             }
         }
         by_file
-    }
-
-    /// The source of every file of the program tree, for a boundary that
-    /// converts spans against the text the build read.
-    pub fn file_sources(&self) -> Vec<(PathBuf, String)> {
-        self.loaded
-            .files
-            .iter()
-            .filter(|file| file.path.is_absolute())
-            .map(|file| (file.path.clone(), file.source.clone()))
-            .collect()
-    }
-
-    /// The declaration a position in a file stands on: the read whose written
-    /// name covers the position, or the declaration's own name. The answer is
-    /// the declaration's file and name span; a local's file is the file of
-    /// the body it is written in.
-    pub fn definition(&self, path: &Path, offset: usize) -> Option<(PathBuf, Span)> {
-        let (target, read_file) = self.declaration_at(path, offset)?;
-        let file = self.name_file(target, read_file)?;
-        let span = self.program.declaration(target).name_span;
-        Some((self.program.files[file.0].path.clone(), span))
-    }
-
-    /// The fact a position in a file stands on, as the editor shows it: the
-    /// declaration's name and the type the check settled for it.
-    pub fn hover(&self, path: &Path, offset: usize) -> Option<String> {
-        let (target, _) = self.declaration_at(path, offset)?;
-        let declaration = self.program.declaration(target);
-        let name = if declaration.kind.local() {
-            declaration.name.clone()
-        } else {
-            let mut path = namespace_path(&self.program.namespaces, declaration.namespace);
-            path.push(declaration.name.clone());
-            join_path(&path)
-        };
-        Some(format!(
-            "{}: {}",
-            name,
-            type_name(&declaration.ty, &self.program.types)
-        ))
-    }
-
-    /// The declaration a position stands on, and the file the read stands in.
-    pub(crate) fn declaration_at(
-        &self,
-        path: &Path,
-        offset: usize,
-    ) -> Option<(DeclarationId, FileId)> {
-        let file = self
-            .program
-            .files
-            .iter()
-            .position(|file| file.path == path)?;
-        let file = FileId(file);
-        let reads = collect_reads(&self.program);
-        let read = reads
-            .reads
-            .iter()
-            .find(|read| read.file == file && read.span.contains(offset))
-            .copied();
-        if let Some(read) = read {
-            return Some((read.declaration, read.file));
-        }
-        // No read covers the position: it stands on a declaration's own name,
-        // a local's, or a file declaration's.
-        let local = reads
-            .bindings
-            .iter()
-            .find(|bound| {
-                bound.file == file
-                    && self
-                        .program
-                        .declaration(bound.declaration)
-                        .name_span
-                        .contains(offset)
-            })
-            .map(|bound| bound.declaration);
-        let declared = self
-            .program
-            .declarations
-            .iter()
-            .enumerate()
-            .find(|(_, declaration)| {
-                declaration.file == Some(file) && declaration.name_span.contains(offset)
-            })
-            .map(|(index, _)| DeclarationId(index));
-        local.or(declared).map(|target| (target, file))
-    }
-
-    /// The file the declaration's own name is written in: a namespace-level
-    /// declaration's file, or the file of the body a local binding is written
-    /// in. A native is written in no file of the program, so it answers none.
-    pub(crate) fn name_file(&self, declaration: DeclarationId, at_file: FileId) -> Option<FileId> {
-        let node = self.program.declaration(declaration);
-        let owned = node.kind.local() || node.owner.is_some();
-        node.file.or(owned.then_some(at_file))
-    }
-
-    /// The target each `use` item delivered, by the item's index in the
-    /// loaded stream: the namespaces' delivery records, read back once.
-    pub(crate) fn deliveries(&self) -> HashMap<usize, UseTarget> {
-        let mut deliveries = HashMap::new();
-        for namespace in &self.program.namespaces {
-            for entries in namespace.brought.values() {
-                for delivery in entries {
-                    deliveries.insert(delivery.use_index, delivery.target);
-                }
-            }
-        }
-        deliveries
     }
 }
 
@@ -260,11 +141,7 @@ pub fn build(entry: &Path, source: &impl ProgramSource) -> Result<Build, BuildFa
         Ok(loaded) => loaded,
         Err(error) => return Err(failure(vec![error], None)),
     };
-    let Resolved {
-        program,
-        warnings,
-        type_uses,
-    } = match resolve_names(&loaded) {
+    let Resolved { program, warnings } = match resolve_names(&loaded) {
         Ok(resolved) => resolved,
         Err(diagnostic) => return Err(failure(vec![], Some((loaded, diagnostic)))),
     };
@@ -278,7 +155,6 @@ pub fn build(entry: &Path, source: &impl ProgramSource) -> Result<Build, BuildFa
         loaded,
         program,
         warnings,
-        type_uses,
     })
 }
 
@@ -400,6 +276,7 @@ mod tests {
     use super::*;
     use crate::compiler::Severity;
     use crate::compiler::sources::VirtualSource;
+    use crate::syntax::Span;
 
     /// The build of a virtual tree, with every file's diagnostics flattened
     /// to (path, severity, message).

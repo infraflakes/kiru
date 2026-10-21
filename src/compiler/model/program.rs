@@ -17,7 +17,7 @@ pub(crate) use graph::{Delivery, File, Namespace, Program, UseTarget, first_dupl
 #[cfg(test)]
 pub(crate) use interner::name_hash;
 pub(crate) use interner::{Interner, Symbol};
-pub(crate) use namespace_paths::{join_path, namespace_at, namespace_path};
+pub(crate) use namespace_paths::{join_path, namespace_at};
 pub(crate) use tables::{MethodTable, NameTable, TypeTable};
 pub(crate) use view::ModelView;
 pub(crate) use visibility::{bound_reachable, reachable};

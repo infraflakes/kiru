@@ -31,10 +31,6 @@ pub(crate) struct Use {
     /// The paths the item brings in: one for a plain `use`, one per name for a
     /// one-level `use prefix::{name, name};` group.
     pub(crate) paths: Vec<Vec<String>>,
-    /// The span of each path's last segment, in the paths' order: the name
-    /// the path delivers, which a query that asks where a delivered name
-    /// stands reads.
-    pub(crate) delivered: Vec<Span>,
     pub(crate) span: Span,
 }
 
@@ -202,9 +198,6 @@ pub(crate) enum TypeExpr {
     /// type arguments: `txt`, `Vec<T>`, `Name<A, B>`.
     Named {
         path: Vec<String>,
-        /// The written path's own span, before its type arguments: the name
-        /// the type is written by, and the namespaces it descends through.
-        path_span: Span,
         arguments: Vec<TypeExpr>,
         span: Span,
     },

@@ -76,12 +76,11 @@ impl Loader {
             match item {
                 Item::Declaration(declaration) => self.record(*declaration, index, &namespace),
                 Item::Use(use_item) => {
-                    for (path, delivered) in use_item.paths.into_iter().zip(use_item.delivered) {
+                    for path in use_item.paths {
                         self.uses.push(ScopedUse {
                             file: index,
                             namespace: namespace.clone(),
                             path,
-                            delivered,
                             span: use_item.span,
                         });
                     }

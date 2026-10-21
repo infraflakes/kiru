@@ -72,16 +72,3 @@ pub(crate) fn first_declaration(name: &str) -> String {
 pub(crate) fn private_member(owner: &str, member: &str, namespace: &str) -> String {
     format!("`{owner}.{member}` is private to `{namespace}`; mark it `pub` to reach it")
 }
-
-/// The message for a word that names no declaration: a rename's target name,
-/// checked against the lexer's own rule for a name.
-pub(crate) fn invalid_name(name: &str) -> String {
-    format!("`{name}` is not a name")
-}
-
-/// The message for a declaration written in no file of the workspace: the
-/// runtime's own natives, and the standard library's declarations, which the
-/// program embeds rather than reads.
-pub(crate) fn no_workspace_file(name: &str) -> String {
-    format!("`{name}` is written in no file of the workspace")
-}

@@ -69,7 +69,6 @@ impl Program {
 #[derive(Debug)]
 pub(crate) struct File {
     pub(crate) path: PathBuf,
-    pub(crate) namespace: NamespaceId,
     pub(crate) declarations: Vec<DeclarationId>,
 }
 
