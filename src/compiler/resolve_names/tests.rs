@@ -305,7 +305,7 @@ fn an_impl_bound_function_is_not_a_name() {
                 "use std::dynamic;\nuse std::dynamic::push;\nfn main() {};",
             )],
             "main.kiru",
-            "`std::dynamic::push` names neither a namespace nor a declaration",
+            "`std::dynamic::push` names no namespace, type, or function",
         ),
         (
             "a bare method call",
@@ -722,7 +722,7 @@ fn an_unresolvable_use_is_rejected_at_its_span() {
     };
     assert_eq!(
         diagnostic.message,
-        "`std::tex` names neither a namespace nor a declaration"
+        "`std::tex` names no namespace, type, or function"
     );
     // The span covers the `use std::tex;` line of the file that wrote it.
     assert_eq!(diagnostic.span, crate::syntax::Span::new(9, 22));
@@ -1105,7 +1105,7 @@ fn method_rules() {
         (
             "a use of a bound function",
             "use std::dynamic;\nuse std::dynamic::push;\nfn main() {};",
-            "`std::dynamic::push` names neither a namespace nor a declaration",
+            "`std::dynamic::push` names no namespace, type, or function",
         ),
         (
             "a duplicate name in one block",

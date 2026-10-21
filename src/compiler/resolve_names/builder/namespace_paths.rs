@@ -12,14 +12,6 @@ use crate::compiler::model::{
 
 use super::registration::Builder;
 
-/// Why a `use` path reaches no target.
-pub(in crate::compiler::resolve_names) enum UseMiss {
-    /// The path ends at a namespace-level declaration a use may not name.
-    Declaration,
-    /// The path names nothing.
-    Nothing,
-}
-
 impl Builder {
     /// Index what each namespace's `use`s deliver. The name a path delivers
     /// keys the target it was resolved to, so every repeated read of a `use`'s
@@ -29,7 +21,7 @@ impl Builder {
     /// of this method covers.
     pub(in crate::compiler::resolve_names) fn index_uses(&mut self, loaded: &LoadedProgram) {
         for (use_index, used) in loaded.uses.iter().enumerate() {
-            let Ok(target) = self.resolve_use(&used.path) else {
+            let Some(target) = self.resolve_use(&used.path) else {
                 continue;
             };
             let (last, _) = used.path.split_last().expect("a `use` path is not empty");
@@ -60,33 +52,26 @@ impl Builder {
     /// its prefix names a namespace from the root. This is the one resolution
     /// every pass that reads a `use` directly asks for; the index built from
     /// it answers the repeated reads.
+    /// Resolve a `use` path to the one thing a use reaches: a namespace, a
+    /// type, or a plain function. Any other declaration is no candidate at
+    /// all, so the lookup never names one.
     pub(in crate::compiler::resolve_names) fn resolve_use(
         &self,
         path: &[String],
-    ) -> Result<UseTarget, UseMiss> {
+    ) -> Option<UseTarget> {
         if let Some(namespace) = namespace_at(&self.intern, &self.namespaces, path) {
-            return Ok(UseTarget::Namespace(namespace));
+            return Some(UseTarget::Namespace(namespace));
         }
-        let Some((name, prefix)) = path.split_last() else {
-            return Err(UseMiss::Nothing);
-        };
-        if prefix.is_empty() {
-            return Err(UseMiss::Nothing);
-        }
-        let Some(namespace) = namespace_at(&self.intern, &self.namespaces, prefix) else {
-            return Err(UseMiss::Nothing);
-        };
+        let (name, prefix) = path.split_last()?;
+        let namespace = namespace_at(&self.intern, &self.namespaces, prefix)?;
         let namespace_table = &self.namespaces[namespace.0];
         if let Some(found) = namespace_table.type_id(&self.intern, name) {
-            return Ok(UseTarget::Type(found));
+            return Some(UseTarget::Type(found));
         }
-        match namespace_table.get(&self.intern, name) {
-            Some(declaration) if self.skeletons[declaration.0].kind.useable() => {
-                Ok(UseTarget::Function(declaration))
-            }
-            Some(_) => Err(UseMiss::Declaration),
-            None => Err(UseMiss::Nothing),
-        }
+        namespace_table
+            .get(&self.intern, name)
+            .filter(|declaration| self.skeletons[declaration.0].kind.useable())
+            .map(UseTarget::Function)
     }
 
     /// The namespace a qualified path's first segment names, through the

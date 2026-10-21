@@ -8,7 +8,7 @@ use crate::compiler::Diagnostic;
 use crate::compiler::load_files::LoadedProgram;
 use crate::compiler::model::join_path;
 
-use super::builder::{Builder, UseMiss};
+use super::builder::Builder;
 
 impl Builder {
     /// The warnings for the `use`s a namespace wrote but no body of the
@@ -58,16 +58,11 @@ impl Builder {
     /// type, or a plain function. The target is resolved once, by
     /// `resolve_use`, for every pass that reads a `use`.
     fn use_rejection(&self, path: &[String]) -> Option<String> {
-        match self.resolve_use(path) {
-            Ok(_) => None,
-            Err(UseMiss::Nothing) => Some(format!(
-                "`{}` names neither a namespace nor a declaration",
+        self.resolve_use(path).is_none().then(|| {
+            format!(
+                "`{}` names no namespace, type, or function",
                 join_path(path)
-            )),
-            Err(UseMiss::Declaration) => Some(format!(
-                "`{}` is a module value; `use` reaches a namespace, a type, or a plain function",
-                join_path(path)
-            )),
-        }
+            )
+        })
     }
 }

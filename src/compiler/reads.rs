@@ -30,15 +30,20 @@ pub(crate) struct Reads {
     pub(crate) bindings: Vec<Bound>,
 }
 
-/// Collect the reads and bindings of every body in the program. A body whose
-/// declaration has no file is a native, which holds no body; a local's file is
-/// the file of the body it is written in, which the walk carries.
-pub(crate) fn collect_reads(program: &Program) -> Reads {
+/// Collect the reads and bindings of the bodies in the program, or of the
+/// bodies one file holds. A body whose declaration has no file is a native,
+/// which holds no body; a local's file is the file of the body it is written
+/// in, which the walk carries. A file-scoped walk leaves the other files'
+/// declarations alone: an analysis links only the file it checks.
+pub(crate) fn collect_reads(program: &Program, only: Option<FileId>) -> Reads {
     let mut reads = Reads::default();
     for declaration in &program.declarations {
         let Some(file) = declaration.file else {
             continue;
         };
+        if only.is_some_and(|wanted| wanted != file) {
+            continue;
+        }
         let mut collector = Collector {
             reads: &mut reads,
             file,
@@ -48,12 +53,12 @@ pub(crate) fn collect_reads(program: &Program) -> Reads {
                 collector.parameters(function);
                 walk_statements(&mut collector, &function.body);
             }
-            None if declaration.kind.module_value() => walk_expression(
-                &mut collector,
-                declaration
-                    .value()
-                    .expect("a module value carries its initializer"),
-            ),
+            None if declaration.kind.module_value() => {
+                let Some(value) = declaration.value() else {
+                    continue;
+                };
+                walk_expression(&mut collector, value);
+            }
             None => {}
         }
     }

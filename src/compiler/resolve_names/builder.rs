@@ -12,7 +12,6 @@ mod namespace_paths;
 mod registration;
 mod type_resolution;
 
-pub(in crate::compiler::resolve_names) use namespace_paths::UseMiss;
 pub(in crate::compiler::resolve_names) use registration::{
     Builder, DeclarationSite, Pending, Skeleton, Slot,
 };

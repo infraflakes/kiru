@@ -34,13 +34,17 @@ impl VirtualSource {
 impl ProgramSource for VirtualSource {
     fn locate(&self, target: &Path) -> std::io::Result<(Option<PathBuf>, PathBuf)> {
         let entry_path = self.root.join(target);
-        if !self.files.contains_key(&entry_path) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("{}", target.display()),
-            ));
+        if self.files.contains_key(&entry_path) {
+            return Ok((Some(entry_path), self.root.clone()));
         }
-        Ok((Some(entry_path), self.root.clone()))
+        // A directory target names a tree, not an entry.
+        if entry_path == self.root || self.files.keys().any(|path| path.starts_with(&entry_path)) {
+            return Ok((None, entry_path));
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("{}", target.display()),
+        ))
     }
 
     fn collect(&self, tree_root: &Path) -> std::io::Result<Vec<PathBuf>> {

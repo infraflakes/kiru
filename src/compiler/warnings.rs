@@ -13,7 +13,9 @@ use std::collections::HashSet;
 
 use crate::compiler::Diagnostic;
 use crate::compiler::STD_TREE;
-use crate::compiler::model::{DeclarationId, DeclarationKind, Program, join_path, namespace_path};
+use crate::compiler::model::{
+    DeclarationId, DeclarationKind, FileId, Program, join_path, namespace_path,
+};
 use crate::compiler::reads::collect_reads;
 
 /// The warnings for the program declarations no reachable body reads. Only a
@@ -74,8 +76,8 @@ pub(crate) fn is_program_file(path: &std::path::Path) -> bool {
 /// name without reading it, so a binding only assigned or only matched is
 /// never read. The binding's own file is the file of the body it is written
 /// in, which the walk carried.
-pub(crate) fn unused_bindings(program: &Program) -> Vec<Diagnostic> {
-    let reads = collect_reads(program);
+pub(crate) fn unused_bindings(program: &Program, only: Option<FileId>) -> Vec<Diagnostic> {
+    let reads = collect_reads(program, only);
     reads
         .bindings
         .iter()

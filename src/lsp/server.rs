@@ -20,7 +20,9 @@ use tower_lsp_server::ls_types::{
 };
 use tower_lsp_server::{Client, LanguageServer};
 
-use crate::compiler::{Diagnostic, STD_TREE, Severity, analyze_file, semantic_tokens};
+use crate::compiler::{
+    AnalysisContext, Diagnostic, STD_TREE, Severity, analyze_file, semantic_tokens,
+};
 
 use super::OverlaySource;
 use super::positions::{Encoding, span_to_range};
@@ -31,6 +33,9 @@ use super::tokens;
 pub struct Backend {
     client: Client,
     encoding: OnceLock<Encoding>,
+    /// The workspace root the client names. Its program tree is the tree the
+    /// analyzed file's names resolve against.
+    root: OnceLock<PathBuf>,
     /// The text of every document the client holds open, as it stands in the
     /// editor. A token request carries no text of its own.
     documents: Mutex<HashMap<PathBuf, String>>,
@@ -41,8 +46,25 @@ impl Backend {
         Self {
             client,
             encoding: OnceLock::new(),
+            root: OnceLock::new(),
             documents: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The context the file is analyzed in. A file under a directory named
+    /// `std` belongs to that library; any other file inside the workspace
+    /// belongs to the program tree rooted there; a file outside it stands
+    /// alone.
+    fn analysis_context<'a>(&'a self, path: &'a Path) -> AnalysisContext<'a> {
+        if let Some(library) = library_root(path) {
+            return AnalysisContext::Library(library);
+        }
+        if let Some(root) = self.root.get()
+            && path.starts_with(root)
+        {
+            return AnalysisContext::Program(root);
+        }
+        AnalysisContext::Single
     }
 
     /// Keep the text a document notification carries.
@@ -68,8 +90,8 @@ impl Backend {
         let encoding = self.encoding.get().copied().unwrap_or(Encoding::Utf16);
         let mut overlay = OverlaySource::new();
         overlay.open(path.to_path_buf(), source.to_owned());
-        let library = library_root(&path);
-        let diagnostics = analyze_file(&path, &overlay, library)
+        let context = self.analysis_context(&path);
+        let diagnostics = analyze_file(&path, &overlay, context)
             .iter()
             .map(|diagnostic| protocol_diagnostic(source, &path, diagnostic, encoding))
             .collect();
@@ -83,6 +105,9 @@ impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         let encoding = negotiated(&params);
         let _ = self.encoding.set(encoding);
+        if let Some(root) = workspace_root(&params) {
+            let _ = self.root.set(root);
+        }
         Ok(InitializeResult {
             server_info: None,
             offset_encoding: None,
@@ -165,7 +190,8 @@ impl LanguageServer for Backend {
         let encoding = *self.encoding.get().unwrap_or(&Encoding::Utf16);
         let mut overlay = OverlaySource::new();
         overlay.open(path.to_path_buf(), source.clone());
-        let tokens = semantic_tokens(&path, &overlay, library_root(&path));
+        let context = self.analysis_context(&path);
+        let tokens = semantic_tokens(&path, &overlay, context);
         Ok(Some(SemanticTokensResult::Tokens(tokens::encode(
             &source, tokens, encoding,
         ))))
@@ -173,11 +199,26 @@ impl LanguageServer for Backend {
 }
 
 /// The library a file belongs to: a file under a directory named `std` is
-/// analyzed in that library's tree; any other file stands in the root
-/// namespace.
+/// analyzed in that library's tree.
 fn library_root(path: &Path) -> Option<&Path> {
     path.ancestors()
         .find(|ancestor| ancestor.file_name().is_some_and(|name| name == STD_TREE))
+}
+
+/// The workspace root the client names: its folders first, then its root uri.
+fn workspace_root(params: &InitializeParams) -> Option<PathBuf> {
+    if let Some(folders) = &params.workspace_folders
+        && let Some(folder) = folders.first()
+        && let Some(path) = folder.uri.to_file_path()
+    {
+        return Some(path.into_owned());
+    }
+    #[allow(deprecated)]
+    params
+        .root_uri
+        .as_ref()
+        .and_then(|uri| uri.to_file_path())
+        .map(|path| path.into_owned())
 }
 
 /// Serve the protocol on standard input and output until the client exits.
@@ -392,7 +433,7 @@ mod tests {
         let source = std::fs::read_to_string(&path).expect("the library file is readable");
         let mut overlay = OverlaySource::new();
         overlay.open(path.clone(), source);
-        let facts = analyze_file(&path, &overlay, Some(&root));
+        let facts = analyze_file(&path, &overlay, AnalysisContext::Library(&root));
         assert!(
             facts
                 .iter()
@@ -407,7 +448,7 @@ mod tests {
         let local = analyze_file(
             path,
             &VirtualSource::new(&[("main.kiru", "fn main() { let unused: int = 1; };")]),
-            None,
+            AnalysisContext::Single,
         );
         assert_eq!(
             local.len(),
@@ -420,7 +461,7 @@ mod tests {
         let unused_use = analyze_file(
             path,
             &VirtualSource::new(&[("main.kiru", "use std::text;\nfn main() {};")]),
-            None,
+            AnalysisContext::Single,
         );
         assert_eq!(
             unused_use.len(),

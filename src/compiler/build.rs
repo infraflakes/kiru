@@ -116,17 +116,33 @@ impl BuildFailure {
 /// library root is named, the embedded library is mounted when none is, and no
 /// entry is selected, so a client asks this for the buffer the editor holds
 /// whatever the file is called and wherever it stands.
+/// Where an analyzed file stands: the one file by itself, a file inside the
+/// program tree the client names, or a file of a library tree.
+#[derive(Clone, Copy)]
+pub enum AnalysisContext<'a> {
+    /// The file alone: the library is mounted and nothing else on disk joins
+    /// it. A program name that is not the file's own is out of scope.
+    Single,
+    /// The file inside the program tree rooted at this directory. The tree is
+    /// loaded so every namespace the file writes resolves; only the analyzed
+    /// file's bodies are checked.
+    Program(&'a Path),
+    /// The file inside the library rooted at this directory. The library is
+    /// read from disk with the analyzed file's buffer in place of its own.
+    Library(&'a Path),
+}
+
 pub fn analyze_file(
     path: &Path,
     source: &impl ProgramSource,
-    library: Option<&Path>,
+    context: AnalysisContext<'_>,
 ) -> Vec<Diagnostic> {
     let Analyzed {
         loaded,
         mut program,
         warnings,
         file,
-    } = match analyzed(path, source, library) {
+    } = match analyzed(path, source, context) {
         Ok(analyzed) => analyzed,
         Err(diagnostics) => return diagnostics,
     };
@@ -139,7 +155,7 @@ pub fn analyze_file(
         .cloned()
         .collect();
     let mut warnings = warnings;
-    warnings.extend(unused_bindings(&program));
+    warnings.extend(unused_bindings(&program, Some(file)));
     warnings.retain(|diagnostic| diagnostic.path == path);
     if !syntax.is_empty() {
         if let Err(diagnostic) = validate_file(&mut program, file) {
@@ -162,14 +178,14 @@ pub fn analyze_file(
 pub(crate) fn semantic_tokens(
     path: &Path,
     source: &impl ProgramSource,
-    library: Option<&Path>,
+    context: AnalysisContext<'_>,
 ) -> Vec<SemanticToken> {
     let Analyzed {
         loaded,
         mut program,
         file,
         ..
-    } = match analyzed(path, source, library) {
+    } = match analyzed(path, source, context) {
         Ok(analyzed) => analyzed,
         Err(_) => return Vec::new(),
     };
@@ -192,11 +208,21 @@ struct Analyzed {
 fn analyzed(
     path: &Path,
     source: &impl ProgramSource,
-    library: Option<&Path>,
+    context: AnalysisContext<'_>,
 ) -> Result<Analyzed, Vec<Diagnostic>> {
-    let loaded = match load_single(path, source, library) {
+    let loaded = match context {
+        AnalysisContext::Single => load_single(path, source, None),
+        AnalysisContext::Library(root) => load_single(path, source, Some(root)),
+        AnalysisContext::Program(root) => load_files(root, source),
+    };
+    let loaded = match loaded {
         Ok(loaded) => loaded,
-        Err(error) => return Err(vec![Diagnostic::new(error.path, error.span, error.message)]),
+        // A tree that cannot be read at all names the file it stopped on. It
+        // is the analyzed file's fact only when it is that file.
+        Err(error) if error.path == path => {
+            return Err(vec![Diagnostic::new(error.path, error.span, error.message)]);
+        }
+        Err(_) => return Err(Vec::new()),
     };
     let Some(index) = loaded.files.iter().position(|file| file.path == path) else {
         return Err(Vec::new());
@@ -204,7 +230,20 @@ fn analyzed(
     let file = FileId(index);
     let Analysis { program, warnings } = match resolve_file(&loaded, file) {
         Ok(analysis) => analysis,
-        Err(diagnostic) => return Err(vec![diagnostic]),
+        // A tree whose resolution stops on another file does not make that
+        // file's failure the analyzed file's diagnostic.
+        Err(diagnostic) => {
+            let mut diagnostics: Vec<Diagnostic> = loaded
+                .syntax
+                .iter()
+                .filter(|diagnostic| diagnostic.path == path)
+                .cloned()
+                .collect();
+            if diagnostic.path == path {
+                diagnostics.push(diagnostic);
+            }
+            return Err(diagnostics);
+        }
     };
     Ok(Analyzed {
         loaded,
@@ -240,7 +279,7 @@ pub fn build(entry: &Path, source: &impl ProgramSource) -> Result<Build, BuildFa
     };
     let mut program = program;
     let mut warnings = warnings;
-    warnings.extend(unused_bindings(&program));
+    warnings.extend(unused_bindings(&program, None));
     if let Err(diagnostic) = validate_program(&mut program) {
         // The checker's error is still one fact among the file's facts: the
         // recovery's syntax errors, what the recovered tree kept unused, and
@@ -390,7 +429,7 @@ mod tests {
             let facts: Vec<(String, String)> = analyze_file(
                 Path::new("/virtual/main.kiru"),
                 &VirtualSource::new(&[("main.kiru", source)]),
-                None,
+                AnalysisContext::Single,
             )
             .into_iter()
             .map(|diagnostic| (format!("{:?}", diagnostic.severity), diagnostic.message))
@@ -410,7 +449,7 @@ mod tests {
         let diagnostics = analyze_file(
             Path::new("/virtual/main.kiru"),
             &VirtualSource::new(&[("main.kiru", source)]),
-            None,
+            AnalysisContext::Single,
         );
         let facts: Vec<(String, String)> = diagnostics
             .iter()
@@ -453,7 +492,7 @@ mod tests {
         let diagnostics = analyze_file(
             Path::new("/virtual/main.kiru"),
             &VirtualSource::new(&[("main.kiru", source)]),
-            None,
+            AnalysisContext::Single,
         );
         let messages: Vec<&str> = diagnostics
             .iter()
@@ -472,11 +511,37 @@ mod tests {
     }
 
     #[test]
+    fn a_program_tree_resolves_the_namespaces_beside_the_file() {
+        // The file's `use root::kiru` names the directory beside it, and the
+        // module value it declares under the same name is no use target: only
+        // a namespace, a type, or a function is.
+        let files = [
+            (
+                "main.kiru",
+                "use root::kiru;\nlet kiru: kiru::Project = { name = \"k\" };\nfn main() { kiru::run(); };\n",
+            ),
+            (
+                "kiru/lib.kiru",
+                "pub rec Project { pub name: txt };\npub fn run() {};\n",
+            ),
+        ];
+        let facts = analyze_file(
+            Path::new("/virtual/main.kiru"),
+            &VirtualSource::new(&files),
+            AnalysisContext::Program(Path::new("/virtual")),
+        );
+        assert!(
+            facts.is_empty(),
+            "the sibling namespace resolves and nothing is wrong: {facts:?}"
+        );
+    }
+
+    #[test]
     fn a_clean_file_still_reports_its_type_error() {
         let diagnostics = analyze_file(
             Path::new("/virtual/main.kiru"),
             &VirtualSource::new(&[("main.kiru", "fn main() { let x: int = \"t\"; };")]),
-            None,
+            AnalysisContext::Single,
         );
         assert!(
             diagnostics
@@ -500,7 +565,7 @@ mod tests {
                 path: path.clone(),
                 source,
             },
-            Some(&root),
+            AnalysisContext::Library(&root),
         );
         assert!(
             facts

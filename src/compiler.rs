@@ -41,7 +41,7 @@ mod validate_program;
 mod warnings;
 
 pub(crate) use build::semantic_tokens;
-pub use build::{Build, BuildFailure, FileDiagnostics, analyze_file, build};
+pub use build::{AnalysisContext, Build, BuildFailure, FileDiagnostics, analyze_file, build};
 pub(crate) use diagnostic::DIAGNOSTIC_PREFIX;
 pub use diagnostic::{Diagnostic, RelatedSpan, Severity};
 pub(crate) use load_files::{LoadedProgram, STD_TREE};

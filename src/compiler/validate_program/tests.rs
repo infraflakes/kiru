@@ -1738,17 +1738,17 @@ fn rule_conformance_syntax() {
         (
             "a `use` whose path reaches nothing",
             "use std;\nuse std::tex;\nfn main() {};\n",
-            "`std::tex` names neither a namespace nor a declaration",
+            "`std::tex` names no namespace, type, or function",
         ),
         (
             "a `use` of an impl-bound function",
             "use std::dynamic;\nuse std::dynamic::push;\nfn main() {};\n",
-            "`std::dynamic::push` names neither a namespace nor a declaration",
+            "`std::dynamic::push` names no namespace, type, or function",
         ),
         (
             "a `use` of a module value",
             "use root::value;\nlet value: int = 1;\nfn main() {};\n",
-            "`root::value` is a module value; `use` reaches a namespace, a type, or a plain function",
+            "`root::value` names no namespace, type, or function",
         ),
         (
             "a reserved word as a binding name",

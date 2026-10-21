@@ -57,8 +57,9 @@
 
 ## The language server
 
-- `kc lsp` serves diagnostics for the one file the editor holds. It parses that file, resolves its names against the library's declarations, and checks only that file's bodies. It selects no entry, builds no program graph, prunes nothing, lowers nothing: it shares the resolver and never runs the compile pipeline.
-- The analysis reports that file's warnings and its errors, and nothing from any other file. A file under the library root is analyzed in the library's namespace; any other file is analyzed in the root namespace.
+- `kc lsp` serves diagnostics for the one file the editor holds. It parses that file, resolves its names against two things: the library's declarations, and the program tree the client names as its workspace root. It checks only that file's bodies. It selects no entry, prunes nothing, lowers nothing: it shares the resolver and never runs the compile pipeline.
+- The analysis reports that file's warnings and its errors, and nothing from any other file. A file under the library root is analyzed in the library's tree; any other file is analyzed in the workspace's program tree, so a `use` of a sibling namespace resolves as the directory it names. A file outside the workspace stands alone.
+- A `use` names a namespace, a type, or a plain function. No other declaration is a candidate, so the resolver never looks one up to reject it.
 - The library is std/. A directory is a namespace and a file name is arbitrary. A file's own declarations belong to its directory's namespace, an impl block binds functions to a type, and a natives.md in each directory lists that namespace's natives.
 
 ## Adding a native
