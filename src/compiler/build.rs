@@ -19,7 +19,7 @@ use crate::compiler::load_files::{LoadError, LoadedProgram, load_files, load_sin
 use crate::compiler::model::{DeclarationId, FileId, Program};
 use crate::compiler::resolve_names::{Analysis, Resolved, resolve_file, resolve_program};
 use crate::compiler::sources::ProgramSource;
-use crate::compiler::warnings::unused_bindings;
+use crate::compiler::warnings::{is_program_file, unused_bindings};
 use crate::compiler::{validate_file, validate_program};
 
 /// One build that checked: the loaded program, the model the check settled,
@@ -29,6 +29,9 @@ pub struct Build {
     pub(crate) program: Program,
     pub(crate) entry: DeclarationId,
     pub(crate) warnings: Vec<Diagnostic>,
+    /// The syntax errors recovery kept. They withhold the output; the facts
+    /// the recovered tree still earned are reported beside them.
+    pub(crate) syntax: Vec<Diagnostic>,
 }
 
 impl std::fmt::Debug for Build {
@@ -125,10 +128,8 @@ pub fn analyze_file(
         return Vec::new();
     };
     let file = FileId(file);
-    // A recovered tree is not checked: a dropped statement leaves a body the
-    // checker would reject for reasons the author never wrote. Its syntax
-    // errors and its unused facts are still the file's own, and those are
-    // read from what recovery kept.
+    // A recovered tree still reports: its syntax errors, the unused facts
+    // recovery kept, and the first error the checker meets in what remains.
     let mut syntax: Vec<Diagnostic> = loaded
         .syntax
         .iter()
@@ -136,9 +137,18 @@ pub fn analyze_file(
         .cloned()
         .collect();
     if !syntax.is_empty() {
-        if let Ok(Analysis { program, warnings }) = resolve_file(&loaded, file) {
-            syntax.extend(warnings);
-            syntax.extend(unused_bindings(&program));
+        match resolve_file(&loaded, file) {
+            Ok(Analysis {
+                mut program,
+                warnings,
+            }) => {
+                syntax.extend(warnings);
+                syntax.extend(unused_bindings(&program));
+                if let Err(diagnostic) = validate_file(&mut program, file) {
+                    syntax.push(diagnostic);
+                }
+            }
+            Err(diagnostic) => syntax.push(diagnostic),
         }
         syntax.retain(|diagnostic| diagnostic.path == path);
         return syntax;
@@ -165,49 +175,62 @@ pub fn analyze_file(
 /// The one pipeline the compiler has; the source decides only what the files
 /// read as.
 pub fn build(entry: &Path, source: &impl ProgramSource) -> Result<Build, BuildFailure> {
-    let loaded = match load_files(entry, source) {
+    let mut loaded = match load_files(entry, source) {
         Ok(loaded) => loaded,
         Err(error) => return Err(failure(vec![error], None)),
     };
-    // A recovered tree is never resolved: the syntax errors are reported in
-    // full before any semantic stage can turn a dropped item into a second,
-    // misleading failure.
-    if !loaded.syntax.is_empty() {
-        return Err(syntax_failure(&loaded));
-    }
+    // A recovered tree still runs every stage: the syntax errors travel with
+    // the result and the output is withheld, but the facts the recovered
+    // source can still earn are facts the caller reports.
     let Resolved {
         program,
         entry,
         warnings,
     } = match resolve_program(&loaded) {
         Ok(resolved) => resolved,
-        Err(diagnostic) => return Err(failure(vec![], Some((loaded, diagnostic)))),
+        Err(diagnostic) => {
+            let mut diagnostics = loaded.syntax.clone();
+            diagnostics.push(diagnostic);
+            return Err(failure_from(&loaded, diagnostics));
+        }
     };
     let mut program = program;
-    if let Err(diagnostic) = validate_program(&mut program) {
-        return Err(failure(vec![], Some((loaded, diagnostic))));
-    }
     let mut warnings = warnings;
     warnings.extend(unused_bindings(&program));
+    if let Err(diagnostic) = validate_program(&mut program) {
+        // The checker's error is still one fact among the file's facts: the
+        // recovery's syntax errors, what the recovered tree kept unused, and
+        // the error itself all report.
+        let mut diagnostics = loaded.syntax.clone();
+        diagnostics.push(diagnostic);
+        let mut program_warnings = warnings.clone();
+        program_warnings.retain(|warning| is_program_file(&warning.path));
+        diagnostics.extend(program_warnings);
+        return Err(failure_from(&loaded, diagnostics));
+    }
+    let syntax = std::mem::take(&mut loaded.syntax);
     Ok(Build {
         loaded,
         program,
         entry,
         warnings,
+        syntax,
     })
 }
 
-/// Assemble the failure a recovered program stops on: every syntax error the
-/// load found, rendered at its place in the order the loader met it. The
-/// program's files carry the sources the spans name.
-fn syntax_failure(loaded: &LoadedProgram) -> BuildFailure {
-    let rendered = loaded
-        .syntax
+/// Assemble the failure a build stopped on from every diagnostic it
+/// gathered, rendered in the order it gathered them. The program's files
+/// carry the sources the spans name; the library's files publish nothing.
+fn failure_from(loaded: &LoadedProgram, gathered: Vec<Diagnostic>) -> BuildFailure {
+    let rendered = gathered
         .iter()
         .map(|diagnostic| render(loaded, diagnostic))
         .collect();
     let mut diagnostics: Vec<FileDiagnostics> = Vec::new();
-    for diagnostic in &loaded.syntax {
+    for diagnostic in &gathered {
+        if !diagnostic.path.is_absolute() {
+            continue;
+        }
         if let Some(file) = diagnostics
             .iter_mut()
             .find(|file| file.path == diagnostic.path)
@@ -233,10 +256,10 @@ fn syntax_failure(loaded: &LoadedProgram) -> BuildFailure {
     }
 }
 
-/// Assemble the failure a build stopped on: the diagnostics placed in their
-/// files, and the rendering a terminal prints. A load failure renders from
-/// the source the load carried; a check failure renders from the loaded
-/// program.
+/// Assemble the failure a build stopped on before it had a program: the
+/// diagnostics placed in their files, and the rendering a terminal prints. A
+/// load failure renders from the source the load carried; a check failure
+/// renders from the loaded program.
 fn failure(errors: Vec<LoadError>, checked: Option<(LoadedProgram, Diagnostic)>) -> BuildFailure {
     let rendered = match &checked {
         Some((loaded, diagnostic)) => render(loaded, diagnostic),
@@ -377,6 +400,30 @@ mod tests {
                 .any(|(level, text)| level == "Warning"
                     && text == "the local `unused` is never read"),
             "{facts:?}"
+        );
+    }
+
+    #[test]
+    fn a_recovered_tree_still_reports_its_type_error() {
+        let source = "use std::text;\nfn main() { let wrong: int = \"t\"; let broken: int = ; };";
+        let diagnostics = analyze_file(
+            Path::new("/virtual/main.kiru"),
+            &VirtualSource::new(&[("main.kiru", source)]),
+            None,
+        );
+        let messages: Vec<&str> = diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.message.as_str())
+            .collect();
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("expected an expression")),
+            "the syntax error reports: {messages:?}"
+        );
+        assert!(
+            messages.contains(&"expected int, found txt"),
+            "the checker still reports what the recovered tree earned: {messages:?}"
         );
     }
 

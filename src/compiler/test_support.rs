@@ -98,6 +98,11 @@ pub(crate) fn checked_program_and_entry(source: &str) -> (Program, DeclarationId
         &VirtualSource::new(&[("main.kiru", source)]),
     )
     .expect("the program checks");
+    assert!(
+        built.syntax.is_empty(),
+        "the program parses: {:?}",
+        built.syntax
+    );
     (built.program, built.entry)
 }
 
@@ -105,6 +110,9 @@ pub(crate) fn checked_program_and_entry(source: &str) -> (Program, DeclarationId
 /// program or the first diagnostic message.
 pub(crate) fn checked_files(files: &[(&str, &str)], entry: &str) -> Result<Program, String> {
     match build(Path::new(entry), &VirtualSource::new(files)) {
+        // A recovered tree still builds its model, but it is not a program:
+        // its syntax errors are the first fact the fixture reports.
+        Ok(built) if !built.syntax.is_empty() => Err(built.syntax[0].message.clone()),
         Ok(built) => Ok(built.program),
         Err(failure) => Err(first_message(&failure)),
     }
@@ -116,7 +124,11 @@ fn first_message(failure: &BuildFailure) -> String {
     failure
         .diagnostics()
         .iter()
-        .find_map(|file| file.diagnostics.first())
+        .find_map(|file| {
+            file.diagnostics
+                .iter()
+                .find(|diagnostic| matches!(diagnostic.severity, crate::compiler::Severity::Error))
+        })
         .map(|diagnostic| diagnostic.message.clone())
         .unwrap_or_else(|| failure.rendered().to_owned())
 }

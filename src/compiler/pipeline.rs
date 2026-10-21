@@ -33,16 +33,26 @@ pub(crate) fn compile(
         mut program,
         entry: entry_id,
         warnings,
+        syntax,
     } = build(entry, source).map_err(|failure| failure.rendered().to_owned())?;
     // The reachable set is the compile's second reading of the graph: what no
     // reachable body reads is a warning, then it is dropped before lowering.
     let reachable = mark_reachable(&program, entry_id);
-    let mut warnings = warnings;
-    warnings.extend(unused_declarations(&program, &reachable));
+    let mut facts = warnings;
+    facts.extend(unused_declarations(&program, &reachable));
     // The program's facts alone: the library the compiler carries is not the
     // program and never warns for it.
-    warnings.retain(|warning| is_program_file(&warning.path));
-    for warning in &warnings {
+    facts.retain(|warning| is_program_file(&warning.path));
+    // A recovered tree cannot become a binary, but it still reports: every
+    // syntax error it kept, and every fact the recovered source earned.
+    if !syntax.is_empty() {
+        let mut message = String::new();
+        for diagnostic in syntax.iter().chain(facts.iter()) {
+            message.push_str(&render(&loaded, diagnostic));
+        }
+        return Err(message);
+    }
+    for warning in &facts {
         eprint!("{}", render(&loaded, warning));
     }
     let entry_id = prune_unreachable(&mut program, entry_id, &reachable);
