@@ -61,8 +61,9 @@ impl Backend {
     }
 
     /// Rebuild the program from the open buffers over the disk, and publish
-    /// every file's diagnostics. A build that stops answers from the last
-    /// good one; a first build that stops publishes the failure.
+    /// every file's diagnostics. A build that stops publishes its failure and
+    /// leaves the last good build answering, so a half written line never
+    /// takes the answers away.
     async fn rebuild(&self) {
         let mut session = self.session.lock().await;
         let mut overlay = OverlaySource::new();
@@ -78,10 +79,12 @@ impl Backend {
                 session.build = Some(built);
             }
             Err(failure) => {
+                // A build that fails publishes what it found and keeps the
+                // last good one: while a line is half written, a hover or a
+                // definition still answers from the program that checked.
                 for file in failure.diagnostics() {
                     self.publish(&session, &file).await;
                 }
-                session.build = None;
             }
         }
     }
@@ -649,6 +652,64 @@ mod tests {
         assert_eq!(
             answer["range"]["start"]["character"], 7,
             "the name's own span"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_build_that_fails_keeps_the_last_good_answers() {
+        let directory = tempfile::tempdir().expect("a temporary directory");
+        let entry = directory.path().join("main.kiru");
+        let text = "fn speak() -> txt { return \"spoken\"; };\nfn main() { speak(); };\n";
+        std::fs::write(&entry, text).expect("the entry file");
+        let mut service = service(&entry);
+        call(
+            &mut service,
+            1,
+            "initialize",
+            serde_json::json!({"capabilities": {}}),
+        )
+        .await;
+        let uri = Uri::from_file_path(&entry).expect("the entry uri");
+        notify(
+            &mut service,
+            "textDocument/didOpen",
+            serde_json::json!({
+                "textDocument": {
+                    "uri": uri.as_str(),
+                    "languageId": "kiru",
+                    "version": 1,
+                    "text": text,
+                }
+            }),
+        )
+        .await;
+        // A half written line: the buffer does not parse, the build publishes
+        // its failure, and the last good program still answers.
+        notify(
+            &mut service,
+            "textDocument/didChange",
+            serde_json::json!({
+                "textDocument": {"uri": uri.as_str(), "version": 2},
+                "contentChanges": [{"text": format!("{text}\nfn probe() {{ let x: = 1; }};\n")}],
+            }),
+        )
+        .await;
+        let answer = call(
+            &mut service,
+            2,
+            "textDocument/hover",
+            serde_json::json!({
+                "textDocument": {"uri": uri.as_str()},
+                "position": {"line": 1, "character": 13},
+            }),
+        )
+        .await;
+        assert_eq!(
+            answer
+                .as_ref()
+                .and_then(|answer| answer["contents"].as_str()),
+            Some("root::speak: fn() -> txt"),
+            "the last good build answers while the buffer is broken: {answer:?}"
         );
     }
 
