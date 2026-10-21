@@ -3,16 +3,20 @@
 //!
 //! A compile walks the stages in order, and this facade is the one place that
 //! names them. The build runs the first half through one pipeline: `load_files`
-//! walks the entry file's directory tree and the embedded library through the
-//! source the caller names; `resolve_names` builds the program model and
-//! resolves every name into an edge; `validate_program` derives every type and
-//! enforces the body and flow rules. What a build leaves is the checked
-//! program and the warnings its unused syntax earned. The pipeline then
-//! `prune_unreachable` keeps only what the entry reaches, `lower_bytecode`
-//! lowers the result to a compact instruction stream, and `package_binary`
-//! serializes that bytecode behind the binary trailer. The model it builds
-//! lives in `crate::compiler::model`, and the bytecode it produces lives in
-//! `crate::compiler::bytecode`.
+//! reads the entry file's directory tree through the program source the caller
+//! supplies and mounts the embedded library; `resolve_program` builds the
+//! program model, resolves every name into an edge, and selects the entry;
+//! `validate_program` derives every type and enforces the body and flow rules.
+//! What a build leaves is the checked program, the entry it starts from, and
+//! the warnings its unused syntax earned. The pipeline then marks what the
+//! entry reaches, `prune_unreachable` keeps only that, `lower_bytecode` lowers
+//! the result to a compact instruction stream, and `package_binary` serializes
+//! that bytecode behind the binary trailer. A single file is analyzed the same
+//! first half: `analyze_file` resolves only that file's bodies and checks only
+//! them, with no entry and no pruning. The compiler reads no disk; the command
+//! line, the language server, and the tests supply the source. The model it
+//! builds lives in `crate::compiler::model`, and the bytecode it produces lives
+//! in `crate::compiler::bytecode`.
 
 mod build;
 pub(crate) mod bytecode;
@@ -35,10 +39,9 @@ mod test_support;
 mod validate_program;
 mod warnings;
 
-pub use build::{Build, BuildFailure, FileDiagnostics, build, check};
+pub use build::{Build, BuildFailure, FileDiagnostics, analyze_file, build};
 pub(crate) use diagnostic::DIAGNOSTIC_PREFIX;
 pub use diagnostic::{Diagnostic, RelatedSpan, Severity};
-pub(in crate::compiler) use load_files::collect_kiru_files;
 pub(crate) use load_files::{LoadedProgram, STD_TREE};
 #[cfg(test)]
 pub(crate) use lower_bytecode::declaration_codes;
@@ -53,8 +56,10 @@ pub(crate) use package_binary::{
 pub(crate) use pipeline::compile;
 pub(crate) use prune_unreachable::{mark_reachable, prune_unreachable};
 pub(crate) use resolve_names::EntryShape;
-pub use sources::{DiskSource, OverlaySource, ProgramSource, VirtualSource};
+pub use sources::ProgramSource;
 #[cfg(test)]
-pub(crate) use test_support::{checked_files, checked_program, checked_program_and_entry};
+pub(crate) use test_support::{
+    VirtualSource, checked_files, checked_program, checked_program_and_entry,
+};
 pub(crate) use validate_program::{validate_file, validate_program};
 pub(crate) use warnings::unused_declarations;

@@ -6,7 +6,7 @@
 //! program or an entry.
 
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::OnceLock;
 
 use tower_lsp_server::jsonrpc::Result;
 use tower_lsp_server::ls_types::{
@@ -18,32 +18,45 @@ use tower_lsp_server::ls_types::{
 };
 use tower_lsp_server::{Client, LanguageServer};
 
-use crate::compiler::{Diagnostic, Severity, check};
+use crate::compiler::{Diagnostic, STD_TREE, Severity, analyze_file};
 
+use super::OverlaySource;
 use super::positions::{Encoding, span_to_range};
 
 /// The server a client speaks to: the client handle, and the encoding its
 /// positions count in.
 pub struct Backend {
     client: Client,
-    encoding: Mutex<Encoding>,
+    encoding: OnceLock<Encoding>,
 }
 
 impl Backend {
     pub fn new(client: Client) -> Self {
         Self {
             client,
-            encoding: Mutex::new(Encoding::Utf16),
+            encoding: OnceLock::new(),
         }
     }
 
-    /// Check one document as the client holds it and publish its facts.
+    /// Analyze one document as the client holds it and publish its facts.
     async fn check(&self, uri: Uri, source: &str) {
         let Some(path) = uri.to_file_path() else {
             return;
         };
-        let encoding = *self.encoding.lock().expect("the encoding is set once");
-        let diagnostics = check(&path, source)
+        // A path that cannot be named as a uri earns no publication.
+        let Some(uri) = Uri::from_file_path(&path) else {
+            return;
+        };
+        let encoding = self.encoding.get().copied().unwrap_or(Encoding::Utf16);
+        let mut overlay = OverlaySource::new();
+        overlay.open(path.to_path_buf(), source.to_owned());
+        // The library is `std/`: a file under a directory named `std` is
+        // analyzed in that library's tree; any other file stands in the root
+        // namespace.
+        let library = path
+            .ancestors()
+            .find(|ancestor| ancestor.file_name().is_some_and(|name| name == STD_TREE));
+        let diagnostics = analyze_file(&path, &overlay, library)
             .iter()
             .map(|diagnostic| protocol_diagnostic(source, &path, diagnostic, encoding))
             .collect();
@@ -56,7 +69,7 @@ impl Backend {
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         let encoding = negotiated(&params);
-        *self.encoding.lock().expect("the encoding is set once") = encoding;
+        let _ = self.encoding.set(encoding);
         Ok(InitializeResult {
             server_info: None,
             offset_encoding: None,
@@ -146,12 +159,15 @@ fn protocol_diagnostic(
         .related
         .iter()
         .filter(|related| related.path == path)
-        .map(|related| DiagnosticRelatedInformation {
-            location: Location {
-                uri: Uri::from_file_path(path).expect("a checked file has a uri"),
-                range: span_to_range(source, related.span, encoding),
-            },
-            message: related.message.clone(),
+        .filter_map(|related| {
+            let uri = Uri::from_file_path(path)?;
+            Some(DiagnosticRelatedInformation {
+                location: Location {
+                    uri,
+                    range: span_to_range(source, related.span, encoding),
+                },
+                message: related.message.clone(),
+            })
         })
         .collect();
     ProtocolDiagnostic {
@@ -167,6 +183,7 @@ fn protocol_diagnostic(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compiler::VirtualSource;
     use tower_lsp_server::jsonrpc::Request;
 
     /// The service over a backend with no state but its encoding.
@@ -235,5 +252,51 @@ mod tests {
         tower::Service::call(&mut service, request)
             .await
             .expect("the notification is handled");
+    }
+
+    #[test]
+    fn the_real_library_file_analyzes_without_errors() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
+        let path = root.join("dynamic/vec.kiru");
+        let source = std::fs::read_to_string(&path).expect("the library file is readable");
+        let mut overlay = OverlaySource::new();
+        overlay.open(path.clone(), source);
+        let facts = analyze_file(&path, &overlay, Some(&root));
+        assert!(
+            facts
+                .iter()
+                .all(|diagnostic| !matches!(diagnostic.severity, Severity::Error)),
+            "the library's own file analyzes without errors: {facts:?}"
+        );
+    }
+
+    #[test]
+    fn a_file_reports_its_own_warnings_only() {
+        let path = Path::new("/virtual/main.kiru");
+        let local = analyze_file(
+            path,
+            &VirtualSource::new(&[("main.kiru", "fn main() { let unused: int = 1; };")]),
+            None,
+        );
+        assert_eq!(
+            local.len(),
+            1,
+            "the file writes one unused local: {local:?}"
+        );
+        assert_eq!(local[0].message, "the local `unused` is never read");
+        assert_eq!(local[0].path, path);
+
+        let unused_use = analyze_file(
+            path,
+            &VirtualSource::new(&[("main.kiru", "use std::text;\nfn main() {};")]),
+            None,
+        );
+        assert_eq!(
+            unused_use.len(),
+            1,
+            "the file writes one unused use: {unused_use:?}"
+        );
+        assert_eq!(unused_use[0].message, "unused use `std::text`");
+        assert_eq!(unused_use[0].path, path);
     }
 }

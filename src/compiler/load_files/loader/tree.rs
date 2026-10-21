@@ -2,12 +2,12 @@
 //!
 //! A file belongs to its directory's namespace: the path from the tree root,
 //! with the tree's name as the first segment. The standard library's files come
-//! from a table compiled into the binary; the program tree is every `.kiru`
-//! file under the entry file's directory, walked recursively. There is no
-//! import: a file is in the tree because it is on disk, and resolution is
-//! order-free.
+//! from a table compiled into the binary; a program tree is every `.kiru` file
+//! under the target's directory. There is no import: a file is in the tree
+//! because the source names it, and resolution is order-free. Every byte is
+//! read through the program source; the loader names no disk.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::compiler::load_files::load_error::LoadError;
 use crate::compiler::load_files::loaded_program::LoadedProgram;
@@ -48,16 +48,10 @@ pub(crate) fn load_files(
         })?;
     program_files.sort();
     for path in program_files {
-        let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
-        let namespace = program_namespace(&tree_root, &canonical);
-        let source = program_source.read(&canonical).map_err(|error| LoadError {
-            path: canonical.clone(),
-            span: crate::syntax::Span::new(0, 0),
-            message: format!("cannot read {}: {error}", canonical.display()),
-            source: String::new(),
-        })?;
-        let index = loader.add(canonical.clone(), source, namespace)?;
-        if entry_path.as_deref() == Some(canonical.as_path()) {
+        let namespace = program_namespace(&tree_root, &path);
+        let source = read_source(program_source, &path)?;
+        let index = loader.add(path.clone(), source, namespace)?;
+        if entry_path.as_deref() == Some(path.as_path()) {
             loader.entry = Some(index);
         }
     }
@@ -82,47 +76,42 @@ pub(crate) fn load_files(
     })
 }
 
-/// Load one file by itself: the library it belongs to and this file, with no
-/// entry. A program tree is not read: a file is checked in its own context.
-/// A file under the library root is checked against the library read from its
-/// own directory, with the edited source in place of its file; any other file
-/// is checked with the embedded library mounted.
-pub(crate) fn load_single(path: &Path, source: &str) -> Result<LoadedProgram, LoadError> {
+/// Load the files of one file's context: this file beside the library it
+/// belongs to, with no entry and no program tree.
+///
+/// With no library root, the embedded table is mounted and the analyzed file
+/// stands in the root namespace. With a library root, the embedded table is
+/// not mounted: the source collects the root's files, each read through it, and
+/// every file joins the `std` tree under its directories. The analyzed file is
+/// one of them, and the source answers its buffer for it.
+pub(crate) fn load_single(
+    path: &Path,
+    program_source: &impl ProgramSource,
+    library: Option<&Path>,
+) -> Result<LoadedProgram, LoadError> {
     let mut loader = Loader::new();
-    match library_file(path) {
-        Some((relative, root)) => {
-            let mut files = collect_kiru_files(&root).map_err(|error| LoadError {
-                path: root.clone(),
+    match library {
+        None => {
+            loader.add_embedded()?;
+            let source = read_source(program_source, path)?;
+            loader.add(path.to_path_buf(), source, vec![PROGRAM_TREE.to_owned()])?;
+        }
+        Some(root) => {
+            let mut files = program_source.collect(root).map_err(|error| LoadError {
+                path: root.to_path_buf(),
                 span: crate::syntax::Span::new(0, 0),
                 message: format!("cannot read {}: {error}", root.display()),
                 source: String::new(),
             })?;
             files.sort();
             for file in files {
-                let Some(under_library) = relative_to(&root, &file) else {
+                let Some(under_library) = relative_to(root, &file) else {
                     continue;
                 };
                 let namespace = namespace_of(&under_library, STD_TREE);
-                if under_library == relative {
-                    loader.add(path.to_path_buf(), source.to_owned(), namespace)?;
-                } else {
-                    let text = std::fs::read_to_string(&file).map_err(|error| LoadError {
-                        path: file.clone(),
-                        span: crate::syntax::Span::new(0, 0),
-                        message: format!("cannot read {}: {error}", file.display()),
-                        source: String::new(),
-                    })?;
-                    loader.add(file, text, namespace)?;
-                }
+                let source = read_source(program_source, &file)?;
+                loader.add(file, source, namespace)?;
             }
-        }
-        None => {
-            loader.add_embedded()?;
-            loader.add(
-                path.to_path_buf(),
-                source.to_owned(),
-                vec![PROGRAM_TREE.to_owned()],
-            )?;
         }
     }
     Ok(LoadedProgram {
@@ -133,22 +122,20 @@ pub(crate) fn load_single(path: &Path, source: &str) -> Result<LoadedProgram, Lo
     })
 }
 
+/// Read one file through the source, naming it when the source cannot.
+fn read_source(program_source: &impl ProgramSource, path: &Path) -> Result<String, LoadError> {
+    program_source.read(path).map_err(|error| LoadError {
+        path: path.to_path_buf(),
+        span: crate::syntax::Span::new(0, 0),
+        message: format!("cannot read {}: {error}", path.display()),
+        source: String::new(),
+    })
+}
+
 /// The path of `file` relative to `root`, in the slash form namespaces use.
 fn relative_to(root: &Path, file: &Path) -> Option<String> {
     let relative = file.strip_prefix(root).ok()?;
     Some(relative.to_string_lossy().replace('\\', "/"))
-}
-
-/// The library-relative path a file under the library root holds, when it
-/// holds one: the library root is the `std` directory the language declares.
-fn library_file(path: &Path) -> Option<(String, PathBuf)> {
-    for ancestor in path.ancestors() {
-        if ancestor.file_name().is_some_and(|name| name == STD_TREE) {
-            let relative = relative_to(ancestor, path)?;
-            return Some((relative, ancestor.to_path_buf()));
-        }
-    }
-    None
 }
 
 /// The namespace a file's directory names, relative to a tree root: the tree's
@@ -177,22 +164,4 @@ fn program_namespace(tree_root: &Path, path: &Path) -> Vec<String> {
         }
     }
     segments
-}
-
-/// Every `.kiru` file under `directory`, recursively. The disk source's
-/// program tree is this walk; the loader reads what it names.
-pub(in crate::compiler) fn collect_kiru_files(directory: &Path) -> std::io::Result<Vec<PathBuf>> {
-    let mut files = Vec::new();
-    for entry in std::fs::read_dir(directory)? {
-        let path = entry?.path();
-        if path.is_dir() {
-            files.extend(collect_kiru_files(&path)?);
-        } else if path
-            .extension()
-            .is_some_and(|extension| extension == "kiru")
-        {
-            files.push(path);
-        }
-    }
-    Ok(files)
 }

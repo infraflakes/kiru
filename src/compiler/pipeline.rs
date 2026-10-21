@@ -12,26 +12,27 @@ use std::path::Path;
 
 use super::output_file::{make_writable_executable, same_file};
 use crate::compiler::diagnostic::render;
-use crate::compiler::sources::DiskSource;
 use crate::compiler::{
-    Build, DIAGNOSTIC_PREFIX, attach_trailer, build, lower_bytecode, mark_reachable,
+    Build, DIAGNOSTIC_PREFIX, ProgramSource, attach_trailer, build, lower_bytecode, mark_reachable,
     prune_unreachable, serialize_bytecode, unused_declarations,
 };
 
 /// Compile `entry` to `output`, or to the entry path without its extension,
-/// by copying `executable` (the running `kc`) and attaching the program. On
-/// failure, returns the message to print, already rendered.
+/// by copying `executable` (the running `kc`) and attaching the program. The
+/// source supplies the files. On failure, returns the message to print,
+/// already rendered.
 pub(crate) fn compile(
     entry: &Path,
     output: Option<&Path>,
     executable: &Path,
+    source: &impl ProgramSource,
 ) -> Result<(), String> {
     let Build {
         loaded,
         mut program,
         entry: entry_id,
         warnings,
-    } = build(entry, &DiskSource).map_err(|failure| failure.rendered().to_owned())?;
+    } = build(entry, source).map_err(|failure| failure.rendered().to_owned())?;
     // The reachable set is the compile's second reading of the graph: what no
     // reachable body reads is a warning, then it is dropped before lowering.
     let reachable = mark_reachable(&program, entry_id);

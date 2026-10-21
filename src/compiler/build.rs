@@ -106,13 +106,18 @@ impl BuildFailure {
     }
 }
 
-/// Check one file by itself: the facts it earns, its unused declaration and
-/// use warnings and the first error the checker meets. The file is checked in
-/// its own context: the library it belongs to is mounted, nothing else on disk
-/// joins it, and no entry is named, so a client asks this for the buffer the
-/// editor holds whatever the file is called and wherever it stands.
-pub fn check(path: &Path, source: &str) -> Vec<Diagnostic> {
-    let loaded = match load_single(path, source) {
+/// Analyze one file by itself: the file's unused-`use` and unused-binding
+/// warnings, and the first error the checker meets. The file is checked in its
+/// own context: the library it belongs to is read through `source` when a
+/// library root is named, the embedded library is mounted when none is, and no
+/// entry is selected, so a client asks this for the buffer the editor holds
+/// whatever the file is called and wherever it stands.
+pub fn analyze_file(
+    path: &Path,
+    source: &impl ProgramSource,
+    library: Option<&Path>,
+) -> Vec<Diagnostic> {
+    let loaded = match load_single(path, source, library) {
         Ok(loaded) => loaded,
         Err(error) => return vec![Diagnostic::new(error.path, error.span, error.message)],
     };
@@ -131,7 +136,7 @@ pub fn check(path: &Path, source: &str) -> Vec<Diagnostic> {
     if let Err(diagnostic) = validate_file(&mut program, file) {
         warnings.push(diagnostic);
     }
-    // The checked file's facts alone: the library is checked with it, and its
+    // The analyzed file's facts alone: the library is checked with it, and its
     // own warnings name files the client did not ask about.
     warnings.retain(|diagnostic| diagnostic.path == path);
     warnings
@@ -215,12 +220,21 @@ fn failure(errors: Vec<LoadError>, checked: Option<(LoadedProgram, Diagnostic)>)
 
 #[cfg(test)]
 mod tests {
-    /// The facts one checked source earns, as (severity, message) pairs.
-    fn checked(source: &str) -> Vec<(String, String)> {
-        check(Path::new("/single/file.kiru"), source)
-            .into_iter()
-            .map(|diagnostic| (format!("{:?}", diagnostic.severity), diagnostic.message))
-            .collect()
+    use super::*;
+    use crate::compiler::Severity;
+    use crate::compiler::VirtualSource;
+    use crate::syntax::Span;
+
+    /// The facts one analyzed source earns, as (severity, message) pairs.
+    fn analyzed(source: &str) -> Vec<(String, String)> {
+        analyze_file(
+            Path::new("/virtual/main.kiru"),
+            &VirtualSource::new(&[("main.kiru", source)]),
+            None,
+        )
+        .into_iter()
+        .map(|diagnostic| (format!("{:?}", diagnostic.severity), diagnostic.message))
+        .collect()
     }
 
     #[test]
@@ -258,7 +272,7 @@ mod tests {
             ),
         ];
         for (case, source, severity, message) in cases {
-            let facts = checked(source);
+            let facts = analyzed(source);
             assert!(
                 facts
                     .iter()
@@ -272,9 +286,9 @@ mod tests {
     fn a_library_file_is_checked_against_its_library() {
         // The library's own file: it joins the namespace its directories
         // name, so `impl Vec` resolves without an entry or a program.
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("std/dynamic/vec.kiru");
-        let source = std::fs::read_to_string(&path).expect("the library file is readable");
-        let facts = check(&path, &source);
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
+        let path = root.join("dynamic/vec.kiru");
+        let facts = analyze_file(&path, &crate::cli::DiskSource, Some(&root));
         assert!(
             facts
                 .iter()
@@ -282,11 +296,6 @@ mod tests {
             "the library's own file checks without errors: {facts:?}"
         );
     }
-
-    use super::*;
-    use crate::compiler::Severity;
-    use crate::compiler::sources::VirtualSource;
-    use crate::syntax::Span;
 
     /// The build of a virtual tree, with every file's diagnostics flattened
     /// to (path, severity, message).

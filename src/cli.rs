@@ -12,6 +12,8 @@ mod parse_arguments;
 mod print_help;
 mod run_command;
 mod run_embedded;
+mod source;
 
 pub(crate) use error::CliError;
 pub use run_command::run;
+pub(crate) use source::DiskSource;

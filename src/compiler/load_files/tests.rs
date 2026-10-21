@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use super::STD_TREE;
 use super::loader::embedded::EMBEDDED;
 use super::loader::load_files;
-use crate::compiler::sources::DiskSource;
+use crate::cli::DiskSource;
 use crate::syntax::{self};
 
 fn write(directory: &Path, name: &str, contents: &str) -> PathBuf {

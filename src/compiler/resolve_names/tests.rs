@@ -16,7 +16,7 @@ fn linked_with_entry(files: &[(&str, &str)], entry: &str) -> Result<Resolved, St
     }
     let program = crate::compiler::load_files::load_files(
         &directory.path().join(entry),
-        &crate::compiler::sources::DiskSource,
+        &crate::cli::DiskSource,
     )
     .map_err(|error| error.message)?;
     resolve_program(&program).map_err(|diagnostic| diagnostic.message)
@@ -710,8 +710,7 @@ fn an_unresolvable_use_is_rejected_at_its_span() {
     let path = directory.path().join("main.kiru");
     std::fs::write(&path, source).expect("write file");
     let loaded =
-        crate::compiler::load_files::load_files(&path, &crate::compiler::sources::DiskSource)
-            .expect("loads");
+        crate::compiler::load_files::load_files(&path, &crate::cli::DiskSource).expect("loads");
     let diagnostic = match resolve_program(&loaded) {
         Ok(_) => panic!("the use is rejected"),
         Err(diagnostic) => diagnostic,
