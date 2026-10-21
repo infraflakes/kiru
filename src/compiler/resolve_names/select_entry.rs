@@ -73,6 +73,23 @@ impl Builder {
         let file = skeleton
             .file
             .expect("a root main is a file declaration, so it has a file");
+        // The entry is the compilation target: the `main` reachability starts
+        // from must stand in that file, so a tree whose `main` lives beside
+        // the named target is rejected rather than silently run from another
+        // file.
+        if file.0 != loaded.entry {
+            let path = &loaded.files[loaded.entry].path;
+            return Err(Diagnostic::new(
+                path,
+                Span::new(0, 0),
+                format!("the entry file declares no `{ENTRY_FUNCTION}` function"),
+            )
+            .with_related(
+                self.files[file.0].path.clone(),
+                skeleton.name_span,
+                format!("`{ENTRY_FUNCTION}` is declared here"),
+            ));
+        }
         let path = &self.files[file.0].path;
         if !skeleton.kind.may_be_entry() {
             return Err(Diagnostic::new(

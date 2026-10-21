@@ -15,8 +15,9 @@ pub(crate) enum Request {
         entry: PathBuf,
         output: Option<PathBuf>,
     },
-    /// Serve the language protocol on standard input and output.
-    Serve { entry: Option<PathBuf> },
+    /// Serve the language protocol on standard input and output for one
+    /// compilation target.
+    Serve { entry: PathBuf },
 }
 
 /// Parse the words after the program name. `help` and `version` win wherever
@@ -27,13 +28,20 @@ pub(crate) fn parse(words: &[String]) -> Result<Request, CliError> {
     // path, not a request for usage.
     if words.first().map(String::as_str) == Some("lsp") {
         let mut rest = words[1..].iter();
-        let entry = rest.next().map(PathBuf::from);
+        let Some(entry) = rest.next() else {
+            return Err(CliError(
+                "the server needs the entry file, the one declaring `main`; run `kc help` for usage"
+                    .to_owned(),
+            ));
+        };
         if let Some(word) = rest.next() {
             return Err(CliError(format!(
                 "unexpected argument `{word}`; run `kc help` for usage"
             )));
         }
-        return Ok(Request::Serve { entry });
+        return Ok(Request::Serve {
+            entry: PathBuf::from(entry),
+        });
     }
     let mut entry = None;
     let mut output = None;
@@ -83,14 +91,11 @@ mod tests {
     }
 
     #[test]
-    fn the_server_takes_an_optional_entry() {
+    fn the_server_takes_the_entry_the_compiler_would() {
+        assert!(parsed(&["lsp"]).is_err(), "the entry file is required");
         assert!(matches!(
-            parsed(&["lsp"]),
-            Ok(Request::Serve { entry: None })
-        ));
-        assert!(matches!(
-            parsed(&["lsp", "main.kiru"]),
-            Ok(Request::Serve { entry: Some(entry) }) if entry == std::path::Path::new("main.kiru")
+            parsed(&["lsp", "app.kiru"]),
+            Ok(Request::Serve { entry }) if entry == std::path::Path::new("app.kiru")
         ));
         assert!(
             parsed(&["lsp", "a.kiru", "b.kiru"]).is_err(),

@@ -146,13 +146,14 @@ fn entry_and_namespace_rules() {
             ],
             "main.kiru",
         ),
-        (
-            "main declared by another file in the root",
-            &[("main.kiru", "use std;"), ("helper.kiru", "fn main() {};")],
-            "main.kiru",
-        ),
     ]);
     expect_rejections(&[
+        (
+            "an entry file that declares no main, while a file beside it does",
+            &[("main.kiru", "use std;"), ("helper.kiru", "fn main() {};")],
+            "main.kiru",
+            "the entry file declares no `main` function",
+        ),
         (
             "main with a text parameter",
             &[("main.kiru", "use std;\nfn main(args: txt) {};")],

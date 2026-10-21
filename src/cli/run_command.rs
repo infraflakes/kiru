@@ -30,7 +30,7 @@ pub fn run() -> i32 {
             0
         }
         Ok(Request::Serve { entry }) => {
-            crate::lsp::serve(entry.unwrap_or_else(|| std::path::PathBuf::from("main.kiru")));
+            crate::lsp::serve(entry);
             0
         }
         Ok(Request::Compile { entry, output }) => match &executable {
