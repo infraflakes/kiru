@@ -33,12 +33,14 @@ mod pipeline;
 mod prune_unreachable;
 mod reads;
 mod resolve_names;
+mod semantic;
 mod sources;
 #[cfg(test)]
 mod test_support;
 mod validate_program;
 mod warnings;
 
+pub(crate) use build::semantic_tokens;
 pub use build::{Build, BuildFailure, FileDiagnostics, analyze_file, build};
 pub(crate) use diagnostic::DIAGNOSTIC_PREFIX;
 pub use diagnostic::{Diagnostic, RelatedSpan, Severity};
@@ -56,6 +58,9 @@ pub(crate) use package_binary::{
 pub(crate) use pipeline::compile;
 pub(crate) use prune_unreachable::{mark_reachable, prune_unreachable};
 pub(crate) use resolve_names::EntryShape;
+#[cfg(test)]
+pub(crate) use semantic::SemanticRole;
+pub(crate) use semantic::{SemanticToken, TOKEN_MODIFIERS, TOKEN_TYPES};
 pub use sources::ProgramSource;
 #[cfg(test)]
 pub(crate) use test_support::{

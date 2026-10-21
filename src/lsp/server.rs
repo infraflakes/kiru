@@ -5,29 +5,35 @@
 //! moment it opens, whatever its name, wherever it stands, and without a
 //! program or an entry.
 
-use std::path::Path;
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use tower_lsp_server::jsonrpc::Result;
 use tower_lsp_server::ls_types::{
     Diagnostic as ProtocolDiagnostic, DiagnosticRelatedInformation, DiagnosticSeverity,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
     DidSaveTextDocumentParams, InitializeParams, InitializeResult, InitializedParams, Location,
-    PositionEncodingKind, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
-    Uri,
+    PositionEncodingKind, SemanticTokensFullOptions, SemanticTokensOptions, SemanticTokensParams,
+    SemanticTokensResult, SemanticTokensServerCapabilities, ServerCapabilities,
+    TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
-use crate::compiler::{Diagnostic, STD_TREE, Severity, analyze_file};
+use crate::compiler::{Diagnostic, STD_TREE, Severity, analyze_file, semantic_tokens};
 
 use super::OverlaySource;
 use super::positions::{Encoding, span_to_range};
+use super::tokens;
 
 /// The server a client speaks to: the client handle, and the encoding its
 /// positions count in.
 pub struct Backend {
     client: Client,
     encoding: OnceLock<Encoding>,
+    /// The text of every document the client holds open, as it stands in the
+    /// editor. A token request carries no text of its own.
+    documents: Mutex<HashMap<PathBuf, String>>,
 }
 
 impl Backend {
@@ -35,7 +41,19 @@ impl Backend {
         Self {
             client,
             encoding: OnceLock::new(),
+            documents: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Keep the text a document notification carries.
+    fn remember(&self, uri: &Uri, source: &str) {
+        let Some(path) = uri.to_file_path() else {
+            return;
+        };
+        self.documents
+            .lock()
+            .expect("the document map is not poisoned")
+            .insert(path.into_owned(), source.to_owned());
     }
 
     /// Analyze one document as the client holds it and publish its facts.
@@ -50,12 +68,7 @@ impl Backend {
         let encoding = self.encoding.get().copied().unwrap_or(Encoding::Utf16);
         let mut overlay = OverlaySource::new();
         overlay.open(path.to_path_buf(), source.to_owned());
-        // The library is `std/`: a file under a directory named `std` is
-        // analyzed in that library's tree; any other file stands in the root
-        // namespace.
-        let library = path
-            .ancestors()
-            .find(|ancestor| ancestor.file_name().is_some_and(|name| name == STD_TREE));
+        let library = library_root(&path);
         let diagnostics = analyze_file(&path, &overlay, library)
             .iter()
             .map(|diagnostic| protocol_diagnostic(source, &path, diagnostic, encoding))
@@ -81,6 +94,15 @@ impl LanguageServer for Backend {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
                     TextDocumentSyncKind::FULL,
                 )),
+                semantic_tokens_provider: Some(
+                    SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        SemanticTokensOptions {
+                            legend: tokens::legend(),
+                            full: Some(SemanticTokensFullOptions::Bool(true)),
+                            ..Default::default()
+                        },
+                    ),
+                ),
                 ..Default::default()
             },
         })
@@ -93,27 +115,69 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        self.remember(&params.text_document.uri, &params.text_document.text);
         self.check(params.text_document.uri, &params.text_document.text)
             .await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         if let Some(change) = params.content_changes.into_iter().last() {
+            self.remember(&params.text_document.uri, &change.text);
             self.check(params.text_document.uri, &change.text).await;
         }
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
         if let Some(text) = params.text {
+            self.remember(&params.text_document.uri, &text);
             self.check(params.text_document.uri, &text).await;
         }
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        if let Some(path) = params.text_document.uri.to_file_path() {
+            self.documents
+                .lock()
+                .expect("the document map is not poisoned")
+                .remove(path.as_ref());
+        }
         self.client
             .publish_diagnostics(params.text_document.uri, Vec::new(), None)
             .await;
     }
+
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> Result<Option<SemanticTokensResult>> {
+        let Some(path) = params.text_document.uri.to_file_path() else {
+            return Ok(None);
+        };
+        let Some(source) = self
+            .documents
+            .lock()
+            .expect("the document map is not poisoned")
+            .get(path.as_ref())
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let encoding = *self.encoding.get().unwrap_or(&Encoding::Utf16);
+        let mut overlay = OverlaySource::new();
+        overlay.open(path.to_path_buf(), source.clone());
+        let tokens = semantic_tokens(&path, &overlay, library_root(&path));
+        Ok(Some(SemanticTokensResult::Tokens(tokens::encode(
+            &source, tokens, encoding,
+        ))))
+    }
+}
+
+/// The library a file belongs to: a file under a directory named `std` is
+/// analyzed in that library's tree; any other file stands in the root
+/// namespace.
+fn library_root(path: &Path) -> Option<&Path> {
+    path.ancestors()
+        .find(|ancestor| ancestor.file_name().is_some_and(|name| name == STD_TREE))
 }
 
 /// Serve the protocol on standard input and output until the client exits.
@@ -209,8 +273,20 @@ mod tests {
         response.map(|response| response.result().cloned().expect("the answer is a result"))
     }
 
+    /// Deliver one notification and let the service handle it.
+    async fn notify(
+        service: &mut tower_lsp_server::LspService<Backend>,
+        method: &str,
+        params: serde_json::Value,
+    ) {
+        let request = Request::build(method.to_owned()).params(params).finish();
+        tower::Service::call(service, request)
+            .await
+            .expect("the notification is handled");
+    }
+
     #[tokio::test]
-    async fn initialize_declares_diagnostics_only() {
+    async fn initialize_declares_diagnostics_and_the_semantic_legend() {
         let mut service = service();
         let answer = call(
             &mut service,
@@ -230,8 +306,63 @@ mod tests {
         assert_eq!(capabilities["hoverProvider"], serde_json::Value::Null);
         assert_eq!(capabilities["completionProvider"], serde_json::Value::Null);
         assert_eq!(
-            capabilities["semanticTokensProvider"],
-            serde_json::Value::Null
+            capabilities["semanticTokensProvider"]["full"], true,
+            "the server offers the whole document's tokens"
+        );
+        assert_eq!(
+            capabilities["semanticTokensProvider"]["legend"]["tokenTypes"][1],
+            "type"
+        );
+        assert_eq!(
+            capabilities["semanticTokensProvider"]["legend"]["tokenModifiers"],
+            serde_json::json!(["declaration"])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_document_answers_with_its_tokens() {
+        let uri = Uri::from_file_path("/single/tokens.kiru").expect("the uri");
+        let mut service = service();
+        call(
+            &mut service,
+            1,
+            "initialize",
+            serde_json::json!({"capabilities": {"general": {"positionEncodings": ["utf-8"]}}}),
+        )
+        .await;
+        notify(
+            &mut service,
+            "textDocument/didOpen",
+            serde_json::json!({
+                "textDocument": {
+                    "uri": uri.as_str(),
+                    "languageId": "kiru",
+                    "version": 1,
+                    "text": "fn main() {};",
+                }
+            }),
+        )
+        .await;
+        let answer = call(
+            &mut service,
+            2,
+            "textDocument/semanticTokens/full",
+            serde_json::json!({"textDocument": {"uri": uri.as_str()}}),
+        )
+        .await
+        .expect("the tokens answer");
+        assert_eq!(
+            answer["data"],
+            serde_json::json!([
+                0, 0, 2, 8, 0, // fn
+                0, 3, 4, 2, 1, // main
+                0, 4, 1, 11, 0, // (
+                0, 1, 1, 11, 0, // )
+                0, 2, 1, 11, 0, // {
+                0, 1, 1, 11, 0, // }
+                0, 1, 1, 11, 0, // ;
+            ]),
+            "the keyword, the declared function, and the punctuation"
         );
     }
 

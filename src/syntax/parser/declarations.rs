@@ -3,9 +3,8 @@
 
 use crate::compiler::model::{DeclarationKind, join_path};
 use crate::syntax::ast::{
-    UsePath,
     Binding, Closure, Declaration, DeclarationForm, Expression, Function, ImplBlock, Parameter,
-    TypeDeclaration, TypeDeclarationKind, TypeExpr, TypeField, Use, VariantDeclaration,
+    TypeDeclaration, TypeDeclarationKind, TypeExpr, TypeField, Use, UsePath, VariantDeclaration,
 };
 use crate::syntax::token::TokenKind;
 

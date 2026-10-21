@@ -6,6 +6,7 @@
 mod positions;
 mod server;
 mod source;
+mod tokens;
 
 pub use positions::Encoding;
 pub use server::serve;

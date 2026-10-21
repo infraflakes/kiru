@@ -223,7 +223,13 @@ impl Builder {
         file: FileId,
         reported_path: &std::path::Path,
     ) -> Result<TypeHead, Diagnostic> {
-        let TypeExpr::Named { path, span, .. } = ty else {
+        let TypeExpr::Named {
+            path,
+            path_span,
+            span,
+            ..
+        } = ty
+        else {
             let resolved = self.resolve_type_expr(ty, namespace, file, &[], reported_path)?;
             return Err(Diagnostic::new(
                 reported_path,
@@ -234,6 +240,13 @@ impl Builder {
                 ),
             ));
         };
+        if let Some(last) = path.last() {
+            self.type_uses.borrow_mut().push(TypeUse {
+                file,
+                path: *path_span,
+                name: Span::new(path_span.end - last.len(), path_span.end),
+            });
+        }
         let resolved =
             match self.named_type(WrittenType { path, span }, namespace, reported_path)? {
                 NamedType::Scalar(scalar) => scalar,

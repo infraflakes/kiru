@@ -18,6 +18,7 @@ use crate::compiler::diagnostic::{Diagnostic, render};
 use crate::compiler::load_files::{LoadError, LoadedProgram, load_files, load_single};
 use crate::compiler::model::{DeclarationId, FileId, Program};
 use crate::compiler::resolve_names::{Analysis, Resolved, resolve_file, resolve_program};
+use crate::compiler::semantic::{self, SemanticToken};
 use crate::compiler::sources::ProgramSource;
 use crate::compiler::warnings::{is_program_file, unused_bindings};
 use crate::compiler::{validate_file, validate_program};
@@ -120,14 +121,15 @@ pub fn analyze_file(
     source: &impl ProgramSource,
     library: Option<&Path>,
 ) -> Vec<Diagnostic> {
-    let loaded = match load_single(path, source, library) {
-        Ok(loaded) => loaded,
-        Err(error) => return vec![Diagnostic::new(error.path, error.span, error.message)],
+    let Analyzed {
+        loaded,
+        mut program,
+        warnings,
+        file,
+    } = match analyzed(path, source, library) {
+        Ok(analyzed) => analyzed,
+        Err(diagnostics) => return diagnostics,
     };
-    let Some(file) = loaded.files.iter().position(|file| file.path == path) else {
-        return Vec::new();
-    };
-    let file = FileId(file);
     // A recovered tree still reports: its syntax errors, the unused facts
     // recovery kept, and the first error the checker meets in what remains.
     let mut syntax: Vec<Diagnostic> = loaded
@@ -136,38 +138,80 @@ pub fn analyze_file(
         .filter(|diagnostic| diagnostic.path == path)
         .cloned()
         .collect();
+    let mut warnings = warnings;
+    warnings.extend(unused_bindings(&program));
+    warnings.retain(|diagnostic| diagnostic.path == path);
     if !syntax.is_empty() {
-        match resolve_file(&loaded, file) {
-            Ok(Analysis {
-                mut program,
-                warnings,
-            }) => {
-                syntax.extend(warnings);
-                syntax.extend(unused_bindings(&program));
-                if let Err(diagnostic) = validate_file(&mut program, file) {
-                    syntax.push(diagnostic);
-                }
-            }
-            Err(diagnostic) => syntax.push(diagnostic),
+        if let Err(diagnostic) = validate_file(&mut program, file) {
+            syntax.extend(warnings);
+            syntax.push(diagnostic);
+        } else {
+            syntax.extend(warnings);
         }
-        syntax.retain(|diagnostic| diagnostic.path == path);
         return syntax;
     }
-    let Analysis {
-        mut program,
-        mut warnings,
-    } = match resolve_file(&loaded, file) {
-        Ok(resolved) => resolved,
-        Err(diagnostic) => return vec![diagnostic],
-    };
-    warnings.extend(unused_bindings(&program));
     if let Err(diagnostic) = validate_file(&mut program, file) {
         warnings.push(diagnostic);
     }
-    // The analyzed file's facts alone: the library is checked with it, and its
-    // own warnings name files the client did not ask about.
-    warnings.retain(|diagnostic| diagnostic.path == path);
     warnings
+}
+
+/// The roles every name of one file plays, for a client that paints the
+/// source. The file is resolved like a check and validated, because the check
+/// settles the method families the tokens name.
+pub(crate) fn semantic_tokens(
+    path: &Path,
+    source: &impl ProgramSource,
+    library: Option<&Path>,
+) -> Vec<SemanticToken> {
+    let Analyzed {
+        loaded,
+        mut program,
+        file,
+        ..
+    } = match analyzed(path, source, library) {
+        Ok(analyzed) => analyzed,
+        Err(_) => return Vec::new(),
+    };
+    let _ = validate_file(&mut program, file);
+    semantic::tokens(&loaded, &program, file)
+}
+
+/// One file after loading and resolution: its source, its model, the
+/// resolution's warnings, and where the file stands in the load.
+struct Analyzed {
+    loaded: LoadedProgram,
+    program: Program,
+    warnings: Vec<Diagnostic>,
+    file: FileId,
+}
+
+/// Load one file and resolve it, with no entry: the facts both the diagnostics
+/// and the semantic tokens read. A load or resolution error is the file's
+/// diagnostic list.
+fn analyzed(
+    path: &Path,
+    source: &impl ProgramSource,
+    library: Option<&Path>,
+) -> Result<Analyzed, Vec<Diagnostic>> {
+    let loaded = match load_single(path, source, library) {
+        Ok(loaded) => loaded,
+        Err(error) => return Err(vec![Diagnostic::new(error.path, error.span, error.message)]),
+    };
+    let Some(index) = loaded.files.iter().position(|file| file.path == path) else {
+        return Err(Vec::new());
+    };
+    let file = FileId(index);
+    let Analysis { program, warnings } = match resolve_file(&loaded, file) {
+        Ok(analysis) => analysis,
+        Err(diagnostic) => return Err(vec![diagnostic]),
+    };
+    Ok(Analyzed {
+        loaded,
+        program,
+        warnings,
+        file,
+    })
 }
 
 /// Run the build: load the program tree and the library through `source`,

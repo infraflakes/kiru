@@ -15,3 +15,4 @@ pub(crate) use lexer::lex_with_comments;
 pub(crate) use parser::parse_file;
 pub use span::Span;
 pub(crate) use token::WILDCARD;
+pub(crate) use token::{Token, TokenKind};
