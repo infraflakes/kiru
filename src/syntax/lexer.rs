@@ -15,7 +15,10 @@ pub(crate) struct LexError {
 
 /// Lex a whole source file.
 pub(crate) fn lex(source: &str) -> Result<Vec<Token>, LexError> {
-    Lexer::new(source).run()
+    let mut lexer = Lexer::new(source);
+    let mut tokens = Vec::new();
+    lexer.run(&mut tokens)?;
+    Ok(tokens)
 }
 
 struct Lexer<'a> {
@@ -67,40 +70,43 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn run(&mut self) -> Result<Vec<Token>, LexError> {
-        let mut tokens = Vec::new();
+    /// Append every token of the source to `tokens`, ending with `Eof`. The
+    /// buffer is the caller's, so one token allocates no vector of its own.
+    fn run(&mut self, tokens: &mut Vec<Token>) -> Result<(), LexError> {
         loop {
-            let next = self.next_tokens()?;
-            if next.is_empty() {
+            let before = tokens.len();
+            self.tokens_at_cursor(tokens)?;
+            if tokens.len() == before {
                 tokens.push(Token {
                     kind: TokenKind::Eof,
                     span: Span::new(self.source.len(), self.source.len()),
                 });
-                return Ok(tokens);
+                return Ok(());
             }
-            tokens.extend(next);
         }
     }
 
-    /// Lex the tokens at the cursor, skipping leading trivia. Usually one
-    /// token, but a string with interpolation is several. Empty at the end of
-    /// the source.
-    fn next_tokens(&mut self) -> Result<Vec<Token>, LexError> {
+    /// Append the tokens at the cursor, skipping leading trivia. Usually one
+    /// token, but a string with interpolation is several. Appends nothing at
+    /// the end of the source.
+    fn tokens_at_cursor(&mut self, tokens: &mut Vec<Token>) -> Result<(), LexError> {
         self.skip_trivia();
         let Some((start, current)) = self.current() else {
-            return Ok(Vec::new());
+            return Ok(());
         };
 
         if current == '"' {
-            return self.text();
+            return self.text(tokens);
         }
 
         if current.is_ascii_digit() {
-            return Ok(vec![self.number()?]);
+            tokens.push(self.number()?);
+            return Ok(());
         }
 
         if is_identifier_start(current) {
-            return Ok(vec![self.identifier()]);
+            tokens.push(self.identifier());
+            return Ok(());
         }
 
         // A two-character operator comes first, so `==` never lexes as two `=`.
@@ -120,10 +126,11 @@ impl<'a> Lexer<'a> {
         if let Some(kind) = two_character_token {
             self.advance();
             self.advance();
-            return Ok(vec![Token {
+            tokens.push(Token {
                 kind,
                 span: Span::new(start, self.offset()),
-            }]);
+            });
+            return Ok(());
         }
 
         let single_character_token = match current {
@@ -148,10 +155,11 @@ impl<'a> Lexer<'a> {
         };
         if let Some(kind) = single_character_token {
             self.advance();
-            return Ok(vec![Token {
+            tokens.push(Token {
                 kind,
                 span: Span::new(start, self.offset()),
-            }]);
+            });
+            return Ok(());
         }
 
         // A lone `&` or `|` is a prefix of a two-character operator.
@@ -246,13 +254,13 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// Lex a string. A string with no interpolation is one `Text` token; a
-    /// string with `@(…)` is a `Text` segment, then an `InterpolationStart`,
-    /// the tokens of the expression, and an `InterpolationEnd`, repeated.
-    fn text(&mut self) -> Result<Vec<Token>, LexError> {
+    /// Lex a string into `tokens`. A string with no interpolation is one
+    /// `Text` token; a string with `@(…)` is a `Text` segment, then an
+    /// `InterpolationStart`, the tokens of the expression, and an
+    /// `InterpolationEnd`, repeated.
+    fn text(&mut self, tokens: &mut Vec<Token>) -> Result<(), LexError> {
         let (start, _) = self.current().expect("string starts at a quote");
         self.advance();
-        let mut tokens = Vec::new();
         let mut value = String::new();
         // The first segment's span opens at the quote, so a literal's written
         // span covers its delimiters and a later segment's opening
@@ -269,7 +277,7 @@ impl<'a> Lexer<'a> {
                         kind: TokenKind::Text(value),
                         span: Span::new(segment_start, self.offset()),
                     });
-                    return Ok(tokens);
+                    return Ok(());
                 }
                 '@' if matches!(self.peek(1), Some((_, '('))) => {
                     tokens.push(Token {
@@ -283,7 +291,7 @@ impl<'a> Lexer<'a> {
                         kind: TokenKind::InterpolationStart,
                         span: Span::new(interpolation_start, self.offset()),
                     });
-                    self.interpolation(&mut tokens)?;
+                    self.interpolation(tokens)?;
                     segment_start = self.offset();
                 }
                 '\\' => {
@@ -328,21 +336,27 @@ impl<'a> Lexer<'a> {
         let mut depth = 0usize;
         loop {
             let start = self.offset();
-            let next = self.next_tokens()?;
-            if next.is_empty() {
+            let before = tokens.len();
+            self.tokens_at_cursor(tokens)?;
+            if tokens.len() == before {
                 return Err(self.error(
                     Span::new(start, self.source.len()),
                     "unterminated interpolation",
                 ));
             }
-            for token in next {
-                match token.kind {
+            let mut index = before;
+            while index < tokens.len() {
+                match tokens[index].kind {
                     TokenKind::LParen => depth += 1,
                     TokenKind::RParen => {
                         if depth == 0 {
+                            // The closing parenthesis is not part of the
+                            // interpolation: the boundary token takes its span.
+                            let span = tokens[index].span;
+                            tokens.truncate(index);
                             tokens.push(Token {
                                 kind: TokenKind::InterpolationEnd,
-                                span: token.span,
+                                span,
                             });
                             return Ok(());
                         }
@@ -350,7 +364,7 @@ impl<'a> Lexer<'a> {
                     }
                     _ => {}
                 }
-                tokens.push(token);
+                index += 1;
             }
         }
     }
