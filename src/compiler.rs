@@ -51,7 +51,7 @@ pub(in crate::compiler) use messages::{
     native_used_as_value, private_member, value_called,
 };
 pub(crate) use package_binary::{
-    attach_trailer, deserialize_bytecode, read_trailer, serialize_bytecode,
+    attach_trailer, deserialize_bytecode, payload_in, serialize_bytecode,
 };
 pub(crate) use pipeline::compile;
 pub(crate) use prune_unreachable::{mark_reachable, prune_unreachable};

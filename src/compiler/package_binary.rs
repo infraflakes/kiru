@@ -8,5 +8,5 @@
 mod binary_trailer;
 mod serialize_bytecode;
 
-pub(crate) use binary_trailer::{attach_trailer, read_trailer};
+pub(crate) use binary_trailer::{attach_trailer, payload_in};
 pub(crate) use serialize_bytecode::{deserialize_bytecode, serialize_bytecode};

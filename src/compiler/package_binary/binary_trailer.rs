@@ -1,6 +1,6 @@
 //! The trailer that turns the kiru binary into a compiled program.
 
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::Write;
 use std::path::Path;
 
 const MAGIC: &[u8; 8] = b"KIRUPROG";
@@ -16,28 +16,22 @@ pub(crate) fn attach_trailer(path: &Path, payload: &[u8]) -> std::io::Result<()>
     Ok(())
 }
 
-/// Read the payload from an executable, or `None` when it has no trailer.
-pub(crate) fn read_trailer(path: &Path) -> Option<Vec<u8>> {
-    let mut file = std::fs::File::open(path).ok()?;
-    let length = file.metadata().ok()?.len();
-    if length < TRAILER as u64 {
+/// The payload a compiled binary's trailer carries, or `None` when the bytes
+/// carry no trailer. The bytes are the executable's own: reading them is the
+/// caller's job.
+pub(crate) fn payload_in(executable: &[u8]) -> Option<&[u8]> {
+    let length = executable.len();
+    if length < TRAILER {
         return None;
     }
-
-    file.seek(SeekFrom::End(-(TRAILER as i64))).ok()?;
-    let mut trailer = [0u8; TRAILER];
-    file.read_exact(&mut trailer).ok()?;
+    let trailer = &executable[length - TRAILER..];
     if &trailer[MAGIC.len()..TRAILER] != MAGIC {
         return None;
     }
-
     let size = u64::from_le_bytes(trailer[..MAGIC.len()].try_into().ok()?);
-    if size > length - TRAILER as u64 {
+    if size > (length - TRAILER) as u64 {
         return None;
     }
     let size = usize::try_from(size).ok()?;
-    file.seek(SeekFrom::End(-((TRAILER + size) as i64))).ok()?;
-    let mut payload = vec![0u8; size];
-    file.read_exact(&mut payload).ok()?;
-    Some(payload)
+    Some(&executable[length - TRAILER - size..length - TRAILER])
 }

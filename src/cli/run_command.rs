@@ -14,11 +14,15 @@ use super::{compile_request, print_help, run_embedded};
 pub fn run() -> i32 {
     let words: Vec<String> = std::env::args().skip(1).collect();
     let executable = std::env::current_exe().ok();
-    if let Some(bytes) = executable
+    // The bytes of the running executable are the command line's to read; the
+    // compiler names the format they carry.
+    if let Some(payload) = executable
         .as_deref()
-        .and_then(crate::compiler::read_trailer)
+        .and_then(|path| std::fs::read(path).ok())
+        .as_deref()
+        .and_then(crate::compiler::payload_in)
     {
-        return run_embedded::run(&bytes, &words);
+        return run_embedded::run(payload, &words);
     }
     match parse_arguments::parse(&words) {
         Ok(Request::Help) => {
