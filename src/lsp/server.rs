@@ -448,15 +448,18 @@ fn file_uri(path: &Path) -> Option<Uri> {
     Uri::from_file_path(path)
 }
 
-/// The path the server speaks for. The entry is resolved before the service
-/// starts, so this is the one argument the binary parses.
-pub fn entry_from_arguments(arguments: impl IntoIterator<Item = String>) -> Option<PathBuf> {
-    let mut arguments = arguments.into_iter();
-    let first = arguments.next()?;
-    if arguments.next().is_some() {
-        return None;
-    }
-    Some(PathBuf::from(first))
+/// Serve the protocol on standard input and output until the client exits.
+/// The entry is the program the server answers for; a relative path resolves
+/// against the workspace root the client names.
+pub fn serve(entry: PathBuf) {
+    let runtime = tokio::runtime::Runtime::new().expect("the server starts its runtime");
+    runtime.block_on(async move {
+        let (service, socket) =
+            tower_lsp_server::LspService::new(move |client| Backend::new(client, entry.clone()));
+        tower_lsp_server::Server::new(tokio::io::stdin(), tokio::io::stdout(), socket)
+            .serve(service)
+            .await;
+    });
 }
 
 /// The diagnostic the protocol carries: the same message, its span as a

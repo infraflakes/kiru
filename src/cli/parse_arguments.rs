@@ -15,12 +15,26 @@ pub(crate) enum Request {
         entry: PathBuf,
         output: Option<PathBuf>,
     },
+    /// Serve the language protocol on standard input and output.
+    Serve { entry: Option<PathBuf> },
 }
 
 /// Parse the words after the program name. `help` and `version` win wherever
 /// they appear, before any later word is read. The first other word is the
 /// entry path; `-o` sets the output path.
 pub(crate) fn parse(words: &[String]) -> Result<Request, CliError> {
+    // The server takes the first word, so a path named `help` after it is a
+    // path, not a request for usage.
+    if words.first().map(String::as_str) == Some("lsp") {
+        let mut rest = words[1..].iter();
+        let entry = rest.next().map(PathBuf::from);
+        if let Some(word) = rest.next() {
+            return Err(CliError(format!(
+                "unexpected argument `{word}`; run `kc help` for usage"
+            )));
+        }
+        return Ok(Request::Serve { entry });
+    }
     let mut entry = None;
     let mut output = None;
     let mut index = 0;
@@ -53,4 +67,42 @@ pub(crate) fn parse(words: &[String]) -> Result<Request, CliError> {
         return Err(CliError("no input file, `kc help` for usage.".to_owned()));
     };
     Ok(Request::Compile { entry, output })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parsed(words: &[&str]) -> Result<Request, CliError> {
+        parse(
+            &words
+                .iter()
+                .map(|word| word.to_string())
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    #[test]
+    fn the_server_takes_an_optional_entry() {
+        assert!(matches!(
+            parsed(&["lsp"]),
+            Ok(Request::Serve { entry: None })
+        ));
+        assert!(matches!(
+            parsed(&["lsp", "main.kiru"]),
+            Ok(Request::Serve { entry: Some(entry) }) if entry == std::path::Path::new("main.kiru")
+        ));
+        assert!(
+            parsed(&["lsp", "a.kiru", "b.kiru"]).is_err(),
+            "one entry at most"
+        );
+    }
+
+    #[test]
+    fn a_compilation_is_not_the_server() {
+        assert!(matches!(
+            parsed(&["main.kiru"]),
+            Ok(Request::Compile { entry, output: None }) if entry == std::path::Path::new("main.kiru")
+        ));
+    }
 }

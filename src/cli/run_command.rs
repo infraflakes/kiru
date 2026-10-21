@@ -2,7 +2,7 @@
 //!
 //! `run` first asks whether this executable carries a program trailer; when it
 //! does, the words name the program's arguments. Otherwise the words select
-//! help, version, or a compilation.
+//! help, version, a compilation, or the language server.
 
 use crate::compiler::DIAGNOSTIC_PREFIX;
 
@@ -27,6 +27,10 @@ pub fn run() -> i32 {
         }
         Ok(Request::Version) => {
             print_help::print_version();
+            0
+        }
+        Ok(Request::Serve { entry }) => {
+            crate::lsp::serve(entry.unwrap_or_else(|| std::path::PathBuf::from("main.kiru")));
             0
         }
         Ok(Request::Compile { entry, output }) => match &executable {
