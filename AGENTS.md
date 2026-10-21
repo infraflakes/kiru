@@ -46,7 +46,7 @@
 
 ## Where things live
 
-- src/compiler/ is the engine. Its stages run in this order: load_files reads the entry file's directory tree and the embedded library through the program source and derives a namespace from each file's directory; resolve_names collects every declaration, resolves references and links bodies; validate_program types and checks every body; prune_unreachable drops what the entry never reaches; lower_bytecode turns bodies into instructions; package_binary writes the image. The checked program holds no entry: the entry is the compilation's input, is selected and validated where the program is resolved, and is passed to the stages that start from it.
+- src/compiler/ is the engine and holds two processes: compile/ and analyze/. Each process and each stage is an entry file beside its directory. compile/ runs load, resolve, check, prune, lower, package in that order: load reads the entry file's directory tree and the embedded library through the program source and derives a namespace from each file's directory; resolve collects every declaration, resolves references and links bodies, and selects the entry; check types and checks every body; prune drops what the entry never reaches; lower turns bodies into instructions; package writes the image. compile/build.rs is the checked program both processes read. analyze/ resolves one file in the context the client names and reports that file's facts and semantic tokens. The checked program holds no entry: the entry is the compilation's input, is selected and validated where the program is resolved, and is passed to the stages that start from it.
 - src/compiler/ reads no program source from disk. A program source provides the files: the command line supplies the disk's source, the language server supplies the editor's buffers, and the tests supply a virtual tree. Packaging writes the output image; the bytes of the running executable are read by the command line, which hands them to the compiler's trailer format.
 - src/compiler/model/ is the graph and holds no stage logic: ids, declarations, expressions, types (the group model), program (the graph, the name and method and type tables, type naming, namespace paths, field lookup), visitors, verify_graph, verify_spans.
 - src/compiler/bytecode/ defines the instruction set and its validation. Nothing outside it names an instruction variant.
@@ -78,7 +78,7 @@
 
 ## Adding a syntax form
 
-- A token goes in src/syntax/token.rs and src/syntax/lexer.rs. A form goes in the parser file for its category: declarations, statements or expressions. Its node goes in src/syntax/ast.rs.
+- A token goes in src/syntax/lex/token.rs and its spelling in src/syntax/lex/scanner.rs. A form goes in the parser file for its category under src/syntax/parse/: declarations, statements or expressions. Its node goes in src/syntax/ast.rs.
 - No pass may decide kind by matching on the syntax tree. Every pass reads the model.
 
 ## When the language changes

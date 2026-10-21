@@ -7,7 +7,7 @@
 
 use crate::compiler::model::{DeclarationKind, Type};
 use crate::syntax::Span;
-use crate::syntax::token::TokenKind;
+use crate::syntax::TokenKind;
 
 /// One parsed source file: its top-level items in order.
 #[derive(Debug, PartialEq, Eq)]

@@ -14,14 +14,14 @@
 //! A pass that rewrites or builds nodes cannot use a read-only visitor, so it
 //! keeps its own match over the kinds it produces. They are:
 //!
-//! - `resolve_names::body_linking`, which builds model nodes from the parsed
+//! - `compile::resolve::body_linking`, which builds model nodes from the parsed
 //!   syntax tree.
-//! - `resolve_names::binding_linking`, which builds a local binding node and a
+//! - `compile::resolve::binding_linking`, which builds a local binding node and a
 //!   variant pattern from a parsed pattern.
 //! - `lower_expressions`, which builds instructions from the model and gives
 //!   every expression a register.
 //!
-//! The checker in `validate_program` also reads the model without rewriting
+//! The checker in `compile::check` also reads the model without rewriting
 //! it, but it interprets each kind — it derives a type or a flow — so it keeps
 //! its own recursion instead of this observer.
 
