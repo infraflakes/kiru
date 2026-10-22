@@ -1,6 +1,4 @@
-
 # The built-in type categories whose names this namespace writes bare.
-use std;
 use std::process;
 
 # The project a build script operates on.
@@ -27,5 +25,5 @@ fn run(project: Project, line: txt) {
 
 # Orchestrated step: hide stdout, keep stderr for debugging, return the code.
 fn status(project: Project, line: txt) -> int {
-  return std::process::command(wrap(project, line)).dir(project.Dir).stream(std::process::Stream.stdout, "/dev/null").run();
+  return process::command(wrap(project, line)).dir(project.Dir).stream(process::Stream.stdout, "/dev/null").run();
 };
