@@ -200,9 +200,8 @@ tracked so they are settled before they block a phase.
   recursively; there is no `import`. Files inside a directory may be renamed, split, or
   merged freely, because only the directory names the namespace.
 - **A project is a `kiru.toml`.** The manifest names the program tree
-  (`project.root`), the binary (`project.name`, defaulting to the manifest
-  directory's name), and the output (`project.output`); the root namespace's
-  `main` is the entry. `kc` reads `./kiru.toml` or the manifest it is given, so
+  (`project.root`) and the binary's path (`project.output`); the root
+  namespace's `main` is the entry. `kc` reads `./kiru.toml` or the manifest it is given, so
   the compilation target is one file rather than a source file. The manifest
   also decides the server's publication scope and which unused warning kinds
   are reported. The standard library is not a project: it is embedded from

@@ -1,7 +1,7 @@
 //! Reading and validating one `kiru.toml`.
 
 use std::fmt;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -98,8 +98,7 @@ struct RawManifest {
 #[serde(deny_unknown_fields)]
 struct RawProject {
     root: PathBuf,
-    name: Option<String>,
-    output: Option<PathBuf>,
+    output: PathBuf,
 }
 
 #[derive(Default, Deserialize)]
@@ -154,27 +153,7 @@ impl Project {
                 format!("the program tree `{}` is not a directory", root.display()),
             ));
         }
-        let name = match raw.project.name {
-            Some(name) => {
-                validate_name(&manifest, &name)?;
-                name
-            }
-            None => directory
-                .file_name()
-                .and_then(|name| name.to_str())
-                .filter(|name| !name.is_empty())
-                .ok_or_else(|| {
-                    ProjectError::new(
-                        &manifest,
-                        "the manifest's directory has no usable name; set `project.name`",
-                    )
-                })?
-                .to_owned(),
-        };
-        let output = match raw.project.output {
-            Some(output) => directory.join(output),
-            None => directory.join(&name),
-        };
+        let output = directory.join(&raw.project.output);
         if output == manifest {
             return Err(ProjectError::new(
                 &manifest,
@@ -204,34 +183,29 @@ impl Project {
     }
 }
 
-/// A binary name is one path component, so the output stays beside the
-/// manifest and no name writes outside it.
-fn validate_name(manifest: &Path, name: &str) -> Result<(), ProjectError> {
-    let path = Path::new(name);
-    let mut components = path.components();
-    let one =
-        matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none();
-    if name.is_empty() || !one {
-        return Err(ProjectError::new(
-            manifest,
-            format!("`{name}` is not a file name; set `project.name` to one path component"),
-        ));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn wrote(manifest: &str) -> (tempfile::TempDir, PathBuf) {
+        let directory = tempfile::tempdir().expect("a temporary directory");
+        let path = directory.path().join(MANIFEST);
+        std::fs::write(&path, manifest).expect("the manifest");
+        (directory, path)
+    }
+
     #[test]
-    fn a_name_is_one_path_component() {
-        assert!(validate_name(Path::new("m"), "pipeline").is_ok());
-        for name in ["", ".", "..", "a/b", "/a"] {
-            assert!(
-                validate_name(Path::new("m"), name).is_err(),
-                "`{name}` is not a file name"
-            );
-        }
+    fn output_is_settled_against_the_manifest_directory() {
+        let (directory, manifest) = wrote("[project]\nroot = \".\"\noutput = \"build/app\"\n");
+        let project = Project::load(&manifest).expect("the manifest is valid");
+        assert_eq!(project.output, directory.path().join("build/app"));
+        assert_eq!(project.root, directory.path().canonicalize().unwrap());
+    }
+
+    #[test]
+    fn a_manifest_without_output_is_rejected() {
+        let (_directory, manifest) = wrote("[project]\nroot = \".\"\n");
+        let error = Project::load(&manifest).expect_err("the output is required");
+        assert!(error.message.contains("missing field `output`"), "{error}");
     }
 }

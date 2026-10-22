@@ -25,7 +25,7 @@ this directory as the program tree and the binary `main`:
 ```toml
 [project]
 root = "."
-name = "main"
+output = "main"
 ```
 
 Kiru source files end in `.kiru`. Make a file called `main.kiru` and enter this
@@ -101,9 +101,8 @@ $ kc version
 
 `kc` reads `./kiru.toml`; `kc path/to/kiru.toml` reads that manifest. It checks
 the whole tree under `project.root`, finds the root namespace's `main`, and
-writes a standalone executable at `project.output`, which defaults to the
-manifest directory joined with `project.name` (itself defaulting to the
-directory's name):
+writes a standalone executable at `project.output`, a path settled against the
+manifest's directory:
 
 ```console
 $ kc

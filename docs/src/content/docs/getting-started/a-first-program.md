@@ -34,7 +34,7 @@ Commands](/commands/running-a-command/) covers the builder's other options, and
 [Panic and Failure](/failure/panic/) defines the exit status.
 
 Compile and run it from its project: a `kiru.toml` in this directory, with
-`root = "."` and `name = "tasks"`, makes this file the program tree's root.
+`root = "."` and `output = "tasks"`, makes this file the program tree's root.
 
 ```console
 $ kc

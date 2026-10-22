@@ -478,7 +478,7 @@ mod tests {
         let directory = tempfile::tempdir().expect("a temporary directory");
         std::fs::write(
             directory.path().join("kiru.toml"),
-            "[project]\nroot = \".\"\n",
+            "[project]\nroot = \".\"\noutput = \"main\"\n",
         )
         .expect("the manifest");
         std::fs::write(directory.path().join("main.kiru"), source).expect("the program");

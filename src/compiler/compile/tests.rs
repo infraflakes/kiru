@@ -12,7 +12,7 @@ fn compile_program(source: &str) -> (String, PathBuf) {
     let directory = tempfile::tempdir().expect("a temporary directory");
     std::fs::write(
         directory.path().join("kiru.toml"),
-        "[project]\nroot = \".\"\nname = \"program\"\n",
+        "[project]\nroot = \".\"\noutput = \"program\"\n",
     )
     .expect("the manifest");
     std::fs::write(directory.path().join("main.kiru"), source).expect("the program file");
@@ -63,7 +63,7 @@ fn a_project_without_a_root_main_names_the_manifest() {
     let directory = tempfile::tempdir().expect("a temporary directory");
     std::fs::write(
         directory.path().join("kiru.toml"),
-        "[project]\nroot = \".\"\nname = \"program\"\n",
+        "[project]\nroot = \".\"\noutput = \"program\"\n",
     )
     .expect("the manifest");
     std::fs::write(directory.path().join("main.kiru"), "fn helper() {};\n")
