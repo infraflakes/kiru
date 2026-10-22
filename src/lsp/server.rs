@@ -23,7 +23,9 @@ use tower_lsp_server::ls_types::{
 };
 use tower_lsp_server::{Client, LanguageServer};
 
-use crate::compiler::{Diagnostic, STD_TREE, Severity, Tree, analyze_tree, semantic_tokens};
+use crate::compiler::{
+    Diagnostic, EMBEDDED, STD_TREE, Severity, Tree, analyze_tree, semantic_tokens,
+};
 use crate::project::{DiagnosticScope, Project, find};
 
 use super::OverlaySource;
@@ -35,9 +37,6 @@ use super::tokens;
 pub struct Backend {
     client: Client,
     encoding: OnceLock<Encoding>,
-    /// The compiler's own standard library source tree, when this build can
-    /// name it. The one tree that is analyzed without a manifest.
-    standard_library: OnceLock<Option<PathBuf>>,
     /// The text of every document the client holds open, as it stands in the
     /// editor. A token request carries no text of its own.
     documents: Mutex<HashMap<PathBuf, String>>,
@@ -58,22 +57,21 @@ impl Backend {
         Self {
             client,
             encoding: OnceLock::new(),
-            standard_library: OnceLock::new(),
             documents: Mutex::new(HashMap::new()),
             published: Mutex::new(HashMap::new()),
             silenced: Mutex::new(HashSet::new()),
         }
     }
 
-    /// The tree the file belongs to. The compiler's own `std/` sources win:
-    /// they are the library, not a project. Otherwise the nearest manifest's
-    /// tree owns the file, and a file outside that tree has no tree at all.
+    /// The tree the file belongs to. A directory named `std` that holds the
+    /// library's files is the library, not a project: it is the one tree
+    /// analyzed without a manifest, and it is recognized by its contents so an
+    /// installed binary needs no checkout path. Otherwise the nearest
+    /// manifest's tree owns the file, and a file outside that tree has no tree
+    /// at all.
     fn context(&self, path: &Path) -> std::result::Result<Context, String> {
-        let library = self.standard_library.get_or_init(standard_library_source);
-        if let Some(root) = library
-            && path.starts_with(root)
-        {
-            return Ok(Context::Library(root.clone()));
+        if let Some(root) = standard_library_root(path) {
+            return Ok(Context::Library(root));
         }
         let manifest =
             find(path).ok_or_else(|| format!("no `kiru.toml` above `{}`", path.display()))?;
@@ -362,13 +360,18 @@ fn negotiated(params: &InitializeParams) -> Encoding {
     }
 }
 
-/// The compiler's own standard library sources, when this build points at
-/// them. An installed binary may not; a file simply has no library tree then.
-fn standard_library_source() -> Option<PathBuf> {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join(STD_TREE)
-        .canonicalize()
-        .ok()
+/// The library's source tree above a file: an ancestor named `std` that holds
+/// every file the binary embeds. The check reads the tree's contents, so a
+/// checkout at any path is recognized by an installed binary too.
+fn standard_library_root(path: &Path) -> Option<PathBuf> {
+    path.ancestors()
+        .find(|ancestor| {
+            ancestor.file_name().is_some_and(|name| name == STD_TREE)
+                && EMBEDDED
+                    .iter()
+                    .all(|(relative, _)| ancestor.join(relative).is_file())
+        })
+        .map(Path::to_path_buf)
 }
 
 /// The canonical path of a file the editor names. A file the disk does not
@@ -590,6 +593,28 @@ mod tests {
         )
         .await;
         assert_eq!(answer, Some(serde_json::Value::Null));
+    }
+
+    #[test]
+    fn the_library_tree_is_recognized_by_its_contents() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("std/dynamic/map.kiru");
+        let root = standard_library_root(&path).expect("the checkout's std tree is the library");
+        assert!(root.ends_with("std"));
+        assert_eq!(
+            root,
+            path.ancestors()
+                .nth(2)
+                .expect("the library root")
+                .canonicalize()
+                .unwrap()
+        );
+        let project = tempfile::tempdir().expect("a temporary directory");
+        std::fs::create_dir_all(project.path().join("std")).expect("create the directory");
+        std::fs::write(project.path().join("std/main.kiru"), "fn main() {};").expect("write");
+        assert!(
+            standard_library_root(&project.path().join("std/main.kiru")).is_none(),
+            "a directory named std without the library's files is a program namespace"
+        );
     }
 
     #[test]

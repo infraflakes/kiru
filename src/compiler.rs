@@ -35,7 +35,7 @@ pub(crate) use compile::check::validate_program;
 
 pub(crate) use compile::compile;
 pub use compile::load::ProgramSource;
-pub(crate) use compile::load::{LoadedProgram, STD_TREE};
+pub(crate) use compile::load::{EMBEDDED, LoadedProgram, STD_TREE};
 #[cfg(test)]
 pub(crate) use compile::lower::declaration_codes;
 pub(crate) use compile::lower::lower_bytecode;

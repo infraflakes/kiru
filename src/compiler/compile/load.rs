@@ -17,6 +17,7 @@ mod sources;
 mod tests;
 mod tree;
 
+pub(crate) use embedded::EMBEDDED;
 pub(crate) use load_error::LoadError;
 pub(crate) use loaded_program::{LoadedProgram, ScopedDeclaration};
 pub use sources::ProgramSource;
