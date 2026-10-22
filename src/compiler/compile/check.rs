@@ -17,4 +17,4 @@ mod statement_check;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use declarations::{validate_file, validate_program};
+pub(crate) use declarations::validate_program;

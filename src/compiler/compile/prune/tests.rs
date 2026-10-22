@@ -93,7 +93,10 @@ fn a_retained_program_still_checks() {
          fn main() { std::print(read(backend)); };",
     );
     prune_unreachable(&mut program, entry, &reachable);
-    validate_program(&mut program).expect("the retained program still checks");
+    assert!(
+        validate_program(&mut program).is_empty(),
+        "the retained program still checks"
+    );
 }
 
 #[test]

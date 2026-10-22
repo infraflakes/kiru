@@ -24,12 +24,31 @@ pub enum Severity {
     Warning,
 }
 
+/// The kind of unused fact a warning states. The project decides which kinds
+/// reach the terminal or the editor; the fact itself is never guessed from
+/// its message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WarningKind {
+    UnusedUse,
+    UnusedLocal,
+    UnusedDeclaration,
+}
+
 /// One other place a diagnostic points at: the span and the fact it states.
 #[derive(Clone, Debug)]
 pub struct RelatedSpan {
     pub path: PathBuf,
     pub span: Span,
     pub message: String,
+}
+
+/// The diagnostics of one file, with the source the spans name. A terminal
+/// renders from it; the server converts its spans against it.
+#[derive(Clone, Debug)]
+pub struct FileDiagnostics {
+    pub path: PathBuf,
+    pub source: String,
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 /// One compiler fact tied to a source file and byte range.
@@ -39,6 +58,9 @@ pub struct Diagnostic {
     pub span: Span,
     pub message: String,
     pub severity: Severity,
+    /// The unused fact this warning states, when it is one. A project's
+    /// diagnostics policy reads this, never the message.
+    pub warning: Option<WarningKind>,
     /// The places that explain this fact, when one exists. The first
     /// declaration behind a duplicate carries its span here.
     pub related: Vec<RelatedSpan>,
@@ -51,18 +73,21 @@ impl Diagnostic {
             span,
             message: message.into(),
             severity: Severity::Error,
+            warning: None,
             related: Vec::new(),
         }
     }
 
-    /// The same fact, weighed as a warning.
+    /// The same fact, weighed as a warning of one kind.
     pub(crate) fn warning(
         path: impl Into<PathBuf>,
         span: Span,
         message: impl Into<String>,
+        kind: WarningKind,
     ) -> Self {
         Self {
             severity: Severity::Warning,
+            warning: Some(kind),
             ..Self::new(path, span, message)
         }
     }

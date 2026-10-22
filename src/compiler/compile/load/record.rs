@@ -7,7 +7,7 @@ use super::tree::{STD_TREE, namespace_of};
 use crate::compiler::Diagnostic;
 use crate::compiler::compile::load::load_error::LoadError;
 use crate::compiler::compile::load::loaded_program::{
-    ImplTarget, LoadedFile, ScopedDeclaration, ScopedUse,
+    ImplTarget, LoadedFile, LoadedProgram, ScopedDeclaration, ScopedUse,
 };
 use crate::syntax;
 use crate::syntax::{Declaration, Item};
@@ -20,8 +20,6 @@ pub(super) struct Loader {
     pub(super) items: Vec<ScopedDeclaration>,
     pub(super) uses: Vec<ScopedUse>,
     pub(super) syntax: Vec<Diagnostic>,
-    /// The index of the entry file once the walk reaches it.
-    pub(super) entry: Option<usize>,
 }
 
 impl Loader {
@@ -31,7 +29,16 @@ impl Loader {
             items: Vec::new(),
             uses: Vec::new(),
             syntax: Vec::new(),
-            entry: None,
+        }
+    }
+
+    /// Take the recorded files and their joined stream.
+    pub(super) fn finish(self) -> LoadedProgram {
+        LoadedProgram {
+            files: self.files,
+            items: self.items,
+            uses: self.uses,
+            syntax: self.syntax,
         }
     }
 

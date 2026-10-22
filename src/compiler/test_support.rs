@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use crate::cli::DiskSource;
 use crate::compiler::model::{DeclarationId, Program};
-use crate::compiler::{BuildFailure, ProgramSource, build};
+use crate::compiler::{BuildFailure, ProgramSource, build, program_main};
 
 /// A program tree that stands for files no walk can reach: the tests write
 /// one, keyed by the paths relative to a root that names no directory.
@@ -29,24 +29,14 @@ impl VirtualSource {
             .collect();
         Self { root, files }
     }
+
+    /// The tree root every file is under.
+    pub(crate) fn root(&self) -> &Path {
+        &self.root
+    }
 }
 
 impl ProgramSource for VirtualSource {
-    fn locate(&self, target: &Path) -> std::io::Result<(Option<PathBuf>, PathBuf)> {
-        let entry_path = self.root.join(target);
-        if self.files.contains_key(&entry_path) {
-            return Ok((Some(entry_path), self.root.clone()));
-        }
-        // A directory target names a tree, not an entry.
-        if entry_path == self.root || self.files.keys().any(|path| path.starts_with(&entry_path)) {
-            return Ok((None, entry_path));
-        }
-        Err(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            format!("{}", target.display()),
-        ))
-    }
-
     fn collect(&self, tree_root: &Path) -> std::io::Result<Vec<PathBuf>> {
         Ok(self
             .files
@@ -73,10 +63,6 @@ pub(crate) struct OverlayOnDisk {
 }
 
 impl ProgramSource for OverlayOnDisk {
-    fn locate(&self, target: &Path) -> std::io::Result<(Option<PathBuf>, PathBuf)> {
-        DiskSource.locate(target)
-    }
-
     fn collect(&self, tree_root: &Path) -> std::io::Result<Vec<PathBuf>> {
         DiskSource.collect(tree_root)
     }
@@ -91,15 +77,16 @@ impl ProgramSource for OverlayOnDisk {
 
 /// Build one source file, returning the checked program.
 pub(crate) fn checked_program(source: &str) -> Program {
-    checked_files(&[("main.kiru", source)], "main.kiru").expect("the program checks")
+    checked_files(&[("main.kiru", source)]).expect("the program checks")
 }
 
-/// Build one source file, returning the checked program and the entry it
-/// starts from.
+/// Build one source file, returning the checked program and its root `main`.
 pub(crate) fn checked_program_and_entry(source: &str) -> (Program, DeclarationId) {
+    let source = VirtualSource::new(&[("main.kiru", source)]);
     let built = build(
-        Path::new("main.kiru"),
-        &VirtualSource::new(&[("main.kiru", source)]),
+        source.root(),
+        &source,
+        &crate::project::WarningPolicy::default(),
     )
     .expect("the program checks");
     assert!(
@@ -107,17 +94,30 @@ pub(crate) fn checked_program_and_entry(source: &str) -> (Program, DeclarationId
         "the program parses: {:?}",
         built.syntax
     );
-    (built.program, built.entry)
+    let main = program_main(&built.program)
+        .expect("the entry is well formed")
+        .expect("the program declares a root main");
+    (built.program, main)
 }
 
-/// Build a set of named files with the given entry, returning the checked
-/// program or the first diagnostic message.
-pub(crate) fn checked_files(files: &[(&str, &str)], entry: &str) -> Result<Program, String> {
-    match build(Path::new(entry), &VirtualSource::new(files)) {
+/// Build a set of named files, returning the checked program or the first
+/// diagnostic message. The program must declare a root `main`, as a compile
+/// does.
+pub(crate) fn checked_files(files: &[(&str, &str)]) -> Result<Program, String> {
+    let source = VirtualSource::new(files);
+    match build(
+        source.root(),
+        &source,
+        &crate::project::WarningPolicy::default(),
+    ) {
         // A recovered tree still builds its model, but it is not a program:
         // its syntax errors are the first fact the fixture reports.
         Ok(built) if !built.syntax.is_empty() => Err(built.syntax[0].message.clone()),
-        Ok(built) => Ok(built.program),
+        Ok(built) => match program_main(&built.program) {
+            Ok(Some(_)) => Ok(built.program),
+            Ok(None) => Err("the program has no root `main` function".to_owned()),
+            Err(diagnostic) => Err(diagnostic.message),
+        },
         Err(failure) => Err(first_message(&failure)),
     }
 }

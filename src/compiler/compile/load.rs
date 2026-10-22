@@ -20,4 +20,4 @@ mod tree;
 pub(crate) use load_error::LoadError;
 pub(crate) use loaded_program::{LoadedProgram, ScopedDeclaration};
 pub use sources::ProgramSource;
-pub(crate) use tree::{PROGRAM_TREE, STD_TREE, load_files, load_single};
+pub(crate) use tree::{PROGRAM_TREE, STD_TREE, load_files, load_library};

@@ -30,6 +30,7 @@ impl Builder {
                     &loaded.files[unused.file].path,
                     unused.span,
                     format!("unused use `{}`", join_path(&unused.path)),
+                    crate::compiler::WarningKind::UnusedUse,
                 )
             })
             .collect()

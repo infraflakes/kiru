@@ -58,7 +58,6 @@ pub(crate) struct ScopedUse {
 /// The whole program: every loaded file plus the joined item stream.
 #[derive(Debug)]
 pub(crate) struct LoadedProgram {
-    pub(crate) entry: Option<usize>,
     pub(crate) files: Vec<LoadedFile>,
     pub(crate) items: Vec<ScopedDeclaration>,
     pub(crate) uses: Vec<ScopedUse>,

@@ -4,16 +4,7 @@
 use std::path::PathBuf;
 
 use crate::compiler::compile::load::{LoadError, LoadedProgram};
-use crate::compiler::diagnostic::{Diagnostic, render};
-
-/// The diagnostics of one file, as a build reports them: the file, the
-/// source the build read it as, and the facts it holds.
-#[derive(Clone, Debug)]
-pub struct FileDiagnostics {
-    pub path: PathBuf,
-    pub source: String,
-    pub diagnostics: Vec<Diagnostic>,
-}
+use crate::compiler::diagnostic::{Diagnostic, FileDiagnostics, render};
 
 /// Why there is no checked program. The diagnostics are the facts the build
 /// stopped on, placed in their files; `rendered` is what a terminal prints

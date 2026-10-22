@@ -9,5 +9,6 @@
 pub mod cli;
 pub mod compiler;
 pub mod lsp;
+mod project;
 pub mod runtime;
 pub mod syntax;

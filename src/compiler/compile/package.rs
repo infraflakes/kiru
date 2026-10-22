@@ -10,5 +10,5 @@ mod output_file;
 mod payload;
 
 pub(crate) use binary_trailer::{attach_trailer, payload_in};
-pub(crate) use output_file::{make_writable_executable, same_file};
+pub(crate) use output_file::make_writable_executable;
 pub(crate) use payload::{deserialize_bytecode, serialize_bytecode};

@@ -8,15 +8,15 @@ mod binding_linking;
 mod body_linking;
 mod builder;
 mod captures;
+mod main;
 mod name_resolution;
 mod register_builtins;
 mod register_declarations;
 mod scopes;
-mod select_entry;
 mod use_checking;
 
 #[cfg(test)]
 mod tests;
 
-pub(crate) use body_linking::{Analysis, Resolved, resolve_file, resolve_program};
-pub(crate) use select_entry::EntryShape;
+pub(crate) use body_linking::{Analysis, resolve_tree};
+pub(crate) use main::{EntryShape, program_main};

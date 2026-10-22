@@ -1,32 +1,40 @@
 //! Name resolution: declarations, edges, uses, and the entry.
 
-use super::{Resolved, resolve_program};
+use super::{program_main, resolve_tree};
 use crate::compiler::checked_program;
 use crate::compiler::model::{Expression, Program, Statement, TypeHead};
 
 fn linked(files: &[(&str, &str)], entry: &str) -> Result<Program, String> {
-    linked_with_entry(files, entry).map(|resolved| resolved.program)
+    linked_with_entry(files, entry).map(|(program, _)| program)
 }
 
-/// Link the files and keep the entry the resolution selected.
-fn linked_with_entry(files: &[(&str, &str)], entry: &str) -> Result<Resolved, String> {
+/// Link the files and keep the root `main` the entry rules accept.
+fn linked_with_entry(
+    files: &[(&str, &str)],
+    _entry: &str,
+) -> Result<(Program, crate::compiler::model::DeclarationId), String> {
     let directory = tempfile::tempdir().expect("temp dir");
     for (name, source) in files {
         let path = directory.path().join(name);
         std::fs::create_dir_all(path.parent().expect("has a parent")).expect("create directory");
         std::fs::write(&path, source).expect("write file");
     }
-    let program = crate::compiler::compile::load::load_files(
-        &directory.path().join(entry),
-        &crate::cli::DiskSource,
-    )
-    .map_err(|error| error.message)?;
+    let loaded =
+        crate::compiler::compile::load::load_files(directory.path(), &crate::cli::DiskSource)
+            .map_err(|error| error.message)?;
     // A recovered file never reaches resolution: its syntax errors stop the
     // build before any semantic stage reads the tree.
-    if let Some(diagnostic) = program.syntax.first() {
+    if let Some(diagnostic) = loaded.syntax.first() {
         return Err(diagnostic.message.clone());
     }
-    resolve_program(&program).map_err(|diagnostic| diagnostic.message)
+    let program = resolve_tree(&loaded)
+        .map_err(|diagnostic| diagnostic.message)?
+        .program;
+    match program_main(&program) {
+        Ok(Some(main)) => Ok((program, main)),
+        Ok(None) => Err("the program has no root `main` function".to_owned()),
+        Err(diagnostic) => Err(diagnostic.message),
+    }
 }
 
 fn accept(files: &[(&str, &str)], entry: &str) -> Program {
@@ -80,7 +88,7 @@ fn expect_rejections(cases: &[RejectCase<'_>]) {
 /// Run one source through the whole compile, returning the first diagnostic
 /// message. A resolution rule that also needs a body typed reads through this.
 fn check(source: &str) -> Result<(), String> {
-    crate::compiler::checked_files(&[("main.kiru", source)], "main.kiru").map(|_| ())
+    crate::compiler::checked_files(&[("main.kiru", source)]).map(|_| ())
 }
 
 /// Run every acceptance case through the whole compile, reporting all
@@ -156,14 +164,13 @@ fn entry_and_namespace_rules() {
             ],
             "main.kiru",
         ),
-    ]);
-    expect_rejections(&[
         (
-            "an entry file that declares no main, while a file beside it does",
+            "the root main stands beside the file the editor names",
             &[("main.kiru", "use std;"), ("helper.kiru", "fn main() {};")],
             "main.kiru",
-            "the entry file declares no `main` function",
         ),
+    ]);
+    expect_rejections(&[
         (
             "main with a text parameter",
             &[("main.kiru", "use std;\nfn main(args: txt) {};")],
@@ -717,8 +724,9 @@ fn an_unresolvable_use_is_rejected_at_its_span() {
     let path = directory.path().join("main.kiru");
     std::fs::write(&path, source).expect("write file");
     let loaded =
-        crate::compiler::compile::load::load_files(&path, &crate::cli::DiskSource).expect("loads");
-    let diagnostic = match resolve_program(&loaded) {
+        crate::compiler::compile::load::load_files(directory.path(), &crate::cli::DiskSource)
+            .expect("loads");
+    let diagnostic = match resolve_tree(&loaded) {
         Ok(_) => panic!("the use is rejected"),
         Err(diagnostic) => diagnostic,
     };
@@ -935,7 +943,7 @@ fn a_method_name_may_repeat_per_receiver_head() {
 
 #[test]
 fn calls_are_edges_to_the_callee() {
-    let resolved = linked_with_entry(
+    let (program, entry) = linked_with_entry(
         &[
             (
                 "main.kiru",
@@ -946,8 +954,8 @@ fn calls_are_edges_to_the_callee() {
         "main.kiru",
     )
     .expect("links");
-    let program = &resolved.program;
-    let entry = program.declaration(resolved.entry);
+    let program = &program;
+    let entry = program.declaration(entry);
     let function = entry.function().expect("the entry is a function");
     let Statement::Expression(Expression::Call { callee, .. }) = &function.body[0] else {
         panic!("the body calls a function");

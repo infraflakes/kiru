@@ -6,8 +6,8 @@ use crate::compiler::model::{
 };
 use crate::compiler::{checked_files, checked_program};
 
-fn check(files: &[(&str, &str)], entry: &str) -> Result<(), String> {
-    checked_files(files, entry).map(|_| ())
+fn check(files: &[(&str, &str)], _entry: &str) -> Result<(), String> {
+    checked_files(files).map(|_| ())
 }
 
 /// The declaration a namespace path and a name resolve to, searched through

@@ -30,12 +30,16 @@ impl OverlaySource {
 }
 
 impl ProgramSource for OverlaySource {
-    fn locate(&self, target: &Path) -> std::io::Result<(Option<PathBuf>, PathBuf)> {
-        DiskSource.locate(target)
-    }
-
     fn collect(&self, tree_root: &Path) -> std::io::Result<Vec<PathBuf>> {
-        DiskSource.collect(tree_root)
+        let mut files = DiskSource.collect(tree_root)?;
+        // A buffer the editor opened before its file exists is still in the
+        // tree: the editor's text is the file until the disk catches up.
+        for path in self.buffers.keys() {
+            if path.starts_with(tree_root) && !files.contains(path) {
+                files.push(path.clone());
+            }
+        }
+        Ok(files)
     }
 
     fn read(&self, path: &Path) -> std::io::Result<String> {

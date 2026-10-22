@@ -37,8 +37,8 @@ pub fn run() -> i32 {
             crate::lsp::serve();
             0
         }
-        Ok(Request::Compile { entry, output }) => match &executable {
-            Some(executable) => compile_request::compile(&entry, output.as_deref(), executable),
+        Ok(Request::Compile { manifest, output }) => match &executable {
+            Some(executable) => compile_request::compile(&manifest, output.as_deref(), executable),
             None => {
                 eprintln!("{DIAGNOSTIC_PREFIX}: cannot find the {DIAGNOSTIC_PREFIX} binary");
                 1

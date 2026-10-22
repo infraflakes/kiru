@@ -25,7 +25,7 @@ type. Every pattern must have the same type as the subject, so a `{ … }` patte
 against a text subject is an error:
 
 ```console
-$ kc main.kiru
+$ kc
 main.kiru:3:5: error: expected text, found a `{ … }` literal
     {} => {};
     ^^
@@ -75,7 +75,7 @@ A pattern is built only from literals, names, and field paths — never a call, 
 operator, or an interpolation:
 
 ```console
-$ kc main.kiru
+$ kc
 main.kiru:5:5: error: a match arm is a literal, a name, or a field path
     1 + 2 => {};
     ^^^^^
@@ -106,7 +106,7 @@ nothing matches, and must be the last arm. Two arms with the same value are an
 error, because the second can never match:
 
 ```console
-$ kc main.kiru
+$ kc
 main.kiru:4:6: error: duplicate match pattern `a`
     "a" => {};
      ^^
@@ -115,7 +115,7 @@ main.kiru:4:6: error: duplicate match pattern `a`
 An arm after `_` is an error, because `_` already matches everything:
 
 ```console
-$ kc main.kiru
+$ kc
 main.kiru:4:6: error: the `_` arm must be last
     "x" => {};
      ^^
@@ -142,7 +142,7 @@ An expression match must be exhaustive, so it always takes an arm and always
 yields a value. Without full coverage it is an error:
 
 ```console
-$ kc main.kiru
+$ kc
 main.kiru:2:20: error: a match that produces a value must cover every case; add a `_` arm
   let label: txt = match "fast" {
                    ^^^^^^^^^^^^^^

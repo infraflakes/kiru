@@ -43,7 +43,7 @@ A missing field, an extra field, or a value of the wrong type is an error, and
 because the field set is fixed, a repeated field is always an error too:
 
 ```console
-$ kc main.kiru
+$ kc
 main.kiru:2:30: error: `Project` is missing field `count`
 fn main() { let p: Project = { name = "x" }; };
                              ^^^^^^^^^^^^^^
@@ -124,7 +124,7 @@ fn main() { std::print("@(area(Shape.Rect(3, 4)))"); };
 A match on an enum must cover every variant, or end with a `_` arm:
 
 ```console
-$ kc main.kiru
+$ kc
 main.kiru:4:20: error: a match that produces a value must cover every case; add a `_` arm
   let color: txt = match c {
                    ^^^^^^^^^

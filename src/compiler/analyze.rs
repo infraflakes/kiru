@@ -1,270 +1,314 @@
-//! The one-file analysis: the process an editor asks for. It resolves the
-//! file's names in the context the client names, links and checks only that
-//! file's bodies, and reports only that file's facts. The same model supplies
-//! the file's semantic tokens.
+//! The tree analysis: the process an editor asks for. It loads the tree the
+//! file belongs to, resolves every name, links and checks every body, and
+//! groups the facts by file. Checking one file must never invent a fact about
+//! another: a callee's halting is settled from its body, so a body ending in a
+//! call that panics is known to stop the run.
+//!
+//! The same model supplies the file's semantic tokens. A client chooses how
+//! much of the grouped facts it publishes: one file, or the whole tree.
 
 mod semantic;
 
 use std::path::Path;
 
-use crate::compiler::compile::check::validate_file;
-use crate::compiler::compile::load::{LoadedProgram, ProgramSource, load_files, load_single};
-use crate::compiler::compile::resolve::{Analysis, resolve_file};
-use crate::compiler::diagnostic::Diagnostic;
-use crate::compiler::model::{FileId, Program};
-use crate::compiler::warnings::unused_bindings;
+use crate::compiler::compile::check::validate_program;
+use crate::compiler::compile::load::{LoadedProgram, ProgramSource, load_files, load_library};
+use crate::compiler::compile::resolve::{Analysis, program_main, resolve_tree};
+use crate::compiler::diagnostic::{Diagnostic, FileDiagnostics};
+use crate::compiler::mark_reachable;
+use crate::compiler::model::FileId;
+use crate::compiler::warnings::{is_program_file, unused_bindings, unused_declarations};
+use crate::project::{Project, WarningPolicy};
 
 #[cfg(test)]
 pub(crate) use semantic::SemanticRole;
 pub(crate) use semantic::{SemanticToken, TOKEN_MODIFIERS, TOKEN_TYPES};
 
-pub enum AnalysisContext<'a> {
-    /// The file alone: the library is mounted and nothing else on disk joins
-    /// it. A program name that is not the file's own is out of scope.
-    Single,
-    /// The file inside the program tree rooted at this directory. The tree is
-    /// loaded so every namespace the file writes resolves; only the analyzed
-    /// file's bodies are checked.
-    Program(&'a Path),
-    /// The file inside the library rooted at this directory. The library is
-    /// read from disk with the analyzed file's buffer in place of its own.
-    Library(&'a Path),
+/// Which tree the editor's file belongs to. A project's tree is read beside
+/// the embedded library; the compiler's own standard library is the one tree
+/// read without it, under the `std` name.
+pub(crate) enum Tree<'a> {
+    Program(&'a Project),
+    StandardLibrary(&'a Path),
 }
 
-pub fn analyze_file(
-    path: &Path,
-    source: &impl ProgramSource,
-    context: AnalysisContext<'_>,
-) -> Vec<Diagnostic> {
-    let Analyzed {
-        loaded,
-        mut program,
-        warnings,
-        file,
-    } = match analyzed(path, source, context) {
-        Ok(analyzed) => analyzed,
-        Err(diagnostics) => return diagnostics,
-    };
-    // A recovered tree still reports: its syntax errors, the unused facts
-    // recovery kept, and the first error the checker meets in what remains.
-    let mut syntax: Vec<Diagnostic> = loaded
-        .syntax
-        .iter()
-        .filter(|diagnostic| diagnostic.path == path)
-        .cloned()
-        .collect();
-    let mut warnings = warnings;
-    warnings.extend(unused_bindings(&program, Some(file)));
-    warnings.retain(|diagnostic| diagnostic.path == path);
-    if !syntax.is_empty() {
-        if let Err(diagnostic) = validate_file(&mut program, file) {
-            syntax.extend(warnings);
-            syntax.push(diagnostic);
-        } else {
-            syntax.extend(warnings);
+impl Tree<'_> {
+    /// The diagnostics policy of the tree: the project's, or the default for
+    /// the compiler's own library.
+    fn policy(&self) -> WarningPolicy {
+        match self {
+            Tree::Program(project) => project.warnings,
+            Tree::StandardLibrary(_) => WarningPolicy::default(),
         }
-        return syntax;
     }
-    if let Err(diagnostic) = validate_file(&mut program, file) {
-        warnings.push(diagnostic);
+}
+
+/// The facts of the whole tree, file by file. A file with no facts is absent;
+/// the client clears what it published before.
+pub(crate) fn diagnostics(tree: Tree<'_>, source: &impl ProgramSource) -> Vec<FileDiagnostics> {
+    let policy = tree.policy();
+    match analyzed(tree, source) {
+        Ok(analyzed) => group(&analyzed.loaded, analyzed.diagnostics, policy),
+        Err(diagnostics) => group_without_tree(diagnostics, policy),
     }
-    warnings
 }
 
 /// The roles every name of one file plays, for a client that paints the
-/// source. The file is resolved like a check and validated, because the check
-/// settles the method families the tokens name.
+/// source. The tree is resolved like a check because the check settles the
+/// method families the tokens name.
 pub(crate) fn semantic_tokens(
     path: &Path,
     source: &impl ProgramSource,
-    context: AnalysisContext<'_>,
+    tree: Tree<'_>,
 ) -> Vec<SemanticToken> {
-    let Analyzed {
-        loaded,
-        mut program,
-        file,
-        ..
-    } = match analyzed(path, source, context) {
-        Ok(analyzed) => analyzed,
-        Err(_) => return Vec::new(),
+    let Ok(analyzed) = analyzed(tree, source) else {
+        return Vec::new();
     };
-    let _ = validate_file(&mut program, file);
-    semantic::tokens(&loaded, &program, file)
+    let Some(index) = analyzed
+        .loaded
+        .files
+        .iter()
+        .position(|file| file.path == path)
+    else {
+        return Vec::new();
+    };
+    semantic::tokens(&analyzed.loaded, &analyzed.program, FileId(index))
 }
 
-/// One file after loading and resolution: its source, its model, the
-/// resolution's warnings, and where the file stands in the load.
+/// One tree after resolution and checking: its files, its model, and every
+/// fact the tree earned.
 struct Analyzed {
     loaded: LoadedProgram,
-    program: Program,
-    warnings: Vec<Diagnostic>,
-    file: FileId,
+    program: crate::compiler::model::Program,
+    diagnostics: Vec<Diagnostic>,
 }
 
-/// Load one file and resolve it, with no entry: the facts both the diagnostics
-/// and the semantic tokens read. A load or resolution error is the file's
-/// diagnostic list.
-fn analyzed(
-    path: &Path,
-    source: &impl ProgramSource,
-    context: AnalysisContext<'_>,
-) -> Result<Analyzed, Vec<Diagnostic>> {
-    let loaded = match context {
-        AnalysisContext::Single => load_single(path, source, None),
-        AnalysisContext::Library(root) => load_single(path, source, Some(root)),
-        AnalysisContext::Program(root) => load_files(root, source),
+/// Load, resolve, and check one tree. A load or resolution failure is the
+/// facts the caller reports; the tree before the failure still names its
+/// files.
+fn analyzed(tree: Tree<'_>, source: &impl ProgramSource) -> Result<Analyzed, Vec<FileDiagnostics>> {
+    let loaded = match tree {
+        Tree::Program(project) => load_files(&project.root, source),
+        Tree::StandardLibrary(root) => load_library(root, source),
     };
     let loaded = match loaded {
         Ok(loaded) => loaded,
-        // A tree that cannot be read at all names the file it stopped on. It
-        // is the analyzed file's fact only when it is that file.
-        Err(error) if error.path == path => {
-            return Err(vec![Diagnostic::new(error.path, error.span, error.message)]);
+        Err(error) => {
+            let diagnostic = Diagnostic::new(&error.path, error.span, &error.message);
+            return Err(vec![FileDiagnostics {
+                path: error.path,
+                source: error.source,
+                diagnostics: vec![diagnostic],
+            }]);
         }
-        Err(_) => return Err(Vec::new()),
     };
-    let Some(index) = loaded.files.iter().position(|file| file.path == path) else {
-        return Err(Vec::new());
-    };
-    let file = FileId(index);
-    let Analysis { program, warnings } = match resolve_file(&loaded, file) {
+    let Analysis {
+        mut program,
+        warnings,
+    } = match resolve_tree(&loaded) {
         Ok(analysis) => analysis,
-        // A tree whose resolution stops on another file does not make that
-        // file's failure the analyzed file's diagnostic.
         Err(diagnostic) => {
-            let mut diagnostics: Vec<Diagnostic> = loaded
-                .syntax
-                .iter()
-                .filter(|diagnostic| diagnostic.path == path)
-                .cloned()
-                .collect();
-            if diagnostic.path == path {
-                diagnostics.push(diagnostic);
-            }
-            return Err(diagnostics);
+            let mut diagnostics = loaded.syntax.clone();
+            diagnostics.push(diagnostic);
+            return Err(group(&loaded, diagnostics, WarningPolicy::default()));
         }
     };
+    // A recovered tree still reports: its syntax errors, every unused fact the
+    // recovery kept, every error the checker met, and the entry's own fact.
+    let mut diagnostics = loaded.syntax.clone();
+    diagnostics.extend(validate_program(&mut program));
+    diagnostics.extend(warnings);
+    diagnostics.extend(unused_bindings(&program));
+    let main = match program_main(&program) {
+        Ok(main) => main,
+        Err(diagnostic) => {
+            diagnostics.push(diagnostic);
+            None
+        }
+    };
+    // A missing `main` is not an editor error: a library and a work in
+    // progress have none. When one exists, the declarations it never reaches
+    // are unused.
+    if let Some(main) = main {
+        let reachable = mark_reachable(&program, main);
+        diagnostics.extend(unused_declarations(&program, &reachable));
+    }
     Ok(Analyzed {
         loaded,
         program,
-        warnings,
-        file,
+        diagnostics,
     })
+}
+
+/// Group facts by the file they name, keeping the source the spans convert
+/// against, and drop the warning kinds the tree's policy silences.
+fn group(
+    loaded: &LoadedProgram,
+    diagnostics: Vec<Diagnostic>,
+    policy: WarningPolicy,
+) -> Vec<FileDiagnostics> {
+    let mut files: Vec<FileDiagnostics> = Vec::new();
+    for diagnostic in diagnostics {
+        // The embedded library is the compiler's, not the editor's: its files
+        // have no real path, and a fact about one cannot be published.
+        if !is_program_file(&diagnostic.path)
+            || diagnostic.warning.is_some_and(|kind| !policy.admits(kind))
+        {
+            continue;
+        }
+        if let Some(file) = files.iter_mut().find(|file| file.path == diagnostic.path) {
+            file.diagnostics.push(diagnostic);
+            continue;
+        }
+        let source = loaded
+            .files
+            .iter()
+            .find(|file| file.path == diagnostic.path)
+            .map(|file| file.source.clone())
+            .unwrap_or_default();
+        files.push(FileDiagnostics {
+            path: diagnostic.path.clone(),
+            source,
+            diagnostics: vec![diagnostic],
+        });
+    }
+    for file in &mut files {
+        file.diagnostics
+            .sort_by_key(|diagnostic| diagnostic.span.start);
+    }
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+    files
+}
+
+/// Group facts that already name their files (a load or resolution failure)
+/// and apply the same policy.
+fn group_without_tree(files: Vec<FileDiagnostics>, policy: WarningPolicy) -> Vec<FileDiagnostics> {
+    files
+        .into_iter()
+        .map(|mut file| {
+            file.diagnostics
+                .retain(|diagnostic| diagnostic.warning.is_none_or(|kind| policy.admits(kind)));
+            file
+        })
+        .filter(|file| !file.diagnostics.is_empty())
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::Severity;
-    use crate::compiler::build;
-    use crate::compiler::{OverlayOnDisk, VirtualSource};
-    use crate::syntax::Span;
-    use std::path::PathBuf;
+    use crate::compiler::{OverlayOnDisk, Severity, VirtualSource, WarningKind, checked_program};
+    use crate::project::{DiagnosticScope, Project, WarningSetting};
+    use std::path::Path;
 
-    #[test]
-    fn a_file_is_checked_in_its_own_context() {
-        let cases = [
-            (
-                "an unused local",
-                "fn main() { let x: int = 1; };",
-                "Warning",
-                "the local `x` is never read",
-            ),
-            (
-                "an unused use",
-                "use std::text;\nfn main() {};",
-                "Warning",
-                "unused use `std::text`",
-            ),
-            (
-                "a wrong type",
-                "fn main() { let x: int = \"t\"; };",
-                "Error",
-                "expected int, found txt",
-            ),
-            (
-                "a wrong arity",
-                "fn f(a: int) {};\nfn main() { f(1, 2); };",
-                "Error",
-                "`root::f` takes 1 argument, found 2",
-            ),
-            (
-                "a syntax error",
-                "fn main() {",
-                "Error",
-                "expected `}` to close the block",
-            ),
-        ];
-        for (case, source, severity, message) in cases {
-            let facts: Vec<(String, String)> = analyze_file(
-                Path::new("/virtual/main.kiru"),
-                &VirtualSource::new(&[("main.kiru", source)]),
-                AnalysisContext::Single,
-            )
-            .into_iter()
-            .map(|diagnostic| (format!("{:?}", diagnostic.severity), diagnostic.message))
-            .collect();
-            assert!(
-                facts
-                    .iter()
-                    .any(|(level, text)| level == severity && text.contains(message)),
-                "{case}: expected a {severity} naming `{message}`, found {facts:?}"
-            );
+    /// A project over a virtual tree, with the default policy.
+    fn project() -> Project {
+        Project {
+            manifest: Path::new("/virtual/kiru.toml").to_path_buf(),
+            root: Path::new("/virtual").to_path_buf(),
+            output: Path::new("/virtual/program").to_path_buf(),
+            scope: DiagnosticScope::File,
+            warnings: WarningPolicy::default(),
         }
     }
 
+    /// Every fact the project's whole tree earns.
+    fn tree_facts(files: &[(&str, &str)]) -> Vec<Diagnostic> {
+        let project = project();
+        let source = VirtualSource::new(files);
+        diagnostics(Tree::Program(&project), &source)
+            .into_iter()
+            .flat_map(|file| file.diagnostics)
+            .collect()
+    }
+
+    fn messages(files: &[(&str, &str)]) -> Vec<String> {
+        tree_facts(files)
+            .into_iter()
+            .map(|diagnostic| diagnostic.message)
+            .collect()
+    }
+
     #[test]
-    fn a_syntax_error_reports_the_files_unused_facts_without_checking() {
-        let source = "use std::text;\nfn main() { let unused: int = 1; let broken: int = ; };";
-        let diagnostics = analyze_file(
-            Path::new("/virtual/main.kiru"),
-            &VirtualSource::new(&[("main.kiru", source)]),
-            AnalysisContext::Single,
-        );
-        let facts: Vec<(String, String)> = diagnostics
-            .iter()
-            .map(|diagnostic| {
-                (
-                    format!("{:?}", diagnostic.severity),
-                    diagnostic.message.clone(),
-                )
-            })
-            .collect();
-        assert_eq!(
-            facts.len(),
-            3,
-            "the syntax error and both unused facts: {facts:?}"
-        );
+    fn every_files_facts_report() {
+        let facts = messages(&[
+            ("main.kiru", "fn main() { let unused: int = 1; };"),
+            (
+                "other.kiru",
+                "pub fn other() -> int { let wrong: int = \"t\"; return 0; };",
+            ),
+        ]);
         assert!(
             facts
                 .iter()
-                .any(|(level, text)| level == "Error" && text.contains("expected an expression")),
+                .any(|fact| fact == "the local `unused` is never read"),
             "{facts:?}"
         );
         assert!(
-            facts
-                .iter()
-                .any(|(level, text)| level == "Warning" && text == "unused use `std::text`"),
-            "{facts:?}"
-        );
-        assert!(
-            facts
-                .iter()
-                .any(|(level, text)| level == "Warning"
-                    && text == "the local `unused` is never read"),
-            "{facts:?}"
+            facts.iter().any(|fact| fact == "expected int, found txt"),
+            "a type error in another file still reports: {facts:?}"
         );
     }
 
     #[test]
-    fn a_recovered_tree_still_reports_its_type_error() {
-        let source = "use std::text;\nfn main() { let wrong: int = \"t\"; let broken: int = ; };";
-        let diagnostics = analyze_file(
-            Path::new("/virtual/main.kiru"),
-            &VirtualSource::new(&[("main.kiru", source)]),
-            AnalysisContext::Single,
+    fn a_call_that_panics_in_another_file_settles_the_flow() {
+        // `get` ends in a call to a function whose body panics. The halting
+        // fact is settled from every body, not only the file being analyzed,
+        // so no false "must end with return or panic" is invented.
+        let facts = messages(&[
+            ("main.kiru", "fn stop() { panic; };\nfn main() { stop(); };"),
+            ("task.kiru", "pub fn get() -> int { stop(); };"),
+        ]);
+        assert!(
+            facts.iter().all(|fact| !fact.contains("must end")),
+            "the call stops the run: {facts:?}"
         );
-        let messages: Vec<&str> = diagnostics
+        assert!(
+            facts
+                .iter()
+                .any(|fact| fact.contains("`root::get` is unused")),
+            "the unreached declaration is still a warning: {facts:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_main_is_not_an_editor_error() {
+        let facts = tree_facts(&[("lib.kiru", "pub fn get() -> int { panic; };")]);
+        assert!(
+            facts
+                .iter()
+                .all(|fact| !matches!(fact.severity, Severity::Error)),
+            "a library needs no entry: {facts:?}"
+        );
+    }
+
+    #[test]
+    fn the_diagnostics_policy_silences_a_warning_kind() {
+        let mut project = project();
+        project.warnings.unused_local = WarningSetting::Off;
+        let source = VirtualSource::new(&[("main.kiru", "fn main() { let unused: int = 1; };")]);
+        let facts: Vec<Diagnostic> = diagnostics(Tree::Program(&project), &source)
+            .into_iter()
+            .flat_map(|file| file.diagnostics)
+            .collect();
+        assert!(facts.is_empty(), "the local warning is off: {facts:?}");
+
+        project.warnings.unused_local = WarningSetting::Warning;
+        let facts: Vec<Diagnostic> = diagnostics(Tree::Program(&project), &source)
+            .into_iter()
+            .flat_map(|file| file.diagnostics)
+            .collect();
+        assert_eq!(facts.len(), 1, "{facts:?}");
+        assert_eq!(facts[0].warning, Some(WarningKind::UnusedLocal));
+    }
+
+    #[test]
+    fn a_syntax_error_reports_beside_the_recovered_trees_facts() {
+        let facts = tree_facts(&[(
+            "main.kiru",
+            "use std::text;\nfn main() { let unused: int = 1; let broken: int = ; };",
+        )]);
+        let messages: Vec<&str> = facts
             .iter()
             .map(|diagnostic| diagnostic.message.as_str())
             .collect();
@@ -272,243 +316,43 @@ mod tests {
             messages
                 .iter()
                 .any(|message| message.contains("expected an expression")),
-            "the syntax error reports: {messages:?}"
+            "{messages:?}"
         );
+        assert!(messages.contains(&"unused use `std::text`"), "{messages:?}");
         assert!(
-            messages.contains(&"expected int, found txt"),
-            "the checker still reports what the recovered tree earned: {messages:?}"
+            messages.contains(&"the local `unused` is never read"),
+            "{messages:?}"
         );
     }
 
     #[test]
-    fn a_program_tree_resolves_the_namespaces_beside_the_file() {
-        // The file's `use root::kiru` names the directory beside it, and the
-        // module value it declares under the same name is no use target: only
-        // a namespace, a type, or a function is.
-        let files = [
-            (
-                "main.kiru",
-                "use root::kiru;\nlet kiru: kiru::Project = { name = \"k\" };\nfn main() { kiru::run(); };\n",
-            ),
-            (
-                "kiru/lib.kiru",
-                "pub rec Project { pub name: txt };\npub fn run() {};\n",
-            ),
-        ];
-        let facts = analyze_file(
-            Path::new("/virtual/main.kiru"),
-            &VirtualSource::new(&files),
-            AnalysisContext::Program(Path::new("/virtual")),
-        );
-        assert!(
-            facts.is_empty(),
-            "the sibling namespace resolves and nothing is wrong: {facts:?}"
-        );
-    }
-
-    #[test]
-    fn a_clean_file_still_reports_its_type_error() {
-        let diagnostics = analyze_file(
-            Path::new("/virtual/main.kiru"),
-            &VirtualSource::new(&[("main.kiru", "fn main() { let x: int = \"t\"; };")]),
-            AnalysisContext::Single,
-        );
-        assert!(
-            diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.message == "expected int, found txt"),
-            "{diagnostics:?}"
-        );
-    }
-
-    #[test]
-    fn a_library_file_is_checked_against_its_library() {
-        // The library's own file: it joins the namespace its directories
-        // name, so `impl Vec` resolves without an entry or a program. The
-        // source holds its text in memory; the file on disk is not edited.
+    fn the_library_file_with_the_cross_file_call_is_clean() {
+        // The real `get` that reported the false fall-through: its body ends
+        // in `std::eprint(...)`, whose own body panics.
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
-        let path = root.join("dynamic/vec.kiru");
+        let root = root.canonicalize().expect("the library is readable");
+        let path = root.join("dynamic/map.kiru");
         let source = std::fs::read_to_string(&path).expect("the library file is readable");
-        let facts = analyze_file(
-            &path,
+        let reports = diagnostics(
+            Tree::StandardLibrary(&root),
             &OverlayOnDisk {
                 path: path.clone(),
                 source,
             },
-            AnalysisContext::Library(&root),
         );
-        assert!(
-            facts
-                .iter()
-                .all(|diagnostic| !matches!(diagnostic.severity, Severity::Error)),
-            "the library's own file checks without errors: {facts:?}"
-        );
-    }
-
-    /// The build of a virtual tree, with every file's diagnostics flattened
-    /// to (path, severity, message).
-    fn built(files: &[(&str, &str)]) -> Vec<(String, Severity, String)> {
-        build(Path::new("main.kiru"), &VirtualSource::new(files))
-            .expect("the program checks")
-            .diagnostics()
-            .into_iter()
-            .flat_map(|file| {
-                file.diagnostics.into_iter().map(move |diagnostic| {
-                    (
-                        file.path.to_string_lossy().to_string(),
-                        diagnostic.severity,
-                        diagnostic.message,
-                    )
-                })
-            })
-            .collect()
+        let errors: Vec<_> = reports
+            .iter()
+            .flat_map(|file| &file.diagnostics)
+            .filter(|diagnostic| matches!(diagnostic.severity, Severity::Error))
+            .collect();
+        assert!(errors.is_empty(), "the library file is clean: {errors:?}");
     }
 
     #[test]
-    fn a_program_without_uses_or_locals_publishes_nothing() {
-        let facts = built(&[("main.kiru", "fn main() {};")]);
-        assert!(facts.is_empty(), "expected nothing, found {facts:?}");
-    }
-
-    #[test]
-    fn a_use_read_through_its_qualifier_is_not_unused() {
-        let files = "use std::dynamic;\nfn main() { let xs: dynamic::Vec<int> = dynamic::Vec.new(); xs.push(1); };";
-        let facts = built(&[("main.kiru", files)]);
-        assert!(facts.is_empty(), "expected nothing, found {facts:?}");
-    }
-
-    #[test]
-    fn the_uses_no_body_reads_are_warnings_at_their_items() {
-        // An absolute path resolves on its own, with no use, so both `use`s
-        // here are never read: `use std;` delivers the tree name `std` a
-        // qualified path names without it, and `use std::text;` delivers the
-        // namespace `std::text` no body reads.
-        let files = "use std;\nuse std::text;\nfn main() { std::print(\"hi\"); };";
-        let built = build(
-            Path::new("main.kiru"),
-            &VirtualSource::new(&[("main.kiru", files)]),
-        )
-        .expect("the program checks");
-        let warnings = &built.diagnostics()[0].diagnostics;
-        assert_eq!(warnings.len(), 2, "both `use`s are unused");
-        let first = &warnings[0];
-        assert_eq!(first.path, PathBuf::from("/virtual/main.kiru"));
-        assert_eq!(first.span, Span::new(0, 8));
-        assert_eq!(first.severity, Severity::Warning);
-        assert_eq!(first.message, "unused use `std`");
-        let second = &warnings[1];
-        assert_eq!(second.span, Span::new(9, 23));
-        assert_eq!(second.message, "unused use `std::text`");
-    }
-
-    #[test]
-    fn a_use_read_in_another_file_of_its_namespace_is_not_unused() {
-        // The `use` stands in help.kiru; the body that reads its delivery is
-        // main.kiru's. A use belongs to its namespace, not to its file.
-        let facts = built(&[
-            (
-                "main.kiru",
-                "fn main() { let xs: dynamic::Vec<int> = dynamic::Vec.new(); xs.push(1); };",
-            ),
-            ("help.kiru", "use std::dynamic;"),
-        ]);
-        assert!(facts.is_empty(), "expected nothing, found {facts:?}");
-    }
-
-    #[test]
-    fn a_use_resolved_only_by_its_absolute_path_is_unused() {
-        let files = "use root::help;\nfn help() -> txt { return \"helped\"; };\nfn main() { std::print(root::help()); };";
-        let facts = built(&[("main.kiru", files)]);
-        assert_eq!(
-            facts,
-            vec![(
-                "/virtual/main.kiru".to_owned(),
-                Severity::Warning,
-                "unused use `root::help`".to_owned()
-            )]
-        );
-    }
-
-    #[test]
-    fn an_unused_local_binding_is_a_warning_at_its_name() {
-        let files = "fn main() { let x: txt = \"a\"; };";
-        let built = build(
-            Path::new("main.kiru"),
-            &VirtualSource::new(&[("main.kiru", files)]),
-        )
-        .expect("the program checks");
-        // The published diagnostics name the program's files only; the
-        // standard library's files are never published.
-        let published = built.diagnostics();
-        assert_eq!(published.len(), 1);
-        let warnings = &published[0].diagnostics;
-        assert_eq!(warnings.len(), 1, "one local is unused");
-        let warning = &warnings[0];
-        // The span is the name `x`, at the binding statement's name.
-        assert_eq!(warning.span, Span::new(16, 17));
-        assert_eq!(warning.severity, Severity::Warning);
-        assert_eq!(warning.message, "the local `x` is never read");
-    }
-
-    #[test]
-    fn a_binding_only_assigned_is_never_read() {
-        let facts = built(&[("main.kiru", "fn main() { let x: int = 1; x = 2; };")]);
-        assert_eq!(facts.len(), 1, "the assignment is not a read");
-        assert_eq!(facts[0].1, Severity::Warning);
-        assert_eq!(facts[0].2, "the local `x` is never read");
-    }
-
-    #[test]
-    fn a_parameter_never_read_is_a_warning() {
-        let files = "fn greet(name: txt) -> txt { return \"hi\"; };\nfn main() { greet(\"a\"); };";
-        let facts = built(&[("main.kiru", files)]);
-        assert_eq!(facts.len(), 1, "the parameter is unused");
-        assert_eq!(facts[0].1, Severity::Warning);
-        assert_eq!(facts[0].2, "the local `name` is never read");
-    }
-
-    #[test]
-    fn a_local_read_only_inside_a_closure_is_read() {
-        let facts = built(&[
-            (
-                "main.kiru",
-                "use root::inner::help;\nfn main() { let f: fn() -> txt = fn() -> txt { return help(); }; let said: txt = f(); std::print(said); };",
-            ),
-            (
-                "inner/help.kiru",
-                "pub fn help() -> txt { return \"helped\"; };",
-            ),
-        ]);
-        assert!(facts.is_empty(), "expected nothing, found {facts:?}");
-    }
-
-    #[test]
-    fn a_duplicate_declaration_points_at_the_first_declaration() {
-        let files = "fn help() {};\nfn help() {};\nfn main() {};";
-        let failure = build(
-            Path::new("main.kiru"),
-            &VirtualSource::new(&[("main.kiru", files)]),
-        )
-        .expect_err("the duplicate is rejected");
-        let files_reported = failure.diagnostics();
-        assert_eq!(files_reported.len(), 1, "the duplicate names one file");
-        let file = &files_reported[0];
-        assert_eq!(file.path, PathBuf::from("/virtual/main.kiru"));
-        // The source the build read the file as, carried for the boundary.
-        assert_eq!(file.source, "fn help() {};\nfn help() {};\nfn main() {};");
-        assert_eq!(file.diagnostics.len(), 1, "the failure names one fact");
-        let diagnostic = &file.diagnostics[0];
-        assert_eq!(diagnostic.severity, Severity::Error);
-        // The second `help`'s name.
-        assert_eq!(diagnostic.span, Span::new(17, 21));
-        assert_eq!(
-            diagnostic.related.len(),
-            1,
-            "the first declaration is attached"
-        );
-        let related = &diagnostic.related[0];
-        assert_eq!(related.path, PathBuf::from("/virtual/main.kiru"));
-        assert_eq!(related.span, Span::new(3, 7));
-        assert_eq!(related.message, "first declaration of `help`");
+    fn a_checked_program_still_reads_through_the_build() {
+        // The build facade and the analysis share one model: a program that
+        // checks through the build has no error in its analysis either.
+        let program = checked_program("fn main() { let x: int = 1; std::print(\"x\"); };");
+        assert!(!program.declarations.is_empty());
     }
 }

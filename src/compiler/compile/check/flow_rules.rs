@@ -5,7 +5,7 @@
 //! a fixpoint that settles every function's `halts` fact, then one report walk
 //! that reads the settled facts and reports the fall-through, break-placement
 //! and return-placement diagnostics directly. No diagnostic is buffered across
-//! passes.
+//! passes, and one body's placement error never stops another body's walk.
 
 use crate::compiler::Diagnostic;
 use crate::compiler::model::{
@@ -15,33 +15,29 @@ use crate::syntax::Span;
 
 use super::flow::Flow;
 
-/// Settle every admitted function's halting fact, then report the flow
-/// diagnostics once.
-pub(super) fn check_flow(
-    program: &mut Program,
-    only_file: Option<FileId>,
-) -> Result<(), Diagnostic> {
-    settle_halts(program, only_file)?;
-    report_flow(program, only_file)
+/// Settle every function's halting fact, then report every flow diagnostic.
+pub(super) fn check_flow(program: &mut Program) -> Vec<Diagnostic> {
+    settle_halts(program);
+    report_flow(program)
 }
 
-/// Raise every admitted function's `halts` fact until a whole pass changes
-/// nothing. The walk reads the facts of the pass before it, so a forward call
-/// and a cycle settle the same way a reachability walk does.
-fn settle_halts(program: &mut Program, only_file: Option<FileId>) -> Result<(), Diagnostic> {
+/// Raise every function's `halts` fact until a whole pass changes nothing. The
+/// walk reads the facts of the pass before it, so a forward call and a cycle
+/// settle the same way a reachability walk does. A body whose placement rules
+/// fail has no settled flow; its error is reported by the report walk.
+fn settle_halts(program: &mut Program) {
     let mut model = ModelView::from(program);
     loop {
         let mut changed = false;
         for index in 0..model.declarations().len() {
             let id = DeclarationId(index);
-            if !in_file(&model, id, only_file) {
-                continue;
-            }
             let kind = model.declaration(id).kind;
             if !(kind.callable() && kind.has_body()) {
                 continue;
             }
-            let flow = body_flow(&model, id, false)?;
+            let Ok(flow) = body_flow(&model, id, false) else {
+                continue;
+            };
             let halts = !flow.falls && !flow.returns;
             if model.declaration(id).derived.halts != halts {
                 model.set_halts(id, halts);
@@ -49,20 +45,18 @@ fn settle_halts(program: &mut Program, only_file: Option<FileId>) -> Result<(), 
             }
         }
         if !changed {
-            return Ok(());
+            return;
         }
     }
 }
 
-/// Walk every admitted body once against the settled halting facts and report
-/// the first flow diagnostic.
-fn report_flow(program: &mut Program, only_file: Option<FileId>) -> Result<(), Diagnostic> {
+/// Walk every body once against the settled halting facts and report every
+/// flow diagnostic.
+fn report_flow(program: &mut Program) -> Vec<Diagnostic> {
     let model = ModelView::from(program);
+    let mut diagnostics = Vec::new();
     for index in 0..model.declarations().len() {
         let id = DeclarationId(index);
-        if !in_file(&model, id, only_file) {
-            continue;
-        }
         let kind = model.declaration(id).kind;
         if kind.callable() && kind.has_body() {
             let walk = FlowWalk::for_declaration(&model, id, true);
@@ -70,9 +64,12 @@ fn report_flow(program: &mut Program, only_file: Option<FileId>) -> Result<(), D
                 .declaration(id)
                 .function()
                 .expect("a callable body is a function expression");
-            let flow = walk.statements(&function.body, false)?;
-            if walk.return_type.is_some() && flow.falls {
-                return Err(walk.fall_through(function.span));
+            match walk.statements(&function.body, false) {
+                Err(diagnostic) => diagnostics.push(diagnostic),
+                Ok(flow) if walk.return_type.is_some() && flow.falls => {
+                    diagnostics.push(walk.fall_through(function.span));
+                }
+                Ok(_) => {}
             }
         } else if kind.module_value() {
             let declaration = model.declaration(id);
@@ -89,10 +86,12 @@ fn report_flow(program: &mut Program, only_file: Option<FileId>) -> Result<(), D
             let value = declaration
                 .value()
                 .expect("a module value carries its initializer");
-            walk.expression(value, false)?;
+            if let Err(diagnostic) = walk.expression(value, false) {
+                diagnostics.push(diagnostic);
+            }
         }
     }
-    Ok(())
+    diagnostics
 }
 
 /// The flow of one declaration's function body, with diagnostics suppressed or
@@ -104,15 +103,6 @@ fn body_flow(model: &ModelView<'_>, id: DeclarationId, report: bool) -> Result<F
         .function()
         .expect("a callable body is a function expression");
     walk.statements(&function.body, false)
-}
-
-/// Whether the declaration's body is in the checked set: all bodies, or only
-/// the ones the file declares.
-fn in_file(model: &ModelView<'_>, id: DeclarationId, only_file: Option<FileId>) -> bool {
-    match only_file {
-        Some(file) => model.declaration(id).file == Some(file),
-        None => true,
-    }
 }
 
 /// The name a body reports under in a diagnostic.

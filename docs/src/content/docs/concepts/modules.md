@@ -5,8 +5,8 @@ description: Directories, absolute paths, use, visibility, names, and the entry.
 
 As a program grows, you group its code by directory. A directory is a
 **namespace**, and a file in it declares into that namespace. There is no `mod`
-and no `import`: the program is the tree of files under the entry file's
-directory, and each file's directory decides where its names live.
+and no `import`: the program is the tree of files under the manifest's
+`project.root`, and each file's directory decides where its names live.
 
 ## A namespace is a directory
 
@@ -15,6 +15,7 @@ Nesting nests:
 
 ```text
 project/
+  kiru.toml            # names this tree
   main.kiru            # root
   build/
     plan.kiru          # root::build
@@ -30,9 +31,8 @@ in one is a name of the other. A file may be renamed, split, or merged freely,
 because only the directory names the namespace.
 
 The standard library is the `std` tree, so `std/dynamic/vec.kiru` declares into
-`std::dynamic`. A program's own tree is the `root` tree, so the entry's
-directory is `root`. The entry file is the file `kc` is pointed at; the whole
-tree under its directory is the program.
+`std::dynamic`. A program's own tree is the `root` tree: every file under the
+manifest's `project.root` is the program, and that directory itself is `root`.
 
 ## Absolute paths
 
@@ -185,7 +185,7 @@ A namespace keeps one pool of names, and a name holds exactly one declaration.
 Reusing a name — whether it names a value, a function, or a type — is an error:
 
 ```console
-$ kc main.kiru
+$ kc
 main.kiru:3:4: error: `thing` is declared more than once in this namespace
 fn thing() -> txt { return "function thing"; };
    ^^^^^
@@ -237,7 +237,7 @@ A module value is private to its namespace: it is evaluated at startup, so it
 has no cross-namespace form, and `pub` on a `let` is rejected:
 
 ```console
-$ kc main.kiru
+$ kc
 main.kiru:2:9: error: a module value cannot be `pub`; it is private to its namespace
 pub let name: txt = "root";
         ^^^^

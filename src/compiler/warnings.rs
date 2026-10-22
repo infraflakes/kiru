@@ -14,9 +14,7 @@ use std::collections::HashSet;
 use crate::compiler::Diagnostic;
 use crate::compiler::STD_TREE;
 use crate::compiler::model::collect_reads;
-use crate::compiler::model::{
-    DeclarationId, DeclarationKind, FileId, Program, join_path, namespace_path,
-};
+use crate::compiler::model::{DeclarationId, DeclarationKind, Program, join_path, namespace_path};
 
 /// The warnings for the program declarations no reachable body reads. Only a
 /// namespace-level function and a module value are named: a filed function
@@ -53,6 +51,7 @@ pub(crate) fn unused_declarations(
                 path.clone(),
                 declaration.name_span,
                 format!("`{}` is unused", join_path(&qualified)),
+                crate::compiler::WarningKind::UnusedDeclaration,
             ))
         })
         .collect();
@@ -76,8 +75,8 @@ pub(crate) fn is_program_file(path: &std::path::Path) -> bool {
 /// name without reading it, so a binding only assigned or only matched is
 /// never read. The binding's own file is the file of the body it is written
 /// in, which the walk carried.
-pub(crate) fn unused_bindings(program: &Program, only: Option<FileId>) -> Vec<Diagnostic> {
-    let reads = collect_reads(program, only);
+pub(crate) fn unused_bindings(program: &Program) -> Vec<Diagnostic> {
+    let reads = collect_reads(program, None);
     reads
         .bindings
         .iter()
@@ -88,6 +87,7 @@ pub(crate) fn unused_bindings(program: &Program, only: Option<FileId>) -> Vec<Di
                 &program.files[bound.file.0].path,
                 declaration.name_span,
                 format!("the local `{}` is never read", declaration.name),
+                crate::compiler::WarningKind::UnusedLocal,
             )
         })
         .collect()

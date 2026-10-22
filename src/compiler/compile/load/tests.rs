@@ -88,8 +88,8 @@ fn the_embedded_table_mirrors_the_std_directory() {
     );
 
     let directory = tempfile::tempdir().expect("temp dir");
-    let entry = write(directory.path(), "main.kiru", "fn main() {};\n");
-    let program = load_files(&entry, &DiskSource).expect("loads");
+    let _entry = write(directory.path(), "main.kiru", "fn main() {};\n");
+    let program = load_files(directory.path(), &DiskSource).expect("loads");
     let prefix = format!("<{STD_TREE}>/");
     let mut loaded: Vec<String> = program
         .files
@@ -111,11 +111,11 @@ fn the_embedded_table_mirrors_the_std_directory() {
 #[test]
 fn a_file_belongs_to_its_directory_namespace() {
     let directory = tempfile::tempdir().expect("temp dir");
-    let entry = write(directory.path(), "main.kiru", "fn main() {};\n");
+    let _entry = write(directory.path(), "main.kiru", "fn main() {};\n");
     write(directory.path(), "task.kiru", "fn task() {};\n");
     write(directory.path(), "sub/worker.kiru", "fn worker() {};\n");
 
-    let program = load_files(&entry, &DiskSource).expect("loads");
+    let program = load_files(directory.path(), &DiskSource).expect("loads");
     assert_eq!(namespace_of(&program, "main"), vec!["root".to_owned()]);
     // A sibling file shares the root namespace; a file in a directory nests.
     assert_eq!(namespace_of(&program, "task"), vec!["root".to_owned()]);
@@ -128,10 +128,10 @@ fn a_file_belongs_to_its_directory_namespace() {
 #[test]
 fn walks_the_entry_directory_recursively() {
     let directory = tempfile::tempdir().expect("temp dir");
-    let entry = write(directory.path(), "main.kiru", "fn main() {};\n");
+    let _entry = write(directory.path(), "main.kiru", "fn main() {};\n");
     write(directory.path(), "a/b/deep.kiru", "fn deep() {};\n");
 
-    let program = load_files(&entry, &DiskSource).expect("loads");
+    let program = load_files(directory.path(), &DiskSource).expect("loads");
     assert_eq!(
         namespace_of(&program, "deep"),
         vec!["root".to_owned(), "a".to_owned(), "b".to_owned()]
@@ -141,8 +141,8 @@ fn walks_the_entry_directory_recursively() {
 #[test]
 fn reports_parse_error_with_file_and_position() {
     let directory = tempfile::tempdir().expect("temp dir");
-    let entry = write(directory.path(), "main.kiru", "fn f( {\n");
-    let program = load_files(&entry, &DiskSource).expect("the recovered file loads");
+    let _entry = write(directory.path(), "main.kiru", "fn f( {\n");
+    let program = load_files(directory.path(), &DiskSource).expect("the recovered file loads");
     let diagnostic = program.syntax.first().expect("one syntax error");
     let source = program
         .files

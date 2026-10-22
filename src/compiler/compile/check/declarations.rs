@@ -5,41 +5,30 @@
 //! declaration order, against the types settled by the linker. Whether a body
 //! falls through, breaks out of a loop, or returns where it may not is a
 //! statement fact, so the flow pass owns it and reads the typed model
-//! afterwards.
+//! afterwards. Every body is attempted: one body's error never hides another
+//! file's fact.
 
 use crate::compiler::Diagnostic;
-use crate::compiler::model::{DeclarationId, Expression, FileId, Function, ModelView, Program};
+use crate::compiler::model::{DeclarationId, Expression, Function, ModelView, Program};
 
 use super::flow_rules::check_flow;
 use super::statement_check::Checker;
 
 /// Validate the program: every function body and module value initializer.
-pub(crate) fn validate_program(program: &mut Program) -> Result<(), Diagnostic> {
-    validate_bodies(program, None)
+pub(crate) fn validate_program(program: &mut Program) -> Vec<Diagnostic> {
+    let mut diagnostics = check_bodies(program);
+    diagnostics.extend(check_flow(program));
+    diagnostics
 }
 
-/// Validate only the bodies declared in `file`.
-pub(crate) fn validate_file(program: &mut Program, file: FileId) -> Result<(), Diagnostic> {
-    validate_bodies(program, Some(file))
-}
-
-/// Run the one rule set over the bodies the filter admits: typing first, then
-/// flow, so no rule is declared twice.
-fn validate_bodies(program: &mut Program, only_file: Option<FileId>) -> Result<(), Diagnostic> {
-    check_bodies(program, only_file)?;
-    check_flow(program, only_file)
-}
-
-/// Type every admitted body once. The declared type is read from the
-/// declaration, and the body is taken out while the checker holds the rest of
-/// the program, so the one write it records (a variant-pattern binding's type)
-/// lands on the node that owns it.
-fn check_bodies(program: &mut Program, only_file: Option<FileId>) -> Result<(), Diagnostic> {
+/// Type every body once, keeping the first error each body earns. The declared
+/// type is read from the declaration, and the body is taken out while the
+/// checker holds the rest of the program, so the one write it records (a
+/// variant-pattern binding's type) lands on the node that owns it.
+fn check_bodies(program: &mut Program) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
     for index in 0..program.declarations.len() {
         let id = DeclarationId(index);
-        if !in_file(program, id, only_file) {
-            continue;
-        }
         let kind = program.declaration(id).kind;
         let has_function_body = kind.callable() && kind.has_body();
         if !has_function_body && !kind.module_value() {
@@ -91,16 +80,9 @@ fn check_bodies(program: &mut Program, only_file: Option<FileId>) -> Result<(), 
             }
         };
         program.declaration_mut(id).value = Some(value);
-        outcome?;
+        if let Err(diagnostic) = outcome {
+            diagnostics.push(diagnostic);
+        }
     }
-    Ok(())
-}
-
-/// Whether the declaration's body is in the checked set: all bodies, or only
-/// the ones the file declares.
-fn in_file(program: &Program, id: DeclarationId, only_file: Option<FileId>) -> bool {
-    match only_file {
-        Some(file) => program.declaration(id).file == Some(file),
-        None => true,
-    }
+    diagnostics
 }
