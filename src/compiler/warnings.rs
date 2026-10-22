@@ -76,10 +76,29 @@ pub(crate) fn is_program_source(path: &std::path::Path) -> bool {
 /// in, which the walk carried.
 pub(crate) fn unused_bindings(program: &Program) -> Vec<Diagnostic> {
     let reads = collect_reads(program, None);
+    // A method's first parameter is its receiver: the method exists because
+    // the value is passed, so a body that ignores it is not an unused local.
+    // Every other parameter and binding still answers the question.
+    let receivers: HashSet<DeclarationId> = program
+        .namespaces
+        .iter()
+        .flat_map(|namespace| namespace.methods.iter().copied())
+        .filter_map(|method| {
+            program
+                .declaration(method)
+                .function()?
+                .parameters
+                .first()
+                .copied()
+        })
+        .collect();
     reads
         .bindings
         .iter()
-        .filter(|bound| !reads.referenced.contains(&bound.declaration))
+        .filter(|bound| {
+            !reads.referenced.contains(&bound.declaration)
+                && !receivers.contains(&bound.declaration)
+        })
         .map(|bound| {
             let declaration = program.declaration(bound.declaration);
             Diagnostic::warning(

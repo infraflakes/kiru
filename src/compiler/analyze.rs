@@ -299,24 +299,38 @@ mod tests {
     }
 
     #[test]
+    fn a_method_receiver_is_not_an_unused_local() {
+        let facts = messages(&[(
+            "main.kiru",
+            "rec Box { value: int };\n\
+             impl Box {\n\
+               fn nothing(self: Box) -> int { return 1; };\n\
+               fn ignored(self: Box, unused: int) -> int { return 2; };\n\
+             };\n\
+             fn main() { let b: Box = { value = 1 }; b.nothing(); b.ignored(0); };",
+        )]);
+        assert!(
+            facts.iter().all(|fact| !fact.contains("`self`")),
+            "the receiver is passed by the call, not an unused local: {facts:?}"
+        );
+        assert!(
+            facts
+                .iter()
+                .any(|fact| fact == "the local `unused` is never read"),
+            "every other parameter still reports: {facts:?}"
+        );
+    }
+
+    #[test]
     fn the_library_file_with_the_cross_file_call_is_clean() {
         // The real `get` that reported the false fall-through: its body ends
         // in `std::eprint(...)`, whose own body panics.
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
         let root = root.canonicalize().expect("the library is readable");
         let reports = diagnostics(Tree::StandardLibrary(&root), &DiskSource);
-        let errors: Vec<_> = reports
-            .iter()
-            .flat_map(|file| &file.diagnostics)
-            .filter(|diagnostic| matches!(diagnostic.severity(), Severity::Error))
-            .collect();
-        assert!(errors.is_empty(), "the library checks clean: {errors:?}");
         assert!(
-            reports
-                .iter()
-                .flat_map(|file| &file.diagnostics)
-                .all(|diagnostic| !diagnostic.message.contains("must end")),
-            "no body reports a false fall-through"
+            reports.is_empty(),
+            "the library reports nothing: {reports:?}"
         );
     }
 }
