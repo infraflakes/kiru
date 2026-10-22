@@ -27,6 +27,7 @@ use crate::compiler::{
     Diagnostic, EMBEDDED, STD_TREE, Severity, Tree, analyze_tree, semantic_tokens,
 };
 use crate::project::{DiagnosticScope, Project, find};
+use crate::sync::MutexExt;
 
 use super::OverlaySource;
 use super::positions::{Encoding, span_to_range};
@@ -87,22 +88,19 @@ impl Backend {
     }
 
     /// Keep the text a document notification carries, under its settled path.
-    fn remember(&self, uri: &Uri, source: &str) -> Option<PathBuf> {
-        let path = settle(&uri.to_file_path()?);
+    fn remember(&self, uri: &Uri, source: &str) {
+        let Some(path) = uri.to_file_path() else {
+            return;
+        };
         self.documents
-            .lock()
-            .expect("the document map is not poisoned")
-            .insert(path.clone(), source.to_owned());
-        Some(path)
+            .lock_unpoisoned()
+            .insert(settle(&path), source.to_owned());
     }
 
     /// Every open buffer over the disk, so the tree the editor sees is the
     /// tree an analysis reads.
     fn overlay(&self) -> OverlaySource {
-        let documents = self
-            .documents
-            .lock()
-            .expect("the document map is not poisoned");
+        let documents = self.documents.lock_unpoisoned();
         let mut overlay = OverlaySource::new();
         for (path, source) in documents.iter() {
             overlay.open(path.clone(), source.clone());
@@ -128,24 +126,26 @@ impl Backend {
             }
         };
         let tree = match &context {
-            Context::Program(project) => Tree::Program(project),
+            Context::Program(project) => Tree::Program {
+                root: &project.root,
+                policy: project.warnings,
+            },
             Context::Library(root) => Tree::StandardLibrary(root),
         };
-        let scope = match &tree {
-            Tree::Program(project) => project.scope,
-            Tree::StandardLibrary(_) => DiagnosticScope::File,
+        let scope = match &context {
+            Context::Program(project) => project.scope,
+            Context::Library(_) => DiagnosticScope::File,
         };
-        let key = match &tree {
-            Tree::Program(project) => project.manifest.clone(),
-            Tree::StandardLibrary(root) => root.to_path_buf(),
+        let key = match &context {
+            Context::Program(project) => project.manifest.clone(),
+            Context::Library(root) => root.clone(),
         };
         let encoding = self.encoding.get().copied().unwrap_or(Encoding::Utf16);
         let overlay = self.overlay();
         let reports = analyze_tree(tree, &overlay);
         let source = self
             .documents
-            .lock()
-            .expect("the document map is not poisoned")
+            .lock_unpoisoned()
             .get(&path)
             .cloned()
             .or_else(|| std::fs::read_to_string(&path).ok())
@@ -202,10 +202,7 @@ impl Backend {
     /// Record what this context published, returning the files that dropped
     /// out of the new set.
     fn remember_published(&self, key: &Path, current: &[PathBuf]) -> Vec<PathBuf> {
-        let mut published = self
-            .published
-            .lock()
-            .expect("the publication map is not poisoned");
+        let mut published = self.published.lock_unpoisoned();
         let previous = published.entry(key.to_path_buf()).or_default();
         let current: HashSet<PathBuf> = current.iter().cloned().collect();
         let stale: Vec<PathBuf> = previous.difference(&current).cloned().collect();
@@ -225,8 +222,7 @@ impl Backend {
         self.client.publish_diagnostics(uri, Vec::new(), None).await;
         let first = self
             .silenced
-            .lock()
-            .expect("the message set is not poisoned")
+            .lock_unpoisoned()
             .insert((path.to_path_buf(), reason.clone()));
         if first {
             self.client.show_message(MessageType::WARNING, reason).await;
@@ -290,10 +286,7 @@ impl LanguageServer for Backend {
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         if let Some(path) = params.text_document.uri.to_file_path() {
-            self.documents
-                .lock()
-                .expect("the document map is not poisoned")
-                .remove(&settle(&path));
+            self.documents.lock_unpoisoned().remove(&settle(&path));
         }
         self.client
             .publish_diagnostics(params.text_document.uri, Vec::new(), None)
@@ -313,13 +306,15 @@ impl LanguageServer for Backend {
             Err(_) => return Ok(None),
         };
         let tree = match &context {
-            Context::Program(project) => Tree::Program(project),
+            Context::Program(project) => Tree::Program {
+                root: &project.root,
+                policy: project.warnings,
+            },
             Context::Library(root) => Tree::StandardLibrary(root),
         };
         let source = self
             .documents
-            .lock()
-            .expect("the document map is not poisoned")
+            .lock_unpoisoned()
             .get(&path)
             .cloned()
             .or_else(|| std::fs::read_to_string(&path).ok());
@@ -399,7 +394,7 @@ fn protocol_diagnostic(
     diagnostic: &Diagnostic,
     encoding: Encoding,
 ) -> ProtocolDiagnostic {
-    let severity = match diagnostic.severity {
+    let severity = match diagnostic.severity() {
         Severity::Error => DiagnosticSeverity::ERROR,
         Severity::Warning => DiagnosticSeverity::WARNING,
     };
@@ -625,7 +620,7 @@ mod tests {
         let errors: Vec<_> = facts
             .iter()
             .flat_map(|file| &file.diagnostics)
-            .filter(|diagnostic| matches!(diagnostic.severity, Severity::Error))
+            .filter(|diagnostic| matches!(diagnostic.severity(), Severity::Error))
             .collect();
         assert!(errors.is_empty(), "the library checks clean: {errors:?}");
         assert!(

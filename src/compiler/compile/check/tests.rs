@@ -6,7 +6,7 @@ use crate::compiler::model::{
 };
 use crate::compiler::{checked_files, checked_program};
 
-fn check(files: &[(&str, &str)], _entry: &str) -> Result<(), String> {
+fn check(files: &[(&str, &str)]) -> Result<(), String> {
     checked_files(files).map(|_| ())
 }
 
@@ -48,7 +48,7 @@ fn value_type(program: &Program, id: DeclarationId) -> Option<Type> {
 fn expect_accepts(cases: &[(&str, &str)]) {
     let mut failures = Vec::new();
     for &(name, source) in cases {
-        if let Err(message) = check(&[("main.kiru", source)], "main.kiru") {
+        if let Err(message) = check(&[("main.kiru", source)]) {
             failures.push(format!("{name}: expected acceptance, found `{message}`"));
         }
     }
@@ -65,7 +65,7 @@ fn expect_accepts(cases: &[(&str, &str)]) {
 fn expect_rejections(cases: &[(&str, &str, &str)]) {
     let mut failures = Vec::new();
     for &(name, source, expected) in cases {
-        match check(&[("main.kiru", source)], "main.kiru") {
+        match check(&[("main.kiru", source)]) {
             Ok(()) => failures.push(format!("{name}: expected `{expected}`, but it checked")),
             Err(message) if message != expected => {
                 failures.push(format!("{name}: expected `{expected}`, found `{message}`"));
@@ -1050,10 +1050,7 @@ fn private_fields_and_variants_need_pub() {
     ];
     for (name, body, hidden) in accepts {
         let main = format!("{preamble}{body}");
-        if let Err(message) = check(
-            &[("main.kiru", &main), ("hidden/mod.kiru", hidden)],
-            "main.kiru",
-        ) {
+        if let Err(message) = check(&[("main.kiru", &main), ("hidden/mod.kiru", hidden)]) {
             panic!("{name}: expected acceptance, found `{message}`");
         }
     }
@@ -1085,10 +1082,7 @@ fn private_fields_and_variants_need_pub() {
     ];
     for (name, body, hidden, expected) in rejects {
         let main = format!("{preamble}{body}");
-        match check(
-            &[("main.kiru", &main), ("hidden/mod.kiru", hidden)],
-            "main.kiru",
-        ) {
+        match check(&[("main.kiru", &main), ("hidden/mod.kiru", hidden)]) {
             Ok(()) => panic!("{name}: expected `{expected}`, but it checked"),
             Err(message) if &message != expected => {
                 panic!("{name}: expected `{expected}`, found `{message}`");
@@ -1336,7 +1330,7 @@ fn rule_conformance_visibility() {
     let mut failures = Vec::new();
     for (name, body, module) in accepts {
         let main = format!("{preamble}{body}");
-        if let Err(message) = check(&[("main.kiru", &main), ("m/mod.kiru", module)], "main.kiru") {
+        if let Err(message) = check(&[("main.kiru", &main), ("m/mod.kiru", module)]) {
             failures.push(format!("{name}: expected acceptance, found `{message}`"));
         }
     }
@@ -1386,7 +1380,7 @@ fn rule_conformance_visibility() {
     ];
     for (name, body, module, expected) in rejects {
         let main = format!("{preamble}{body}");
-        match check(&[("main.kiru", &main), ("m/mod.kiru", module)], "main.kiru") {
+        match check(&[("main.kiru", &main), ("m/mod.kiru", module)]) {
             Ok(()) => failures.push(format!("{name}: expected `{expected}`, but it checked")),
             Err(message) if &message != expected => {
                 failures.push(format!("{name}: expected `{expected}`, found `{message}`"));

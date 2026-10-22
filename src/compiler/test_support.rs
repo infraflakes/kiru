@@ -7,7 +7,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::cli::DiskSource;
 use crate::compiler::model::{DeclarationId, Program};
 use crate::compiler::{BuildFailure, ProgramSource, build, program_main};
 
@@ -53,28 +52,6 @@ impl ProgramSource for VirtualSource {
     }
 }
 
-/// A file on the disk with one buffer in place of its content: the
-/// single-file analysis of a real file, without editing the file. Every other
-/// file is read from the disk.
-#[derive(Debug)]
-pub(crate) struct OverlayOnDisk {
-    pub(crate) path: PathBuf,
-    pub(crate) source: String,
-}
-
-impl ProgramSource for OverlayOnDisk {
-    fn collect(&self, tree_root: &Path) -> std::io::Result<Vec<PathBuf>> {
-        DiskSource.collect(tree_root)
-    }
-
-    fn read(&self, path: &Path) -> std::io::Result<String> {
-        if path == self.path {
-            return Ok(self.source.clone());
-        }
-        DiskSource.read(path)
-    }
-}
-
 /// Build one source file, returning the checked program.
 pub(crate) fn checked_program(source: &str) -> Program {
     checked_files(&[("main.kiru", source)]).expect("the program checks")
@@ -90,9 +67,9 @@ pub(crate) fn checked_program_and_entry(source: &str) -> (Program, DeclarationId
     )
     .expect("the program checks");
     assert!(
-        built.syntax.is_empty(),
+        built.loaded.syntax.is_empty(),
         "the program parses: {:?}",
-        built.syntax
+        built.loaded.syntax
     );
     let main = program_main(&built.program)
         .expect("the entry is well formed")
@@ -112,10 +89,10 @@ pub(crate) fn checked_files(files: &[(&str, &str)]) -> Result<Program, String> {
     ) {
         // A recovered tree still builds its model, but it is not a program:
         // its syntax errors are the first fact the fixture reports.
-        Ok(built) if !built.syntax.is_empty() => Err(built.syntax[0].message.clone()),
+        Ok(built) if !built.loaded.syntax.is_empty() => Err(built.loaded.syntax[0].message.clone()),
         Ok(built) => match program_main(&built.program) {
             Ok(Some(_)) => Ok(built.program),
-            Ok(None) => Err("the program has no root `main` function".to_owned()),
+            Ok(None) => Err(crate::compiler::MISSING_MAIN.to_owned()),
             Err(diagnostic) => Err(diagnostic.message),
         },
         Err(failure) => Err(first_message(&failure)),
@@ -129,9 +106,9 @@ fn first_message(failure: &BuildFailure) -> String {
         .diagnostics()
         .iter()
         .find_map(|file| {
-            file.diagnostics
-                .iter()
-                .find(|diagnostic| matches!(diagnostic.severity, crate::compiler::Severity::Error))
+            file.diagnostics.iter().find(|diagnostic| {
+                matches!(diagnostic.severity(), crate::compiler::Severity::Error)
+            })
         })
         .map(|diagnostic| diagnostic.message.clone())
         .unwrap_or_else(|| failure.rendered().to_owned())

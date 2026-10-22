@@ -12,7 +12,6 @@
 use std::collections::HashSet;
 
 use crate::compiler::Diagnostic;
-use crate::compiler::STD_TREE;
 use crate::compiler::model::collect_reads;
 use crate::compiler::model::{DeclarationId, DeclarationKind, Program, join_path, namespace_path};
 
@@ -25,7 +24,6 @@ pub(crate) fn unused_declarations(
     program: &Program,
     reachable: &HashSet<DeclarationId>,
 ) -> Vec<Diagnostic> {
-    let library_prefix = format!("<{STD_TREE}>/");
     let mut warnings: Vec<Diagnostic> = program
         .declarations
         .iter()
@@ -42,7 +40,7 @@ pub(crate) fn unused_declarations(
         .filter_map(|(_, declaration)| {
             let file = declaration.file?;
             let path = &program.files[file.0].path;
-            if path.to_string_lossy().starts_with(&library_prefix) {
+            if !is_program_source(path) {
                 return None;
             }
             let mut qualified = namespace_path(&program.namespaces, declaration.namespace);
@@ -63,10 +61,11 @@ pub(crate) fn unused_declarations(
     warnings
 }
 
-/// Whether a file is the program's own. The embedded library's files are the
-/// compiler's, not the program's, so the program's warnings leave them out.
-pub(crate) fn is_program_file(path: &std::path::Path) -> bool {
-    !path.to_string_lossy().starts_with("<std>/")
+/// Whether a file is the program's own. The embedded library's files name no
+/// disk path, so a file with an absolute path is the program's and a warning
+/// about the library is the compiler's, not the program's.
+pub(crate) fn is_program_source(path: &std::path::Path) -> bool {
+    path.is_absolute()
 }
 
 /// The warnings for the local bindings the program declares but never reads.
@@ -117,14 +116,16 @@ mod tests {
         assert_eq!(warnings.len(), 1, "one declaration is unreached");
         let warning = &warnings[0];
         assert_eq!(warning.path, std::path::PathBuf::from("/virtual/main.kiru"));
-        assert_eq!(warning.severity, crate::compiler::Severity::Warning);
+        assert_eq!(warning.severity(), crate::compiler::Severity::Warning);
         assert_eq!(warning.message, "`root::helper` is unused");
     }
 
     #[test]
     fn the_librarys_files_are_not_the_programs() {
-        assert!(is_program_file(std::path::Path::new("/program/main.kiru")));
-        assert!(!is_program_file(std::path::Path::new(
+        assert!(is_program_source(std::path::Path::new(
+            "/program/main.kiru"
+        )));
+        assert!(!is_program_source(std::path::Path::new(
             "<std>/dynamic/vec.kiru"
         )));
     }

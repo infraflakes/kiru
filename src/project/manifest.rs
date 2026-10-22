@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::compiler::WarningKind;
+use crate::compiler::{Diagnostic, WarningKind};
 
 /// What the server publishes when it has checked the tree.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -38,6 +38,12 @@ pub(crate) struct WarningPolicy {
 }
 
 impl WarningPolicy {
+    /// Whether one fact reaches the terminal or the editor: an error always
+    /// does, a warning when its kind is not silenced.
+    pub(crate) fn admits_fact(self, fact: &Diagnostic) -> bool {
+        fact.warning_kind().is_none_or(|kind| self.admits(kind))
+    }
+
     /// Whether a warning of this kind reaches the terminal or the editor.
     pub(crate) fn admits(self, kind: WarningKind) -> bool {
         let setting = match kind {
@@ -63,8 +69,8 @@ pub(crate) struct Project {
 /// A manifest that cannot be a project: the file and what is wrong with it.
 #[derive(Debug)]
 pub(crate) struct ProjectError {
-    pub(crate) manifest: PathBuf,
-    pub(crate) message: String,
+    manifest: PathBuf,
+    message: String,
 }
 
 impl ProjectError {
@@ -154,21 +160,7 @@ impl Project {
             ));
         }
         let output = directory.join(&raw.project.output);
-        if output == manifest {
-            return Err(ProjectError::new(
-                &manifest,
-                "the output would overwrite the manifest; set `project.output`",
-            ));
-        }
-        if output
-            .extension()
-            .is_some_and(|extension| extension == "kiru")
-        {
-            return Err(ProjectError::new(
-                &manifest,
-                "the output would overwrite a source file; set `project.output`",
-            ));
-        }
+        validate_output(&manifest, &output)?;
         Ok(Self {
             manifest,
             root,
@@ -181,6 +173,51 @@ impl Project {
             },
         })
     }
+}
+
+impl Project {
+    /// Replace the output for one build, under the same rule the manifest's
+    /// own output follows. `kc -o` is the only caller.
+    pub(crate) fn set_output(&mut self, output: PathBuf) -> Result<(), ProjectError> {
+        validate_output(&self.manifest, &output)?;
+        self.output = output;
+        Ok(())
+    }
+}
+
+/// An output may not overwrite the manifest or a source file. The path is
+/// settled first, so `-o kiru.toml` from the manifest's directory is caught
+/// as well as an absolute spelling.
+fn validate_output(manifest: &Path, output: &Path) -> Result<(), ProjectError> {
+    if settled(output) == manifest {
+        return Err(ProjectError::new(
+            manifest,
+            "the output would overwrite the manifest; set `project.output`",
+        ));
+    }
+    if output
+        .extension()
+        .is_some_and(|extension| extension == "kiru")
+    {
+        return Err(ProjectError::new(
+            manifest,
+            "the output would overwrite a source file; set `project.output`",
+        ));
+    }
+    Ok(())
+}
+
+/// The path with its directory settled, whether or not the file exists yet.
+fn settled(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| {
+        let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+            return path.to_path_buf();
+        };
+        parent
+            .canonicalize()
+            .map(|parent| parent.join(name))
+            .unwrap_or_else(|_| path.to_path_buf())
+    })
 }
 
 #[cfg(test)]
@@ -200,6 +237,22 @@ mod tests {
         let project = Project::load(&manifest).expect("the manifest is valid");
         assert_eq!(project.output, directory.path().join("build/app"));
         assert_eq!(project.root, directory.path().canonicalize().unwrap());
+    }
+
+    #[test]
+    fn one_build_cannot_overwrite_the_manifest_or_a_source() {
+        let (directory, manifest) = wrote("[project]\nroot = \".\"\noutput = \"app\"\n");
+        let mut project = Project::load(&manifest).expect("the manifest is valid");
+        assert!(
+            project.set_output(directory.path().join(MANIFEST)).is_err(),
+            "the manifest is not an output"
+        );
+        assert!(
+            project
+                .set_output(directory.path().join("main.kiru"))
+                .is_err()
+        );
+        assert!(project.set_output(directory.path().join("app")).is_ok());
     }
 
     #[test]

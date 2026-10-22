@@ -5,6 +5,9 @@ use crate::compiler::compile::load::PROGRAM_TREE;
 use crate::compiler::model::Type;
 use crate::compiler::model::{DeclarationId, ENTRY_FUNCTION, TypeDecl, fits, list_type};
 
+/// The fact a compilation reports when the root namespace declares no entry.
+pub(crate) const MISSING_MAIN: &str = "the program has no root `main` function";
+
 /// The shape every program entry declares: at most one parameter, carrying the
 /// command-line words as the runtime list of text, and `int` or no value as its
 /// result. Selection checks the settled function type against this fact, the

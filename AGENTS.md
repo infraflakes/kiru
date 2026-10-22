@@ -52,6 +52,7 @@
 - src/compiler/model/ is the graph and holds no stage logic: ids, declarations, expressions, types (the group model), program (the graph, the name and method and type tables, type naming, namespace paths, field lookup), visitors, verify_graph, verify_spans.
 - src/compiler/bytecode/ defines the instruction set and its validation. Nothing outside it names an instruction variant.
 - src/runtime/ executes: the virtual machine, its native dispatch, values, and the process, thread and signal pools.
+- src/sync/ is the crate's one lock policy: a poisoned lock is recovered, never propagated. The runtime and the server both read it.
 - src/syntax/ is the surface: tokens, lexer, parser, syntax tree, spans.
 - src/cli/ is the only place a terminal is spoken to, and the only place the compiler's disk input enters: it supplies the disk source and renders diagnostics for a terminal.
 - src/lsp/ is the language server's client: the protocol session, the position encoding, and the documents over the disk. It supplies every open buffer as a program source and publishes the analysis's diagnostics for the files its project names.

@@ -4,8 +4,9 @@
 //! another: a callee's halting is settled from its body, so a body ending in a
 //! call that panics is known to stop the run.
 //!
-//! The same model supplies the file's semantic tokens. A client chooses how
-//! much of the grouped facts it publishes: one file, or the whole tree.
+//! A diagnostics request pays for the unused facts; a token request does not.
+//! Both share the load, the resolution, and the check, so neither can disagree
+//! with the other about what the tree means.
 
 mod semantic;
 
@@ -14,11 +15,11 @@ use std::path::Path;
 use crate::compiler::compile::check::validate_program;
 use crate::compiler::compile::load::{LoadedProgram, ProgramSource, load_files, load_library};
 use crate::compiler::compile::resolve::{Analysis, program_main, resolve_tree};
-use crate::compiler::diagnostic::{Diagnostic, FileDiagnostics};
+use crate::compiler::diagnostic::{Diagnostic, FileDiagnostics, group};
 use crate::compiler::mark_reachable;
-use crate::compiler::model::FileId;
-use crate::compiler::warnings::{is_program_file, unused_bindings, unused_declarations};
-use crate::project::{Project, WarningPolicy};
+use crate::compiler::model::{FileId, Program};
+use crate::compiler::warnings::{is_program_source, unused_bindings, unused_declarations};
+use crate::project::WarningPolicy;
 
 #[cfg(test)]
 pub(crate) use semantic::SemanticRole;
@@ -28,7 +29,10 @@ pub(crate) use semantic::{SemanticToken, TOKEN_MODIFIERS, TOKEN_TYPES};
 /// the embedded library; the compiler's own standard library is the one tree
 /// read without it, under the `std` name.
 pub(crate) enum Tree<'a> {
-    Program(&'a Project),
+    Program {
+        root: &'a Path,
+        policy: WarningPolicy,
+    },
     StandardLibrary(&'a Path),
 }
 
@@ -37,7 +41,7 @@ impl Tree<'_> {
     /// the compiler's own library.
     fn policy(&self) -> WarningPolicy {
         match self {
-            Tree::Program(project) => project.warnings,
+            Tree::Program { policy, .. } => *policy,
             Tree::StandardLibrary(_) => WarningPolicy::default(),
         }
     }
@@ -47,24 +51,57 @@ impl Tree<'_> {
 /// the client clears what it published before.
 pub(crate) fn diagnostics(tree: Tree<'_>, source: &impl ProgramSource) -> Vec<FileDiagnostics> {
     let policy = tree.policy();
-    match analyzed(tree, source) {
-        Ok(analyzed) => group(&analyzed.loaded, analyzed.diagnostics, policy),
-        Err(diagnostics) => group_without_tree(diagnostics, policy),
+    let linked = match link(tree, source) {
+        Ok(linked) => linked,
+        // A tree that cannot be resolved names only errors, and an error is
+        // never silenced by the project's policy.
+        Err(files) => return files,
+    };
+    // A recovered tree still reports: its syntax errors, every error the
+    // checker met, and every unused fact the recovery kept.
+    let mut diagnostics = linked.loaded.syntax.clone();
+    diagnostics.extend(linked.errors);
+    diagnostics.extend(linked.warnings);
+    diagnostics.extend(unused_bindings(&linked.program));
+    let main = match program_main(&linked.program) {
+        Ok(main) => main,
+        Err(diagnostic) => {
+            diagnostics.push(diagnostic);
+            None
+        }
+    };
+    // A missing `main` is not an editor error: a library and a work in
+    // progress have none. When one exists, the declarations it never reaches
+    // are unused.
+    if let Some(main) = main {
+        let reachable = mark_reachable(&linked.program, main);
+        diagnostics.extend(unused_declarations(&linked.program, &reachable));
     }
+    // The embedded library is the compiler's, not the editor's: its files
+    // have no real path, and a fact about one cannot be published.
+    diagnostics
+        .retain(|diagnostic| is_program_source(&diagnostic.path) && policy.admits_fact(diagnostic));
+    diagnostics.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then(left.span.start.cmp(&right.span.start))
+    });
+    group(&linked.loaded, diagnostics)
 }
 
 /// The roles every name of one file plays, for a client that paints the
-/// source. The tree is resolved like a check because the check settles the
-/// method families the tokens name.
+/// source. The tree is checked because the check settles the method families
+/// the tokens name; the unused facts are not computed, because tokens do not
+/// read them.
 pub(crate) fn semantic_tokens(
     path: &Path,
     source: &impl ProgramSource,
     tree: Tree<'_>,
 ) -> Vec<SemanticToken> {
-    let Ok(analyzed) = analyzed(tree, source) else {
+    let Ok(linked) = link(tree, source) else {
         return Vec::new();
     };
-    let Some(index) = analyzed
+    let Some(index) = linked
         .loaded
         .files
         .iter()
@@ -72,23 +109,24 @@ pub(crate) fn semantic_tokens(
     else {
         return Vec::new();
     };
-    semantic::tokens(&analyzed.loaded, &analyzed.program, FileId(index))
+    semantic::tokens(&linked.loaded, &linked.program, FileId(index))
 }
 
-/// One tree after resolution and checking: its files, its model, and every
-/// fact the tree earned.
-struct Analyzed {
+/// One tree after resolution and checking: its files, its model, the
+/// resolution's warnings, and every error the checker met.
+struct Linked {
     loaded: LoadedProgram,
-    program: crate::compiler::model::Program,
-    diagnostics: Vec<Diagnostic>,
+    program: Program,
+    warnings: Vec<Diagnostic>,
+    errors: Vec<Diagnostic>,
 }
 
 /// Load, resolve, and check one tree. A load or resolution failure is the
 /// facts the caller reports; the tree before the failure still names its
 /// files.
-fn analyzed(tree: Tree<'_>, source: &impl ProgramSource) -> Result<Analyzed, Vec<FileDiagnostics>> {
+fn link(tree: Tree<'_>, source: &impl ProgramSource) -> Result<Linked, Vec<FileDiagnostics>> {
     let loaded = match tree {
-        Tree::Program(project) => load_files(&project.root, source),
+        Tree::Program { root, .. } => load_files(root, source),
         Tree::StandardLibrary(root) => load_library(root, source),
     };
     let loaded = match loaded {
@@ -110,113 +148,35 @@ fn analyzed(tree: Tree<'_>, source: &impl ProgramSource) -> Result<Analyzed, Vec
         Err(diagnostic) => {
             let mut diagnostics = loaded.syntax.clone();
             diagnostics.push(diagnostic);
-            return Err(group(&loaded, diagnostics, WarningPolicy::default()));
+            diagnostics.retain(|diagnostic| is_program_source(&diagnostic.path));
+            return Err(group(&loaded, diagnostics));
         }
     };
-    // A recovered tree still reports: its syntax errors, every unused fact the
-    // recovery kept, every error the checker met, and the entry's own fact.
-    let mut diagnostics = loaded.syntax.clone();
-    diagnostics.extend(validate_program(&mut program));
-    diagnostics.extend(warnings);
-    diagnostics.extend(unused_bindings(&program));
-    let main = match program_main(&program) {
-        Ok(main) => main,
-        Err(diagnostic) => {
-            diagnostics.push(diagnostic);
-            None
-        }
-    };
-    // A missing `main` is not an editor error: a library and a work in
-    // progress have none. When one exists, the declarations it never reaches
-    // are unused.
-    if let Some(main) = main {
-        let reachable = mark_reachable(&program, main);
-        diagnostics.extend(unused_declarations(&program, &reachable));
-    }
-    Ok(Analyzed {
+    let errors = validate_program(&mut program);
+    Ok(Linked {
         loaded,
         program,
-        diagnostics,
+        warnings,
+        errors,
     })
-}
-
-/// Group facts by the file they name, keeping the source the spans convert
-/// against, and drop the warning kinds the tree's policy silences.
-fn group(
-    loaded: &LoadedProgram,
-    diagnostics: Vec<Diagnostic>,
-    policy: WarningPolicy,
-) -> Vec<FileDiagnostics> {
-    let mut files: Vec<FileDiagnostics> = Vec::new();
-    for diagnostic in diagnostics {
-        // The embedded library is the compiler's, not the editor's: its files
-        // have no real path, and a fact about one cannot be published.
-        if !is_program_file(&diagnostic.path)
-            || diagnostic.warning.is_some_and(|kind| !policy.admits(kind))
-        {
-            continue;
-        }
-        if let Some(file) = files.iter_mut().find(|file| file.path == diagnostic.path) {
-            file.diagnostics.push(diagnostic);
-            continue;
-        }
-        let source = loaded
-            .files
-            .iter()
-            .find(|file| file.path == diagnostic.path)
-            .map(|file| file.source.clone())
-            .unwrap_or_default();
-        files.push(FileDiagnostics {
-            path: diagnostic.path.clone(),
-            source,
-            diagnostics: vec![diagnostic],
-        });
-    }
-    for file in &mut files {
-        file.diagnostics
-            .sort_by_key(|diagnostic| diagnostic.span.start);
-    }
-    files.sort_by(|left, right| left.path.cmp(&right.path));
-    files
-}
-
-/// Group facts that already name their files (a load or resolution failure)
-/// and apply the same policy.
-fn group_without_tree(files: Vec<FileDiagnostics>, policy: WarningPolicy) -> Vec<FileDiagnostics> {
-    files
-        .into_iter()
-        .map(|mut file| {
-            file.diagnostics
-                .retain(|diagnostic| diagnostic.warning.is_none_or(|kind| policy.admits(kind)));
-            file
-        })
-        .filter(|file| !file.diagnostics.is_empty())
-        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compiler::{OverlayOnDisk, Severity, VirtualSource, WarningKind, checked_program};
-    use crate::project::{DiagnosticScope, Project, WarningSetting};
+    use crate::cli::DiskSource;
+    use crate::compiler::{Severity, VirtualSource, WarningKind};
+    use crate::project::WarningSetting;
     use std::path::Path;
 
-    /// A project over a virtual tree, with the default policy.
-    fn project() -> Project {
-        Project {
-            manifest: Path::new("/virtual/kiru.toml").to_path_buf(),
-            root: Path::new("/virtual").to_path_buf(),
-            output: Path::new("/virtual/program").to_path_buf(),
-            scope: DiagnosticScope::File,
-            warnings: WarningPolicy::default(),
-        }
-    }
-
-    /// Every fact the project's whole tree earns.
+    /// Every fact a virtual project's whole tree earns.
     fn tree_facts(files: &[(&str, &str)]) -> Vec<Diagnostic> {
-        let project = project();
         let source = VirtualSource::new(files);
-        diagnostics(Tree::Program(&project), &source)
+        let tree = Tree::Program {
+            root: source.root(),
+            policy: WarningPolicy::default(),
+        };
+        diagnostics(tree, &source)
             .into_iter()
             .flat_map(|file| file.diagnostics)
             .collect()
@@ -277,29 +237,42 @@ mod tests {
         assert!(
             facts
                 .iter()
-                .all(|fact| !matches!(fact.severity, Severity::Error)),
+                .all(|fact| !matches!(fact.severity(), Severity::Error)),
             "a library needs no entry: {facts:?}"
         );
     }
 
     #[test]
     fn the_diagnostics_policy_silences_a_warning_kind() {
-        let mut project = project();
-        project.warnings.unused_local = WarningSetting::Off;
         let source = VirtualSource::new(&[("main.kiru", "fn main() { let unused: int = 1; };")]);
-        let facts: Vec<Diagnostic> = diagnostics(Tree::Program(&project), &source)
-            .into_iter()
-            .flat_map(|file| file.diagnostics)
-            .collect();
+        let policy = WarningPolicy {
+            unused_local: WarningSetting::Off,
+            ..Default::default()
+        };
+        let facts: Vec<Diagnostic> = diagnostics(
+            Tree::Program {
+                root: source.root(),
+                policy,
+            },
+            &source,
+        )
+        .into_iter()
+        .flat_map(|file| file.diagnostics)
+        .collect();
         assert!(facts.is_empty(), "the local warning is off: {facts:?}");
 
-        project.warnings.unused_local = WarningSetting::Warning;
-        let facts: Vec<Diagnostic> = diagnostics(Tree::Program(&project), &source)
-            .into_iter()
-            .flat_map(|file| file.diagnostics)
-            .collect();
+        let facts: Vec<Diagnostic> = diagnostics(
+            Tree::Program {
+                root: source.root(),
+                policy: WarningPolicy::default(),
+            },
+            &source,
+        )
+        .into_iter()
+        .flat_map(|file| file.diagnostics)
+        .collect();
         assert_eq!(facts.len(), 1, "{facts:?}");
-        assert_eq!(facts[0].warning, Some(WarningKind::UnusedLocal));
+        assert_eq!(facts[0].warning_kind(), Some(WarningKind::UnusedLocal));
     }
 
     #[test]
@@ -331,28 +304,19 @@ mod tests {
         // in `std::eprint(...)`, whose own body panics.
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
         let root = root.canonicalize().expect("the library is readable");
-        let path = root.join("dynamic/map.kiru");
-        let source = std::fs::read_to_string(&path).expect("the library file is readable");
-        let reports = diagnostics(
-            Tree::StandardLibrary(&root),
-            &OverlayOnDisk {
-                path: path.clone(),
-                source,
-            },
-        );
+        let reports = diagnostics(Tree::StandardLibrary(&root), &DiskSource);
         let errors: Vec<_> = reports
             .iter()
             .flat_map(|file| &file.diagnostics)
-            .filter(|diagnostic| matches!(diagnostic.severity, Severity::Error))
+            .filter(|diagnostic| matches!(diagnostic.severity(), Severity::Error))
             .collect();
-        assert!(errors.is_empty(), "the library file is clean: {errors:?}");
-    }
-
-    #[test]
-    fn a_checked_program_still_reads_through_the_build() {
-        // The build facade and the analysis share one model: a program that
-        // checks through the build has no error in its analysis either.
-        let program = checked_program("fn main() { let x: int = 1; std::print(\"x\"); };");
-        assert!(!program.declarations.is_empty());
+        assert!(errors.is_empty(), "the library checks clean: {errors:?}");
+        assert!(
+            reports
+                .iter()
+                .flat_map(|file| &file.diagnostics)
+                .all(|diagnostic| !diagnostic.message.contains("must end")),
+            "no body reports a false fall-through"
+        );
     }
 }

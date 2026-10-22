@@ -34,6 +34,30 @@ pub enum WarningKind {
     UnusedDeclaration,
 }
 
+/// What a diagnostic is: an error, or a warning of one kind. One field, so an
+/// error can never carry a warning kind and a warning can never lack one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiagnosticKind {
+    Error,
+    Warning(WarningKind),
+}
+
+impl DiagnosticKind {
+    pub fn severity(self) -> Severity {
+        match self {
+            DiagnosticKind::Error => Severity::Error,
+            DiagnosticKind::Warning(_) => Severity::Warning,
+        }
+    }
+
+    pub fn warning(self) -> Option<WarningKind> {
+        match self {
+            DiagnosticKind::Error => None,
+            DiagnosticKind::Warning(kind) => Some(kind),
+        }
+    }
+}
+
 /// One other place a diagnostic points at: the span and the fact it states.
 #[derive(Clone, Debug)]
 pub struct RelatedSpan {
@@ -51,16 +75,41 @@ pub struct FileDiagnostics {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+/// Group facts by the file they name, keeping the source the spans convert
+/// against and the order they were gathered in. One grouping serves the
+/// terminal's failure and the server's publication.
+pub(crate) fn group(
+    loaded: &LoadedProgram,
+    diagnostics: impl IntoIterator<Item = Diagnostic>,
+) -> Vec<FileDiagnostics> {
+    let mut files: Vec<FileDiagnostics> = Vec::new();
+    for diagnostic in diagnostics {
+        if let Some(file) = files.iter_mut().find(|file| file.path == diagnostic.path) {
+            file.diagnostics.push(diagnostic);
+            continue;
+        }
+        let source = loaded
+            .files
+            .iter()
+            .find(|file| file.path == diagnostic.path)
+            .map(|file| file.source.clone())
+            .unwrap_or_default();
+        files.push(FileDiagnostics {
+            path: diagnostic.path.clone(),
+            source,
+            diagnostics: vec![diagnostic],
+        });
+    }
+    files
+}
+
 /// One compiler fact tied to a source file and byte range.
 #[derive(Clone, Debug)]
 pub struct Diagnostic {
     pub path: PathBuf,
     pub span: Span,
     pub message: String,
-    pub severity: Severity,
-    /// The unused fact this warning states, when it is one. A project's
-    /// diagnostics policy reads this, never the message.
-    pub warning: Option<WarningKind>,
+    pub kind: DiagnosticKind,
     /// The places that explain this fact, when one exists. The first
     /// declaration behind a duplicate carries its span here.
     pub related: Vec<RelatedSpan>,
@@ -72,8 +121,7 @@ impl Diagnostic {
             path: path.into(),
             span,
             message: message.into(),
-            severity: Severity::Error,
-            warning: None,
+            kind: DiagnosticKind::Error,
             related: Vec::new(),
         }
     }
@@ -86,8 +134,7 @@ impl Diagnostic {
         kind: WarningKind,
     ) -> Self {
         Self {
-            severity: Severity::Warning,
-            warning: Some(kind),
+            kind: DiagnosticKind::Warning(kind),
             ..Self::new(path, span, message)
         }
     }
@@ -107,9 +154,20 @@ impl Diagnostic {
         self
     }
 
+    /// The severity of the fact.
+    pub fn severity(&self) -> Severity {
+        self.kind.severity()
+    }
+
+    /// The unused fact this warning states, when it is one. A project's
+    /// diagnostics policy reads this, never the message.
+    pub fn warning_kind(&self) -> Option<WarningKind> {
+        self.kind.warning()
+    }
+
     /// The word the terminal renders for the severity.
     fn severity_word(&self) -> &'static str {
-        match self.severity {
+        match self.severity() {
             Severity::Error => "error",
             Severity::Warning => "warning",
         }

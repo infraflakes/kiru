@@ -7,7 +7,6 @@
 
 mod compile_request;
 mod error;
-pub(crate) mod lock_recovery;
 mod parse_arguments;
 mod print_help;
 mod run_command;

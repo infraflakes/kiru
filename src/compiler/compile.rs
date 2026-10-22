@@ -9,11 +9,11 @@
 
 use std::path::Path;
 
-use super::warnings::{is_program_file, unused_declarations};
+use super::warnings::{is_program_source, unused_declarations};
 use crate::compiler::diagnostic::render;
 use crate::compiler::{
-    Build, DIAGNOSTIC_PREFIX, ProgramSource, attach_trailer, build, lower_bytecode, mark_reachable,
-    program_main, prune_unreachable, serialize_bytecode,
+    Build, DIAGNOSTIC_PREFIX, MISSING_MAIN, ProgramSource, attach_trailer, build, lower_bytecode,
+    mark_reachable, program_main, prune_unreachable, serialize_bytecode,
 };
 use crate::project::Project;
 use package::make_writable_executable;
@@ -41,12 +41,11 @@ pub(crate) fn compile(
         loaded,
         mut program,
         warnings,
-        syntax,
     } = build(&project.root, source, &project.warnings)
         .map_err(|failure| failure.rendered().to_owned())?;
     let mut facts: Vec<_> = warnings
         .into_iter()
-        .filter(|fact| is_program_file(&fact.path) && admitted(project, fact))
+        .filter(|fact| is_program_source(&fact.path) && admitted(project, fact))
         .collect();
     // The entry is the manifest's program main. A missing one is the
     // project's fact; a malformed one is the file's, and the diagnostic names
@@ -79,14 +78,14 @@ pub(crate) fn compile(
     // A recovered tree cannot become a binary, but it still reports: every
     // syntax error it kept, every fact the recovered source earned, and the
     // entry's own fact.
-    if !syntax.is_empty() || main.is_none() {
+    if !loaded.syntax.is_empty() || main.is_none() {
         let mut message = String::new();
-        for diagnostic in syntax.iter().chain(facts.iter()) {
+        for diagnostic in loaded.syntax.iter().chain(facts.iter()) {
             message.push_str(&render(&loaded, diagnostic));
         }
         if missing_main {
             message.push_str(&format!(
-                "{DIAGNOSTIC_PREFIX}: {}: the program has no root `main` function\n",
+                "{DIAGNOSTIC_PREFIX}: {}: {MISSING_MAIN}\n",
                 project.manifest.display()
             ));
         }
@@ -139,6 +138,5 @@ pub(crate) fn compile(
 
 /// Whether the project's diagnostics policy admits one fact.
 fn admitted(project: &Project, fact: &crate::compiler::Diagnostic) -> bool {
-    fact.warning
-        .is_none_or(|kind| project.warnings.admits(kind))
+    project.warnings.admits_fact(fact)
 }

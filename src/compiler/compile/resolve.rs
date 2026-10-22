@@ -19,4 +19,4 @@ mod use_checking;
 mod tests;
 
 pub(crate) use body_linking::{Analysis, resolve_tree};
-pub(crate) use main::{EntryShape, program_main};
+pub(crate) use main::{EntryShape, MISSING_MAIN, program_main};

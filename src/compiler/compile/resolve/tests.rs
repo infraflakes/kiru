@@ -4,14 +4,13 @@ use super::{program_main, resolve_tree};
 use crate::compiler::checked_program;
 use crate::compiler::model::{Expression, Program, Statement, TypeHead};
 
-fn linked(files: &[(&str, &str)], entry: &str) -> Result<Program, String> {
-    linked_with_entry(files, entry).map(|(program, _)| program)
+fn linked(files: &[(&str, &str)]) -> Result<Program, String> {
+    linked_with_entry(files).map(|(program, _)| program)
 }
 
 /// Link the files and keep the root `main` the entry rules accept.
 fn linked_with_entry(
     files: &[(&str, &str)],
-    _entry: &str,
 ) -> Result<(Program, crate::compiler::model::DeclarationId), String> {
     let directory = tempfile::tempdir().expect("temp dir");
     for (name, source) in files {
@@ -37,22 +36,22 @@ fn linked_with_entry(
     }
 }
 
-fn accept(files: &[(&str, &str)], entry: &str) -> Program {
-    linked(files, entry).expect("links")
+fn accept(files: &[(&str, &str)]) -> Program {
+    linked(files).expect("links")
 }
 
-/// One acceptance row: a case name, the files to write, and the entry file.
-type AcceptCase<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a str);
+/// One acceptance row: a case name and the files to write.
+type AcceptCase<'a> = (&'a str, &'a [(&'a str, &'a str)]);
 
 /// One rejection row: an acceptance row plus the expected error message.
-type RejectCase<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a str, &'a str);
+type RejectCase<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a str);
 
 /// Run every acceptance case, reporting all failures at once so one run names
 /// every case that broke rather than only the first.
 fn expect_accepts(cases: &[AcceptCase<'_>]) {
     let mut failures = Vec::new();
-    for &(name, files, entry) in cases {
-        if let Err(message) = linked(files, entry) {
+    for &(name, files) in cases {
+        if let Err(message) = linked(files) {
             failures.push(format!("{name}: expected acceptance, found `{message}`"));
         }
     }
@@ -68,8 +67,8 @@ fn expect_accepts(cases: &[AcceptCase<'_>]) {
 /// mismatches so one run reports every case that failed.
 fn expect_rejections(cases: &[RejectCase<'_>]) {
     let mut failures = Vec::new();
-    for &(name, files, entry, expected) in cases {
-        match linked(files, entry) {
+    for &(name, files, expected) in cases {
+        match linked(files) {
             Ok(_) => failures.push(format!("{name}: expected `{expected}`, but it linked")),
             Err(message) if message != expected => {
                 failures.push(format!("{name}: expected `{expected}`, found `{message}`"));
@@ -132,18 +131,13 @@ fn expect_checked_rejections(cases: &[(&str, &str, &str)]) {
 #[test]
 fn entry_and_namespace_rules() {
     expect_accepts(&[
-        (
-            "root main",
-            &[("main.kiru", "use std;\nfn main() {};")],
-            "main.kiru",
-        ),
+        ("root main", &[("main.kiru", "use std;\nfn main() {};")]),
         (
             "root main with a words parameter",
             &[(
                 "main.kiru",
                 "use std;\nuse std::dynamic::Vec;\nfn main(words: Vec<txt>) {};",
             )],
-            "main.kiru",
         ),
         (
             "a file in a subdirectory is its own namespace",
@@ -154,7 +148,6 @@ fn entry_and_namespace_rules() {
                 ),
                 ("tasks/go.kiru", "pub fn go() {};"),
             ],
-            "main.kiru",
         ),
         (
             "a sibling file shares the root namespace",
@@ -162,19 +155,16 @@ fn entry_and_namespace_rules() {
                 ("main.kiru", "use std;\nfn main() { helper(); };"),
                 ("helper.kiru", "fn helper() {};"),
             ],
-            "main.kiru",
         ),
         (
             "the root main stands beside the file the editor names",
             &[("main.kiru", "use std;"), ("helper.kiru", "fn main() {};")],
-            "main.kiru",
         ),
     ]);
     expect_rejections(&[
         (
             "main with a text parameter",
             &[("main.kiru", "use std;\nfn main(args: txt) {};")],
-            "main.kiru",
             "`main`'s parameter must be declared `std::dynamic::Vec<txt>`",
         ),
         (
@@ -183,7 +173,6 @@ fn entry_and_namespace_rules() {
                 ("main.kiru", "use std;\nuse root::tools;"),
                 ("tools/mod.kiru", "pub fn main() {};"),
             ],
-            "main.kiru",
             "the program has no root `main` function",
         ),
         (
@@ -192,13 +181,11 @@ fn entry_and_namespace_rules() {
                 ("main.kiru", "use std;\nfn main() {};"),
                 ("helper.kiru", "fn main() {};"),
             ],
-            "main.kiru",
             "`main` is declared more than once in this namespace",
         ),
         (
             "main with two parameters",
             &[("main.kiru", "use std;\nfn main(a: txt, b: txt) {};")],
-            "main.kiru",
             "`main` takes at most one parameter",
         ),
     ]);
@@ -209,96 +196,72 @@ fn a_namespace_scoped_use_covers_the_directory() {
     // A `use` is namespace-scoped: any file in the directory may write it, and
     // it covers every declaration of the namespace. `a.kiru` writes the use;
     // `b.kiru` reads `Option` bare through it.
-    accept(
-        &[
-            (
-                "main.kiru",
-                "use std;\nuse root::shared;\nfn main() { shared::g(); };",
-            ),
-            (
-                "shared/a.kiru",
-                "use std::Option;\npub fn f() -> Option<int> { return Option.none; };",
-            ),
-            (
-                "shared/b.kiru",
-                "pub fn g() -> Option<int> { return f(); };",
-            ),
-        ],
-        "main.kiru",
-    );
+    accept(&[
+        (
+            "main.kiru",
+            "use std;\nuse root::shared;\nfn main() { shared::g(); };",
+        ),
+        (
+            "shared/a.kiru",
+            "use std::Option;\npub fn f() -> Option<int> { return Option.none; };",
+        ),
+        (
+            "shared/b.kiru",
+            "pub fn g() -> Option<int> { return f(); };",
+        ),
+    ]);
 }
 
 #[test]
 fn a_method_needs_no_use() {
     // A bound function is gated by `pub` alone, never by whether its namespace
     // is `use`d: `xs.len()` works with no `use` in the file at all.
-    accept(
-        &[(
-            "main.kiru",
-            "fn main() { let xs: std::dynamic::Vec<int> = std::dynamic::Vec.new(); xs = xs.push(1); let n: int = xs.len(); };",
-        )],
+    accept(&[(
         "main.kiru",
-    );
+        "fn main() { let xs: std::dynamic::Vec<int> = std::dynamic::Vec.new(); xs = xs.push(1); let n: int = xs.len(); };",
+    )]);
     // A name-`use` of the type alone reaches the type and, through it, its
     // bound functions.
-    accept(
-        &[(
-            "main.kiru",
-            "use std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new(); let n: int = xs.len(); };",
-        )],
+    accept(&[(
         "main.kiru",
-    );
+        "use std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new(); let n: int = xs.len(); };",
+    )]);
 }
 
 #[test]
 fn absolute_paths_resolve_with_no_use() {
     // A path's first segment is a tree name, so `std::…` and `root::…` always
     // resolve: no `use` is needed for an absolute path.
-    accept(
-        &[(
+    accept(&[(
+        "main.kiru",
+        "fn main() { std::print(\"no use at all\"); let xs: std::dynamic::Vec<int> = std::dynamic::Vec.new(); std::print(\"@(std::dynamic::len(xs))\"); };",
+    )]);
+    accept(&[
+        (
             "main.kiru",
-            "fn main() { std::print(\"no use at all\"); let xs: std::dynamic::Vec<int> = std::dynamic::Vec.new(); std::print(\"@(std::dynamic::len(xs))\"); };",
-        )],
-        "main.kiru",
-    );
-    accept(
-        &[
-            (
-                "main.kiru",
-                "use root::tasks;\nfn main() { std::print(tasks::go()); };",
-            ),
-            ("tasks/go.kiru", "pub fn go() -> txt { return \"x\"; };"),
-        ],
-        "main.kiru",
-    );
+            "use root::tasks;\nfn main() { std::print(tasks::go()); };",
+        ),
+        ("tasks/go.kiru", "pub fn go() -> txt { return \"x\"; };"),
+    ]);
 }
 
 #[test]
 fn a_use_shortens_paths() {
     // A namespace-`use` gives the qualifier its last segment spells.
-    accept(
-        &[(
-            "main.kiru",
-            "use std::dynamic;\nfn main() { let xs: dynamic::Vec<int> = dynamic::Vec.new(); let n: int = dynamic::len(xs); };",
-        )],
+    accept(&[(
         "main.kiru",
-    );
+        "use std::dynamic;\nfn main() { let xs: dynamic::Vec<int> = dynamic::Vec.new(); let n: int = dynamic::len(xs); };",
+    )]);
     // A type-`use` gives a bare type, and its bound functions come with it.
-    accept(
-        &[(
-            "main.kiru",
-            "use std::dynamic::Map;\nfn main() { let m: Map<txt, int> = Map.new(); let n: int = m.len(); };",
-        )],
+    accept(&[(
         "main.kiru",
-    );
+        "use std::dynamic::Map;\nfn main() { let m: Map<txt, int> = Map.new(); let n: int = m.len(); };",
+    )]);
     // One level of braces names several things under one prefix.
-    accept(
-        &[(
-            "main.kiru",
-            "use std::dynamic::{Map, text_order};\nfn main() { let m: Map<txt, int> = Map.new(); let b: bool = text_order(\"a\", \"b\"); };",
-        )],
+    accept(&[(
         "main.kiru",
-    );
+        "use std::dynamic::{Map, text_order};\nfn main() { let m: Map<txt, int> = Map.new(); let b: bool = text_order(\"a\", \"b\"); };",
+    )]);
 }
 
 #[test]
@@ -313,7 +276,6 @@ fn an_impl_bound_function_is_not_a_name() {
                 "main.kiru",
                 "use std::dynamic;\nuse std::dynamic::push;\nfn main() {};",
             )],
-            "main.kiru",
             "`std::dynamic::push` names no namespace, type, or function",
         ),
         (
@@ -322,7 +284,6 @@ fn an_impl_bound_function_is_not_a_name() {
                 "main.kiru",
                 "use std::dynamic;\nfn main() { let xs: dynamic::Vec<int> = dynamic::Vec.new(); push(xs, 1); };",
             )],
-            "main.kiru",
             "unknown name `push`",
         ),
         (
@@ -331,7 +292,6 @@ fn an_impl_bound_function_is_not_a_name() {
                 "main.kiru",
                 "use std::dynamic;\nfn main() { let f: fn(dynamic::Vec<int>, int) -> dynamic::Vec<int> = push; };",
             )],
-            "main.kiru",
             "unknown name `push`",
         ),
         (
@@ -340,19 +300,15 @@ fn an_impl_bound_function_is_not_a_name() {
                 "main.kiru",
                 "use std::dynamic;\nfn main() { let f: int = dynamic::push; };",
             )],
-            "main.kiru",
             "unknown name `dynamic::push`",
         ),
     ]);
     // A qualified path reaches the bound function through the namespace, and
     // the method reaches it through the receiver.
-    accept(
-        &[(
-            "main.kiru",
-            "fn main() { let xs: std::dynamic::Vec<int> = std::dynamic::Vec.new(); xs = std::dynamic::push(xs, 1); xs = xs.push(2); };",
-        )],
+    accept(&[(
         "main.kiru",
-    );
+        "fn main() { let xs: std::dynamic::Vec<int> = std::dynamic::Vec.new(); xs = std::dynamic::push(xs, 1); xs = xs.push(2); };",
+    )]);
 }
 
 #[test]
@@ -367,7 +323,6 @@ fn vec_is_a_declared_type_in_std_dynamic() {
                 "main.kiru",
                 "use std;\nfn f(xs: Vec<int>) {};\nfn main() {};",
             )],
-            "main.kiru",
             "unknown type `Vec`",
         ),
         (
@@ -376,24 +331,17 @@ fn vec_is_a_declared_type_in_std_dynamic() {
                 "main.kiru",
                 "use std;\nfn main() { let xs: dynamic::Vec<int> = Vec.new(); };",
             )],
-            "main.kiru",
             "unknown name `Vec`",
         ),
     ]);
-    accept(
-        &[(
-            "main.kiru",
-            "use std;\nuse std::dynamic;\nfn main() { let xs: dynamic::Vec<int> = dynamic::Vec.new(); };",
-        )],
+    accept(&[(
         "main.kiru",
-    );
-    accept(
-        &[(
-            "main.kiru",
-            "use std;\nuse std::dynamic;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new(); };",
-        )],
+        "use std;\nuse std::dynamic;\nfn main() { let xs: dynamic::Vec<int> = dynamic::Vec.new(); };",
+    )]);
+    accept(&[(
         "main.kiru",
-    );
+        "use std;\nuse std::dynamic;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new(); };",
+    )]);
 }
 
 #[test]
@@ -401,13 +349,10 @@ fn associated_functions_are_reached_through_the_type() {
     // A function in an `impl` block whose first parameter is not the block's
     // type is an associated function: `Vec.new()` finds the native vec `new`
     // and `Map.new()` the map one, both filed under their type.
-    let program = accept(
-        &[(
-            "main.kiru",
-            "use std;\nuse std::dynamic;\nuse std::dynamic::Vec;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new(); let m: Map<txt, int> = Map.new(); };",
-        )],
+    let program = accept(&[(
         "main.kiru",
-    );
+        "use std;\nuse std::dynamic;\nuse std::dynamic::Vec;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new(); let m: Map<txt, int> = Map.new(); };",
+    )]);
     let root = program
         .namespace_at(&["root".to_owned()])
         .expect("the program root exists");
@@ -452,13 +397,10 @@ fn the_library_files_its_functions_under_their_types() {
     // The runtime's `Vec` rows name `Vec` themselves: `push` has it as its
     // first parameter, so it is a method, and `new` returns it, so it is an
     // associated function reached as `Vec.new()`.
-    let program = accept(
-        &[(
-            "main.kiru",
-            "use std;\nuse std::dynamic;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new(); xs = xs.push(1); };",
-        )],
+    let program = accept(&[(
         "main.kiru",
-    );
+        "use std;\nuse std::dynamic;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new(); xs = xs.push(1); };",
+    )]);
     let dynamic = program
         .namespace_at(&["std".to_owned(), "dynamic".to_owned()])
         .expect("std::dynamic exists");
@@ -499,16 +441,13 @@ fn the_library_files_its_functions_under_their_types() {
 fn impl_blocks_for_one_type_merge() {
     // Two blocks for one type merge the way two files make one namespace: a
     // method of one block calls a method of the other.
-    accept(
-        &[(
-            "main.kiru",
-            "use std;\nrec Point { x: int, y: int };\n\
+    accept(&[(
+        "main.kiru",
+        "use std;\nrec Point { x: int, y: int };\n\
              impl Point { pub fn sum(self: Point) -> int { return self.x + self.y; }; };\n\
              impl Point { pub fn scaled(self: Point, factor: int) -> int { return self.sum() * factor; }; };\n\
              fn main() { let p: Point = { x = 1, y = 2 }; std::print(\"@(p.scaled(3))\"); };",
-        )],
-        "main.kiru",
-    );
+    )]);
     expect_rejections(&[(
         "a duplicate across two blocks",
         &[(
@@ -518,7 +457,6 @@ fn impl_blocks_for_one_type_merge() {
              impl Point { pub fn sum(self: Point) -> int { return 1; }; };\n\
              fn main() {};",
         )],
-        "main.kiru",
         "`sum` is declared more than once in this namespace",
     )]);
 }
@@ -528,50 +466,41 @@ fn an_impl_block_files_its_functions_in_its_namespace() {
     // The block's functions are filed in the namespace of the file that wrote
     // it, and a bound function is gated by `pub` alone, so a caller reaches a
     // public method through the type.
-    accept(
-        &[
-            (
-                "main.kiru",
-                "use std;\nuse root::m;\nfn main() { let p: m::P = { x = 1 }; std::print(\"@(p.sum())\"); };",
-            ),
-            (
-                "m/mod.kiru",
-                "pub rec P { x: int };\nimpl P { pub fn sum(self: P) -> int { return self.x; }; };",
-            ),
-        ],
-        "main.kiru",
-    );
+    accept(&[
+        (
+            "main.kiru",
+            "use std;\nuse root::m;\nfn main() { let p: m::P = { x = 1 }; std::print(\"@(p.sum())\"); };",
+        ),
+        (
+            "m/mod.kiru",
+            "pub rec P { x: int };\nimpl P { pub fn sum(self: P) -> int { return self.x; }; };",
+        ),
+    ]);
     // A name-`use` of the type reaches the type and, through it, its methods.
-    accept(
-        &[
-            (
-                "main.kiru",
-                "use std;\nuse root::m::P;\nfn main() { let p: P = { x = 1 }; std::print(\"@(p.sum())\"); };",
-            ),
-            (
-                "m/mod.kiru",
-                "pub rec P { x: int };\nimpl P { pub fn sum(self: P) -> int { return self.x; }; };",
-            ),
-        ],
-        "main.kiru",
-    );
+    accept(&[
+        (
+            "main.kiru",
+            "use std;\nuse root::m::P;\nfn main() { let p: P = { x = 1 }; std::print(\"@(p.sum())\"); };",
+        ),
+        (
+            "m/mod.kiru",
+            "pub rec P { x: int };\nimpl P { pub fn sum(self: P) -> int { return self.x; }; };",
+        ),
+    ]);
 }
 
 #[test]
 fn a_same_named_function_in_two_blocks_does_not_collide() {
     // `impl Map` and `impl Set` may both declare `of`: the two blocks file it
     // under different types, so neither owns the name alone.
-    accept(
-        &[(
-            "main.kiru",
-            "use std;\nuse std::dynamic;\nuse std::dynamic::Map;\nuse std::dynamic::Set;\nuse std::dynamic::Vec;\n\
+    accept(&[(
+        "main.kiru",
+        "use std;\nuse std::dynamic;\nuse std::dynamic::Map;\nuse std::dynamic::Set;\nuse std::dynamic::Vec;\n\
              fn order(a: txt, b: txt) -> bool { return a < b; };\n\
              impl Map { pub fn of() -> Map<txt, int> { return Map.new(); }; };\n\
              impl Set { pub fn of() -> Set<txt> { return Set.from_items(Vec.new(), order); }; };\n\
              fn main() { let m: Map<txt, int> = Map.of(); let s: Set<txt> = Set.of(); std::print(\"@(m.len()) @(s.len())\"); };",
-        )],
-        "main.kiru",
-    );
+    )]);
 }
 
 #[test]
@@ -593,7 +522,6 @@ fn an_impl_block_with_an_unknown_target_is_rejected() {
             "main.kiru",
             "use std;\nimpl Missing { fn f() {}; };\nfn main() {};",
         )],
-        "main.kiru",
         "unknown type `Missing`",
     )]);
 }
@@ -606,7 +534,6 @@ fn a_pub_let_is_rejected() {
             "main.kiru",
             "use std;\npub let x: txt = \"a\";\nfn main() {};",
         )],
-        "main.kiru",
         "expected a declaration, found `pub`",
     )]);
 }
@@ -619,17 +546,13 @@ fn a_module_value_cycle_is_rejected() {
             "main.kiru",
             "use std;\nlet x: int = y;\nlet y: int = x;\nfn main() {};",
         )],
-        "main.kiru",
         "`x` is part of a cycle among module values",
     )]);
     // An order-free forward reference resolves: a value may read a later one.
-    accept(
-        &[(
-            "main.kiru",
-            "use std;\nlet derived: txt = \"@(base)b\";\nlet base: txt = \"a\";\nfn main() {};",
-        )],
+    accept(&[(
         "main.kiru",
-    );
+        "use std;\nlet derived: txt = \"@(base)b\";\nlet base: txt = \"a\";\nfn main() {};",
+    )]);
 }
 
 /// The names of a program's module values in evaluation order: each is
@@ -688,31 +611,22 @@ fn a_module_value_cycle_through_a_deferred_body_is_legal() {
     // A reference in a function literal body is evaluated when the value is
     // called, not when its initializer runs, so it is not a module-value
     // dependency and the mention creates no cycle.
-    accept(
-        &[(
-            "main.kiru",
-            "use std;\nfn apply(f: fn() -> int) -> int { return f(); };\nlet x: int = apply(fn() -> int { return x; });\nfn main() {};",
-        )],
+    accept(&[(
         "main.kiru",
-    );
-    accept(
-        &[(
-            "main.kiru",
-            "use std;\nfn wrap(f: fn() -> int) -> fn() -> int { return f; };\nlet a: fn() -> int = wrap(fn() -> int { return b(); });\nlet b: fn() -> int = a;\nfn main() {};",
-        )],
+        "use std;\nfn apply(f: fn() -> int) -> int { return f(); };\nlet x: int = apply(fn() -> int { return x; });\nfn main() {};",
+    )]);
+    accept(&[(
         "main.kiru",
-    );
+        "use std;\nfn wrap(f: fn() -> int) -> fn() -> int { return f; };\nlet a: fn() -> int = wrap(fn() -> int { return b(); });\nlet b: fn() -> int = a;\nfn main() {};",
+    )]);
 }
 
 #[test]
 fn an_order_free_forward_reference_resolves() {
-    accept(
-        &[(
-            "main.kiru",
-            "use std;\nfn main() { std::print(banner()); };\nfn banner() -> txt { return \"x\"; };",
-        )],
+    accept(&[(
         "main.kiru",
-    );
+        "use std;\nfn main() { std::print(banner()); };\nfn banner() -> txt { return \"x\"; };",
+    )]);
 }
 
 #[test]
@@ -749,7 +663,6 @@ fn name_and_binding_rules() {
                 "main.kiru",
                 "use std;\nlet top: txt = \"a\";\nfn main() { let top: txt = \"b\"; std::print(top); };",
             )],
-            "main.kiru",
         ),
         (
             "case arms reuse a name",
@@ -757,14 +670,12 @@ fn name_and_binding_rules() {
                 "main.kiru",
                 "use std;\nfn main() {\nmatch \"a\" {\n\"a\" => { let x: txt = \"1\"; };\n\"b\" => { let x: txt = \"2\"; };\n_ => { let x: txt = \"3\"; };\n};\n};",
             )],
-            "main.kiru",
         ),
     ]);
     expect_rejections(&[
         (
             "unknown name",
             &[("main.kiru", "use std;\nfn main() { nope(); };")],
-            "main.kiru",
             "unknown name `nope`",
         ),
         (
@@ -773,7 +684,6 @@ fn name_and_binding_rules() {
                 "main.kiru",
                 "use std;\nfn f(a: txt, a: txt) {};\nfn main() {};",
             )],
-            "main.kiru",
             "`a` is declared more than once",
         ),
         (
@@ -782,7 +692,6 @@ fn name_and_binding_rules() {
                 "main.kiru",
                 "use std;\nfn main() { let x: txt = \"a\"; let x: txt = \"b\"; };",
             )],
-            "main.kiru",
             "`x` is declared more than once",
         ),
         (
@@ -791,7 +700,6 @@ fn name_and_binding_rules() {
                 "main.kiru",
                 "use std;\nfn f(x: txt) { let x: txt = \"a\"; };\nfn main() {};",
             )],
-            "main.kiru",
             "`x` is declared more than once",
         ),
     ]);
@@ -805,7 +713,6 @@ fn a_duplicate_name_is_rejected() {
             "main.kiru",
             "use std;\nfn build() {};\nlet build: txt = \"b\";\nfn main() { std::print(build); };",
         )],
-        "main.kiru",
         "`build` is declared more than once in this namespace",
     )]);
 }
@@ -813,10 +720,9 @@ fn a_duplicate_name_is_rejected() {
 #[test]
 fn a_loop_item_keeps_its_element_type_for_dispatch() {
     // A method call on a loop item dispatches on the item's declared type.
-    accept(
-        &[(
-            "main.kiru",
-            "use std;\n\
+    accept(&[(
+        "main.kiru",
+        "use std;\n\
              use std::dynamic;\n\
              use std::dynamic::Vec;\n\
              rec Service { name: txt };\n\
@@ -833,17 +739,14 @@ fn a_loop_item_keeps_its_element_type_for_dispatch() {
              index = index + 1;\n\
              };\n\
              };",
-        )],
-        "main.kiru",
-    );
+    )]);
 }
 
 #[test]
 fn a_method_name_may_repeat_per_receiver_head() {
-    let program = accept(
-        &[(
-            "main.kiru",
-            "use std;\n\
+    let program = accept(&[(
+        "main.kiru",
+        "use std;\n\
              rec A { n: int };\nrec B { n: int };\n\
              impl A { pub fn describe(self: A) -> txt { return \"a\"; }; };\n\
              impl B { pub fn describe(self: B) -> txt { return \"b\"; }; };\n\
@@ -851,9 +754,7 @@ fn a_method_name_may_repeat_per_receiver_head() {
              let a: A = { n = 1 };\nlet b: B = { n = 2 };\n\
              std::print(a.describe());\nstd::print(b.describe());\n\
              };",
-        )],
-        "main.kiru",
-    );
+    )]);
     let root = program
         .namespace_at(&["root".to_owned()])
         .expect("the program root exists");
@@ -898,7 +799,6 @@ fn a_method_name_may_repeat_per_receiver_head() {
              std::print(root::describe(a));\nstd::print(root::describe(b));\n\
              };",
         )],
-        "main.kiru",
     )]);
     expect_rejections(&[
         (
@@ -910,7 +810,6 @@ fn a_method_name_may_repeat_per_receiver_head() {
                  impl A { pub fn describe(self: A) -> txt { return \"a\"; }; pub fn describe(self: A) -> txt { return \"b\"; }; };\n\
                  fn main() {};",
             )],
-            "main.kiru",
             "`describe` is declared more than once in this namespace",
         ),
         (
@@ -923,7 +822,6 @@ fn a_method_name_may_repeat_per_receiver_head() {
                  impl B { pub fn describe(self: B) -> txt { return \"b\"; }; };\n\
                  fn main() { let f: fn(A) -> txt = describe; };",
             )],
-            "main.kiru",
             "unknown name `describe`",
         ),
         (
@@ -935,7 +833,6 @@ fn a_method_name_may_repeat_per_receiver_head() {
                  impl A { pub fn describe(self: A) -> txt { return \"a\"; }; };\n\
                  fn main() { let a: A = { n = 1 }; std::print(describe(a)); };",
             )],
-            "main.kiru",
             "unknown name `describe`",
         ),
     ]);
@@ -943,16 +840,13 @@ fn a_method_name_may_repeat_per_receiver_head() {
 
 #[test]
 fn calls_are_edges_to_the_callee() {
-    let (program, entry) = linked_with_entry(
-        &[
-            (
-                "main.kiru",
-                "use std;\nuse root::tasks;\nfn main() { tasks::go(); };",
-            ),
-            ("tasks/go.kiru", "pub fn go() {};"),
-        ],
-        "main.kiru",
-    )
+    let (program, entry) = linked_with_entry(&[
+        (
+            "main.kiru",
+            "use std;\nuse root::tasks;\nfn main() { tasks::go(); };",
+        ),
+        ("tasks/go.kiru", "pub fn go() {};"),
+    ])
     .expect("links");
     let program = &program;
     let entry = program.declaration(entry);
@@ -968,15 +862,12 @@ fn calls_are_edges_to_the_callee() {
 
 #[test]
 fn a_named_function_and_a_closure_are_the_same_value() {
-    let program = accept(
-        &[(
-            "main.kiru",
-            "use std;\n\
+    let program = accept(&[(
+        "main.kiru",
+        "use std;\n\
              fn double(x: int) -> int { return x * 2; };\n\
              fn main() { let f: fn(int) -> int = fn(x: int) -> int { return x + 1; }; };",
-        )],
-        "main.kiru",
-    );
+    )]);
     let root = program
         .namespace_at(&["root".to_owned()])
         .expect("the program root exists");

@@ -11,4 +11,5 @@ pub mod compiler;
 pub mod lsp;
 mod project;
 pub mod runtime;
+mod sync;
 pub mod syntax;

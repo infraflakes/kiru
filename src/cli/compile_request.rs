@@ -17,18 +17,11 @@ pub(crate) fn compile(manifest: &Path, output: Option<&Path>, executable: &Path)
             return 1;
         }
     };
-    if let Some(output) = output {
-        if output
-            .extension()
-            .is_some_and(|extension| extension == "kiru")
-        {
-            eprintln!(
-                "{}: the output would overwrite a source file",
-                crate::compiler::DIAGNOSTIC_PREFIX
-            );
-            return 1;
-        }
-        project.output = output.to_path_buf();
+    if let Some(output) = output
+        && let Err(error) = project.set_output(output.to_path_buf())
+    {
+        eprintln!("{}: {error}", crate::compiler::DIAGNOSTIC_PREFIX);
+        return 1;
     }
     match compiler::compile(&project, executable, &DiskSource) {
         Ok(()) => 0,
