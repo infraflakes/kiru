@@ -11,29 +11,63 @@ use crate::compiler::model::join_path;
 use super::builder::Builder;
 
 impl Builder {
-    /// The warnings for the `use`s a namespace wrote but no body of the
-    /// namespace ever read. A read is a resolution that took one delivery of
-    /// the name: the reader records it where it reads, so a `use` absent from
-    /// the recordings delivered nothing this namespace's bodies read.
-    pub(in crate::compiler::compile::resolve) fn unused_use_warnings(
+    /// The warnings for the `use`s a namespace wrote. A `use` is used when a
+    /// body reads a delivery of its target; two items that deliver the same
+    /// target under the same name are one namespace fact written twice, so the
+    /// later ones are redundant rather than unused. The first item stays the
+    /// one the unused fact names when no body reads the target.
+    pub(in crate::compiler::compile::resolve) fn use_warnings(
         &self,
         loaded: &LoadedProgram,
     ) -> Vec<Diagnostic> {
         let used = self.used_uses.borrow();
-        loaded
-            .uses
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| !used.contains(index))
-            .map(|(_, unused)| {
-                Diagnostic::warning(
-                    &loaded.files[unused.file].path,
-                    unused.span,
-                    format!("unused use `{}`", join_path(&unused.path)),
+        let mut firsts: Vec<(&[String], &str, crate::compiler::model::UseTarget, usize)> =
+            Vec::new();
+        let mut warnings = Vec::new();
+        for (index, item) in loaded.uses.iter().enumerate() {
+            let Some(target) = self.resolve_use(&item.path) else {
+                continue;
+            };
+            let name = item
+                .path
+                .last()
+                .expect("a `use` path is not empty")
+                .as_str();
+            if let Some((_, _, _, first)) =
+                firsts.iter().find(|(namespace, delivered, first, _)| {
+                    *namespace == item.namespace.as_slice()
+                        && *delivered == name
+                        && *first == target
+                })
+            {
+                let first = *first;
+                let first_item = &loaded.uses[first];
+                warnings.push(
+                    Diagnostic::warning(
+                        &loaded.files[item.file].path,
+                        item.span,
+                        format!("redundant use `{}`", join_path(&item.path)),
+                        crate::compiler::WarningKind::RedundantUse,
+                    )
+                    .with_related(
+                        &loaded.files[first_item.file].path,
+                        first_item.span,
+                        "first use is here",
+                    ),
+                );
+                continue;
+            }
+            firsts.push((&item.namespace, name, target, index));
+            if !used.contains(&index) {
+                warnings.push(Diagnostic::warning(
+                    &loaded.files[item.file].path,
+                    item.span,
+                    format!("unused use `{}`", join_path(&item.path)),
                     crate::compiler::WarningKind::UnusedUse,
-                )
-            })
-            .collect()
+                ));
+            }
+        }
+        warnings
     }
 
     /// Reject a `use` whose path may not end where it does: a `use` reaches a

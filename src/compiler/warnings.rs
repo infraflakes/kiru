@@ -2,8 +2,9 @@
 //!
 //! A warning is a statement of a fact the compiler already holds: the
 //! language is deliberately simple, so a warning says what is, not what to
-//! do. The facts are an unused `use`, an unused local binding, and a program
-//! declaration no reachable body reads. The unused-`use` fact is recorded
+//! do. The facts are an unused `use`, a redundant `use` (a second item that
+//! delivers a target an earlier one already delivered in its namespace), an
+//! unused local binding, and a program declaration no reachable body reads. The unused-`use` fact is recorded
 //! where resolutions read the deliveries and is emitted beside those reads, in
 //! the resolver; the unused-binding fact is the reference edges the check
 //! settled, and this pass reads them; the unused-declaration fact is the

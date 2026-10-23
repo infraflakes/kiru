@@ -35,7 +35,7 @@ pub(crate) fn resolve_tree(loaded: &LoadedProgram) -> Result<Analysis, Diagnosti
     let module_values = builder.order_module_values(&builder.module_values)?;
     // The unused-`use` fact is settled: every body is linked and every read
     // recorded itself. It is read before `finish` takes the builder apart.
-    let warnings = builder.unused_use_warnings(loaded);
+    let warnings = builder.use_warnings(loaded);
     let program = builder.finish(module_values);
     Ok(Analysis { program, warnings })
 }

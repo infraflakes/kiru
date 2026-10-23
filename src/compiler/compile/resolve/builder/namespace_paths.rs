@@ -29,17 +29,18 @@ impl Builder {
             let namespace = self.ensure_namespace(&used.namespace);
             let brought = &mut self.namespaces[namespace.0].brought;
             let entries = brought.entry(symbol).or_default();
-            // A use recorded above is never recorded again: the reader takes
-            // the first entry that fits, and one target twice is that entry.
-            if !entries.iter().any(|entry| entry.target == target) {
+            // One use item is recorded once, by the two indexing passes; two
+            // items that deliver the same target both stay, so the redundant
+            // fact can name the later one.
+            if !entries.iter().any(|entry| entry.use_index == use_index) {
                 entries.push(Delivery { target, use_index });
             }
         }
     }
 
-    /// Mark the `use` item that delivered a read resolution as used. The
-    /// recording happens where the read happens: the reader takes the first
-    /// entry that fits, and that entry's `use` is the one the resolution used.
+    /// Mark the `use` item a read resolution took as used. A second item that
+    /// delivered the same target is not marked: it was never taken, and the
+    /// redundant fact names it for what it is.
     pub(in crate::compiler::compile::resolve) fn record_delivery(
         &self,
         entries: &[Delivery],

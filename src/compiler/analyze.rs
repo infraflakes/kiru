@@ -299,6 +299,70 @@ mod tests {
     }
 
     #[test]
+    fn a_duplicate_use_is_redundant_not_unused() {
+        // Uses belong to the namespace: two files may write the same one. The
+        // read makes the delivery used; the second statement is the redundant
+        // one, and it is named as redundant rather than unused.
+        let facts = messages(&[
+            (
+                "main.kiru",
+                "use std::process;\nfn main() { std::print(process::quote(\"x\")); };",
+            ),
+            ("other.kiru", "use std::process;\n"),
+        ]);
+        assert!(
+            facts.contains(&"redundant use `std::process`".to_owned()),
+            "{facts:?}"
+        );
+        assert!(
+            facts.iter().all(|fact| !fact.contains("unused use")),
+            "the delivery is read: {facts:?}"
+        );
+    }
+
+    #[test]
+    fn an_unread_duplicate_reports_both_facts() {
+        let facts = messages(&[
+            ("main.kiru", "use std::process;\nfn main() {};"),
+            ("other.kiru", "use std::process;\n"),
+        ]);
+        assert!(
+            facts.contains(&"unused use `std::process`".to_owned()),
+            "the delivery is never read: {facts:?}"
+        );
+        assert!(
+            facts.contains(&"redundant use `std::process`".to_owned()),
+            "the second item duplicates the first: {facts:?}"
+        );
+    }
+
+    #[test]
+    fn the_policy_silences_a_redundant_use() {
+        let source = VirtualSource::new(&[
+            (
+                "main.kiru",
+                "use std::process;\nfn main() { std::print(process::quote(\"x\")); };",
+            ),
+            ("other.kiru", "use std::process;\n"),
+        ]);
+        let policy = WarningPolicy {
+            redundant_use: WarningSetting::Off,
+            ..Default::default()
+        };
+        let facts: Vec<Diagnostic> = diagnostics(
+            Tree::Program {
+                root: source.root(),
+                policy,
+            },
+            &source,
+        )
+        .into_iter()
+        .flat_map(|file| file.diagnostics)
+        .collect();
+        assert!(facts.is_empty(), "the redundant fact is off: {facts:?}");
+    }
+
+    #[test]
     fn a_method_receiver_is_not_an_unused_local() {
         let facts = messages(&[(
             "main.kiru",

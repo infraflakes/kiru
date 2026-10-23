@@ -30,6 +30,7 @@ pub enum Severity {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WarningKind {
     UnusedUse,
+    RedundantUse,
     UnusedLocal,
     UnusedDeclaration,
 }

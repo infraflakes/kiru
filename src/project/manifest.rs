@@ -29,10 +29,11 @@ pub(crate) enum WarningSetting {
     Off,
 }
 
-/// Which unused facts the project reports.
+/// Which warnings the project reports.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct WarningPolicy {
     pub(crate) unused_use: WarningSetting,
+    pub(crate) redundant_use: WarningSetting,
     pub(crate) unused_local: WarningSetting,
     pub(crate) unused_declaration: WarningSetting,
 }
@@ -48,6 +49,7 @@ impl WarningPolicy {
     pub(crate) fn admits(self, kind: WarningKind) -> bool {
         let setting = match kind {
             WarningKind::UnusedUse => self.unused_use,
+            WarningKind::RedundantUse => self.redundant_use,
             WarningKind::UnusedLocal => self.unused_local,
             WarningKind::UnusedDeclaration => self.unused_declaration,
         };
@@ -118,6 +120,8 @@ struct RawLsp {
 struct RawDiagnostics {
     #[serde(rename = "unused-use")]
     unused_use: Option<WarningSetting>,
+    #[serde(rename = "redundant-use")]
+    redundant_use: Option<WarningSetting>,
     #[serde(rename = "unused-local")]
     unused_local: Option<WarningSetting>,
     #[serde(rename = "unused-declaration")]
@@ -168,6 +172,7 @@ impl Project {
             scope: raw.lsp.scope.unwrap_or_default(),
             warnings: WarningPolicy {
                 unused_use: raw.diagnostics.unused_use.unwrap_or_default(),
+                redundant_use: raw.diagnostics.redundant_use.unwrap_or_default(),
                 unused_local: raw.diagnostics.unused_local.unwrap_or_default(),
                 unused_declaration: raw.diagnostics.unused_declaration.unwrap_or_default(),
             },
