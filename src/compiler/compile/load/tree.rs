@@ -34,18 +34,6 @@ pub(crate) fn load_files(
     Ok(loader.finish())
 }
 
-/// Load one project tree as the standard library: the compiler's own sources,
-/// every file joining the `std` tree under its directories. The embedded table
-/// is not mounted; the disk is this library's source.
-pub(crate) fn load_library(
-    root: &Path,
-    program_source: &impl ProgramSource,
-) -> Result<LoadedProgram, LoadError> {
-    let mut loader = Loader::new();
-    add_tree(&mut loader, root, STD_TREE, program_source)?;
-    Ok(loader.finish())
-}
-
 /// Add every file of one tree, each in the namespace its directories name.
 fn add_tree(
     loader: &mut Loader,

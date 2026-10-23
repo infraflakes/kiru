@@ -13,7 +13,7 @@ mod semantic;
 use std::path::Path;
 
 use crate::compiler::compile::check::validate_program;
-use crate::compiler::compile::load::{LoadedProgram, ProgramSource, load_files, load_library};
+use crate::compiler::compile::load::{LoadedProgram, ProgramSource, load_files};
 use crate::compiler::compile::resolve::{Analysis, program_main, resolve_tree};
 use crate::compiler::diagnostic::{Diagnostic, FileDiagnostics, group};
 use crate::compiler::mark_reachable;
@@ -24,19 +24,14 @@ use crate::compiler::warnings::{is_program_source, unused_bindings, unused_decla
 pub(crate) use semantic::SemanticRole;
 pub(crate) use semantic::{SemanticToken, TOKEN_MODIFIERS, TOKEN_TYPES};
 
-/// Which tree the editor's file belongs to. A project's tree is read beside
-/// the embedded library; the compiler's own standard library is the one tree
-/// read without it, under the `std` name.
-pub(crate) enum Tree<'a> {
-    Project(&'a crate::project::Project),
-    StandardLibrary(&'a Path),
-}
-
 /// The facts of the whole tree, file by file. A file with no facts is absent;
 /// a caller that reports one file publishes an empty list when its entry is
 /// missing.
-pub(crate) fn diagnostics(tree: Tree<'_>, source: &impl ProgramSource) -> Vec<FileDiagnostics> {
-    let linked = match link(tree, source) {
+pub(crate) fn diagnostics(
+    project: &crate::project::Project,
+    source: &impl ProgramSource,
+) -> Vec<FileDiagnostics> {
+    let linked = match link(project, source) {
         Ok(linked) => linked,
         // A tree that cannot be resolved names only errors, and an error is
         // never silenced by the project's policy.
@@ -78,11 +73,11 @@ pub(crate) fn diagnostics(tree: Tree<'_>, source: &impl ProgramSource) -> Vec<Fi
 /// the tokens name; the unused facts are not computed, because tokens do not
 /// read them.
 pub(crate) fn semantic_tokens(
+    project: &crate::project::Project,
     path: &Path,
     source: &impl ProgramSource,
-    tree: Tree<'_>,
 ) -> Vec<SemanticToken> {
-    let Ok(linked) = link(tree, source) else {
+    let Ok(linked) = link(project, source) else {
         return Vec::new();
     };
     let Some(index) = linked
@@ -108,11 +103,11 @@ struct Linked {
 /// Load, resolve, and check one tree. A load or resolution failure is the
 /// facts the caller reports; the tree before the failure still names its
 /// files.
-fn link(tree: Tree<'_>, source: &impl ProgramSource) -> Result<Linked, Vec<FileDiagnostics>> {
-    let loaded = match tree {
-        Tree::Project(project) => load_files(project, source),
-        Tree::StandardLibrary(root) => load_library(root, source),
-    };
+fn link(
+    project: &crate::project::Project,
+    source: &impl ProgramSource,
+) -> Result<Linked, Vec<FileDiagnostics>> {
+    let loaded = load_files(project, source);
     let loaded = match loaded {
         Ok(loaded) => loaded,
         Err(error) => {
@@ -148,22 +143,16 @@ fn link(tree: Tree<'_>, source: &impl ProgramSource) -> Result<Linked, Vec<FileD
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::DiskSource;
     use crate::compiler::{Severity, VirtualSource};
-    use std::path::Path;
 
     /// Every fact a virtual project's whole tree earns.
     fn tree_facts(files: &[(&str, &str)]) -> Vec<Diagnostic> {
         let source = VirtualSource::new(files);
-        diagnostics(
-            Tree::Project(&crate::compiler::test_support::virtual_project(
-                source.root(),
-            )),
-            &source,
-        )
-        .into_iter()
-        .flat_map(|file| file.diagnostics)
-        .collect()
+        let project = crate::compiler::test_support::virtual_project(source.root());
+        diagnostics(&project, &source)
+            .into_iter()
+            .flat_map(|file| file.diagnostics)
+            .collect()
     }
 
     fn messages(files: &[(&str, &str)]) -> Vec<String> {
@@ -307,19 +296,6 @@ mod tests {
                 .iter()
                 .any(|fact| fact == "the local `unused` is never read"),
             "every other parameter still reports: {facts:?}"
-        );
-    }
-
-    #[test]
-    fn the_library_file_with_the_cross_file_call_is_clean() {
-        // The real `get` that reported the false fall-through: its body ends
-        // in `std::eprint(...)`, whose own body panics.
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
-        let root = root.canonicalize().expect("the library is readable");
-        let reports = diagnostics(Tree::StandardLibrary(&root), &DiskSource);
-        assert!(
-            reports.is_empty(),
-            "the library reports nothing: {reports:?}"
         );
     }
 }

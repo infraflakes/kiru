@@ -4,9 +4,8 @@
 //! manifest names is analyzed as a whole: every body is linked and checked, so
 //! a fact about one file never depends on which file the editor is looking at.
 //! Only the open file's facts are published; there is no other mode. A file
-//! under the compiler's own `std/` source tree is the one special case: it is
-//! analyzed as the library, with no project and no entry. A file with no
-//! project is not analyzed.
+//! with no project is not analyzed: the manifest is the total structure of the
+//! codebase, and a tree is never inferred from a path.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -23,9 +22,7 @@ use tower_lsp_server::ls_types::{
 };
 use tower_lsp_server::{Client, LanguageServer};
 
-use crate::compiler::{
-    Diagnostic, EMBEDDED, STD_TREE, Severity, Tree, analyze_tree, semantic_tokens,
-};
+use crate::compiler::{Diagnostic, Severity, analyze_tree, semantic_tokens};
 use crate::project::{Project, find};
 use crate::sync::MutexExt;
 
@@ -45,12 +42,6 @@ pub struct Backend {
     silenced: Mutex<HashSet<(PathBuf, String)>>,
 }
 
-/// Which tree a file belongs to, with the tree's own data.
-enum Context {
-    Program(Project),
-    Library(PathBuf),
-}
-
 impl Backend {
     pub fn new(client: Client) -> Self {
         Self {
@@ -61,16 +52,9 @@ impl Backend {
         }
     }
 
-    /// The tree the file belongs to. A directory named `std` that holds the
-    /// library's files is the library, not a project: it is the one tree
-    /// analyzed without a manifest, and it is recognized by its contents so an
-    /// installed binary needs no checkout path. Otherwise the nearest
-    /// manifest's tree owns the file, and a file outside that tree has no tree
-    /// at all.
-    fn context(&self, path: &Path) -> std::result::Result<Context, String> {
-        if let Some(root) = standard_library_root(path) {
-            return Ok(Context::Library(root));
-        }
+    /// The project the file belongs to: the nearest manifest's tree, when the
+    /// file stands in it. There is no tree without a manifest.
+    fn project(&self, path: &Path) -> std::result::Result<Project, String> {
         let manifest =
             find(path).ok_or_else(|| format!("no `kiru.toml` above `{}`", path.display()))?;
         let project = Project::load(&manifest).map_err(|error| error.to_string())?;
@@ -81,7 +65,7 @@ impl Backend {
                 project.root.display()
             ));
         }
-        Ok(Context::Program(project))
+        Ok(project)
     }
 
     /// Keep the text a document notification carries, under its settled path.
@@ -116,20 +100,16 @@ impl Backend {
         let Some(uri) = Uri::from_file_path(&path) else {
             return;
         };
-        let context = match self.context(&path) {
-            Ok(context) => context,
+        let project = match self.project(&path) {
+            Ok(project) => project,
             Err(reason) => {
                 self.inactive(&path, uri.clone(), reason).await;
                 return;
             }
         };
-        let tree = match &context {
-            Context::Program(project) => Tree::Project(project),
-            Context::Library(root) => Tree::StandardLibrary(root),
-        };
         let encoding = self.encoding.get().copied().unwrap_or(Encoding::Utf16);
         let overlay = self.overlay();
-        let reports = analyze_tree(tree, &overlay);
+        let reports = analyze_tree(&project, &overlay);
         let source = self
             .documents
             .lock_unpoisoned()
@@ -234,13 +214,9 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         let path = settle(&raw);
-        let context = match self.context(&path) {
-            Ok(context) => context,
+        let project = match self.project(&path) {
+            Ok(project) => project,
             Err(_) => return Ok(None),
-        };
-        let tree = match &context {
-            Context::Program(project) => Tree::Project(project),
-            Context::Library(root) => Tree::StandardLibrary(root),
         };
         let source = self
             .documents
@@ -253,7 +229,7 @@ impl LanguageServer for Backend {
         };
         let encoding = *self.encoding.get().unwrap_or(&Encoding::Utf16);
         let overlay = self.overlay();
-        let tokens = semantic_tokens(&path, &overlay, tree);
+        let tokens = semantic_tokens(&project, &path, &overlay);
         Ok(Some(SemanticTokensResult::Tokens(tokens::encode(
             &source, tokens, encoding,
         ))))
@@ -283,20 +259,6 @@ fn negotiated(params: &InitializeParams) -> Encoding {
         Some(list) if list.contains(&PositionEncodingKind::UTF8) => Encoding::Utf8,
         _ => Encoding::Utf16,
     }
-}
-
-/// The library's source tree above a file: an ancestor named `std` that holds
-/// every file the binary embeds. The check reads the tree's contents, so a
-/// checkout at any path is recognized by an installed binary too.
-fn standard_library_root(path: &Path) -> Option<PathBuf> {
-    path.ancestors()
-        .find(|ancestor| {
-            ancestor.file_name().is_some_and(|name| name == STD_TREE)
-                && EMBEDDED
-                    .iter()
-                    .all(|(relative, _)| ancestor.join(relative).is_file())
-        })
-        .map(Path::to_path_buf)
 }
 
 /// The canonical path of a file the editor names. A file the disk does not
@@ -518,47 +480,5 @@ mod tests {
         )
         .await;
         assert_eq!(answer, Some(serde_json::Value::Null));
-    }
-
-    #[test]
-    fn the_library_tree_is_recognized_by_its_contents() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("std/dynamic/map.kiru");
-        let root = standard_library_root(&path).expect("the checkout's std tree is the library");
-        assert!(root.ends_with("std"));
-        assert_eq!(
-            root,
-            path.ancestors()
-                .nth(2)
-                .expect("the library root")
-                .canonicalize()
-                .unwrap()
-        );
-        let project = tempfile::tempdir().expect("a temporary directory");
-        std::fs::create_dir_all(project.path().join("std")).expect("create the directory");
-        std::fs::write(project.path().join("std/main.kiru"), "fn main() {};").expect("write");
-        assert!(
-            standard_library_root(&project.path().join("std/main.kiru")).is_none(),
-            "a directory named std without the library's files is a program namespace"
-        );
-    }
-
-    #[test]
-    fn the_whole_library_analyzes_without_errors() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("std");
-        let root = root.canonicalize().expect("the library is readable");
-        let facts = analyze_tree(Tree::StandardLibrary(&root), &crate::cli::DiskSource);
-        let errors: Vec<_> = facts
-            .iter()
-            .flat_map(|file| &file.diagnostics)
-            .filter(|diagnostic| matches!(diagnostic.severity, Severity::Error))
-            .collect();
-        assert!(errors.is_empty(), "the library checks clean: {errors:?}");
-        assert!(
-            facts
-                .iter()
-                .flat_map(|file| &file.diagnostics)
-                .all(|diagnostic| !diagnostic.message.contains("must end with")),
-            "no body reports a false fall-through"
-        );
     }
 }
