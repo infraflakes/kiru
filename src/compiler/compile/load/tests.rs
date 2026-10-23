@@ -89,7 +89,8 @@ fn the_embedded_table_mirrors_the_std_directory() {
 
     let directory = tempfile::tempdir().expect("temp dir");
     write(directory.path(), "main.kiru", "fn main() {};\n");
-    let program = load_files(directory.path(), &DiskSource).expect("loads");
+    let project = crate::compiler::test_support::virtual_project(directory.path());
+    let program = load_files(&project, &DiskSource).expect("loads");
     let prefix = format!("<{STD_TREE}>/");
     let mut loaded: Vec<String> = program
         .files
@@ -115,7 +116,8 @@ fn a_file_belongs_to_its_directory_namespace() {
     write(directory.path(), "task.kiru", "fn task() {};\n");
     write(directory.path(), "sub/worker.kiru", "fn worker() {};\n");
 
-    let program = load_files(directory.path(), &DiskSource).expect("loads");
+    let project = crate::compiler::test_support::virtual_project(directory.path());
+    let program = load_files(&project, &DiskSource).expect("loads");
     assert_eq!(namespace_of(&program, "main"), vec!["root".to_owned()]);
     // A sibling file shares the root namespace; a file in a directory nests.
     assert_eq!(namespace_of(&program, "task"), vec!["root".to_owned()]);
@@ -131,7 +133,8 @@ fn walks_the_tree_recursively() {
     write(directory.path(), "main.kiru", "fn main() {};\n");
     write(directory.path(), "a/b/deep.kiru", "fn deep() {};\n");
 
-    let program = load_files(directory.path(), &DiskSource).expect("loads");
+    let project = crate::compiler::test_support::virtual_project(directory.path());
+    let program = load_files(&project, &DiskSource).expect("loads");
     assert_eq!(
         namespace_of(&program, "deep"),
         vec!["root".to_owned(), "a".to_owned(), "b".to_owned()]
@@ -142,7 +145,8 @@ fn walks_the_tree_recursively() {
 fn reports_parse_error_with_file_and_position() {
     let directory = tempfile::tempdir().expect("temp dir");
     write(directory.path(), "main.kiru", "fn f( {\n");
-    let program = load_files(directory.path(), &DiskSource).expect("the recovered file loads");
+    let project = crate::compiler::test_support::virtual_project(directory.path());
+    let program = load_files(&project, &DiskSource).expect("the recovered file loads");
     let diagnostic = program.syntax.first().expect("one syntax error");
     let source = program
         .files

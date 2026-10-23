@@ -124,7 +124,7 @@ impl Backend {
             }
         };
         let tree = match &context {
-            Context::Program(project) => Tree::Program(&project.root),
+            Context::Program(project) => Tree::Project(project),
             Context::Library(root) => Tree::StandardLibrary(root),
         };
         let encoding = self.encoding.get().copied().unwrap_or(Encoding::Utf16);
@@ -239,7 +239,7 @@ impl LanguageServer for Backend {
             Err(_) => return Ok(None),
         };
         let tree = match &context {
-            Context::Program(project) => Tree::Program(&project.root),
+            Context::Program(project) => Tree::Project(project),
             Context::Library(root) => Tree::StandardLibrary(root),
         };
         let source = self

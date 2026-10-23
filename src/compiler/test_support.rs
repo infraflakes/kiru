@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use crate::compiler::model::{DeclarationId, Program};
 use crate::compiler::{BuildFailure, ProgramSource, build, program_main};
+use crate::project::Project;
 
 /// A program tree that stands for files no walk can reach: the tests write
 /// one, keyed by the paths relative to a root that names no directory.
@@ -52,6 +53,16 @@ impl ProgramSource for VirtualSource {
     }
 }
 
+/// The project a virtual tree stands for: no manifest is read, and the
+/// output names a path inside the tree.
+pub(crate) fn virtual_project(root: &Path) -> Project {
+    Project {
+        manifest: root.join("kiru.toml"),
+        root: root.to_path_buf(),
+        output: root.join("program"),
+    }
+}
+
 /// Build one source file, returning the checked program.
 pub(crate) fn checked_program(source: &str) -> Program {
     checked_files(&[("main.kiru", source)]).expect("the program checks")
@@ -60,7 +71,7 @@ pub(crate) fn checked_program(source: &str) -> Program {
 /// Build one source file, returning the checked program and its root `main`.
 pub(crate) fn checked_program_and_entry(source: &str) -> (Program, DeclarationId) {
     let source = VirtualSource::new(&[("main.kiru", source)]);
-    let built = build(source.root(), &source).expect("the program checks");
+    let built = build(&virtual_project(source.root()), &source).expect("the program checks");
     assert!(
         built.loaded.syntax.is_empty(),
         "the program parses: {:?}",
@@ -77,7 +88,7 @@ pub(crate) fn checked_program_and_entry(source: &str) -> (Program, DeclarationId
 /// does.
 pub(crate) fn checked_files(files: &[(&str, &str)]) -> Result<Program, String> {
     let source = VirtualSource::new(files);
-    match build(source.root(), &source) {
+    match build(&virtual_project(source.root()), &source) {
         // A recovered tree still builds its model, but it is not a program:
         // its syntax errors are the first fact the fixture reports.
         Ok(built) if !built.loaded.syntax.is_empty() => Err(built.loaded.syntax[0].message.clone()),

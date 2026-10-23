@@ -28,7 +28,7 @@ pub(crate) use semantic::{SemanticToken, TOKEN_MODIFIERS, TOKEN_TYPES};
 /// the embedded library; the compiler's own standard library is the one tree
 /// read without it, under the `std` name.
 pub(crate) enum Tree<'a> {
-    Program(&'a Path),
+    Project(&'a crate::project::Project),
     StandardLibrary(&'a Path),
 }
 
@@ -110,7 +110,7 @@ struct Linked {
 /// files.
 fn link(tree: Tree<'_>, source: &impl ProgramSource) -> Result<Linked, Vec<FileDiagnostics>> {
     let loaded = match tree {
-        Tree::Program(root) => load_files(root, source),
+        Tree::Project(project) => load_files(project, source),
         Tree::StandardLibrary(root) => load_library(root, source),
     };
     let loaded = match loaded {
@@ -155,10 +155,15 @@ mod tests {
     /// Every fact a virtual project's whole tree earns.
     fn tree_facts(files: &[(&str, &str)]) -> Vec<Diagnostic> {
         let source = VirtualSource::new(files);
-        diagnostics(Tree::Program(source.root()), &source)
-            .into_iter()
-            .flat_map(|file| file.diagnostics)
-            .collect()
+        diagnostics(
+            Tree::Project(&crate::compiler::test_support::virtual_project(
+                source.root(),
+            )),
+            &source,
+        )
+        .into_iter()
+        .flat_map(|file| file.diagnostics)
+        .collect()
     }
 
     fn messages(files: &[(&str, &str)]) -> Vec<String> {

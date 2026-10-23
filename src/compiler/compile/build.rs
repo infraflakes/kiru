@@ -4,14 +4,13 @@
 
 mod failure;
 
-use std::path::Path;
-
 use crate::compiler::compile::check::validate_program;
 use crate::compiler::compile::load::{LoadedProgram, ProgramSource, load_files};
 use crate::compiler::compile::resolve::{Analysis, resolve_tree};
 use crate::compiler::diagnostic::Diagnostic;
 use crate::compiler::model::Program;
 use crate::compiler::warnings::{is_program_source, unused_bindings};
+use crate::project::Project;
 
 use failure::{failure, failure_from};
 
@@ -36,11 +35,11 @@ impl std::fmt::Debug for Build {
     }
 }
 
-/// Run the build: load the program tree and the library through `source`,
+/// Run the build: load the project's tree and the library through `source`,
 /// resolve every name into an edge, and check every body. The one build the
 /// compiler has; the source decides only what the files read as.
-pub(crate) fn build(tree_root: &Path, source: &impl ProgramSource) -> Result<Build, BuildFailure> {
-    let loaded = match load_files(tree_root, source) {
+pub(crate) fn build(project: &Project, source: &impl ProgramSource) -> Result<Build, BuildFailure> {
+    let loaded = match load_files(project, source) {
         Ok(loaded) => loaded,
         Err(error) => return Err(failure(vec![error])),
     };
