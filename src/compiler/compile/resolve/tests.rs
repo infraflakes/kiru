@@ -18,9 +18,9 @@ fn linked_with_entry(
         std::fs::create_dir_all(path.parent().expect("has a parent")).expect("create directory");
         std::fs::write(&path, source).expect("write file");
     }
-    let loaded =
-        crate::compiler::compile::load::load_files(directory.path(), &crate::cli::DiskSource)
-            .map_err(|error| error.message)?;
+    let project = crate::compiler::test_support::virtual_project(directory.path());
+    let loaded = crate::compiler::compile::load::load_files(&project, &crate::cli::DiskSource)
+        .map_err(|error| error.message)?;
     // A recovered file never reaches resolution: its syntax errors stop the
     // build before any semantic stage reads the tree.
     if let Some(diagnostic) = loaded.syntax.first() {
@@ -637,9 +637,9 @@ fn an_unresolvable_use_is_rejected_at_its_span() {
     let directory = tempfile::tempdir().expect("temp dir");
     let path = directory.path().join("main.kiru");
     std::fs::write(&path, source).expect("write file");
-    let loaded =
-        crate::compiler::compile::load::load_files(directory.path(), &crate::cli::DiskSource)
-            .expect("loads");
+    let project = crate::compiler::test_support::virtual_project(directory.path());
+    let loaded = crate::compiler::compile::load::load_files(&project, &crate::cli::DiskSource)
+        .expect("loads");
     let diagnostic = match resolve_tree(&loaded) {
         Ok(_) => panic!("the use is rejected"),
         Err(diagnostic) => diagnostic,

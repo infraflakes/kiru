@@ -25,24 +25,12 @@ pub(crate) const STD_TREE: &str = "std";
 /// Load the standard library and the whole project tree, read through the
 /// source the caller names.
 pub(crate) fn load_files(
-    tree_root: &Path,
+    project: &crate::project::Project,
     program_source: &impl ProgramSource,
 ) -> Result<LoadedProgram, LoadError> {
     let mut loader = Loader::new();
     loader.add_embedded()?;
-    add_tree(&mut loader, tree_root, PROGRAM_TREE, program_source)?;
-    Ok(loader.finish())
-}
-
-/// Load one project tree as the standard library: the compiler's own sources,
-/// every file joining the `std` tree under its directories. The embedded table
-/// is not mounted; the disk is this library's source.
-pub(crate) fn load_library(
-    root: &Path,
-    program_source: &impl ProgramSource,
-) -> Result<LoadedProgram, LoadError> {
-    let mut loader = Loader::new();
-    add_tree(&mut loader, root, STD_TREE, program_source)?;
+    add_tree(&mut loader, &project.root, PROGRAM_TREE, program_source)?;
     Ok(loader.finish())
 }
 

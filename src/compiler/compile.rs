@@ -41,7 +41,7 @@ pub(crate) fn compile(
         loaded,
         mut program,
         warnings,
-    } = build(&project.root, source).map_err(|failure| failure.rendered().to_owned())?;
+    } = build(project, source).map_err(|failure| failure.rendered().to_owned())?;
     let mut facts: Vec<_> = warnings
         .into_iter()
         .filter(|fact| is_program_source(&fact.path))

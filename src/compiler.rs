@@ -25,9 +25,9 @@ mod warnings;
 
 #[cfg(test)]
 pub(crate) use analyze::SemanticRole;
+pub(crate) use analyze::diagnostics as analyze_tree;
 pub(crate) use analyze::semantic_tokens;
 pub(crate) use analyze::{SemanticToken, TOKEN_MODIFIERS, TOKEN_TYPES};
-pub(crate) use analyze::{Tree, diagnostics as analyze_tree};
 pub(crate) use compile::build::build;
 pub use compile::build::{Build, BuildFailure};
 #[cfg(test)]
@@ -35,7 +35,7 @@ pub(crate) use compile::check::validate_program;
 
 pub(crate) use compile::compile;
 pub use compile::load::ProgramSource;
-pub(crate) use compile::load::{EMBEDDED, LoadedProgram, STD_TREE};
+pub(crate) use compile::load::{LoadedProgram, STD_TREE};
 #[cfg(test)]
 pub(crate) use compile::lower::declaration_codes;
 pub(crate) use compile::lower::lower_bytecode;
