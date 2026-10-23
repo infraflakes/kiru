@@ -1,5 +1,3 @@
-
-use std;
 use std::process;
 
 let usage_kiru: txt = "usage: kiru <flag>
