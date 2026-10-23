@@ -4,6 +4,7 @@
 //! a code id, a local reads a register, and a module value reads a global.
 
 use crate::compiler::native_registry::{Native, NativeSignature};
+use crate::compiler::operator_facts::{Arithmetic, Comparison};
 
 /// A whole program as bytecode, ready to serialize and run.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -217,12 +218,11 @@ pub(crate) enum CompareOp {
     NotEqual,
 }
 
-impl From<crate::syntax::Arithmetic> for NumberOp {
+impl From<Arithmetic> for NumberOp {
     /// The instruction an operator's arithmetic fact names. The mapping lives
     /// beside the instruction set, so the operator table names no instruction
     /// variant itself.
-    fn from(arithmetic: crate::syntax::Arithmetic) -> Self {
-        use crate::syntax::Arithmetic;
+    fn from(arithmetic: Arithmetic) -> Self {
         match arithmetic {
             Arithmetic::Add => NumberOp::Add,
             Arithmetic::Subtract => NumberOp::Subtract,
@@ -233,10 +233,9 @@ impl From<crate::syntax::Arithmetic> for NumberOp {
     }
 }
 
-impl From<crate::syntax::Comparison> for CompareOp {
+impl From<Comparison> for CompareOp {
     /// The instruction an operator's comparison fact names.
-    fn from(comparison: crate::syntax::Comparison) -> Self {
-        use crate::syntax::Comparison;
+    fn from(comparison: Comparison) -> Self {
         match comparison {
             Comparison::Less => CompareOp::Less,
             Comparison::LessEqual => CompareOp::LessEqual,

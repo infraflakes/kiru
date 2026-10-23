@@ -18,6 +18,13 @@ use super::statement_check::Checker;
 pub(crate) fn validate_program(program: &mut Program) -> Vec<Diagnostic> {
     let mut diagnostics = check_bodies(program);
     diagnostics.extend(check_flow(program));
+    #[cfg(debug_assertions)]
+    if diagnostics.is_empty() {
+        crate::compiler::model::assert_known_relations(
+            program,
+            crate::compiler::model::RelationBoundary::Checked,
+        );
+    }
     diagnostics
 }
 

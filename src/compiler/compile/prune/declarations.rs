@@ -14,6 +14,17 @@ pub(crate) fn prune_unreachable(
     entry: DeclarationId,
     reachable: &HashSet<DeclarationId>,
 ) -> DeclarationId {
+    // Reachability is closed under the resolved edges before any declaration
+    // is dropped: every edge out of a reachable declaration points at another
+    // reachable declaration.
+    #[cfg(debug_assertions)]
+    {
+        let violations = crate::compiler::model::verify_reachability(program, entry, reachable);
+        debug_assert!(
+            violations.is_empty(),
+            "the reachable set is not closed before pruning: {violations:?}"
+        );
+    }
     let mapping = compact(program, reachable);
     let entry = mapped(&mapping, entry);
     remap(program, &mapping);
@@ -23,6 +34,11 @@ pub(crate) fn prune_unreachable(
     if cfg!(debug_assertions) {
         crate::compiler::model::verify_program(program);
     }
+    #[cfg(debug_assertions)]
+    crate::compiler::model::assert_known_relations(
+        program,
+        crate::compiler::model::RelationBoundary::Pruned,
+    );
     entry
 }
 

@@ -1,7 +1,6 @@
 //! Declaration level grammar: functions, variables, recs, and nominal type
 //! declarations.
 
-use crate::compiler::model::{DeclarationKind, join_path};
 use crate::syntax::TokenKind;
 use crate::syntax::ast::{
     Binding, Closure, Declaration, DeclarationForm, Expression, Function, ImplBlock, Parameter,
@@ -11,38 +10,16 @@ use crate::syntax::ast::{
 use super::parser::{ParseError, Parser};
 
 impl<'a> Parser<'a> {
-    /// The kind the current token opens, when it opens a declaration. The
-    /// marking from the surface form to the model's kind lives here, once.
-    pub(super) fn declaration_kind(&self, lookahead: usize) -> Option<DeclarationKind> {
-        match &self.peek(lookahead).kind {
-            TokenKind::Fn => Some(DeclarationKind::Function),
-            TokenKind::Let => Some(DeclarationKind::ModuleValue),
-            TokenKind::Rec => Some(DeclarationKind::Rec),
-            TokenKind::Enum => Some(DeclarationKind::Enum),
-            TokenKind::Impl => Some(DeclarationKind::Impl),
-            _ => None,
-        }
-    }
-
     /// Parse one declaration: a function, a module value, a nominal type, or an
     /// `impl` block.
     pub(super) fn parse_declaration(&mut self) -> Result<Declaration, ParseError> {
-        // `pub` is a production only for a kind that takes visibility. For a
+        // `pub` is a production only for a form that takes visibility. For a
         // `let` or an `impl` it is not consumed, so the declaration dispatch
         // reports it as an ordinary unexpected token.
-        let public = self
-            .declaration_kind(1)
-            .is_some_and(DeclarationKind::takes_visibility)
-            && self.eat(&TokenKind::Pub);
-        let kind = match self.declaration_kind(0) {
-            Some(kind) => kind,
-            None => {
-                return Err(self.error_here(format!(
-                    "expected a declaration, found {}",
-                    self.describe_current()
-                )));
-            }
-        };
+        let public = matches!(
+            &self.peek(1).kind,
+            TokenKind::Fn | TokenKind::Rec | TokenKind::Enum
+        ) && self.eat(&TokenKind::Pub);
         let form = match &self.current().kind {
             TokenKind::Fn => DeclarationForm::Function(self.parse_function()?),
             TokenKind::Let => DeclarationForm::Binding(self.parse_let_binding()?),
@@ -63,12 +40,15 @@ impl<'a> Parser<'a> {
             // An `impl` block introduces no name of its own: it files its
             // members under the type it writes.
             DeclarationForm::Impl(block) => (
-                block.ty.named_path().map(join_path).unwrap_or_default(),
+                block
+                    .ty
+                    .named_path()
+                    .map(|path| path.join("::"))
+                    .unwrap_or_default(),
                 block.ty.span(),
             ),
         };
         Ok(Declaration {
-            kind,
             public,
             name,
             name_span,
@@ -95,7 +75,6 @@ impl<'a> Parser<'a> {
             }
             let function = self.parse_function()?;
             functions.push(Declaration {
-                kind: DeclarationKind::Impl,
                 public,
                 name: function.name.clone(),
                 name_span: function.name_span,

@@ -12,10 +12,11 @@ use crate::compiler::model::{
     RuntimeShape, Shape, StringPart, Type, TypeHead, TypeId, TypeKind, bound_reachable,
     first_duplicate, fits, has_parameter, join_path, rec_field, substitute, unify,
 };
+use crate::compiler::operator_facts::BinaryOperands;
 use crate::compiler::{
     Diagnostic, duplicate_field, expected_instead, native_used_as_value, value_called,
 };
-use crate::syntax::{BinaryOp, BinaryOperands, Span, UnaryOp};
+use crate::syntax::{BinaryOp, Span, UnaryOp};
 
 use super::statement_check::Checker;
 

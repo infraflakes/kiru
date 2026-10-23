@@ -69,20 +69,6 @@ impl DeclarationKind {
         self.module_value() || self.local()
     }
 
-    /// Whether the form may be written `pub`. A `let` and an `impl` block take
-    /// no visibility of their own; a native is public by construction.
-    pub(crate) fn takes_visibility(self) -> bool {
-        match self {
-            DeclarationKind::Function => true,
-            DeclarationKind::ModuleValue => false,
-            DeclarationKind::Local => false,
-            DeclarationKind::Rec => true,
-            DeclarationKind::Enum => true,
-            DeclarationKind::Impl => false,
-            DeclarationKind::Native => false,
-        }
-    }
-
     /// Whether the name is a namespace-level name. An `impl` member's name
     /// belongs to its type and a local binding's name belongs to its function,
     /// so neither joins the namespace name pool.
@@ -215,7 +201,7 @@ mod tests {
     #[test]
     fn every_declaration_kind_declares_every_fact() {
         // Every kind is reachable, and each fact is total: the match in every
-        // fact has an arm for all six, and a new kind is a compile error in
+        // fact has an arm for all seven, and a new kind is a compile error in
         // this file rather than a gap. The assertions name the facts.
         let kinds = [
             DeclarationKind::Function,
@@ -236,7 +222,6 @@ mod tests {
             let _ = kind.has_name();
             let _ = kind.has_body();
             let _ = kind.has_value();
-            let _ = kind.takes_visibility();
             let _ = kind.owns_name();
             let _ = kind.is_bound();
             let _ = kind.may_be_entry();
@@ -258,7 +243,6 @@ mod tests {
         assert!(DeclarationKind::ModuleValue.has_value());
         assert!(DeclarationKind::ModuleValue.module_value());
         assert!(!DeclarationKind::ModuleValue.local());
-        assert!(!DeclarationKind::ModuleValue.takes_visibility());
         assert!(!DeclarationKind::ModuleValue.useable());
         assert!(!DeclarationKind::ModuleValue.callable());
 
@@ -266,7 +250,6 @@ mod tests {
         assert!(DeclarationKind::Local.local());
         assert!(!DeclarationKind::Local.module_value());
         assert!(!DeclarationKind::Local.owns_name());
-        assert!(!DeclarationKind::Local.takes_visibility());
         assert!(!DeclarationKind::Local.useable());
         assert!(!DeclarationKind::Local.callable());
 
@@ -286,6 +269,5 @@ mod tests {
         assert!(DeclarationKind::Native.native());
         assert!(DeclarationKind::Native.useable());
         assert!(!DeclarationKind::Native.has_body());
-        assert!(!DeclarationKind::Native.takes_visibility());
     }
 }

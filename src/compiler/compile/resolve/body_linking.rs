@@ -37,6 +37,11 @@ pub(crate) fn resolve_tree(loaded: &LoadedProgram) -> Result<Analysis, Diagnosti
     // recorded itself. It is read before `finish` takes the builder apart.
     let warnings = builder.use_warnings(loaded);
     let program = builder.finish(module_values);
+    #[cfg(debug_assertions)]
+    crate::compiler::model::assert_known_relations(
+        &program,
+        crate::compiler::model::RelationBoundary::Resolved,
+    );
     Ok(Analysis { program, warnings })
 }
 
@@ -68,7 +73,8 @@ impl Builder {
             let (declaration_id, file, item, namespace) = pending.parts();
             let skeleton = &self.skeletons[declaration_id.0];
             let name = skeleton.name.clone();
-            let declaration = &loaded.items[item].declaration;
+            let scoped = &loaded.items[item];
+            let declaration = &scoped.declaration;
             let ty = match pending {
                 Pending::Callable { .. } => {
                     let function = declaration
@@ -84,7 +90,7 @@ impl Builder {
                 }
             };
             self.declarations[declaration_id.0] = Declaration {
-                kind: declaration.kind,
+                kind: scoped.kind,
                 name,
                 name_span: skeleton.name_span,
                 public: skeleton.public,

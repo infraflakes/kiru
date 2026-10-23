@@ -14,6 +14,8 @@ mod program;
 mod reads;
 mod types;
 mod verify_graph;
+#[cfg(debug_assertions)]
+mod verify_relations;
 mod verify_spans;
 mod visitors;
 
@@ -40,6 +42,8 @@ pub(crate) use types::{
     has_parameter, list_type, scalar_from_name, substitute, type_name, type_parameters_of, unify,
 };
 pub(crate) use verify_graph::verify_program;
+#[cfg(debug_assertions)]
+pub(crate) use verify_relations::{RelationBoundary, assert_known_relations, verify_reachability};
 pub(crate) use visitors::{
     Visitor, VisitorMut, walk_expression, walk_expression_mut, walk_statements,
 };

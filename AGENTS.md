@@ -50,11 +50,11 @@
 - src/compiler/ is the engine and holds two processes: compile/ and analyze/. Each process and each stage is an entry file beside its directory. compile/ runs load, resolve, check, prune, lower, package in that order: load reads the manifest's program tree and the embedded library through the program source and derives a namespace from each file's directory; resolve collects every declaration, resolves references and links every body; check types and checks every body; prune drops what the root `main` never reaches; lower turns bodies into instructions; package writes the image at the manifest's output. compile/build.rs is the checked program both processes read. analyze/ loads a whole tree, resolves and checks every body, and groups the facts by file; the server publishes the open file's facts. The checked program holds no entry: the root `main` is found by name after the program is resolved, and is passed to the stages that start from it.
 - The compile and analysis entry points take the `Project`, never a bare tree root: `build`, `load_files`, `compile`, and the analyzer all read the manifest's tree. The compiler's `std/` sources are embedded at build time; they are compiler input, not a project and not a second tree mode.
 - src/compiler/ reads no program source from disk. A program source provides the files: the command line supplies the disk's source, the language server supplies the editor's buffers, and the tests supply a virtual tree. Packaging writes the output image; the bytes of the running executable are read by the command line, which hands them to the compiler's trailer format.
-- src/compiler/model/ is the graph and holds no stage logic: ids, declarations, expressions, types (the group model), program (the graph, the name and method and type tables, type naming, namespace paths, field lookup), visitors, verify_graph, verify_spans.
+- src/compiler/model/ is the graph and holds no stage logic: ids, declarations, expressions, types (the group model), program (the graph, the name and method and type tables, type naming, namespace paths, field lookup), visitors, verify_graph, verify_relations (the debug-only relational verifier), verify_spans.
 - src/compiler/bytecode/ defines the instruction set and its validation. Nothing outside it names an instruction variant.
 - src/runtime/ executes: the virtual machine, its native dispatch, values, and the process, thread and signal pools.
 - src/sync/ is the crate's one lock policy: a poisoned lock is recovered, never propagated. The runtime and the server both read it.
-- src/syntax/ is the surface: tokens, lexer, parser, syntax tree, spans.
+- src/syntax/ is the surface: tokens, lexer, parser, syntax tree, spans. It imports no compiler model. The loader is the one boundary that derives a declaration's model kind from the surface form; operator spelling and precedence stay in the syntax tree, while operand types, result types, and lowering instructions live in the compiler.
 - src/cli/ is the only place a terminal is spoken to, and the only place the compiler's disk input enters: it supplies the disk source and renders diagnostics for a terminal.
 - src/lsp/ is the language server's client: the protocol session, the position encoding, and the documents over the disk. It supplies every open buffer as a program source and publishes the analysis's diagnostics for the open file.
 
@@ -82,7 +82,8 @@
 ## Adding a syntax form
 
 - A token goes in src/syntax/lex/token.rs and its spelling in src/syntax/lex/scanner.rs. A form goes in the parser file for its category under src/syntax/parse/: declarations, statements or expressions. Its node goes in src/syntax/ast.rs.
-- No pass may decide kind by matching on the syntax tree. Every pass reads the model.
+- No pass may decide kind by matching on the syntax tree. Every pass reads the model. The loader is the one boundary that turns a surface form into a model declaration kind; it records that kind once, and no later pass matches the syntax tree for it.
+- src/syntax imports no compiler model. A new operator spelling or precedence is a syntax fact; a new operand type, result type, or lowering instruction is a compiler fact.
 
 ## When the language changes
 

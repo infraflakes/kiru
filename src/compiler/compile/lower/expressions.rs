@@ -9,7 +9,8 @@ use crate::compiler::bytecode::{Code, Instruction};
 use crate::compiler::model::{
     DeclarationId, Expression, Function, MatchArm, MatchBody, Pattern, Statement, StringPart,
 };
-use crate::syntax::{BinaryInstruction, BinaryOp, UnaryOp};
+use crate::compiler::operator_facts::BinaryInstruction;
+use crate::syntax::{BinaryOp, UnaryOp};
 
 use super::program::Lowerer;
 

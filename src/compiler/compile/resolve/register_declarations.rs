@@ -25,7 +25,7 @@ impl Builder {
         // may name itself and any other type, whatever the declaration order.
         for scoped in &loaded.items {
             let declaration = &scoped.declaration;
-            if declaration.kind.declares_type() {
+            if scoped.kind.declares_type() {
                 let type_declaration = declaration
                     .type_declaration()
                     .expect("a type declaration carries its body");
@@ -64,13 +64,13 @@ impl Builder {
         let loaded_file = &loaded.files[scoped.file];
         let declaration = &scoped.declaration;
         debug_assert!(
-            declaration.kind.has_name(),
+            scoped.kind.has_name(),
             "every registered declaration introduces a name"
         );
         let namespace = self.ensure_namespace(&scoped.namespace);
         // A declared type has no body and no node; its name was reserved in the
         // first pass, so its fields fill in here.
-        if declaration.kind.declares_type() {
+        if scoped.kind.declares_type() {
             let type_declaration = declaration
                 .type_declaration()
                 .expect("a type declaration carries its body");
@@ -79,7 +79,7 @@ impl Builder {
                 .resolve(&declaration.name)
                 .and_then(|symbol| self.namespaces[namespace.0].types.get(symbol))
                 .expect("every declared type was reserved");
-            let group = declaration
+            let group = scoped
                 .kind
                 .group()
                 .expect("a type declaration belongs to a type group");
@@ -98,7 +98,7 @@ impl Builder {
         // and every other function is an associated function. A declaration
         // outside a block is filed under no type, so it is never reached
         // through one.
-        if declaration.kind.callable() {
+        if scoped.kind.callable() {
             let function = declaration
                 .function()
                 .expect("a callable declaration carries its function body");
@@ -108,7 +108,7 @@ impl Builder {
                 &loaded_file.path,
             )?;
         }
-        let (receiver_head, associated_head) = if declaration.kind.is_bound() {
+        let (receiver_head, associated_head) = if scoped.kind.is_bound() {
             let function = declaration
                 .function()
                 .expect("a bound declaration carries its function body");
@@ -145,7 +145,7 @@ impl Builder {
         };
         let file = FileId(scoped.file);
         let id = self.declare(DeclarationSite {
-            kind: declaration.kind,
+            kind: scoped.kind,
             namespace,
             name: &declaration.name,
             name_span: declaration.name_span,
@@ -155,7 +155,7 @@ impl Builder {
             file: Some(file),
             reported_path: &loaded_file.path,
         })?;
-        let pending = if declaration.kind.callable() {
+        let pending = if scoped.kind.callable() {
             Pending::Callable {
                 declaration: id,
                 file,

@@ -9,8 +9,9 @@ use crate::compiler::compile::load::load_error::LoadError;
 use crate::compiler::compile::load::loaded_program::{
     ImplTarget, LoadedFile, LoadedProgram, ScopedDeclaration, ScopedUse,
 };
+use crate::compiler::model::DeclarationKind;
 use crate::syntax;
-use crate::syntax::{Declaration, Item};
+use crate::syntax::{Declaration, DeclarationForm, Item, TypeDeclarationKind};
 
 /// The accumulating state of a load: the files read so far, their joined
 /// declarations and uses, the syntax errors recovery found, and the index of
@@ -110,14 +111,16 @@ impl Loader {
     }
 
     /// Record one declaration. A bound form is the surface group an `impl`
-    /// block writes: its members are the declarations, each already marked with
-    /// the impl kind and carrying its block's target. Every other form is one
+    /// block writes: its members are the declarations, each carrying the impl
+    /// kind the loader records and its block's target. Every other form is one
     /// declaration.
     fn record(&mut self, declaration: Declaration, file: usize, namespace: &[String]) {
-        if !declaration.kind.is_bound() {
+        if !matches!(&declaration.form, DeclarationForm::Impl(_)) {
+            let kind = declaration_kind(&declaration);
             self.items.push(ScopedDeclaration {
                 file,
                 namespace: namespace.to_owned(),
+                kind,
                 declaration,
                 impl_target: None,
             });
@@ -131,11 +134,29 @@ impl Loader {
             self.items.push(ScopedDeclaration {
                 file,
                 namespace: namespace.to_owned(),
+                kind: DeclarationKind::Impl,
                 declaration: member,
                 impl_target: Some(ImplTarget {
                     ty: target.ty.clone(),
                 }),
             });
+        }
+    }
+}
+
+/// The model kind a loaded declaration form carries. The loader is the one
+/// boundary that turns the surface form into a model kind; every later pass
+/// reads the kind it recorded instead of matching the syntax tree.
+fn declaration_kind(declaration: &Declaration) -> DeclarationKind {
+    match &declaration.form {
+        DeclarationForm::Function(_) => DeclarationKind::Function,
+        DeclarationForm::Binding(_) => DeclarationKind::ModuleValue,
+        DeclarationForm::Type(declaration) => match declaration.kind {
+            TypeDeclarationKind::Rec(_) => DeclarationKind::Rec,
+            TypeDeclarationKind::Enum(_) => DeclarationKind::Enum,
+        },
+        DeclarationForm::Impl(_) => {
+            unreachable!("an impl block is flattened before it is recorded")
         }
     }
 }

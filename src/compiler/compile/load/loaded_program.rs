@@ -8,6 +8,7 @@
 use std::path::PathBuf;
 
 use crate::compiler::Diagnostic;
+use crate::compiler::model::DeclarationKind;
 use crate::syntax::{Declaration, Span, TypeExpr};
 
 /// One loaded source file, kept for diagnostics.
@@ -25,6 +26,9 @@ pub(crate) struct LoadedFile {
 pub(crate) struct ScopedDeclaration {
     pub(crate) file: usize,
     pub(crate) namespace: Vec<String>,
+    /// The model kind the declaration form carries. The loader derives it once
+    /// from the surface form, and every later pass reads this fact.
+    pub(crate) kind: DeclarationKind,
     pub(crate) declaration: Declaration,
     /// The type an `impl` block files this function under, when it came from
     /// one. The block is flattened into its functions when loaded, so every

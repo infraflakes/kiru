@@ -6,9 +6,8 @@ mod parse;
 mod span;
 
 pub(crate) use ast::{
-    Arithmetic, BinaryInstruction, BinaryOp, BinaryOperands, Comparison, Declaration, Expression,
-    Field, Function, Item, MatchBody, Parameter, Statement, StringPart, TypeDeclaration, TypeExpr,
-    UnaryOp,
+    BinaryOp, Declaration, DeclarationForm, Expression, Field, Function, Item, MatchBody,
+    Parameter, Statement, StringPart, TypeDeclaration, TypeDeclarationKind, TypeExpr, UnaryOp,
 };
 pub(crate) use lex::{Token, TokenKind, WILDCARD, lex_with_comments};
 pub(crate) use parse::parse_file;

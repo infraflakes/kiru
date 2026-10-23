@@ -8,13 +8,13 @@ use crate::syntax::ast::{BinaryOp, Expression, StringPart, UnaryOp};
 use super::parser::{ParseError, Parser};
 
 /// The binary operator a token writes, or `None` when the token is not one. The
-/// operator's own facts name the token, so the surface spelling is declared
+/// operator's own spelling names the token, so the surface spelling is declared
 /// beside the operator and nowhere else.
 fn binary_operator(kind: &TokenKind) -> Option<BinaryOp> {
     BinaryOp::ALL
         .iter()
         .copied()
-        .find(|operator| operator.facts().spelling == *kind)
+        .find(|operator| operator.spelling() == *kind)
 }
 
 /// The prefix operator a token writes, or `None` when the token is not one.
@@ -43,7 +43,7 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_binary(&mut self, minimum: u8) -> Result<Expression, ParseError> {
         let mut left = self.parse_unary()?;
         while let Some(operator) = binary_operator(&self.current().kind) {
-            let binding = operator.facts().precedence;
+            let binding = operator.precedence();
             if binding < minimum {
                 break;
             }

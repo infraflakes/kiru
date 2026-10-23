@@ -9,9 +9,10 @@
 //!
 //! Every process and every shared fact is an entry file beside its directory:
 //! `compile` with its stages, `analyze` with the token projection, `model` with
-//! the graph, `bytecode` with the instruction set, `diagnostic` with the facts
-//! and their rendering, `warnings` with the unused facts, `native_registry`
-//! with the native table, and `test_support` with the fixtures.
+//! the graph, `operator_facts` with the semantics of an operator, `bytecode`
+//! with the instruction set, `diagnostic` with the facts and their rendering,
+//! `warnings` with the unused facts, `native_registry` with the native table,
+//! and `test_support` with the fixtures.
 
 mod analyze;
 pub(crate) mod bytecode;
@@ -19,6 +20,7 @@ pub(crate) mod compile;
 mod diagnostic;
 pub(crate) mod model;
 pub(crate) mod native_registry;
+pub(crate) mod operator_facts;
 #[cfg(test)]
 mod test_support;
 mod warnings;

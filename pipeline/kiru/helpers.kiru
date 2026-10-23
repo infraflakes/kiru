@@ -7,7 +7,7 @@ pub rec Project { pub name: txt, pub Dir: txt, pub Nix: bool };
 # Wrap a line in `nix develop` when the project asks for it.
 fn wrap(project: Project, line: txt) -> txt {
   let wrapped: txt = match project.Nix {
-    true => "nix develop -c sh -c @(std::process::quote(line))";
+    true => "nix develop -c sh -c @(process::quote(line))";
     _ => line;
   };
   return wrapped;

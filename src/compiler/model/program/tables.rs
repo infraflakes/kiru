@@ -50,6 +50,16 @@ impl NameTable {
         self.entries.values()
     }
 
+    /// Every registered symbol and the declaration it names, in no particular
+    /// order. A relation that proves the key against the declaration's name
+    /// reads the pair here.
+    #[cfg(debug_assertions)]
+    pub(crate) fn iter_entries(&self) -> impl Iterator<Item = (Symbol, DeclarationId)> + '_ {
+        self.entries
+            .iter()
+            .map(|(&symbol, &declaration)| (symbol, declaration))
+    }
+
     /// Keep only the entries whose id the mapping keeps, and rewrite each
     /// surviving id through it. Retention compacts the declaration table.
     pub(crate) fn remap(&mut self, mapping: &[Option<DeclarationId>]) {
@@ -100,6 +110,20 @@ impl MethodTable {
         self.entries.values().flat_map(HashMap::values)
     }
 
+    /// Every registered head, symbol, and declaration, in no particular order.
+    /// A relation that proves the pool's key and receiver reads the triple
+    /// here.
+    #[cfg(debug_assertions)]
+    pub(crate) fn iter_entries(
+        &self,
+    ) -> impl Iterator<Item = (TypeHead, Symbol, DeclarationId)> + '_ {
+        self.entries.iter().flat_map(|(&head, methods)| {
+            methods
+                .iter()
+                .map(move |(&symbol, &declaration)| (head, symbol, declaration))
+        })
+    }
+
     /// Keep only the entries whose id the mapping keeps, and rewrite each
     /// surviving id through it. Retention compacts the declaration table.
     pub(crate) fn remap(&mut self, mapping: &[Option<DeclarationId>]) {
@@ -133,5 +157,15 @@ impl TypeTable {
     /// The type registered under a name, if any.
     pub(crate) fn get(&self, name: Symbol) -> Option<TypeId> {
         self.entries.get(&name).copied()
+    }
+
+    /// Every registered symbol and the type it names, in no particular order.
+    /// A relation that proves the key against the type's name reads the pair
+    /// here.
+    #[cfg(debug_assertions)]
+    pub(crate) fn iter_entries(&self) -> impl Iterator<Item = (Symbol, TypeId)> + '_ {
+        self.entries
+            .iter()
+            .map(|(&symbol, &declaration)| (symbol, declaration))
     }
 }

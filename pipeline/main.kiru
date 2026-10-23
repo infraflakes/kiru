@@ -2,9 +2,6 @@
 use root::kiru;
 
 # The built-in type categories this file's signatures write bare.
-use std;
-use std::cli;
-use std::dynamic;
 use std::dynamic::Vec;
 
 let kiru: kiru::Project = {
