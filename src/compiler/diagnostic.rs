@@ -24,41 +24,6 @@ pub enum Severity {
     Warning,
 }
 
-/// The kind of unused fact a warning states. The project decides which kinds
-/// reach the terminal or the editor; the fact itself is never guessed from
-/// its message.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum WarningKind {
-    UnusedUse,
-    RedundantUse,
-    UnusedLocal,
-    UnusedDeclaration,
-}
-
-/// What a diagnostic is: an error, or a warning of one kind. One field, so an
-/// error can never carry a warning kind and a warning can never lack one.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DiagnosticKind {
-    Error,
-    Warning(WarningKind),
-}
-
-impl DiagnosticKind {
-    pub fn severity(self) -> Severity {
-        match self {
-            DiagnosticKind::Error => Severity::Error,
-            DiagnosticKind::Warning(_) => Severity::Warning,
-        }
-    }
-
-    pub fn warning(self) -> Option<WarningKind> {
-        match self {
-            DiagnosticKind::Error => None,
-            DiagnosticKind::Warning(kind) => Some(kind),
-        }
-    }
-}
-
 /// One other place a diagnostic points at: the span and the fact it states.
 #[derive(Clone, Debug)]
 pub struct RelatedSpan {
@@ -110,7 +75,7 @@ pub struct Diagnostic {
     pub path: PathBuf,
     pub span: Span,
     pub message: String,
-    pub kind: DiagnosticKind,
+    pub severity: Severity,
     /// The places that explain this fact, when one exists. The first
     /// declaration behind a duplicate carries its span here.
     pub related: Vec<RelatedSpan>,
@@ -122,20 +87,19 @@ impl Diagnostic {
             path: path.into(),
             span,
             message: message.into(),
-            kind: DiagnosticKind::Error,
+            severity: Severity::Error,
             related: Vec::new(),
         }
     }
 
-    /// The same fact, weighed as a warning of one kind.
+    /// The same fact, weighed as a warning.
     pub(crate) fn warning(
         path: impl Into<PathBuf>,
         span: Span,
         message: impl Into<String>,
-        kind: WarningKind,
     ) -> Self {
         Self {
-            kind: DiagnosticKind::Warning(kind),
+            severity: Severity::Warning,
             ..Self::new(path, span, message)
         }
     }
@@ -155,20 +119,9 @@ impl Diagnostic {
         self
     }
 
-    /// The severity of the fact.
-    pub fn severity(&self) -> Severity {
-        self.kind.severity()
-    }
-
-    /// The unused fact this warning states, when it is one. A project's
-    /// diagnostics policy reads this, never the message.
-    pub fn warning_kind(&self) -> Option<WarningKind> {
-        self.kind.warning()
-    }
-
     /// The word the terminal renders for the severity.
     fn severity_word(&self) -> &'static str {
-        match self.severity() {
+        match self.severity {
             Severity::Error => "error",
             Severity::Warning => "warning",
         }

@@ -535,12 +535,7 @@ mod tests {
     /// The tokens of a one-file program, as (role, written text) pairs.
     fn painted(source: &str) -> Vec<(String, String)> {
         let tree = VirtualSource::new(&[("main.kiru", source)]);
-        let built = build(
-            tree.root(),
-            &tree,
-            &crate::project::WarningPolicy::default(),
-        )
-        .expect("the program checks");
+        let built = build(tree.root(), &tree).expect("the program checks");
         let file = built
             .loaded
             .files

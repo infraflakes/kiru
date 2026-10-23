@@ -19,7 +19,6 @@ use crate::compiler::diagnostic::{Diagnostic, FileDiagnostics, group};
 use crate::compiler::mark_reachable;
 use crate::compiler::model::{FileId, Program};
 use crate::compiler::warnings::{is_program_source, unused_bindings, unused_declarations};
-use crate::project::WarningPolicy;
 
 #[cfg(test)]
 pub(crate) use semantic::SemanticRole;
@@ -29,28 +28,14 @@ pub(crate) use semantic::{SemanticToken, TOKEN_MODIFIERS, TOKEN_TYPES};
 /// the embedded library; the compiler's own standard library is the one tree
 /// read without it, under the `std` name.
 pub(crate) enum Tree<'a> {
-    Program {
-        root: &'a Path,
-        policy: WarningPolicy,
-    },
+    Program(&'a Path),
     StandardLibrary(&'a Path),
 }
 
-impl Tree<'_> {
-    /// The diagnostics policy of the tree: the project's, or the default for
-    /// the compiler's own library.
-    fn policy(&self) -> WarningPolicy {
-        match self {
-            Tree::Program { policy, .. } => *policy,
-            Tree::StandardLibrary(_) => WarningPolicy::default(),
-        }
-    }
-}
-
 /// The facts of the whole tree, file by file. A file with no facts is absent;
-/// the client clears what it published before.
+/// a caller that reports one file publishes an empty list when its entry is
+/// missing.
 pub(crate) fn diagnostics(tree: Tree<'_>, source: &impl ProgramSource) -> Vec<FileDiagnostics> {
-    let policy = tree.policy();
     let linked = match link(tree, source) {
         Ok(linked) => linked,
         // A tree that cannot be resolved names only errors, and an error is
@@ -79,8 +64,7 @@ pub(crate) fn diagnostics(tree: Tree<'_>, source: &impl ProgramSource) -> Vec<Fi
     }
     // The embedded library is the compiler's, not the editor's: its files
     // have no real path, and a fact about one cannot be published.
-    diagnostics
-        .retain(|diagnostic| is_program_source(&diagnostic.path) && policy.admits_fact(diagnostic));
+    diagnostics.retain(|diagnostic| is_program_source(&diagnostic.path));
     diagnostics.sort_by(|left, right| {
         left.path
             .cmp(&right.path)
@@ -126,7 +110,7 @@ struct Linked {
 /// files.
 fn link(tree: Tree<'_>, source: &impl ProgramSource) -> Result<Linked, Vec<FileDiagnostics>> {
     let loaded = match tree {
-        Tree::Program { root, .. } => load_files(root, source),
+        Tree::Program(root) => load_files(root, source),
         Tree::StandardLibrary(root) => load_library(root, source),
     };
     let loaded = match loaded {
@@ -165,18 +149,13 @@ fn link(tree: Tree<'_>, source: &impl ProgramSource) -> Result<Linked, Vec<FileD
 mod tests {
     use super::*;
     use crate::cli::DiskSource;
-    use crate::compiler::{Severity, VirtualSource, WarningKind};
-    use crate::project::WarningSetting;
+    use crate::compiler::{Severity, VirtualSource};
     use std::path::Path;
 
     /// Every fact a virtual project's whole tree earns.
     fn tree_facts(files: &[(&str, &str)]) -> Vec<Diagnostic> {
         let source = VirtualSource::new(files);
-        let tree = Tree::Program {
-            root: source.root(),
-            policy: WarningPolicy::default(),
-        };
-        diagnostics(tree, &source)
+        diagnostics(Tree::Program(source.root()), &source)
             .into_iter()
             .flat_map(|file| file.diagnostics)
             .collect()
@@ -237,42 +216,9 @@ mod tests {
         assert!(
             facts
                 .iter()
-                .all(|fact| !matches!(fact.severity(), Severity::Error)),
+                .all(|fact| !matches!(fact.severity, Severity::Error)),
             "a library needs no entry: {facts:?}"
         );
-    }
-
-    #[test]
-    fn the_diagnostics_policy_silences_a_warning_kind() {
-        let source = VirtualSource::new(&[("main.kiru", "fn main() { let unused: int = 1; };")]);
-        let policy = WarningPolicy {
-            unused_local: WarningSetting::Off,
-            ..Default::default()
-        };
-        let facts: Vec<Diagnostic> = diagnostics(
-            Tree::Program {
-                root: source.root(),
-                policy,
-            },
-            &source,
-        )
-        .into_iter()
-        .flat_map(|file| file.diagnostics)
-        .collect();
-        assert!(facts.is_empty(), "the local warning is off: {facts:?}");
-
-        let facts: Vec<Diagnostic> = diagnostics(
-            Tree::Program {
-                root: source.root(),
-                policy: WarningPolicy::default(),
-            },
-            &source,
-        )
-        .into_iter()
-        .flat_map(|file| file.diagnostics)
-        .collect();
-        assert_eq!(facts.len(), 1, "{facts:?}");
-        assert_eq!(facts[0].warning_kind(), Some(WarningKind::UnusedLocal));
     }
 
     #[test]
@@ -334,32 +280,6 @@ mod tests {
             facts.contains(&"redundant use `std::process`".to_owned()),
             "the second item duplicates the first: {facts:?}"
         );
-    }
-
-    #[test]
-    fn the_policy_silences_a_redundant_use() {
-        let source = VirtualSource::new(&[
-            (
-                "main.kiru",
-                "use std::process;\nfn main() { std::print(process::quote(\"x\")); };",
-            ),
-            ("other.kiru", "use std::process;\n"),
-        ]);
-        let policy = WarningPolicy {
-            redundant_use: WarningSetting::Off,
-            ..Default::default()
-        };
-        let facts: Vec<Diagnostic> = diagnostics(
-            Tree::Program {
-                root: source.root(),
-                policy,
-            },
-            &source,
-        )
-        .into_iter()
-        .flat_map(|file| file.diagnostics)
-        .collect();
-        assert!(facts.is_empty(), "the redundant fact is off: {facts:?}");
     }
 
     #[test]

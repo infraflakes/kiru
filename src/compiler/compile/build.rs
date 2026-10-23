@@ -12,7 +12,6 @@ use crate::compiler::compile::resolve::{Analysis, resolve_tree};
 use crate::compiler::diagnostic::Diagnostic;
 use crate::compiler::model::Program;
 use crate::compiler::warnings::{is_program_source, unused_bindings};
-use crate::project::WarningPolicy;
 
 use failure::{failure, failure_from};
 
@@ -40,11 +39,7 @@ impl std::fmt::Debug for Build {
 /// Run the build: load the program tree and the library through `source`,
 /// resolve every name into an edge, and check every body. The one build the
 /// compiler has; the source decides only what the files read as.
-pub(crate) fn build(
-    tree_root: &Path,
-    source: &impl ProgramSource,
-    policy: &WarningPolicy,
-) -> Result<Build, BuildFailure> {
+pub(crate) fn build(tree_root: &Path, source: &impl ProgramSource) -> Result<Build, BuildFailure> {
     let loaded = match load_files(tree_root, source) {
         Ok(loaded) => loaded,
         Err(error) => return Err(failure(vec![error])),
@@ -71,8 +66,7 @@ pub(crate) fn build(
         let mut diagnostics = loaded.syntax.clone();
         diagnostics.extend(errors);
         let mut program_warnings = warnings.clone();
-        program_warnings
-            .retain(|warning| is_program_source(&warning.path) && policy.admits_fact(warning));
+        program_warnings.retain(|warning| is_program_source(&warning.path));
         diagnostics.extend(program_warnings);
         return Err(failure_from(&loaded, diagnostics));
     }

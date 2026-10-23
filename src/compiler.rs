@@ -45,7 +45,7 @@ pub(crate) use compile::package::{
 pub(crate) use compile::prune::{mark_reachable, prune_unreachable};
 pub(crate) use compile::resolve::{EntryShape, MISSING_MAIN, program_main};
 pub(crate) use diagnostic::DIAGNOSTIC_PREFIX;
-pub use diagnostic::{Diagnostic, RelatedSpan, Severity, WarningKind};
+pub use diagnostic::{Diagnostic, RelatedSpan, Severity};
 pub(in crate::compiler) use diagnostic::{
     duplicate_field, duplicate_in_namespace, duplicate_name, expected_instead,
     native_used_as_value, private_member, value_called,

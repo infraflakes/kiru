@@ -41,11 +41,10 @@ pub(crate) fn compile(
         loaded,
         mut program,
         warnings,
-    } = build(&project.root, source, &project.warnings)
-        .map_err(|failure| failure.rendered().to_owned())?;
+    } = build(&project.root, source).map_err(|failure| failure.rendered().to_owned())?;
     let mut facts: Vec<_> = warnings
         .into_iter()
-        .filter(|fact| is_program_source(&fact.path) && admitted(project, fact))
+        .filter(|fact| is_program_source(&fact.path))
         .collect();
     // The entry is the manifest's program main. A missing one is the
     // project's fact; a malformed one is the file's, and the diagnostic names
@@ -58,11 +57,7 @@ pub(crate) fn compile(
             // what no reachable body reads is a warning, then it is dropped
             // before lowering.
             let marked = mark_reachable(&program, main);
-            facts.extend(
-                unused_declarations(&program, &marked)
-                    .into_iter()
-                    .filter(|fact| admitted(project, fact)),
-            );
+            facts.extend(unused_declarations(&program, &marked));
             reachable = Some(marked);
             Some(main)
         }
@@ -134,9 +129,4 @@ pub(crate) fn compile(
         )
     })?;
     Ok(())
-}
-
-/// Whether the project's diagnostics policy admits one fact.
-fn admitted(project: &Project, fact: &crate::compiler::Diagnostic) -> bool {
-    project.warnings.admits_fact(fact)
 }

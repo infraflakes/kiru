@@ -3,10 +3,10 @@
 //! A file belongs to the nearest `kiru.toml` above it, and the tree that
 //! manifest names is analyzed as a whole: every body is linked and checked, so
 //! a fact about one file never depends on which file the editor is looking at.
-//! The manifest's `[lsp] scope` decides whether one file or the whole tree is
-//! published. A file under the compiler's own `std/` source tree is the one
-//! special case: it is analyzed as the library, with no project and no entry.
-//! A file with no project is not analyzed.
+//! Only the open file's facts are published; there is no other mode. A file
+//! under the compiler's own `std/` source tree is the one special case: it is
+//! analyzed as the library, with no project and no entry. A file with no
+//! project is not analyzed.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -26,7 +26,7 @@ use tower_lsp_server::{Client, LanguageServer};
 use crate::compiler::{
     Diagnostic, EMBEDDED, STD_TREE, Severity, Tree, analyze_tree, semantic_tokens,
 };
-use crate::project::{DiagnosticScope, Project, find};
+use crate::project::{Project, find};
 use crate::sync::MutexExt;
 
 use super::OverlaySource;
@@ -34,15 +34,13 @@ use super::positions::{Encoding, span_to_range};
 use super::tokens;
 
 /// The server a client speaks to: the client handle, the encoding its
-/// positions count in, the open documents, and what it published where.
+/// positions count in, and the open documents.
 pub struct Backend {
     client: Client,
     encoding: OnceLock<Encoding>,
     /// The text of every document the client holds open, as it stands in the
     /// editor. A token request carries no text of its own.
     documents: Mutex<HashMap<PathBuf, String>>,
-    /// The files published per context, so a file that grows clean is cleared.
-    published: Mutex<HashMap<PathBuf, HashSet<PathBuf>>>,
     /// The messages already shown, so a keystroke does not repeat one.
     silenced: Mutex<HashSet<(PathBuf, String)>>,
 }
@@ -59,7 +57,6 @@ impl Backend {
             client,
             encoding: OnceLock::new(),
             documents: Mutex::new(HashMap::new()),
-            published: Mutex::new(HashMap::new()),
             silenced: Mutex::new(HashSet::new()),
         }
     }
@@ -108,8 +105,9 @@ impl Backend {
         overlay
     }
 
-    /// Analyze the tree the document belongs to and publish the facts its
-    /// manifest asks for.
+    /// Analyze the tree the document belongs to and publish the open file's
+    /// facts. The tree is checked whole; only the file the editor holds is
+    /// published.
     async fn check(&self, uri: &Uri) {
         let Some(raw) = uri.to_file_path() else {
             return;
@@ -126,19 +124,8 @@ impl Backend {
             }
         };
         let tree = match &context {
-            Context::Program(project) => Tree::Program {
-                root: &project.root,
-                policy: project.warnings,
-            },
+            Context::Program(project) => Tree::Program(&project.root),
             Context::Library(root) => Tree::StandardLibrary(root),
-        };
-        let scope = match &context {
-            Context::Program(project) => project.scope,
-            Context::Library(_) => DiagnosticScope::File,
-        };
-        let key = match &context {
-            Context::Program(project) => project.manifest.clone(),
-            Context::Library(root) => root.clone(),
         };
         let encoding = self.encoding.get().copied().unwrap_or(Encoding::Utf16);
         let overlay = self.overlay();
@@ -150,71 +137,17 @@ impl Backend {
             .cloned()
             .or_else(|| std::fs::read_to_string(&path).ok())
             .unwrap_or_default();
-        match scope {
-            DiagnosticScope::File => {
-                let current = reports.iter().find(|file| file.path == path);
-                let diagnostics: Vec<ProtocolDiagnostic> = current
-                    .map(|file| file.diagnostics.as_slice())
-                    .unwrap_or(&[])
-                    .iter()
-                    .map(|diagnostic| protocol_diagnostic(&source, &path, diagnostic, encoding))
-                    .collect();
-                self.client
-                    .publish_diagnostics(uri, diagnostics, None)
-                    .await;
-                let stale = self.remember_published(&key, std::slice::from_ref(&path));
-                for path in stale {
-                    self.clear(&path).await;
-                }
-            }
-            DiagnosticScope::Tree => {
-                let mut files: HashMap<PathBuf, (String, Vec<Diagnostic>)> = reports
-                    .into_iter()
-                    .map(|file| (file.path, (file.source, file.diagnostics)))
-                    .collect();
-                // The open file is published even when clean, so an earlier
-                // publication is cleared.
-                files
-                    .entry(path.clone())
-                    .or_insert_with(|| (source, Vec::new()));
-                files.retain(|path, _| path.is_absolute());
-                let current: Vec<PathBuf> = files.keys().cloned().collect();
-                let stale = self.remember_published(&key, &current);
-                for (path, (source, diagnostics)) in &files {
-                    let Some(uri) = Uri::from_file_path(path) else {
-                        continue;
-                    };
-                    let diagnostics = diagnostics
-                        .iter()
-                        .map(|diagnostic| protocol_diagnostic(source, path, diagnostic, encoding))
-                        .collect();
-                    self.client
-                        .publish_diagnostics(uri, diagnostics, None)
-                        .await;
-                }
-                for path in stale {
-                    self.clear(&path).await;
-                }
-            }
-        }
-    }
-
-    /// Record what this context published, returning the files that dropped
-    /// out of the new set.
-    fn remember_published(&self, key: &Path, current: &[PathBuf]) -> Vec<PathBuf> {
-        let mut published = self.published.lock_unpoisoned();
-        let previous = published.entry(key.to_path_buf()).or_default();
-        let current: HashSet<PathBuf> = current.iter().cloned().collect();
-        let stale: Vec<PathBuf> = previous.difference(&current).cloned().collect();
-        *previous = current;
-        stale
-    }
-
-    /// Clear one file's diagnostics.
-    async fn clear(&self, path: &Path) {
-        if let Some(uri) = Uri::from_file_path(path) {
-            self.client.publish_diagnostics(uri, Vec::new(), None).await;
-        }
+        let diagnostics: Vec<ProtocolDiagnostic> = reports
+            .iter()
+            .find(|file| file.path == path)
+            .map(|file| file.diagnostics.as_slice())
+            .unwrap_or(&[])
+            .iter()
+            .map(|diagnostic| protocol_diagnostic(&source, &path, diagnostic, encoding))
+            .collect();
+        self.client
+            .publish_diagnostics(uri, diagnostics, None)
+            .await;
     }
 
     /// Clear the open file and explain once why it is not analyzed.
@@ -306,10 +239,7 @@ impl LanguageServer for Backend {
             Err(_) => return Ok(None),
         };
         let tree = match &context {
-            Context::Program(project) => Tree::Program {
-                root: &project.root,
-                policy: project.warnings,
-            },
+            Context::Program(project) => Tree::Program(&project.root),
             Context::Library(root) => Tree::StandardLibrary(root),
         };
         let source = self
@@ -394,7 +324,7 @@ fn protocol_diagnostic(
     diagnostic: &Diagnostic,
     encoding: Encoding,
 ) -> ProtocolDiagnostic {
-    let severity = match diagnostic.severity() {
+    let severity = match diagnostic.severity {
         Severity::Error => DiagnosticSeverity::ERROR,
         Severity::Warning => DiagnosticSeverity::WARNING,
     };
@@ -620,7 +550,7 @@ mod tests {
         let errors: Vec<_> = facts
             .iter()
             .flat_map(|file| &file.diagnostics)
-            .filter(|diagnostic| matches!(diagnostic.severity(), Severity::Error))
+            .filter(|diagnostic| matches!(diagnostic.severity, Severity::Error))
             .collect();
         assert!(errors.is_empty(), "the library checks clean: {errors:?}");
         assert!(

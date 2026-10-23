@@ -50,7 +50,6 @@ pub(crate) fn unused_declarations(
                 path.clone(),
                 declaration.name_span,
                 format!("`{}` is unused", join_path(&qualified)),
-                crate::compiler::WarningKind::UnusedDeclaration,
             ))
         })
         .collect();
@@ -106,7 +105,6 @@ pub(crate) fn unused_bindings(program: &Program) -> Vec<Diagnostic> {
                 &program.files[bound.file.0].path,
                 declaration.name_span,
                 format!("the local `{}` is never read", declaration.name),
-                crate::compiler::WarningKind::UnusedLocal,
             )
         })
         .collect()
@@ -136,7 +134,7 @@ mod tests {
         assert_eq!(warnings.len(), 1, "one declaration is unreached");
         let warning = &warnings[0];
         assert_eq!(warning.path, std::path::PathBuf::from("/virtual/main.kiru"));
-        assert_eq!(warning.severity(), crate::compiler::Severity::Warning);
+        assert_eq!(warning.severity, crate::compiler::Severity::Warning);
         assert_eq!(warning.message, "`root::helper` is unused");
     }
 

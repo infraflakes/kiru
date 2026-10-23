@@ -5,58 +5,6 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::compiler::{Diagnostic, WarningKind};
-
-/// What the server publishes when it has checked the tree.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum DiagnosticScope {
-    /// The open file only.
-    #[default]
-    File,
-    /// Every file of the project tree.
-    Tree,
-}
-
-/// How one unused fact is reported.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum WarningSetting {
-    /// Report it as a warning.
-    #[default]
-    Warning,
-    /// Do not report it.
-    Off,
-}
-
-/// Which warnings the project reports.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct WarningPolicy {
-    pub(crate) unused_use: WarningSetting,
-    pub(crate) redundant_use: WarningSetting,
-    pub(crate) unused_local: WarningSetting,
-    pub(crate) unused_declaration: WarningSetting,
-}
-
-impl WarningPolicy {
-    /// Whether one fact reaches the terminal or the editor: an error always
-    /// does, a warning when its kind is not silenced.
-    pub(crate) fn admits_fact(self, fact: &Diagnostic) -> bool {
-        fact.warning_kind().is_none_or(|kind| self.admits(kind))
-    }
-
-    /// Whether a warning of this kind reaches the terminal or the editor.
-    pub(crate) fn admits(self, kind: WarningKind) -> bool {
-        let setting = match kind {
-            WarningKind::UnusedUse => self.unused_use,
-            WarningKind::RedundantUse => self.redundant_use,
-            WarningKind::UnusedLocal => self.unused_local,
-            WarningKind::UnusedDeclaration => self.unused_declaration,
-        };
-        setting == WarningSetting::Warning
-    }
-}
-
 /// One project: its manifest, the program tree it names, the binary it
 /// builds, and the facts the server publishes.
 #[derive(Clone, Debug)]
@@ -64,8 +12,6 @@ pub(crate) struct Project {
     pub(crate) manifest: PathBuf,
     pub(crate) root: PathBuf,
     pub(crate) output: PathBuf,
-    pub(crate) scope: DiagnosticScope,
-    pub(crate) warnings: WarningPolicy,
 }
 
 /// A manifest that cannot be a project: the file and what is wrong with it.
@@ -96,10 +42,6 @@ impl fmt::Display for ProjectError {
 #[serde(deny_unknown_fields)]
 struct RawManifest {
     project: RawProject,
-    #[serde(default)]
-    lsp: RawLsp,
-    #[serde(default)]
-    diagnostics: RawDiagnostics,
 }
 
 #[derive(Deserialize)]
@@ -107,25 +49,6 @@ struct RawManifest {
 struct RawProject {
     root: PathBuf,
     output: PathBuf,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawLsp {
-    scope: Option<DiagnosticScope>,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawDiagnostics {
-    #[serde(rename = "unused-use")]
-    unused_use: Option<WarningSetting>,
-    #[serde(rename = "redundant-use")]
-    redundant_use: Option<WarningSetting>,
-    #[serde(rename = "unused-local")]
-    unused_local: Option<WarningSetting>,
-    #[serde(rename = "unused-declaration")]
-    unused_declaration: Option<WarningSetting>,
 }
 
 /// The one manifest name: a project is found by its file, not by a pattern.
@@ -169,13 +92,6 @@ impl Project {
             manifest,
             root,
             output,
-            scope: raw.lsp.scope.unwrap_or_default(),
-            warnings: WarningPolicy {
-                unused_use: raw.diagnostics.unused_use.unwrap_or_default(),
-                redundant_use: raw.diagnostics.redundant_use.unwrap_or_default(),
-                unused_local: raw.diagnostics.unused_local.unwrap_or_default(),
-                unused_declaration: raw.diagnostics.unused_declaration.unwrap_or_default(),
-            },
         })
     }
 }

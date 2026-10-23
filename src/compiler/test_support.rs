@@ -60,12 +60,7 @@ pub(crate) fn checked_program(source: &str) -> Program {
 /// Build one source file, returning the checked program and its root `main`.
 pub(crate) fn checked_program_and_entry(source: &str) -> (Program, DeclarationId) {
     let source = VirtualSource::new(&[("main.kiru", source)]);
-    let built = build(
-        source.root(),
-        &source,
-        &crate::project::WarningPolicy::default(),
-    )
-    .expect("the program checks");
+    let built = build(source.root(), &source).expect("the program checks");
     assert!(
         built.loaded.syntax.is_empty(),
         "the program parses: {:?}",
@@ -82,11 +77,7 @@ pub(crate) fn checked_program_and_entry(source: &str) -> (Program, DeclarationId
 /// does.
 pub(crate) fn checked_files(files: &[(&str, &str)]) -> Result<Program, String> {
     let source = VirtualSource::new(files);
-    match build(
-        source.root(),
-        &source,
-        &crate::project::WarningPolicy::default(),
-    ) {
+    match build(source.root(), &source) {
         // A recovered tree still builds its model, but it is not a program:
         // its syntax errors are the first fact the fixture reports.
         Ok(built) if !built.loaded.syntax.is_empty() => Err(built.loaded.syntax[0].message.clone()),
@@ -106,9 +97,9 @@ fn first_message(failure: &BuildFailure) -> String {
         .diagnostics()
         .iter()
         .find_map(|file| {
-            file.diagnostics.iter().find(|diagnostic| {
-                matches!(diagnostic.severity(), crate::compiler::Severity::Error)
-            })
+            file.diagnostics
+                .iter()
+                .find(|diagnostic| matches!(diagnostic.severity, crate::compiler::Severity::Error))
         })
         .map(|diagnostic| diagnostic.message.clone())
         .unwrap_or_else(|| failure.rendered().to_owned())

@@ -47,7 +47,6 @@ impl Builder {
                         &loaded.files[item.file].path,
                         item.span,
                         format!("redundant use `{}`", join_path(&item.path)),
-                        crate::compiler::WarningKind::RedundantUse,
                     )
                     .with_related(
                         &loaded.files[first_item.file].path,
@@ -63,7 +62,6 @@ impl Builder {
                     &loaded.files[item.file].path,
                     item.span,
                     format!("unused use `{}`", join_path(&item.path)),
-                    crate::compiler::WarningKind::UnusedUse,
                 ));
             }
         }
