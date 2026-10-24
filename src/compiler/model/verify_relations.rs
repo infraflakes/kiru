@@ -18,9 +18,9 @@
 use std::collections::HashSet;
 
 use crate::compiler::model::{
-    DeclarationId, DeclarationKind, Expression, FileId, Function, NamespaceId, Pattern, Program,
-    Statement, Symbol, Type, TypeDecl, TypeHead, TypeId, TypeKind, UseTarget, Visitor, reachable,
-    walk_expression, walk_statements,
+    DeclarationId, DeclarationKind, Expression, FileId, Function, FunctionBinding, NamespaceId,
+    Pattern, Program, Statement, Symbol, Type, TypeDecl, TypeHead, TypeId, TypeKind, UseTarget,
+    Visitor, reachable, walk_expression, walk_statements,
 };
 use crate::syntax::Span;
 
@@ -92,7 +92,8 @@ pub(crate) enum RelationViolationKind {
     MethodNamespaceMismatch,
     /// A method pool key is not the symbol of the declaration's name.
     MethodSymbolMismatch,
-    /// A method pool entry is neither an impl member nor a native.
+    /// A method pool entry is neither a function with the method binding nor a
+    /// native.
     MethodKindNotBound,
     /// A method pool entry's declared type is not a function type.
     MethodTypeNotFunction,
@@ -106,8 +107,8 @@ pub(crate) enum RelationViolationKind {
     /// An associated-function pool key is not the symbol of the declaration's
     /// name.
     AssociateSymbolMismatch,
-    /// An associated-function pool entry is neither an impl member nor a
-    /// native.
+    /// An associated-function pool entry is neither a function with the
+    /// associated binding nor a native.
     AssociateKindNotBound,
     /// An associated-function pool entry's declared type is not a function
     /// type.
@@ -789,17 +790,23 @@ fn check_pool_entry(
         Pool::Method => RelationViolationKind::MethodKindNotBound,
         Pool::Associate => RelationViolationKind::AssociateKindNotBound,
     };
-    if !matches!(
-        declaration.kind,
-        DeclarationKind::Impl | DeclarationKind::Native
-    ) {
+    // A filed function carries the binding that files it: a method holds its
+    // receiver head and an associated function holds its type head. A native
+    // has no function binding; its row's signature files it instead.
+    let matching_binding = match (pool, declaration.binding) {
+        (Pool::Method, Some(FunctionBinding::Method { receiver })) => receiver == head,
+        (Pool::Associate, Some(FunctionBinding::Associated { owner })) => owner == head,
+        _ => false,
+    };
+    if !matching_binding && declaration.kind != DeclarationKind::Native {
         violations.push(violation(
             kind_not_bound,
             format!(
-                "{} registers {}, whose kind {:?} is not a bound function",
+                "{} registers {}, whose binding {:?} is not filed under head {:?}",
                 namespace_label(program, namespace_id),
                 declaration_label(program, declaration_id),
-                declaration.kind
+                declaration.binding,
+                head
             ),
         ));
     }

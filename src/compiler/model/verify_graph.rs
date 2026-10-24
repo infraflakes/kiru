@@ -90,7 +90,8 @@ pub(crate) fn validate_program_structure(program: &Program) -> Result<(), String
         }
         match declaration.binding {
             // Only a function binds: a named one to a namespace name, an
-            // anonymous one to the body that writes its literal.
+            // anonymous one to the body that writes its literal, and a method
+            // or associated function to the type head that files it.
             Some(FunctionBinding::Named) if declaration.kind != DeclarationKind::Function => {
                 return Err("a non-function declaration names a named binding".to_owned());
             }
@@ -104,7 +105,15 @@ pub(crate) fn validate_program_structure(program: &Program) -> Result<(), String
                     "an anonymous function's container",
                 )?;
             }
-            Some(FunctionBinding::Named) | None => {}
+            Some(FunctionBinding::Method { .. } | FunctionBinding::Associated { .. })
+                if declaration.kind != DeclarationKind::Function =>
+            {
+                return Err("a non-function declaration names a bound-function binding".to_owned());
+            }
+            Some(FunctionBinding::Named)
+            | Some(FunctionBinding::Method { .. })
+            | Some(FunctionBinding::Associated { .. })
+            | None => {}
         }
         check_type(&declaration.ty, type_count, "a declaration type")?;
         if declaration.kind.callable() && declaration.kind.has_body() {

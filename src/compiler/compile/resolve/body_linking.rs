@@ -8,8 +8,8 @@ use crate::compiler::Diagnostic;
 use crate::compiler::compile::load::LoadedProgram;
 use crate::compiler::model::Type;
 use crate::compiler::model::{
-    Declaration, DeclarationId, DeclarationKind, Derived, Expression, Field, FileId, Function,
-    FunctionBinding, MatchArm, MatchBody, NamespaceId, Program, Statement, StringPart,
+    Declaration, DeclarationId, Derived, Expression, Field, FileId, Function, MatchArm, MatchBody,
+    NamespaceId, Program, Statement, StringPart,
 };
 use crate::syntax::Span;
 use crate::syntax::{Expression as ParsedExpression, Statement as ParsedStatement, TypeExpr};
@@ -90,15 +90,11 @@ impl Builder {
                 }
             };
             self.declarations[declaration_id.0] = Declaration {
-                kind: scoped.kind,
-                // A top-level `fn` owns its namespace name. A filed function
-                // is bound to its type instead, which is stage 0b-2's fact.
-                binding: match pending {
-                    Pending::Callable { .. } if scoped.kind == DeclarationKind::Function => {
-                        Some(FunctionBinding::Named)
-                    }
-                    Pending::Callable { .. } | Pending::ModuleValue { .. } => None,
-                },
+                // Registration normalized the loader's surface kind and
+                // settled the function binding, so the model node holds those
+                // facts rather than the parsed item's kind.
+                kind: skeleton.kind,
+                binding: skeleton.binding,
                 name,
                 name_span: skeleton.name_span,
                 public: skeleton.public,

@@ -27,8 +27,10 @@ pub(crate) enum DeclarationKind {
     Rec,
     /// An `enum Name { ... }` type declaration.
     Enum,
-    /// A function filed under a type by an `impl` block. Its name belongs to
-    /// the type, so it is never a namespace-level name.
+    /// The loader's surface form for a function written inside an `impl`
+    /// block. Registration normalizes it to `Function` with the method or
+    /// associated binding, so no node in the program graph has this kind. Its
+    /// name belongs to the type, so it is never a namespace-level name.
     Impl,
     /// A callable the runtime provides.
     Native,

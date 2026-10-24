@@ -14,8 +14,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::compiler::compile::load::LoadedProgram;
 use crate::compiler::model::{
-    DeclarationId, DeclarationKind, Expression, FileId, Function, MatchBody, Pattern, Program,
-    Statement, TypeKind, UseTarget, Visitor, walk_expression, walk_statements,
+    Declaration, DeclarationId, DeclarationKind, Expression, FileId, Function, MatchBody, Pattern,
+    Program, Statement, TypeKind, UseTarget, Visitor, walk_expression, walk_statements,
 };
 use crate::syntax::{Span, Token, TokenKind, lex_with_comments};
 
@@ -223,7 +223,7 @@ impl<'a> Written<'a> {
             named(
                 &mut facts,
                 node.name_span,
-                role_of(node.kind, declaration, &self.parameters),
+                role_of(node, declaration, &self.parameters),
                 true,
             );
         }
@@ -234,7 +234,7 @@ impl<'a> Written<'a> {
             named(
                 &mut facts,
                 node.name_span,
-                role_of(node.kind, declaration, &self.parameters),
+                role_of(node, declaration, &self.parameters),
                 true,
             );
         }
@@ -298,7 +298,7 @@ impl<'a> Written<'a> {
             named(
                 &mut facts,
                 written_name(self.source, span),
-                role_of(node.kind, declaration, &self.parameters),
+                role_of(node, declaration, &self.parameters),
                 false,
             );
         }
@@ -318,7 +318,7 @@ impl<'a> Written<'a> {
             named(
                 &mut facts,
                 span,
-                role_of(node.kind, declaration, &self.parameters),
+                role_of(node, declaration, &self.parameters),
                 false,
             );
         }
@@ -432,21 +432,32 @@ impl Visitor for Written<'_> {
 
 /// The role a declaration plays where it stands, or where a reference names
 /// it. A local that is a function's parameter is a parameter wherever it is
-/// written.
+/// written. A function's binding decides its role: a method and an associated
+/// function are reached through their type, while a named or anonymous
+/// function is a plain function value. A declaration with no function binding
+/// falls back to its kind's role.
 fn role_of(
-    kind: DeclarationKind,
-    declaration: DeclarationId,
+    declaration: &Declaration,
+    declaration_id: DeclarationId,
     parameters: &HashSet<DeclarationId>,
 ) -> SemanticRole {
-    match kind {
-        DeclarationKind::Function | DeclarationKind::Native => SemanticRole::Function,
-        // A member an impl block filed under its type is reached through the
-        // type, never by a namespace-level name.
-        DeclarationKind::Impl => SemanticRole::Method,
-        DeclarationKind::ModuleValue => SemanticRole::Variable,
-        DeclarationKind::Local if parameters.contains(&declaration) => SemanticRole::Parameter,
-        DeclarationKind::Local => SemanticRole::Variable,
-        DeclarationKind::Rec | DeclarationKind::Enum => SemanticRole::Type,
+    match declaration.binding {
+        Some(binding) if binding.is_bound() => SemanticRole::Method,
+        Some(_) => SemanticRole::Function,
+        None => match declaration.kind {
+            DeclarationKind::Function | DeclarationKind::Native => SemanticRole::Function,
+            // A member an impl block filed under its type is reached through
+            // the type, never by a namespace-level name. The loader's `Impl`
+            // form leaves no model node, but its role is the same wherever a
+            // kind with no binding reaches this table.
+            DeclarationKind::Impl => SemanticRole::Method,
+            DeclarationKind::ModuleValue => SemanticRole::Variable,
+            DeclarationKind::Local if parameters.contains(&declaration_id) => {
+                SemanticRole::Parameter
+            }
+            DeclarationKind::Local => SemanticRole::Variable,
+            DeclarationKind::Rec | DeclarationKind::Enum => SemanticRole::Type,
+        },
     }
 }
 
@@ -462,7 +473,7 @@ fn role_of_target(
         UseTarget::Type(_) => SemanticRole::Type,
         UseTarget::Function(declaration) => {
             let node = program.declaration(declaration);
-            role_of(node.kind, declaration, parameters)
+            role_of(node, declaration, parameters)
         }
     }
 }

@@ -36,9 +36,13 @@ pub(in crate::compiler::compile::resolve) struct DeclarationSite<'a> {
 
 /// What is known about a declaration before its body is linked.
 pub(in crate::compiler::compile::resolve) struct Skeleton {
+    /// The kind the model node will hold. A bound member enters registration
+    /// as the loader's `Impl` form and is normalized to `Function` here, so
+    /// no node in the program graph has kind `Impl`.
     pub(in crate::compiler::compile::resolve) kind: DeclarationKind,
     /// How the declaration is bound when it is a function: a namespace name,
-    /// or the body that writes the closure literal. Every other kind has none.
+    /// the body that writes the closure literal, a receiver head, or an
+    /// associated function's type head. Every other kind has none.
     pub(in crate::compiler::compile::resolve) binding: Option<FunctionBinding>,
     pub(in crate::compiler::compile::resolve) name: String,
     pub(in crate::compiler::compile::resolve) name_span: Span,
@@ -63,9 +67,10 @@ impl Skeleton {
     /// Whether the declaration is filed under a type: a method or an
     /// associated function in an `impl` block, or a native whose row gives it a
     /// head. A filed declaration does not own its name alone; a plain function,
-    /// a module value, and a type do.
+    /// a module value, and a type do. The heads decide, not the kind: a bound
+    /// native has a head and no function binding.
     pub(in crate::compiler::compile::resolve) fn filed(&self) -> bool {
-        self.kind.is_bound() && (self.receiver_head.is_some() || self.associated_head.is_some())
+        self.receiver_head.is_some() || self.associated_head.is_some()
     }
 }
 
@@ -327,17 +332,21 @@ impl Builder {
             file,
             reported_path,
         } = site;
-        // A namespace-level function owns its name; every other kind is
-        // registered under a name that belongs to a namespace, a type, an
-        // `impl` block, or a local scope instead of a function binding.
-        let binding = match kind {
-            DeclarationKind::Function => Some(FunctionBinding::Named),
-            DeclarationKind::ModuleValue
-            | DeclarationKind::Local
-            | DeclarationKind::Rec
-            | DeclarationKind::Enum
-            | DeclarationKind::Impl
-            | DeclarationKind::Native => None,
+        // The loader's `Impl` kind is a surface fact: a bound function enters
+        // registration as `Impl` and leaves as the model's one `Function` form,
+        // with the head that files it carried as its binding. A plain function
+        // is the named binding, and every other kind has no function binding.
+        let (kind, binding) = match kind {
+            DeclarationKind::Function => (DeclarationKind::Function, Some(FunctionBinding::Named)),
+            DeclarationKind::Impl if receiver_head.is_some() => (
+                DeclarationKind::Function,
+                receiver_head.map(|receiver| FunctionBinding::Method { receiver }),
+            ),
+            DeclarationKind::Impl if associated_head.is_some() => (
+                DeclarationKind::Function,
+                associated_head.map(|owner| FunctionBinding::Associated { owner }),
+            ),
+            kind => (kind, None),
         };
         let id = self.create_node(
             Skeleton {

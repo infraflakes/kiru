@@ -14,13 +14,16 @@ use std::collections::HashSet;
 
 use crate::compiler::Diagnostic;
 use crate::compiler::model::collect_reads;
-use crate::compiler::model::{DeclarationId, DeclarationKind, Program, join_path, namespace_path};
+use crate::compiler::model::{
+    DeclarationId, DeclarationKind, FunctionBinding, Program, join_path, namespace_path,
+};
 
 /// The warnings for the program declarations no reachable body reads. Only a
-/// namespace-level function and a module value are named: a filed function
-/// belongs to its type, a type, local, and native are reached as a whole or
-/// not at all, and the embedded library's own declarations are never the
-/// program's to prune.
+/// named namespace-level function and a module value are named: an anonymous
+/// function is contained by the body that writes it, a method or associated
+/// function belongs to its type, a native is reached as a whole or not at all,
+/// and the embedded library's own declarations are never the program's to
+/// prune.
 pub(crate) fn unused_declarations(
     program: &Program,
     reachable: &HashSet<DeclarationId>,
@@ -33,6 +36,13 @@ pub(crate) fn unused_declarations(
         // An anonymous function is contained by the body that writes it and
         // owns no namespace name, so it is never an unused declaration.
         .filter(|(_, declaration)| !declaration.is_anonymous_function())
+        // A method or associated function is filed under its type and owns no
+        // namespace name, so it is never an unused declaration either.
+        .filter(|(_, declaration)| {
+            !declaration
+                .binding
+                .is_some_and(FunctionBinding::is_method_or_associated)
+        })
         .filter(|(_, declaration)| match declaration.kind {
             DeclarationKind::Function | DeclarationKind::ModuleValue => true,
             DeclarationKind::Local
