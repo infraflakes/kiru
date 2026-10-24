@@ -1168,52 +1168,52 @@ fn closure_rules() {
     expect_accepts(&[
         (
             "an inline closure passed to a function",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new().push(1).push(2); let ys: Vec<int> = xs.map(fn(x: int) -> int { return x * 2; }); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new().push(1).push(2); let ys: Vec<int> = xs.map([x: int] -> int { return x * 2; }); };",
         ),
         (
             "a closure stored in a function-typed binding",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let f: fn(int) -> int = fn(x: int) -> int { return x + 1; }; };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let f: fn(int) -> int = [x: int] -> int { return x + 1; }; };",
         ),
         (
             "a closure that captures an enclosing local",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let factor: int = 3; let f: fn(int) -> int = fn(x: int) -> int { return x * factor; }; };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let factor: int = 3; let f: fn(int) -> int = [x: int] -> int { return x * factor; }; };",
         ),
         (
             "a nested closure",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let base: int = 1; let make: fn(int) -> fn(int) -> int = fn(a: int) -> fn(int) -> int { return fn(b: int) -> int { return base + a + b; }; }; };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let base: int = 1; let make: fn(int) -> fn(int) -> int = [a: int] -> fn(int) -> int { return [b: int] -> int { return base + a + b; }; }; };",
         ),
         (
             "a no-value closure bound and called as a statement",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let go: fn(txt) = fn(name: txt) { std::print(name); }; go(\"x\"); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let go: fn(txt) = [name: txt] { std::print(name); }; go(\"x\"); };",
         ),
         (
             "an async closure call",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let job: fn() = fn() { std::print(\"x\"); }; async job(); wait; };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let job: fn() = [] { std::print(\"x\"); }; async job(); wait; };",
         ),
         (
             "a closure that captures a loop variable",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new().push(1).push(2); let index: int = 0; let count: int = xs.len(); for { match index < count { false => { break; }; true => {}; }; let x: int = xs.at(index); let f: fn() -> int = fn() -> int { return x; }; index = index + 1; }; };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new().push(1).push(2); let index: int = 0; let count: int = xs.len(); for { match index < count { false => { break; }; true => {}; }; let x: int = xs.at(index); let f: fn() -> int = [] -> int { return x; }; index = index + 1; }; };",
         ),
     ]);
     expect_rejections(&[
         (
             "a closure used where a value is expected",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let n: int = fn(x: int) -> int { return x; }; };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let n: int = [x: int] -> int { return x; }; };",
             "expected int, found fn(int) -> int",
         ),
         (
             "assigning to a captured local",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let total: int = 0; let bump: fn(int) -> int = fn(x: int) -> int { total = total + x; return total; }; };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let total: int = 0; let bump: fn(int) -> int = [x: int] -> int { total = total + x; return total; }; };",
             "`total` is captured by a closure and cannot be assigned",
         ),
         (
             "a closure body that does not return",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let f: fn(int) -> int = fn(x: int) -> int { let y: int = x; }; };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let f: fn(int) -> int = [x: int] -> int { let y: int = x; }; };",
             "`<closure>` is declared to return int, so every path must end with `return ...`, `panic;`, or a call that stops the run",
         ),
         (
             "a wrong-typed closure return",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let f: fn(int) -> int = fn(x: int) -> int { return \"s\"; }; };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let f: fn(int) -> int = [x: int] -> int { return \"s\"; }; };",
             "expected int, found txt",
         ),
     ]);
@@ -1769,11 +1769,11 @@ fn rule_conformance_syntax() {
         (
             "bracket syntax",
             "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = [1,2,3]; };\n",
-            "unexpected character `[`",
+            "expected a name in the parameter list, found `1`",
         ),
         (
             "a call of a call",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn make() -> fn() -> int { return fn() -> int { return 1; }; };\nfn main() { let x: int = make()(); };\n",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn make() -> fn() -> int { return [] -> int { return 1; }; };\nfn main() { let x: int = make()(); };\n",
             "expected `;` after the initializer, found `(`",
         ),
         (

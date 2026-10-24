@@ -61,7 +61,7 @@ primary        := string
                 | "false"
                 | "{" (field ("," field)* ","?)? "}"            # record literal (a declared type)
                 | "(" expression ")"                            # grouping
-                | "fn" "(" params? ")" ("->" type)? block       # closure
+                | "[" params? "]" ("->" type)? block           # closure
                 | "match" expression "{" arm* "}"
                 | path arguments?                               # call by path
 arguments   := "(" (expression ("," expression)* ","?)? ")"

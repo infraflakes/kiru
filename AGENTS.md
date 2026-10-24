@@ -54,7 +54,7 @@
 - src/compiler/bytecode/ defines the instruction set and its validation. Nothing outside it names an instruction variant.
 - src/runtime/ executes: the virtual machine, its native dispatch, values, and the process, thread and signal pools.
 - src/sync/ is the crate's one lock policy: a poisoned lock is recovered, never propagated. The runtime and the server both read it.
-- src/syntax/ is the surface: tokens, lexer, parser, syntax tree, spans. It imports no compiler model. The loader is the one boundary that derives a declaration's model kind from the surface form; operator spelling and precedence stay in the syntax tree, while operand types, result types, and lowering instructions live in the compiler.
+- src/syntax/ is the surface: tokens, lexer, parser, syntax tree, spans. It imports no compiler model. The loader is the one boundary that derives a declaration's model kind from the surface form; operator spelling and precedence stay in the syntax tree, while operand types, result types, and lowering instructions live in the compiler. A closure literal is `[parameters] -> result? { body }`; `fn name(...)` is a named declaration, and `fn(types) -> result` is a function type.
 - src/cli/ is the only place a terminal is spoken to, and the only place the compiler's disk input enters: it supplies the disk source and renders diagnostics for a terminal.
 - src/lsp/ is the language server's client: the protocol session, the position encoding, and the documents over the disk. It supplies every open buffer as a program source and publishes the analysis's diagnostics for the open file.
 

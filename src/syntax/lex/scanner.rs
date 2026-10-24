@@ -168,6 +168,8 @@ impl<'a> Lexer<'a> {
             '}' => Some(TokenKind::RBrace),
             '(' => Some(TokenKind::LParen),
             ')' => Some(TokenKind::RParen),
+            '[' => Some(TokenKind::LBracket),
+            ']' => Some(TokenKind::RBracket),
             _ => None,
         };
         if let Some(kind) = single_character_token {
@@ -431,6 +433,10 @@ mod tests {
                 TokenKind::Semi,
                 TokenKind::Eof,
             ]
+        );
+        assert_eq!(
+            kinds("[]"),
+            vec![TokenKind::LBracket, TokenKind::RBracket, TokenKind::Eof,]
         );
     }
 

@@ -82,23 +82,23 @@ fn expect_rejections(cases: &[(&str, &str, &str)]) {
 
 #[test]
 fn rejects_index_assignment() {
-    // Brackets are deleted from the language: `xs[i] = v` is not a form.
+    // Brackets open a closure's parameter list only: `xs[i] = v` is not a form.
     let message = parse_error("fn main() { let xs: Vec<int> = Vec.new(); xs[0] = 1; };");
-    assert_eq!(message, "unexpected character `[`");
+    assert_eq!(message, "expected `;` after the expression, found `[`");
 }
 
 #[test]
 fn rejects_index_expressions() {
     let message = parse_error("fn f(xs: Vec<int>) -> int { return xs[0]; };");
-    assert_eq!(message, "unexpected character `[`");
+    assert_eq!(message, "expected `;` after the return, found `[`");
 }
 
 #[test]
 fn rejects_list_literals() {
     let message = parse_error("fn main() { let xs: Vec<int> = [1, 2]; };");
-    assert_eq!(message, "unexpected character `[`");
+    assert_eq!(message, "expected a name in the parameter list, found `1`");
     let message = parse_error("fn main() { let xs: Vec<int> = []; };");
-    assert_eq!(message, "unexpected character `[`");
+    assert_eq!(message, "expected `{` to open a block, found `;`");
 }
 
 #[test]
@@ -571,7 +571,7 @@ fn parser_errors() {
 
 #[test]
 fn parses_a_closure() {
-    let file = parse("fn main() { let f: fn(int) -> int = fn(x: int) -> int { return x; }; };");
+    let file = parse("fn main() { let f: fn(int) -> int = [x: int] -> int { return x; }; };");
     let function = declaration(&file, 0)
         .function()
         .expect("expected a function");
@@ -583,7 +583,7 @@ fn parses_a_closure() {
 
 #[test]
 fn parses_a_no_value_function_type() {
-    let file = parse("fn main() { let go: fn(txt) = fn(name: txt) { }; };");
+    let file = parse("fn main() { let go: fn(txt) = [name: txt] { }; };");
     let function = declaration(&file, 0)
         .function()
         .expect("expected a function");

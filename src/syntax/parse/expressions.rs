@@ -137,7 +137,7 @@ impl<'a> Parser<'a> {
             return Ok(Expression::Bool { value: false, span });
         }
         match &self.current().kind {
-            TokenKind::Fn => self.parse_closure(),
+            TokenKind::LBracket => self.parse_closure(),
             TokenKind::Text(_) | TokenKind::InterpolationStart => self.parse_interpolated(),
             TokenKind::Match => self.parse_match(true),
             TokenKind::LBrace => {

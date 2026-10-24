@@ -6,7 +6,7 @@ use crate::syntax::{BinaryOp, Span, UnaryOp};
 
 use super::ids::{DeclarationId, NamespaceId};
 
-/// A function literal: a named `fn` declaration's body, or a `fn(...) { .. }`
+/// A function literal: a named `fn` declaration's body, or a `[...] { .. }`
 /// written in expression position. The same node either way; only the name of
 /// the declaration that holds it differs.
 #[derive(Debug)]
@@ -123,7 +123,7 @@ pub(crate) enum Expression {
         exhaustive: bool,
         span: Span,
     },
-    /// A function literal: a named function's value, or a `fn(...) { .. }`
+    /// A function literal: a named function's value, or a `[...] { .. }`
     /// written in expression position.
     Function(Function),
 }

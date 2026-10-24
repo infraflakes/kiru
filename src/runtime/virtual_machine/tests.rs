@@ -543,13 +543,13 @@ fn new_vec_methods_evaluate() {
         ),
         (
             "fold combines from the left with the accumulator first",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3); let total: int = xs.fold(0, fn(acc: int, x: int) -> int { return acc + x; }); return \"@(total)\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3); let total: int = xs.fold(0, [acc: int, x: int] -> int { return acc + x; }); return \"@(total)\"; };\nfn main() {};",
             "f",
             "6",
         ),
         (
             "each runs over every element and returns nothing",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3); xs.each(fn(x: int) { }); return \"done\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3); xs.each([x: int] { }); return \"done\"; };\nfn main() {};",
             "f",
             "done",
         ),
@@ -567,11 +567,11 @@ fn each_calls_apply_for_every_element() {
     // A panicking apply proves the element is visited; an empty vec calls it
     // never, so the run completes.
     let visited = runtime(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3); xs.each(fn(x: int) { match x { 3 => { std::eprint(\"visited\"); }; _ => {}; }; }); return \"ok\"; };\nfn main() {};",
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3); xs.each([x: int] { match x { 3 => { std::eprint(\"visited\"); }; _ => {}; }; }); return \"ok\"; };\nfn main() {};",
     );
     assert!(visited.call_root("f", Vec::new()).is_err());
     let empty = runtime(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new(); xs.each(fn(x: int) { std::eprint(\"visited\"); }); return \"ok\"; };\nfn main() {};",
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new(); xs.each([x: int] { std::eprint(\"visited\"); }); return \"ok\"; };\nfn main() {};",
     );
     assert_eq!(call_text(&empty, "f"), "ok");
 }
@@ -672,43 +672,43 @@ fn closures_evaluate() {
     expect_text_results(&[
         (
             "an inline closure doubles",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3); let ys: Vec<int> = xs.map(fn(x: int) -> int { return x * 2; }); return \"@(ys.at(0))@(ys.at(1))@(ys.at(2))\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3); let ys: Vec<int> = xs.map([x: int] -> int { return x * 2; }); return \"@(ys.at(0))@(ys.at(1))@(ys.at(2))\"; };\nfn main() {};",
             "f",
             "246",
         ),
         (
             "a closure captures an enclosing local",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let factor: int = 10; let xs: Vec<int> = Vec.new().push(1).push(2); let ys: Vec<int> = xs.map(fn(x: int) -> int { return x * factor; }); return \"@(ys.at(0)),@(ys.at(1))\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let factor: int = 10; let xs: Vec<int> = Vec.new().push(1).push(2); let ys: Vec<int> = xs.map([x: int] -> int { return x * factor; }); return \"@(ys.at(0)),@(ys.at(1))\"; };\nfn main() {};",
             "f",
             "10,20",
         ),
         (
             "a nested closure captures across a boundary",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let base: int = 100; let make: fn(int) -> fn(int) -> int = fn(a: int) -> fn(int) -> int { return fn(b: int) -> int { return base + a + b; }; }; let g: fn(int) -> int = make(20); return \"@(g(3))\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let base: int = 100; let make: fn(int) -> fn(int) -> int = [a: int] -> fn(int) -> int { return [b: int] -> int { return base + a + b; }; }; let g: fn(int) -> int = make(20); return \"@(g(3))\"; };\nfn main() {};",
             "f",
             "123",
         ),
         (
             "a captured value is a snapshot",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let n: int = 1; let read: fn() -> int = fn() -> int { return n; }; n = 5; return \"@(read())\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let n: int = 1; let read: fn() -> int = [] -> int { return n; }; n = 5; return \"@(read())\"; };\nfn main() {};",
             "f",
             "1",
         ),
         (
             "a closure captures a loop variable by value",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(10).push(20); let fs: Vec<fn() -> int> = Vec.new(); let index: int = 0; let count: int = xs.len(); for { match index < count { false => { break; }; true => {}; }; let x: int = xs.at(index); fs = fs.push(fn() -> int { return x; }); index = index + 1; }; let a: fn() -> int = fs.at(0); let b: fn() -> int = fs.at(1); return \"@(a()),@(b())\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(10).push(20); let fs: Vec<fn() -> int> = Vec.new(); let index: int = 0; let count: int = xs.len(); for { match index < count { false => { break; }; true => {}; }; let x: int = xs.at(index); fs = fs.push([] -> int { return x; }); index = index + 1; }; let a: fn() -> int = fs.at(0); let b: fn() -> int = fs.at(1); return \"@(a()),@(b())\"; };\nfn main() {};",
             "f",
             "10,20",
         ),
         (
             "a no-value closure call is a statement",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let set: fn() = fn() { }; set(); return \"ok\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let set: fn() = [] { }; set(); return \"ok\"; };\nfn main() {};",
             "f",
             "ok",
         ),
         (
             "an async closure runs and joins",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let gate: int = 1; let work: fn() -> int = fn() -> int { return gate; }; async work(); wait; return \"ok\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt { let gate: int = 1; let work: fn() -> int = [] -> int { return gate; }; async work(); wait; return \"ok\"; };\nfn main() {};",
             "f",
             "ok",
         ),

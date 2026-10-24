@@ -1,7 +1,7 @@
 //! The declaration nodes: a name, the type it holds, and the value it holds.
 //!
 //! A declaration's value is an expression. A named function is a function
-//! expression, the same node as a `fn(...) { .. }` literal, so a function is
+//! expression, the same node as a `[...] { .. }` literal, so a function is
 //! not a separate kind of value. A parameter or local binding has no value
 //! form: its value is storage. A native is the one value the runtime provides
 //! rather than the program, so it carries a marker instead of an expression.

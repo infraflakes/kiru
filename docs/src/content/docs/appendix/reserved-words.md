@@ -16,7 +16,7 @@ plus the `std` namespace.
 | --- | --- |
 | `use` | shorten a path to a namespace, a type, or a plain function |
 | `pub` | let another namespace reach a declaration, field, or variant |
-| `fn` | declare a function, or write a function type or literal |
+| `fn` | declare a function, or write a function type |
 | `impl` | file functions under a type |
 | `enum` | declare an enum type and its variants |
 | `let` | declare a binding |

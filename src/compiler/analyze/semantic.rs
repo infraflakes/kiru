@@ -521,7 +521,9 @@ fn role_of_token(token: &Token, facts: &[Named], paths: &[Span]) -> Option<Seman
         | TokenKind::LBrace
         | TokenKind::RBrace
         | TokenKind::LParen
-        | TokenKind::RParen => Some(SemanticRole::Operator),
+        | TokenKind::RParen
+        | TokenKind::LBracket
+        | TokenKind::RBracket => Some(SemanticRole::Operator),
     }
 }
 

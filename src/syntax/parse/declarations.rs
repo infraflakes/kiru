@@ -313,15 +313,15 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Parse an anonymous function literal: `fn(a: T) -> R { ... }`. In
+    /// Parse an anonymous function literal: `[a: T] -> R { ... }`. In
     /// expression position it is a closure value.
     pub(super) fn parse_closure(&mut self) -> Result<Expression, ParseError> {
-        let keyword = self.advance();
+        let open = self.current().span;
         let (parameters, _) = self.parse_delimited(
-            &TokenKind::LParen,
-            &TokenKind::RParen,
-            "after `fn`",
-            "after the parameter list",
+            &TokenKind::LBracket,
+            &TokenKind::RBracket,
+            "to open the closure parameters",
+            "to close the closure parameters",
             Self::parse_parameter,
         )?;
         let return_type = self.parse_return_type()?;
@@ -331,7 +331,7 @@ impl<'a> Parser<'a> {
             parameters,
             return_type,
             body,
-            span: keyword.merge(close),
+            span: open.merge(close),
         })))
     }
 

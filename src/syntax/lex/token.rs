@@ -69,6 +69,10 @@ pub(crate) enum TokenKind {
     RBrace,
     LParen,
     RParen,
+    /// `[`, which opens a closure literal's parameter list.
+    LBracket,
+    /// `]`, which closes a closure literal's parameter list.
+    RBracket,
     Eof,
 }
 
@@ -130,6 +134,8 @@ impl TokenKind {
             TokenKind::RBrace => "`}`".to_owned(),
             TokenKind::LParen => "`(`".to_owned(),
             TokenKind::RParen => "`)`".to_owned(),
+            TokenKind::LBracket => "`[`".to_owned(),
+            TokenKind::RBracket => "`]`".to_owned(),
             TokenKind::Eof => "the end of the file".to_owned(),
         }
     }

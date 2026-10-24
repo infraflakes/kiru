@@ -437,7 +437,7 @@ pub(crate) enum Expression {
         default: Option<MatchBody>,
         span: Span,
     },
-    /// An anonymous function literal: `fn(a: T) -> R { ... }`. In expression
+    /// An anonymous function literal: `[a: T] -> R { ... }`. In expression
     /// position it is a closure value that captures the enclosing locals.
     Closure(Box<Closure>),
 }

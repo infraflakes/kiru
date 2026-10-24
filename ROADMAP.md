@@ -245,6 +245,12 @@ tracked so they are settled before they block a phase.
   value is called through a name (`apply(x)`), never by calling a call result
   (`make()()`) or an index (`fs[0](x)`). (Dropped `Expression::Invoke`: an
   arbitrary callee adds no orchestration and reads badly.)
+- **A closure literal is `[parameters] -> result? { body }`.** `fn name(...)`
+  with an optional return type is a named function declaration, and
+  `fn(types) -> result` is a function type; an expression-position `fn` is not
+  a form. Brackets name a closure's parameters and nothing else, so the
+  language still has no list literal and no index syntax. (The closure's
+  parameters, return type, captures, and value type are unchanged.)
 - **The sequence type is `Vec<T>`, and its element type is always written.** No
   bare `Vec`, and no implicit `Vec<txt>`. `Vec` is a declared `rec` in the
   `std::dynamic` namespace (`std/dynamic/vec.kiru`), not an intrinsic, and it
@@ -381,13 +387,13 @@ tracked so they are settled before they block a phase.
   `std/dynamic/vec.kiru`. With `<` extended to `txt`, `sort` moved too: it is
   an iterative O(n log n) bottom-up merge sort, and `sort_by` takes a
   comparator.
-- **4c ✅ — closures.** An anonymous `fn(a: T) -> R { ... }` literal is a value.
+- **4c ✅ — closures.** An anonymous `[a: T] -> R { ... }` literal is a value.
   It captures the enclosing locals **by value** at creation (capture-all, so no
   free-variable analysis): the closure's leading registers are the captured
   values, `MakeFunction` snapshots them, and a captured local is read-only
   inside the closure. Nested closures capturing across a boundary work, a
   closure body is checked inline so a captured loop variable keeps its type, and
-  `async` accepts a closure call. A closure with no return type is `fn(params)`
+  `async` accepts a closure call. A closure with no return type is `[params]`
   and returns no value.
 
 ### Backlog — everything planned but not yet built

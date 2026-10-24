@@ -90,7 +90,7 @@ pub(crate) enum Shape {
     Record,
     /// A `Type.Variant(…)` construction.
     Variant,
-    /// A `fn(…) { … }` literal.
+    /// A `[…] { … }` literal.
     Callable,
     /// A type parameter: no literal of its own.
     Parameter,

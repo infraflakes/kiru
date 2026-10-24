@@ -579,7 +579,7 @@ fn a_closure_in_an_initializer_does_not_order_the_value_after_what_it_mentions()
     // it is made, so the module value it mentions is not a dependency of the
     // initializer. `derived` keeps its declaration position.
     let program = checked_program(
-        "use std;\nfn apply(f: fn() -> int) -> int { return f(); };\nlet derived: int = apply(fn() -> int { return base; });\nlet base: int = 1;\nfn main() {};",
+        "use std;\nfn apply(f: fn() -> int) -> int { return f(); };\nlet derived: int = apply([] -> int { return base; });\nlet base: int = 1;\nfn main() {};",
     );
     let order = module_value_order(&program);
     assert!(
@@ -613,11 +613,11 @@ fn a_module_value_cycle_through_a_deferred_body_is_legal() {
     // dependency and the mention creates no cycle.
     accept(&[(
         "main.kiru",
-        "use std;\nfn apply(f: fn() -> int) -> int { return f(); };\nlet x: int = apply(fn() -> int { return x; });\nfn main() {};",
+        "use std;\nfn apply(f: fn() -> int) -> int { return f(); };\nlet x: int = apply([] -> int { return x; });\nfn main() {};",
     )]);
     accept(&[(
         "main.kiru",
-        "use std;\nfn wrap(f: fn() -> int) -> fn() -> int { return f; };\nlet a: fn() -> int = wrap(fn() -> int { return b(); });\nlet b: fn() -> int = a;\nfn main() {};",
+        "use std;\nfn wrap(f: fn() -> int) -> fn() -> int { return f; };\nlet a: fn() -> int = wrap([] -> int { return b(); });\nlet b: fn() -> int = a;\nfn main() {};",
     )]);
 }
 
@@ -866,7 +866,7 @@ fn a_named_function_and_a_closure_are_the_same_value() {
         "main.kiru",
         "use std;\n\
              fn double(x: int) -> int { return x * 2; };\n\
-             fn main() { let f: fn(int) -> int = fn(x: int) -> int { return x + 1; }; };",
+             fn main() { let f: fn(int) -> int = [x: int] -> int { return x + 1; }; };",
     )]);
     let root = program
         .namespace_at(&["root".to_owned()])

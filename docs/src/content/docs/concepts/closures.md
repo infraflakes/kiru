@@ -49,7 +49,7 @@ fn main() {
 
 ## Closures
 
-An anonymous function literal is a value: `fn(a: T) -> R { ... }`. It captures
+An anonymous function literal is a value: `[a: T] -> R { ... }`. It captures
 the enclosing locals by value at the point it is created, so it can use them:
 
 ```kiru
@@ -62,21 +62,21 @@ fn main() {
   xs = xs.push(1);
   xs = xs.push(2);
   xs = xs.push(3);
-  let scaled: Vec<int> = xs.map(fn(x: int) -> int { return x * factor; });
+  let scaled: Vec<int> = xs.map([x: int] -> int { return x * factor; });
   std::print("@(scaled.at(2))");    # 30
 };
 ```
 
-A closure's parameters and return type are written like a function's; with no
-return type it is `fn(params)` and returns no value, and its body must return on
-every path when it declares a return type. Because the closure holds a copy of
-each captured local, it cannot assign one:
+A closure's parameters and return type are written like a function's, with the
+parameter list in brackets; with no return type it is `[params]` and returns no
+value, and its body must return on every path when it declares a return type.
+Because the closure holds a copy of each captured local, it cannot assign one:
 
 ```console
 $ kc
-main.kiru:3:50: error: `total` is captured by a closure and cannot be assigned
-  let bump: fn(int) -> int = fn(x: int) -> int { total = total + x; return total; };
-                                                 ^^^^^
+main.kiru:3:48: error: `total` is captured by a closure and cannot be assigned
+  let bump: fn(int) -> int = [x: int] -> int { total = total + x; return total; };
+                                               ^^^^^
 ```
 
 A closure may capture across more than one level, so a closure returned from a
@@ -101,9 +101,9 @@ fn main() {
   xs = xs.push(2);
   xs = xs.push(3);
   xs = xs.push(4);
-  let doubled: Vec<int> = xs.map(fn(x: int) -> int { return x * 2; });
-  let evens: Vec<int> = xs.filter(fn(x: int) -> bool { return x % 2 == 0; });
-  let desc: Vec<int> = xs.sort_by(fn(a: int, b: int) -> bool { return a > b; });
+  let doubled: Vec<int> = xs.map([x: int] -> int { return x * 2; });
+  let evens: Vec<int> = xs.filter([x: int] -> bool { return x % 2 == 0; });
+  let desc: Vec<int> = xs.sort_by([a: int, b: int] -> bool { return a > b; });
   std::print("@(doubled.at(0)) @(evens.at(0)) @(desc.at(0))");   # 2 2 4
 };
 ```

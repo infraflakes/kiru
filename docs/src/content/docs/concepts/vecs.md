@@ -7,8 +7,8 @@ A vec holds several values of one type in order. The type is written `Vec<T>`,
 where `T` is the element type; the element type is always written, so there is
 no bare form. `Vec` is a declared `rec` in `std::dynamic`, not an intrinsic, so
 a program reaches it by its path or with `use std::dynamic::Vec;`. It has no
-literal and no index brackets: a value is built and changed through its
-operations.
+literal and no index syntax: `[...]` is only a closure's parameter list, so a
+value is built and changed through its operations.
 
 ```kiru
 use std;
