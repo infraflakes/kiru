@@ -40,6 +40,7 @@ pub(crate) fn compile(
     let Build {
         loaded,
         mut program,
+        facts: mut derived_facts,
         warnings,
     } = build(project, source).map_err(|failure| failure.rendered().to_owned())?;
     let mut facts: Vec<_> = warnings
@@ -56,7 +57,7 @@ pub(crate) fn compile(
             // The reachable set is the compile's second reading of the graph:
             // what no reachable body reads is a warning, then it is dropped
             // before lowering.
-            let marked = mark_reachable(&program, main);
+            let marked = mark_reachable(&program, &derived_facts, main);
             facts.extend(unused_declarations(&program, &marked));
             reachable = Some(marked);
             Some(main)
@@ -91,8 +92,8 @@ pub(crate) fn compile(
     }
     let main = main.expect("the entry was settled above");
     let reachable = reachable.expect("a setted entry has its reachable set");
-    let main = prune_unreachable(&mut program, main, &reachable);
-    let bytecode = lower_bytecode(&program, main);
+    let main = prune_unreachable(&mut program, &mut derived_facts, main, &reachable);
+    let bytecode = lower_bytecode(&program, &derived_facts, main);
 
     let bytes = serialize_bytecode(&bytecode)
         .map_err(|error| format!("{DIAGNOSTIC_PREFIX}: cannot serialize the program: {error}\n"))?;

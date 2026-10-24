@@ -81,10 +81,10 @@ pub(crate) enum Expression {
     /// A call whose callee is a bound function named only by its family: the
     /// receiver's type head selects the one declaration. The linker holds no
     /// type facts, so it writes the family alone — the namespace a qualified
-    /// path named, the written path, and no more; the check resolves the
-    /// family while typing the call and rewrites this into the reference the
-    /// callee becomes. A family names no declaration before then, so this
-    /// node carries no edge.
+    /// path named, the written path, and no more. The check computes the
+    /// receiver's type while typing the call and records the selected target
+    /// in `Facts`; the family stays the family it was written as. A family
+    /// names no declaration before then, so this node carries no edge.
     Method {
         /// The namespace a qualified family path named. `None` for a bare
         /// method name, which every namespace's method pool answers.
@@ -112,16 +112,13 @@ pub(crate) enum Expression {
         span: Span,
     },
     /// `match subject { pattern => body; … };` — a term whose value is the
-    /// taken arm's expression, or no value when its arms are blocks.
+    /// taken arm's expression, or no value when its arms are blocks. Whether
+    /// the arms and the default cover every value the subject can take is a
+    /// fact the check records in `Facts`, not a field here.
     Match {
         subject: Box<Expression>,
         cases: Vec<MatchArm>,
         default: Option<MatchBody>,
-        /// Whether the arms and the default cover every value the subject can
-        /// take. The check pass writes it where it reads the subject's type,
-        /// and the flow pass reads it to know whether the term can fall
-        /// through.
-        exhaustive: bool,
         span: Span,
     },
     /// A function body: a named function's value, or the anonymous function a

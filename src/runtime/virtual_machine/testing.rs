@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use crate::compiler::model::{DeclarationId, Program};
+use crate::compiler::model::{DeclarationId, Facts, Program};
 use crate::compiler::{declaration_codes, lower_bytecode};
 use crate::runtime::Panic;
 use crate::runtime::Value;
@@ -14,8 +14,8 @@ use super::Runtime;
 impl Runtime {
     /// Build a runtime over a checked program and evaluate its module values,
     /// exactly as the compiled binary does at startup.
-    pub(crate) fn for_testing(program: Program, entry: DeclarationId) -> Self {
-        let bytecode = lower_bytecode(&program, entry);
+    pub(crate) fn for_testing(program: Program, facts: Facts, entry: DeclarationId) -> Self {
+        let bytecode = lower_bytecode(&program, &facts, entry);
         let symbols = root_symbols(&program, entry);
         let global_count = bytecode.module_values.len();
         let runtime = Self {

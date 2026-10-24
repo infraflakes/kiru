@@ -2,31 +2,33 @@
 //!
 //! Typing does not depend on whether a callee stops the run, and this pass
 //! needs no type but a function's declared return. It walks statements twice:
-//! a fixpoint that settles every function's `halts` fact, then one report walk
-//! that reads the settled facts and reports the fall-through, break-placement
-//! and return-placement diagnostics directly. No diagnostic is buffered across
-//! passes, and one body's placement error never stops another body's walk.
+//! a fixpoint that settles every function's halting fact in `Facts`, then one
+//! report walk that reads the settled facts and reports the fall-through,
+//! break-placement and return-placement diagnostics directly. No diagnostic is
+//! buffered across passes, and one body's placement error never stops another
+//! body's walk.
 
 use crate::compiler::Diagnostic;
 use crate::compiler::model::{
-    DeclarationId, Expression, FileId, Function, MatchBody, ModelView, Program, Statement,
+    DeclarationId, Expression, Facts, FileId, Function, MatchBody, ModelView, Program, Site,
+    Statement,
 };
 use crate::syntax::Span;
 
 use super::flow::Flow;
 
 /// Settle every function's halting fact, then report every flow diagnostic.
-pub(super) fn check_flow(program: &mut Program) -> Vec<Diagnostic> {
-    settle_halts(program);
-    report_flow(program)
+pub(super) fn check_flow(program: &Program, facts: &mut Facts) -> Vec<Diagnostic> {
+    settle_halts(program, facts);
+    report_flow(program, facts)
 }
 
 /// Raise every function's `halts` fact until a whole pass changes nothing. The
 /// walk reads the facts of the pass before it, so a forward call and a cycle
 /// settle the same way a reachability walk does. A body whose placement rules
 /// fail has no settled flow; its error is reported by the report walk.
-fn settle_halts(program: &mut Program) {
-    let mut model = ModelView::from(program);
+fn settle_halts(program: &Program, facts: &mut Facts) {
+    let model = ModelView::from(program);
     loop {
         let mut changed = false;
         for index in 0..model.declarations().len() {
@@ -35,12 +37,12 @@ fn settle_halts(program: &mut Program) {
             if !(kind.callable() && kind.has_body()) {
                 continue;
             }
-            let Ok(flow) = body_flow(&model, id, false) else {
+            let Ok(flow) = body_flow(&model, facts, id, false) else {
                 continue;
             };
             let halts = !flow.falls && !flow.returns;
-            if model.declaration(id).derived.halts != halts {
-                model.set_halts(id, halts);
+            if facts.halts(id) != halts {
+                facts.set_halts(id, halts);
                 changed = true;
             }
         }
@@ -52,14 +54,14 @@ fn settle_halts(program: &mut Program) {
 
 /// Walk every body once against the settled halting facts and report every
 /// flow diagnostic.
-fn report_flow(program: &mut Program) -> Vec<Diagnostic> {
+fn report_flow(program: &Program, facts: &Facts) -> Vec<Diagnostic> {
     let model = ModelView::from(program);
     let mut diagnostics = Vec::new();
     for index in 0..model.declarations().len() {
         let id = DeclarationId(index);
         let kind = model.declaration(id).kind;
         if kind.callable() && kind.has_body() {
-            let walk = FlowWalk::for_declaration(&model, id, true);
+            let walk = FlowWalk::for_declaration(&model, facts, id, true);
             let function = model
                 .declaration(id)
                 .function()
@@ -78,6 +80,8 @@ fn report_flow(program: &mut Program) -> Vec<Diagnostic> {
                 .expect("a module value is a file declaration, so it has a file");
             let walk = FlowWalk {
                 model: &model,
+                facts,
+                owner: id,
                 file,
                 return_type: None,
                 name: BodyName::ModuleValue,
@@ -96,8 +100,13 @@ fn report_flow(program: &mut Program) -> Vec<Diagnostic> {
 
 /// The flow of one declaration's function body, with diagnostics suppressed or
 /// reported according to `report`.
-fn body_flow(model: &ModelView<'_>, id: DeclarationId, report: bool) -> Result<Flow, Diagnostic> {
-    let walk = FlowWalk::for_declaration(model, id, report);
+fn body_flow(
+    model: &ModelView<'_>,
+    facts: &Facts,
+    id: DeclarationId,
+    report: bool,
+) -> Result<Flow, Diagnostic> {
+    let walk = FlowWalk::for_declaration(model, facts, id, report);
     let function = model
         .declaration(id)
         .function()
@@ -115,8 +124,12 @@ enum BodyName {
 
 /// One body's flow walk. It reports placement diagnostics always; the
 /// fall-through diagnostic only after the halting facts have settled.
-struct FlowWalk<'m, 'v> {
+struct FlowWalk<'m, 'v, 'f> {
     model: &'m ModelView<'v>,
+    facts: &'f Facts,
+    /// The declaration whose body this walk covers, so an expression site
+    /// reads the fact recorded for that body.
+    owner: DeclarationId,
     file: FileId,
     /// The body's declared return type, when it declares one.
     return_type: Option<crate::compiler::model::Type>,
@@ -124,11 +137,18 @@ struct FlowWalk<'m, 'v> {
     report: bool,
 }
 
-impl<'m, 'v> FlowWalk<'m, 'v> {
-    fn for_declaration(model: &'m ModelView<'v>, id: DeclarationId, report: bool) -> Self {
+impl<'m, 'v, 'f> FlowWalk<'m, 'v, 'f> {
+    fn for_declaration(
+        model: &'m ModelView<'v>,
+        facts: &'f Facts,
+        id: DeclarationId,
+        report: bool,
+    ) -> Self {
         let declaration = model.declaration(id);
         Self {
             model,
+            facts,
+            owner: id,
             file: declaration
                 .file
                 .expect("a body declaration is a file declaration"),
@@ -206,7 +226,7 @@ impl<'m, 'v> FlowWalk<'m, 'v> {
                     subject,
                     cases,
                     default,
-                    exhaustive,
+                    span,
                     ..
                 } => {
                     self.expression(subject, in_loop)?;
@@ -217,6 +237,10 @@ impl<'m, 'v> FlowWalk<'m, 'v> {
                     if let Some(default) = default {
                         flow = flow.union(self.match_body(default, in_loop)?);
                     }
+                    let exhaustive = self
+                        .facts
+                        .match_is_exhaustive(Site::new(self.owner, *span))
+                        .unwrap_or(false);
                     if !exhaustive {
                         flow = flow.union(Flow::FALLS);
                     }
@@ -257,13 +281,25 @@ impl<'m, 'v> FlowWalk<'m, 'v> {
     }
 
     /// The flow of a bare call statement: it stops the run when its callee
-    /// does.
+    /// does. A reference reads the callee's halting fact; a method family reads
+    /// the target the check selected, then that target's fact.
     fn call_flow(&self, expression: &Expression) -> Flow {
-        if let Expression::Call { callee, .. } = expression
-            && let Expression::Reference { declaration, .. } = callee.as_ref()
-            && self.model.declaration(*declaration).derived.halts
-        {
-            return Flow::STOPS;
+        if let Expression::Call { callee, .. } = expression {
+            match callee.as_ref() {
+                Expression::Reference { declaration, .. } => {
+                    if self.facts.halts(*declaration) {
+                        return Flow::STOPS;
+                    }
+                }
+                Expression::Method { span, .. } => {
+                    if let Some(target) = self.facts.method_target(Site::new(self.owner, *span))
+                        && self.facts.halts(target)
+                    {
+                        return Flow::STOPS;
+                    }
+                }
+                _ => {}
+            }
         }
         Flow::FALLS
     }
@@ -373,6 +409,8 @@ impl<'m, 'v> FlowWalk<'m, 'v> {
     fn function_body(&self, function: &Function) -> Result<(), Diagnostic> {
         let inner = FlowWalk {
             model: self.model,
+            facts: self.facts,
+            owner: self.owner,
             file: self.file,
             return_type: function.declared_return.clone(),
             name: BodyName::Closure,

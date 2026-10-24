@@ -10,28 +10,30 @@
 //!
 //! A violation is a compiler bug unless it is one of the two known graph
 //! defects the migration ledger names. The boundary decides which checks are
-//! meaningful: a method family is a linked fact before the check and a defect
-//! after it, and a delivery target is valid before pruning and not remapped
-//! after it. The ledger is deliberately small: a new entry needs the owner's
-//! decision, never a delegate's.
+//! meaningful: a method family is a linked site with no target before the
+//! check and must have a target after it, and a delivery target is valid
+//! before pruning and not remapped after it. The ledger is deliberately small:
+//! a new entry needs the owner's decision, never a delegate's.
 
 use std::collections::HashSet;
 
 use crate::compiler::model::{
-    DeclarationId, DeclarationKind, Expression, FileId, Function, FunctionBinding, NamespaceId,
-    Pattern, Program, Statement, Symbol, Type, TypeDecl, TypeHead, TypeId, TypeKind, UseTarget,
-    Visitor, reachable, walk_expression, walk_statements,
+    DeclarationId, DeclarationKind, Expression, Facts, FileId, Function, FunctionBinding,
+    NamespaceId, Pattern, Program, Site, Statement, Symbol, Type, TypeDecl, TypeHead, TypeId,
+    TypeKind, UseTarget, Visitor, reachable, walk_expression, walk_statements,
 };
 use crate::syntax::Span;
 
 /// The stage after which the relations are checked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RelationBoundary {
-    /// Every name and body is linked; method families are still unresolved.
+    /// Every name and body is linked; method families are linked sites with
+    /// no target yet.
     Resolved,
-    /// Every body is checked; no method family remains.
+    /// Every body is checked and every method site has a target in `Facts`.
     Checked,
-    /// The reachable declarations are compacted and every id is remapped.
+    /// The reachable declarations are compacted, every id is remapped, and the
+    /// facts are remapped with them.
     Pruned,
 }
 
@@ -196,8 +198,8 @@ pub(crate) enum RelationViolationKind {
     /// stage 5 defect.
     BroughtNotRemapped,
 
-    /// A method family survived the check.
-    MethodFamilyAfterCheck,
+    /// A method family has no target after the check.
+    MethodCallMissing,
 
     /// The entry id points past the declaration table.
     EntryOutOfRange,
@@ -207,6 +209,8 @@ pub(crate) enum RelationViolationKind {
     ReachableDeclarationOutOfRange,
     /// A reachable body references a declaration outside the reachable set.
     ReachableReferenceOutsideClosure,
+    /// A reachable method site's target is outside the reachable set.
+    ReachableMethodTargetOutsideClosure,
     /// A reachable body binds a declaration outside the reachable set.
     ReachableBindingOutsideClosure,
     /// A reachable function parameter is outside the reachable set.
@@ -227,8 +231,8 @@ pub(crate) enum RelationViolationKind {
 /// Assert every relation at a boundary, allowing only the ledger's known
 /// defects. A stray violation panics with the boundary, its kind, and its
 /// detail.
-pub(crate) fn assert_known_relations(program: &Program, boundary: RelationBoundary) {
-    for violation in verify_relations(program, boundary) {
+pub(crate) fn assert_known_relations(program: &Program, facts: &Facts, boundary: RelationBoundary) {
+    for violation in verify_relations(program, facts, boundary) {
         debug_assert!(
             known_defect(boundary, violation.kind),
             "the program violates a relation after {boundary:?}: {:?}: {}",
@@ -254,6 +258,7 @@ fn known_defect(boundary: RelationBoundary, kind: RelationViolationKind) -> bool
 /// Check every relation the current model can express.
 pub(crate) fn verify_relations(
     program: &Program,
+    facts: &Facts,
     boundary: RelationBoundary,
 ) -> Vec<RelationViolation> {
     let mut violations = Vec::new();
@@ -266,7 +271,7 @@ pub(crate) fn verify_relations(
     check_owners(program, &mut violations);
     check_declaration_types(program, &mut violations);
     check_type_declarations(program, &mut violations);
-    check_bodies(program, boundary, &mut violations);
+    check_bodies(program, facts, boundary, &mut violations);
     check_module_values(program, &mut violations);
     check_deliveries(program, boundary, &mut violations);
     violations.sort();
@@ -278,6 +283,7 @@ pub(crate) fn verify_relations(
 /// declaration points into the reachable set.
 pub(crate) fn verify_reachability(
     program: &Program,
+    facts: &Facts,
     entry: DeclarationId,
     reachable: &HashSet<DeclarationId>,
 ) -> Vec<RelationViolation> {
@@ -363,7 +369,9 @@ pub(crate) fn verify_reachability(
         }
         let mut collector = ReachableEdgeCheck {
             program,
+            facts,
             reachable,
+            owner: *id,
             violations: &mut violations,
         };
         if let Some(function) = declaration.function() {
@@ -1118,6 +1126,7 @@ fn check_type_arity(
 
 fn check_bodies(
     program: &Program,
+    facts: &Facts,
     boundary: RelationBoundary,
     violations: &mut Vec<RelationViolation>,
 ) {
@@ -1128,7 +1137,9 @@ fn check_bodies(
         let id = DeclarationId(index);
         let mut verifier = BodyVerifier {
             program,
+            facts,
             boundary,
+            owner: id,
             site_namespace: declaration.namespace,
             violations,
         };
@@ -1281,7 +1292,10 @@ fn delivery_failure(program: &Program, symbol: Symbol, target: UseTarget) -> Opt
 /// The checks that walk one declaration's body.
 struct BodyVerifier<'a> {
     program: &'a Program,
+    facts: &'a Facts,
     boundary: RelationBoundary,
+    /// The declaration whose body this verifier walks.
+    owner: DeclarationId,
     site_namespace: NamespaceId,
     violations: &'a mut Vec<RelationViolation>,
 }
@@ -1556,13 +1570,22 @@ impl Visitor for BodyVerifier<'_> {
     }
 
     fn method(&mut self, expression: &Expression) {
-        if self.boundary != RelationBoundary::Resolved {
+        // Before the check a family is a linked site with no target yet. After
+        // it, every site the check kept has a target it recorded.
+        if self.boundary == RelationBoundary::Resolved {
+            return;
+        }
+        let Expression::Method { span, .. } = expression else {
+            unreachable!("the walk names a method family");
+        };
+        if self
+            .facts
+            .method_target(Site::new(self.owner, *span))
+            .is_none()
+        {
             self.violations.push(violation(
-                RelationViolationKind::MethodFamilyAfterCheck,
-                format!(
-                    "a method family at {:?} survived the check",
-                    expression.span()
-                ),
+                RelationViolationKind::MethodCallMissing,
+                format!("a method family at {span:?} has no target after the check"),
             ));
         }
     }
@@ -1597,7 +1620,10 @@ impl Visitor for BodyVerifier<'_> {
 /// The checks that walk one reachable declaration's body.
 struct ReachableEdgeCheck<'a> {
     program: &'a Program,
+    facts: &'a Facts,
     reachable: &'a HashSet<DeclarationId>,
+    /// The declaration whose body this checker walks.
+    owner: DeclarationId,
     violations: &'a mut Vec<RelationViolation>,
 }
 
@@ -1703,7 +1729,27 @@ impl Visitor for ReachableEdgeCheck<'_> {
     fn variant(&mut self, _: &Expression) {}
     fn interpolated(&mut self, _: &Expression) {}
     fn call(&mut self, _: &Expression) {}
-    fn method(&mut self, _: &Expression) {}
+
+    // A family carries no graph edge; its target is the check's fact. A
+    // retained target outside the reachable set breaks the closure the entry's
+    // walk settled.
+    fn method(&mut self, expression: &Expression) {
+        let Expression::Method { span, .. } = expression else {
+            unreachable!("the walk names a method family");
+        };
+        match self.facts.method_target(Site::new(self.owner, *span)) {
+            Some(target) => self.check_edge(
+                target,
+                RelationViolationKind::ReachableMethodTargetOutsideClosure,
+                "a method target",
+            ),
+            None => self.violations.push(violation(
+                RelationViolationKind::MethodCallMissing,
+                format!("a method family at {span:?} has no target after the check"),
+            )),
+        }
+    }
+
     fn field(&mut self, _: &Expression) {}
     fn binary(&mut self, _: &Expression) {}
     fn unary(&mut self, _: &Expression) {}

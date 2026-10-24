@@ -3,23 +3,25 @@
 use std::collections::HashSet;
 
 use crate::compiler::model::{
-    Declaration, DeclarationId, Expression, FunctionBinding, MatchBody, Pattern, Program,
+    Declaration, DeclarationId, Expression, Facts, FunctionBinding, MatchBody, Pattern, Program,
     Statement, VisitorMut, walk_expression_mut,
 };
 
-/// Keep only the declarations the entry reaches, remapping every id, and
-/// return the entry's new id.
+/// Keep only the declarations the entry reaches, remapping every id in the
+/// graph and the facts, and return the entry's new id.
 pub(crate) fn prune_unreachable(
     program: &mut Program,
+    facts: &mut Facts,
     entry: DeclarationId,
     reachable: &HashSet<DeclarationId>,
 ) -> DeclarationId {
-    // Reachability is closed under the resolved edges before any declaration
-    // is dropped: every edge out of a reachable declaration points at another
-    // reachable declaration.
+    // Reachability is closed under the resolved edges and the method targets
+    // before any declaration is dropped: every edge out of a reachable
+    // declaration points at another reachable declaration.
     #[cfg(debug_assertions)]
     {
-        let violations = crate::compiler::model::verify_reachability(program, entry, reachable);
+        let violations =
+            crate::compiler::model::verify_reachability(program, facts, entry, reachable);
         debug_assert!(
             violations.is_empty(),
             "the reachable set is not closed before pruning: {violations:?}"
@@ -28,6 +30,9 @@ pub(crate) fn prune_unreachable(
     let mapping = compact(program, reachable);
     let entry = mapped(&mapping, entry);
     remap(program, &mapping);
+    // A fact is keyed by the declaration it describes, so it is rewritten with
+    // the ids. The remap disappears when prune becomes a view.
+    facts.remap(&mapping);
     // Pruning is the one pass that rewrites every id, so the structural
     // invariant is proved here, after the rewrite. A debug build checks it;
     // a release build skips the walk.
@@ -37,6 +42,7 @@ pub(crate) fn prune_unreachable(
     #[cfg(debug_assertions)]
     crate::compiler::model::assert_known_relations(
         program,
+        facts,
         crate::compiler::model::RelationBoundary::Pruned,
     );
     entry

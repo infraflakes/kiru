@@ -4,89 +4,74 @@
 //! Typing is one job and needs no flow fact: a body is typed once, in
 //! declaration order, against the types settled by the linker. Whether a body
 //! falls through, breaks out of a loop, or returns where it may not is a
-//! statement fact, so the flow pass owns it and reads the typed model
-//! afterwards. Every body is attempted: one body's error never hides another
-//! file's fact.
+//! statement fact, so the flow pass owns it and reads the immutable model
+//! afterwards. The checker reads the immutable graph and records what it
+//! derives in `Facts`; it never writes a node type or takes a body out. Every
+//! body is attempted: one body's error never hides another file's fact.
 
 use crate::compiler::Diagnostic;
-use crate::compiler::model::{DeclarationId, Expression, Function, ModelView, Program};
+use crate::compiler::model::{DeclarationId, Facts, ModelView, Program};
 
 use super::flow_rules::check_flow;
 use super::statement_check::Checker;
 
 /// Validate the program: every function body and module value initializer.
-pub(crate) fn validate_program(program: &mut Program) -> Vec<Diagnostic> {
-    let mut diagnostics = check_bodies(program);
-    diagnostics.extend(check_flow(program));
+/// The returned facts are the settled store beside the unchanged graph.
+pub(crate) fn validate_program(program: &Program) -> (Facts, Vec<Diagnostic>) {
+    let mut facts = Facts::default();
+    let mut diagnostics = check_bodies(program, &mut facts);
+    diagnostics.extend(check_flow(program, &mut facts));
     #[cfg(debug_assertions)]
     if diagnostics.is_empty() {
         crate::compiler::model::assert_known_relations(
             program,
+            &facts,
             crate::compiler::model::RelationBoundary::Checked,
         );
     }
-    diagnostics
+    (facts, diagnostics)
 }
 
 /// Type every body once, keeping the first error each body earns. The declared
-/// type is read from the declaration, and the body is taken out while the
-/// checker holds the rest of the program, so the one write it records (a
-/// variant-pattern binding's type) lands on the node that owns it.
-fn check_bodies(program: &mut Program) -> Vec<Diagnostic> {
+/// type is read from the declaration, and the body is read where it stands, so
+/// the checker holds only shared references to the graph and writes only the
+/// facts store.
+fn check_bodies(program: &Program, facts: &mut Facts) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     for index in 0..program.declarations.len() {
         let id = DeclarationId(index);
-        let kind = program.declaration(id).kind;
+        let declaration = program.declaration(id);
+        let kind = declaration.kind;
         let has_function_body = kind.callable() && kind.has_body();
         if !has_function_body && !kind.module_value() {
             continue;
         }
         let return_type = if has_function_body {
-            program.declaration(id).return_type(&program.types)
+            declaration.return_type(&program.types)
         } else {
             None
         };
-        let declared = kind
-            .module_value()
-            .then(|| program.declaration(id).ty.clone());
+        let declared = kind.module_value().then(|| declaration.ty.clone());
         let file = program.file_of(id);
-        let namespace = program.declaration(id).namespace;
-        let mut value = program
-            .declaration_mut(id)
-            .value
-            .take()
-            .expect("a body declaration carries its value");
-        let outcome = {
-            if has_function_body {
-                let Expression::Function(function) = &mut value else {
-                    unreachable!("a callable body is a function expression");
-                };
-                // While the body is checked, the declaration keeps the
-                // function's metadata so a reference to the function itself
-                // reads its parameters, captures and declared type. Only the
-                // body, which the walk owns, is absent.
-                program.declaration_mut(id).value = Some(Expression::Function(Function {
-                    declared_return: function.declared_return.clone(),
-                    parameters: function.parameters.clone(),
-                    body: Vec::new(),
-                    type_parameters: function.type_parameters.clone(),
-                    captures: function.captures.clone(),
-                    span: function.span,
-                }));
-                let mut walk = Checker::new(ModelView::from(&mut *program), file, namespace);
-                walk.check_function(function, return_type)
-            } else {
-                let mut walk = Checker::new(ModelView::from(&mut *program), file, namespace);
-                walk.require(
-                    &mut value,
-                    declared
-                        .as_ref()
-                        .expect("a module value carries its declared type"),
-                )
-                .map(|_| ())
-            }
+        let namespace = declaration.namespace;
+        let mut walk = Checker::new(ModelView::from(program), facts, id, file, namespace);
+        let outcome = if has_function_body {
+            let function = declaration
+                .function()
+                .expect("a callable body is a function expression");
+            walk.check_function(function, return_type)
+        } else {
+            let value = declaration
+                .value()
+                .expect("a module value carries its initializer");
+            walk.require(
+                value,
+                declared
+                    .as_ref()
+                    .expect("a module value carries its declared type"),
+            )
+            .map(|_| ())
         };
-        program.declaration_mut(id).value = Some(value);
         if let Err(diagnostic) = outcome {
             diagnostics.push(diagnostic);
         }

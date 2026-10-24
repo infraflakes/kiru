@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use super::declarations::prune_unreachable;
-use crate::compiler::model::{DeclarationId, Program};
+use crate::compiler::model::{DeclarationId, Facts, Program};
 use crate::compiler::{
     checked_program_and_entry, lower_bytecode, mark_reachable, validate_program,
 };
@@ -19,18 +19,19 @@ fn retained_names(program: &Program) -> Vec<&str> {
         .collect()
 }
 
-/// A checked program, its entry, and the declarations the entry reaches.
-fn checked(source: &str) -> (Program, DeclarationId, HashSet<DeclarationId>) {
-    let (program, entry) = checked_program_and_entry(source);
-    let reachable = mark_reachable(&program, entry);
-    (program, entry, reachable)
+/// A checked program, its facts, its entry, and the declarations the entry
+/// reaches.
+fn checked(source: &str) -> (Program, Facts, DeclarationId, HashSet<DeclarationId>) {
+    let (program, facts, entry) = checked_program_and_entry(source);
+    let reachable = mark_reachable(&program, &facts, entry);
+    (program, facts, entry, reachable)
 }
 
 #[test]
 fn drops_std_the_entry_never_reaches() {
-    let (mut program, entry, reachable) =
+    let (mut program, mut facts, entry, reachable) =
         checked("use std;\nuse std::text;\nuse std::dynamic;\nfn main() { std::print(\"x\"); };");
-    prune_unreachable(&mut program, entry, &reachable);
+    prune_unreachable(&mut program, &mut facts, entry, &reachable);
     let names = retained_names(&program);
     assert!(names.contains(&"print"), "print is reachable: {names:?}");
     assert!(
@@ -41,26 +42,26 @@ fn drops_std_the_entry_never_reaches() {
 
 #[test]
 fn drops_unreachable_user_declarations() {
-    let (mut program, entry, reachable) = checked(
+    let (mut program, mut facts, entry, reachable) = checked(
         "use std;\nuse std::text;\nuse std::dynamic;\nfn unused() -> txt { return \"\"; };\n\
          let dead: txt = \"x\";\n\
          rec Dead { key: txt };\n\
          let dead_record: Dead = { key = \"v\" };\n\
          fn main() {};",
     );
-    prune_unreachable(&mut program, entry, &reachable);
+    prune_unreachable(&mut program, &mut facts, entry, &reachable);
     assert_eq!(retained_names(&program), vec!["main"]);
 }
 
 #[test]
 fn retains_transitive_calls() {
-    let (mut program, entry, reachable) = checked(
+    let (mut program, mut facts, entry, reachable) = checked(
         "use std;\nuse std::text;\nuse std::dynamic;\nfn leaf() -> txt { return \"\"; };\n\
          fn middle() -> txt { return leaf(); };\n\
          fn helper() { middle(); };\n\
          fn main() { helper(); };",
     );
-    prune_unreachable(&mut program, entry, &reachable);
+    prune_unreachable(&mut program, &mut facts, entry, &reachable);
     let names = retained_names(&program);
     assert!(names.contains(&"main"));
     assert!(names.contains(&"helper"));
@@ -70,14 +71,14 @@ fn retains_transitive_calls() {
 
 #[test]
 fn retains_module_values_the_entry_reads() {
-    let (mut program, entry, reachable) = checked(
+    let (mut program, mut facts, entry, reachable) = checked(
         "use std;\nuse std::text;\nuse std::dynamic;\nlet greeting: txt = \"hi\";\n\
          rec Repo { dir: txt };\n\
          let backend: Repo = { dir = \"/x\" };\n\
          fn read(repo: Repo) -> txt { return repo.dir; };\n\
          fn main() { std::print(greeting); std::print(read(backend)); };",
     );
-    prune_unreachable(&mut program, entry, &reachable);
+    prune_unreachable(&mut program, &mut facts, entry, &reachable);
     let names = retained_names(&program);
     assert!(names.contains(&"greeting"));
     assert!(names.contains(&"backend"));
@@ -86,28 +87,26 @@ fn retains_module_values_the_entry_reads() {
 
 #[test]
 fn a_retained_program_still_checks() {
-    let (mut program, entry, reachable) = checked(
+    let (mut program, mut facts, entry, reachable) = checked(
         "use std;\nuse std::text;\nuse std::dynamic;\nrec Repo { dir: txt };\n\
          let backend: Repo = { dir = \"/x\" };\n\
          fn read(repo: Repo) -> txt { return repo.dir; };\n\
          fn main() { std::print(read(backend)); };",
     );
-    prune_unreachable(&mut program, entry, &reachable);
-    assert!(
-        validate_program(&mut program).is_empty(),
-        "the retained program still checks"
-    );
+    prune_unreachable(&mut program, &mut facts, entry, &reachable);
+    let (_, errors) = validate_program(&program);
+    assert!(errors.is_empty(), "the retained program still checks");
 }
 
 #[test]
 fn retention_shrinks_the_payload() {
-    let (mut program, entry, reachable) =
+    let (mut program, mut facts, entry, reachable) =
         checked("use std;\nuse std::text;\nuse std::dynamic;\nfn main() { std::print(\"x\"); };");
-    let before = postcard::to_allocvec(&lower_bytecode(&program, entry))
+    let before = postcard::to_allocvec(&lower_bytecode(&program, &facts, entry))
         .expect("serializes")
         .len();
-    let entry = prune_unreachable(&mut program, entry, &reachable);
-    let after = postcard::to_allocvec(&lower_bytecode(&program, entry))
+    let entry = prune_unreachable(&mut program, &mut facts, entry, &reachable);
+    let after = postcard::to_allocvec(&lower_bytecode(&program, &facts, entry))
         .expect("serializes")
         .len();
     assert!(
@@ -119,12 +118,12 @@ fn retention_shrinks_the_payload() {
 
 #[test]
 fn a_retained_program_still_runs() {
-    let (mut program, entry, reachable) = checked(
+    let (mut program, mut facts, entry, reachable) = checked(
         "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn answer() -> txt { return \"42\"; };\n\
          fn main() { answer(); };",
     );
-    let entry = prune_unreachable(&mut program, entry, &reachable);
-    let runtime = Runtime::for_testing(program, entry);
+    let entry = prune_unreachable(&mut program, &mut facts, entry, &reachable);
+    let runtime = Runtime::for_testing(program, facts, entry);
     let value = runtime
         .call_root("answer", Vec::new())
         .expect("the retained function runs");
@@ -133,13 +132,13 @@ fn a_retained_program_still_runs() {
 
 #[test]
 fn retained_module_values_still_evaluate() {
-    let (mut program, entry, reachable) = checked(
+    let (mut program, mut facts, entry, reachable) = checked(
         "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nlet base: txt = \"a\";\n\
          fn f() -> txt { return \"@(base)b\"; };\n\
          fn main() { f(); };",
     );
-    let entry = prune_unreachable(&mut program, entry, &reachable);
-    let runtime = Runtime::for_testing(program, entry);
+    let entry = prune_unreachable(&mut program, &mut facts, entry, &reachable);
+    let runtime = Runtime::for_testing(program, facts, entry);
     let value = runtime
         .call_root("f", Vec::new())
         .expect("the retained module value evaluates");
@@ -159,12 +158,12 @@ fn prunes_an_unreached_module_value_with_a_side_effect() {
          fn main() {{}};",
         touched.display()
     );
-    let (mut program, entry, reachable) = checked(&source);
-    let entry = prune_unreachable(&mut program, entry, &reachable);
+    let (mut program, mut facts, entry, reachable) = checked(&source);
+    let entry = prune_unreachable(&mut program, &mut facts, entry, &reachable);
     let names = retained_names(&program);
     assert!(!names.contains(&"dead"), "an unreached value is pruned");
     assert!(!names.contains(&"touch"), "its initializer is pruned too");
-    let _runtime = Runtime::for_testing(program, entry);
+    let _runtime = Runtime::for_testing(program, facts, entry);
     assert!(
         !touched.exists(),
         "a pruned initializer's instructions never run"
@@ -183,11 +182,11 @@ fn keeps_a_module_value_only_main_reaches() {
          fn main() {{ std::text::strlen(kept); }};",
         touched.display()
     );
-    let (mut program, entry, reachable) = checked(&source);
-    let entry = prune_unreachable(&mut program, entry, &reachable);
+    let (mut program, mut facts, entry, reachable) = checked(&source);
+    let entry = prune_unreachable(&mut program, &mut facts, entry, &reachable);
     let names = retained_names(&program);
     assert!(names.contains(&"kept"), "a reached value is kept");
     assert!(names.contains(&"touch"), "its initializer is kept");
-    let _runtime = Runtime::for_testing(program, entry);
+    let _runtime = Runtime::for_testing(program, facts, entry);
     assert!(touched.exists(), "a kept initializer runs at startup");
 }

@@ -3,21 +3,30 @@
 use std::collections::HashSet;
 
 use crate::compiler::model::{
-    DeclarationId, Expression, MatchBody, Pattern, Program, Statement, Visitor, walk_expression,
+    DeclarationId, Expression, Facts, MatchBody, Pattern, Program, Site, Statement, Visitor,
+    walk_expression,
 };
 
 /// The declarations reachable from the entry: every function's parameters and
 /// the bindings, references, and callees in the bodies and initializers it
-/// reaches. Visited nodes are recorded, so a shared callee is walked once.
-pub(crate) fn mark_reachable(program: &Program, entry: DeclarationId) -> HashSet<DeclarationId> {
+/// reaches. A method family's callee is the target the check recorded, read
+/// from `Facts`. Visited nodes are recorded, so a shared callee is walked once.
+pub(crate) fn mark_reachable(
+    program: &Program,
+    facts: &Facts,
+    entry: DeclarationId,
+) -> HashSet<DeclarationId> {
     let mut reachable = HashSet::new();
     let mut collector = ReachableCollector {
         pending: vec![entry],
+        facts,
+        owner: entry,
     };
     while let Some(id) = collector.pending.pop() {
         if !reachable.insert(id) {
             continue;
         }
+        collector.owner = id;
         let declaration = program.declaration(id);
         if let Some(value) = declaration.value() {
             walk_expression(&mut collector, value);
@@ -27,13 +36,17 @@ pub(crate) fn mark_reachable(program: &Program, entry: DeclarationId) -> HashSet
 }
 
 /// Collects the declaration ids a body points at: the binding a statement
-/// declares, the declaration a reference names, and the callee a call names.
-/// Every node kind is listed, so a new edge-bearing kind fails to compile.
-struct ReachableCollector {
+/// declares, the declaration a reference names, and the target of a call's
+/// family. Every node kind is listed, so a new edge-bearing kind fails to
+/// compile.
+struct ReachableCollector<'f> {
     pending: Vec<DeclarationId>,
+    facts: &'f Facts,
+    /// The declaration whose body is being walked.
+    owner: DeclarationId,
 }
 
-impl ReachableCollector {
+impl ReachableCollector<'_> {
     /// The declaration a binding statement declares.
     fn declared(&mut self, statement: &Statement) {
         let (Statement::Bind { declaration, .. }
@@ -46,12 +59,23 @@ impl ReachableCollector {
     }
 }
 
-impl Visitor for ReachableCollector {
+impl Visitor for ReachableCollector<'_> {
     fn reference(&mut self, expression: &Expression) {
         let Expression::Reference { declaration, .. } = expression else {
             unreachable!("the walk names a reference");
         };
         self.pending.push(*declaration);
+    }
+
+    // A family carries no graph edge; the check recorded the target selection
+    // in `Facts`, and reachability follows that fact.
+    fn method(&mut self, expression: &Expression) {
+        let Expression::Method { span, .. } = expression else {
+            unreachable!("the walk names a method family");
+        };
+        if let Some(target) = self.facts.method_target(Site::new(self.owner, *span)) {
+            self.pending.push(target);
+        }
     }
 
     // A function value owns its parameters; an unused one still needs a
@@ -89,7 +113,6 @@ impl Visitor for ReachableCollector {
     fn variant(&mut self, _: &Expression) {}
     fn interpolated(&mut self, _: &Expression) {}
     fn call(&mut self, _: &Expression) {}
-    fn method(&mut self, _: &Expression) {}
     fn field(&mut self, _: &Expression) {}
     fn binary(&mut self, _: &Expression) {}
     fn unary(&mut self, _: &Expression) {}

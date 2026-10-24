@@ -130,8 +130,8 @@ mod tests {
 
     /// The unused-declaration warnings of a checked virtual program.
     fn warned(source: &str) -> Vec<Diagnostic> {
-        let (program, entry) = checked_program_and_entry(source);
-        let reachable = mark_reachable(&program, entry);
+        let (program, facts, entry) = checked_program_and_entry(source);
+        let reachable = mark_reachable(&program, &facts, entry);
         unused_declarations(&program, &reachable)
     }
 
@@ -163,8 +163,8 @@ mod tests {
 
     #[test]
     fn a_library_declaration_is_silent() {
-        let (program, entry) = checked_program_and_entry("fn main() {};");
-        let reachable = mark_reachable(&program, entry);
+        let (program, facts, entry) = checked_program_and_entry("fn main() {};");
+        let reachable = mark_reachable(&program, &facts, entry);
         let unreached_library_function =
             program
                 .declarations

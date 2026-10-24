@@ -63,7 +63,7 @@ impl FunctionBinding {
     }
 }
 
-/// One declaration node: its kind, its name, the type it holds, and the value
+/// One declaration node: its kind, its name, its declared type, and the value
 /// it holds. The kind and the function binding are the one place every form
 /// fact is read from; a pass never re-derives it from the payload fields.
 #[derive(Debug)]
@@ -86,7 +86,9 @@ pub(crate) struct Declaration {
     pub(crate) namespace: NamespaceId,
     /// The function that owns a parameter or local binding.
     pub(crate) owner: Option<DeclarationId>,
-    /// The declared type of the name. A callable's type is a function type.
+    /// The declared type of the name. A callable's type is a function type. A
+    /// variant-pattern binding declares its payload type; the type its arm
+    /// instantiates is a derived fact, not this field.
     pub(crate) ty: Type,
     /// The value the name holds: a function expression or any other
     /// expression. A parameter or local binding holds no value form here — its
@@ -97,7 +99,6 @@ pub(crate) struct Declaration {
     /// runtime provides rather than the program, so it carries this marker
     /// instead of an expression.
     pub(crate) native: Option<Native>,
-    pub(crate) derived: Derived,
 }
 
 impl Declaration {
@@ -184,15 +185,6 @@ impl Declaration {
             None => crate::compiler::model::type_parameters_of(&self.ty, types),
         }
     }
-}
-
-/// What a phase has learned about a node.
-#[derive(Debug, Default)]
-pub(crate) struct Derived {
-    /// Whether every path of a function ends in `panic;` or a call to a
-    /// function that stops the run. A call to such a function ends its
-    /// caller's path exactly like `panic;` does.
-    pub(crate) halts: bool,
 }
 
 /// A nominal type: a `rec` with fields, or an `enum` with variants.

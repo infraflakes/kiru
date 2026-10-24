@@ -9,7 +9,7 @@
 
 use crate::compiler::model::{
     Binding, DeclarationId, Expression, Field, Function, Group, MatchBody, NamespaceId,
-    RuntimeShape, Shape, StringPart, Type, TypeHead, TypeId, TypeKind, bound_reachable,
+    RuntimeShape, Shape, Site, StringPart, Type, TypeHead, TypeId, TypeKind, bound_reachable,
     first_duplicate, fits, has_parameter, join_path, rec_field, substitute, unify,
 };
 use crate::compiler::operator_facts::BinaryOperands;
@@ -97,7 +97,7 @@ impl<'a> Checker<'a> {
     /// appears.
     pub(super) fn expression(
         &mut self,
-        expression: &mut Expression,
+        expression: &Expression,
         expected: Option<&Type>,
     ) -> Result<Option<Type>, Diagnostic> {
         let actual = match expression {
@@ -181,7 +181,7 @@ impl<'a> Checker<'a> {
                 ..
             } => self.call(callee, *callee_span, arguments, expected),
             Expression::Interpolated { parts, .. } => {
-                for part in parts.iter_mut() {
+                for part in parts {
                     if let StringPart::Expression(expression) = part {
                         self.displayable(expression)?;
                     }
@@ -195,9 +195,8 @@ impl<'a> Checker<'a> {
                 subject,
                 cases,
                 default,
-                exhaustive,
                 span,
-            } => self.match_expression(*span, subject, cases, default, expected, exhaustive),
+            } => self.match_expression(*span, subject, cases, default, expected),
             Expression::Field {
                 target,
                 name,
@@ -373,8 +372,8 @@ impl<'a> Checker<'a> {
     fn binary(
         &mut self,
         op: BinaryOp,
-        left: &mut Expression,
-        right: &mut Expression,
+        left: &Expression,
+        right: &Expression,
     ) -> Result<Option<Type>, Diagnostic> {
         let facts = op.facts();
         match facts.operands {
@@ -418,7 +417,7 @@ impl<'a> Checker<'a> {
     }
 
     /// The type of a prefix operator: integer negation or boolean not.
-    fn unary(&mut self, op: UnaryOp, operand: &mut Expression) -> Result<Option<Type>, Diagnostic> {
+    fn unary(&mut self, op: UnaryOp, operand: &Expression) -> Result<Option<Type>, Diagnostic> {
         match op {
             UnaryOp::Negate => {
                 self.require(operand, &Type::Int)?;
@@ -433,7 +432,7 @@ impl<'a> Checker<'a> {
 
     /// Require a value that `@(…)` can insert: text, an integer, or a boolean.
     /// A map, a Vec, and a no-value call have no display form.
-    fn displayable(&mut self, expression: &mut Expression) -> Result<(), Diagnostic> {
+    fn displayable(&mut self, expression: &Expression) -> Result<(), Diagnostic> {
         let Some(ty) = self.expression(expression, None)? else {
             return Err(self.error(
                 expression.span(),
@@ -485,12 +484,12 @@ impl<'a> Checker<'a> {
     /// value form and is the one callee dispatched by index.
     fn call(
         &mut self,
-        callee: &mut Expression,
+        callee: &Expression,
         callee_span: Span,
-        arguments: &mut [Expression],
+        arguments: &[Expression],
         expected: Option<&Type>,
     ) -> Result<Option<Type>, Diagnostic> {
-        let family = match &*callee {
+        let family = match callee {
             Expression::Reference { declaration, .. }
                 if self.model.declaration(*declaration).is_callable() =>
             {
@@ -503,23 +502,22 @@ impl<'a> Checker<'a> {
             _ => None,
         };
         if let Some((namespace, path)) = family {
-            return self.method_call(callee, namespace, &path, callee_span, arguments, expected);
+            return self.method_call(namespace, &path, callee_span, arguments, expected);
         }
         self.call_value(callee, arguments)
     }
 
     /// The check's method dispatch: the one pass that types every expression
     /// computes the receiver's type here, and the head of that type selects
-    /// the one bound function the family names. The linker wrote the family
-    /// alone, so the resolved edge is written into the callee, and every
-    /// later pass reads the call like any other resolved call's.
+    /// the one bound function the family names. The family stays the family
+    /// the linker wrote; the selected target is recorded in `Facts`, and every
+    /// later pass reads the call's target from there.
     fn method_call(
         &mut self,
-        callee: &mut Expression,
         namespace: Option<NamespaceId>,
         path: &[String],
         callee_span: Span,
-        arguments: &mut [Expression],
+        arguments: &[Expression],
         expected: Option<&Type>,
     ) -> Result<Option<Type>, Diagnostic> {
         let head = arguments
@@ -529,10 +527,11 @@ impl<'a> Checker<'a> {
         let Some(declaration) = self.select_method(namespace, path, head, callee_span)? else {
             return Err(self.error(callee_span, family_rejected(namespace, path)));
         };
-        *callee = Expression::Reference {
-            declaration,
-            span: callee_span,
-        };
+        // Record the target before checking the arguments: reachability reads
+        // the fact even when one argument later fails, and a reachable method
+        // must stay reachable when the call is otherwise reported.
+        self.facts
+            .set_method_target(Site::new(self.owner, callee_span), declaration);
         self.direct_call(declaration, callee_span, arguments, expected)
     }
 
@@ -601,7 +600,7 @@ impl<'a> Checker<'a> {
         &mut self,
         callee: DeclarationId,
         callee_span: Span,
-        arguments: &mut [Expression],
+        arguments: &[Expression],
         expected: Option<&Type>,
     ) -> Result<Option<Type>, Diagnostic> {
         let (returns, type_parameters, declared) = {
@@ -650,7 +649,7 @@ impl<'a> Checker<'a> {
         // a `{ … }` literal, whose type comes from the position alone; an
         // argument with a type of its own is typed on its own, so a
         // conflicting one still reports against the argument.
-        for (argument, parameter) in arguments.iter_mut().zip(&declared) {
+        for (argument, parameter) in arguments.iter().zip(&declared) {
             if has_parameter(parameter, self.model.types()) {
                 let mut hint_solution = solution.clone();
                 for (slot, expected) in hint_solution.iter_mut().zip(&expected_bindings) {
@@ -714,7 +713,7 @@ impl<'a> Checker<'a> {
                 ));
             }
         }
-        for (argument, parameter) in arguments.iter_mut().zip(&declared) {
+        for (argument, parameter) in arguments.iter().zip(&declared) {
             let required = substitute(
                 parameter,
                 self.model.types(),
@@ -737,8 +736,8 @@ impl<'a> Checker<'a> {
     /// function value with no return type yields no type.
     fn call_value(
         &mut self,
-        callee: &mut Expression,
-        arguments: &mut [Expression],
+        callee: &Expression,
+        arguments: &[Expression],
     ) -> Result<Option<Type>, Diagnostic> {
         let callee_type = self.expression(callee, None)?;
         let Some(callee_type) = callee_type else {
@@ -777,7 +776,7 @@ impl<'a> Checker<'a> {
                 ),
             ));
         }
-        for (argument, required) in arguments.iter_mut().zip(&parameters) {
+        for (argument, required) in arguments.iter().zip(&parameters) {
             self.require(argument, required)?;
         }
         Ok(returns.map(|returns| *returns))
@@ -809,7 +808,7 @@ impl<'a> Checker<'a> {
     /// expression that produces no value is rejected here.
     pub(in crate::compiler::compile::check) fn require(
         &mut self,
-        expression: &mut Expression,
+        expression: &Expression,
         required: &Type,
     ) -> Result<Type, Diagnostic> {
         self.expression(expression, Some(required))?.ok_or_else(|| {
@@ -827,7 +826,7 @@ impl<'a> Checker<'a> {
         &mut self,
         id: TypeId,
         arguments: &[Type],
-        fields: &mut [Field],
+        fields: &[Field],
         span: Span,
     ) -> Result<(), Diagnostic> {
         let declaration = self.model.type_decl(id);
@@ -857,11 +856,11 @@ impl<'a> Checker<'a> {
 
         self.reject_duplicate_fields(fields)?;
         for (field_name, public, field_ty) in &declared {
-            let Some(field) = fields.iter_mut().find(|field| &field.name == field_name) else {
+            let Some(field) = fields.iter().find(|field| &field.name == field_name) else {
                 return Err(self.error(span, format!("`{name}` is missing field `{field_name}`")));
             };
             self.check_member(id, field_name, *public, field.name_span)?;
-            self.require(&mut field.value, field_ty)?;
+            self.require(&field.value, field_ty)?;
         }
         for field in fields.iter() {
             if !declared.iter().any(|(other, _, _)| other == &field.name) {
@@ -881,7 +880,7 @@ impl<'a> Checker<'a> {
         id: TypeId,
         index: usize,
         arguments: &[Type],
-        payload: &mut [Expression],
+        payload: &[Expression],
         span: Span,
     ) -> Result<(), Diagnostic> {
         let (name, variant_name, public, parameters, declared) = {
@@ -913,7 +912,7 @@ impl<'a> Checker<'a> {
         ) {
             return Err(self.error(span, message));
         }
-        for (argument, required) in payload.iter_mut().zip(&declared) {
+        for (argument, required) in payload.iter().zip(&declared) {
             let required = substitute(
                 required,
                 self.model.types(),

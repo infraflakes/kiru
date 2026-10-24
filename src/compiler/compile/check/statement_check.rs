@@ -1,31 +1,38 @@
 //! Checking one declaration body.
 //!
-//! Names are already edges, so the checker only reads and writes node types.
-//! The statement walk and the typing rules live here; the typing of an
-//! expression lives in `expression_typing`, and the match rules live in
-//! `match_rules`. A function's return type is declared, so a return is checked
-//! against it rather than accumulated, and a call that produces no value may
-//! only stand as a statement.
+//! Names are already edges, so the checker only reads the immutable graph and
+//! records what it derives in `Facts`. The statement walk and the typing rules
+//! live here; the typing of an expression lives in `expression_typing`, and
+//! the match rules live in `match_rules`. A function's return type is
+//! declared, so a return is checked against it rather than accumulated, and a
+//! call that produces no value may only stand as a statement.
 //!
 //! This pass only types. Whether a body falls through, breaks out of a loop, or
 //! returns where it may not is a fact about the statement walk alone, so the
-//! flow pass reads the tree after this one; the only fact it records here is a
-//! match's exhaustiveness, which needs the subject's type.
+//! flow pass reads the graph after this one. The facts it records here are the
+//! ones a later pass reads: a pattern binding's instantiated type, a method
+//! call's target, and a match's coverage.
 
 use crate::compiler::model::Type;
 use crate::compiler::model::{
-    Binding, DeclarationId, Expression, FileId, Function, MatchArm, MatchBody, ModelView,
-    NamespaceId, Statement, TypeId, reachable, rec_field, substitute,
+    Binding, DeclarationId, Expression, Facts, FileId, Function, MatchArm, MatchBody, ModelView,
+    NamespaceId, Site, Statement, TypeId, reachable, rec_field, substitute,
 };
 use crate::compiler::{Diagnostic, private_member};
 use crate::syntax::Span;
 
 use super::match_rules::is_exhaustive;
 
-/// The checker over one body. Names are already edges, so it only reads and
-/// writes node types.
+/// The checker over one body. Names are already edges, so it only reads the
+/// graph and records the facts it derives.
 pub(in crate::compiler::compile::check) struct Checker<'a> {
     pub(super) model: ModelView<'a>,
+    /// The derived store beside the graph. The checker writes here, never to
+    /// a declaration or an expression.
+    pub(super) facts: &'a mut Facts,
+    /// The declaration whose body this walk checks. A fact about an expression
+    /// site is keyed by this owner and the expression's span.
+    pub(super) owner: DeclarationId,
     pub(super) file: FileId,
     /// The namespace the body is written in. A field or variant is reached
     /// freely here and from another namespace only when it is `pub`.
@@ -42,11 +49,15 @@ impl<'a> Checker<'a> {
     /// function sets its declaration's.
     pub(in crate::compiler::compile::check) fn new(
         model: ModelView<'a>,
+        facts: &'a mut Facts,
+        owner: DeclarationId,
         file: FileId,
         namespace: NamespaceId,
     ) -> Self {
         Self {
             model,
+            facts,
+            owner,
             file,
             namespace,
             return_type: None,
@@ -58,9 +69,13 @@ impl<'a> Checker<'a> {
         Diagnostic::new(&self.model.file(self.file).path, span, message)
     }
 
-    /// The type of a binding or a module value.
+    /// The type a binding holds at a use site: the type its arm instantiated
+    /// when it is a variant-pattern binding, and its declared type otherwise.
     pub(super) fn kind_of(&self, id: DeclarationId) -> Type {
-        self.model.declaration(id).ty.clone()
+        self.facts
+            .pattern_type(id)
+            .cloned()
+            .unwrap_or_else(|| self.model.declaration(id).ty.clone())
     }
 
     /// Whether a member declared in `declaring` is reachable from the walk's
@@ -105,7 +120,7 @@ impl<'a> Checker<'a> {
     /// fact, and the flow pass reads all of them too.
     pub(in crate::compiler::compile::check) fn statements(
         &mut self,
-        statements: &mut [Statement],
+        statements: &[Statement],
     ) -> Result<(), Diagnostic> {
         for statement in statements {
             self.statement(statement)?;
@@ -114,7 +129,7 @@ impl<'a> Checker<'a> {
     }
 
     /// Type one statement.
-    fn statement(&mut self, statement: &mut Statement) -> Result<(), Diagnostic> {
+    fn statement(&mut self, statement: &Statement) -> Result<(), Diagnostic> {
         match statement {
             Statement::Bind {
                 declaration, value, ..
@@ -143,22 +158,22 @@ impl<'a> Checker<'a> {
                     subject,
                     cases,
                     default,
-                    exhaustive,
+                    span,
                     ..
-                } = &mut *expression
+                } = expression
                 {
-                    return self.match_statement(subject, cases, default, exhaustive);
+                    return self.match_statement(subject, cases, default, *span);
                 }
-                if !matches!(&*expression, Expression::Call { .. }) {
+                if !matches!(expression, Expression::Call { .. }) {
                     return Err(self.error(expression.span(), "a statement must be a call"));
                 }
                 self.expression(expression, None)?;
                 Ok(())
             }
-            Statement::Return { value, .. } => self.return_statement(value.as_mut()),
+            Statement::Return { value, .. } => self.return_statement(value.as_ref()),
             Statement::Panic { .. } => Ok(()),
             Statement::Async { call, .. } => {
-                if !matches!(&*call, Expression::Call { .. }) {
+                if !matches!(call, Expression::Call { .. }) {
                     return Err(self.error(call.span(), "`async` takes a call"));
                 }
                 self.expression(call, None)?;
@@ -206,12 +221,12 @@ impl<'a> Checker<'a> {
     /// function's return type is its declaration's; a literal's is its own.
     pub(in crate::compiler::compile::check) fn check_function(
         &mut self,
-        function: &mut Function,
+        function: &Function,
         return_type: Option<Type>,
     ) -> Result<(), Diagnostic> {
         let saved_return = std::mem::replace(&mut self.return_type, return_type);
         let saved_frozen = std::mem::replace(&mut self.frozen, function.captures.clone());
-        let result = self.statements(&mut function.body);
+        let result = self.statements(&function.body);
         self.return_type = saved_return;
         self.frozen = saved_frozen;
         result
@@ -221,7 +236,7 @@ impl<'a> Checker<'a> {
         &mut self,
         declaration: DeclarationId,
         name_span: Span,
-        value: &mut Expression,
+        value: &Expression,
     ) -> Result<(), Diagnostic> {
         let ty = self.assignment_target(declaration, name_span)?;
         self.require(value, &ty)?;
@@ -235,7 +250,7 @@ impl<'a> Checker<'a> {
         declaration: DeclarationId,
         name_span: Span,
         field: &str,
-        value: &mut Expression,
+        value: &Expression,
     ) -> Result<(), Diagnostic> {
         let name = self.model.declaration(declaration).name.clone();
         match self.assignment_target(declaration, name_span)? {
@@ -266,7 +281,7 @@ impl<'a> Checker<'a> {
 
     /// Type the value of a `return`, when the enclosing function declares a
     /// return type. Whether the return is allowed at all is a flow fact.
-    fn return_statement(&mut self, value: Option<&mut Expression>) -> Result<(), Diagnostic> {
+    fn return_statement(&mut self, value: Option<&Expression>) -> Result<(), Diagnostic> {
         if let Some(value) = value
             && let Some(return_type) = self.return_type.clone()
         {
@@ -285,32 +300,30 @@ impl<'a> Checker<'a> {
     /// fall through.
     fn match_statement(
         &mut self,
-        subject: &mut Expression,
-        cases: &mut [MatchArm],
-        default: &mut Option<MatchBody>,
-        exhaustive: &mut bool,
+        subject: &Expression,
+        cases: &[MatchArm],
+        default: &Option<MatchBody>,
+        span: Span,
     ) -> Result<(), Diagnostic> {
         let subject_type = self.match_subject(subject)?;
         let mut seen: Vec<&Expression> = Vec::new();
         let mut coverage = self.coverage(&subject_type);
-        for arm in cases.iter_mut() {
-            self.match_pattern(
-                &mut arm.pattern,
-                &subject_type,
-                &mut seen,
-                coverage.as_mut(),
-            )?;
-            self.match_body(&mut arm.body)?;
+        for arm in cases {
+            self.match_pattern(&arm.pattern, &subject_type, &mut seen, coverage.as_mut())?;
+            self.match_body(&arm.body)?;
         }
-        if let Some(default) = default.as_mut() {
+        if let Some(default) = default {
             self.match_body(default)?;
         }
-        *exhaustive = is_exhaustive(default, coverage.as_ref());
+        self.facts.set_match_exhaustive(
+            Site::new(self.owner, span),
+            is_exhaustive(default, coverage.as_ref()),
+        );
         Ok(())
     }
 
     /// Type one match arm's body.
-    pub(super) fn match_body(&mut self, body: &mut MatchBody) -> Result<(), Diagnostic> {
+    pub(super) fn match_body(&mut self, body: &MatchBody) -> Result<(), Diagnostic> {
         match body {
             MatchBody::Expression(expression) => {
                 self.expression(expression, None)?;

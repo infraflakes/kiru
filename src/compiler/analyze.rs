@@ -17,7 +17,7 @@ use crate::compiler::compile::load::{LoadedProgram, ProgramSource, load_files};
 use crate::compiler::compile::resolve::{Analysis, program_main, resolve_tree};
 use crate::compiler::diagnostic::{Diagnostic, FileDiagnostics, group};
 use crate::compiler::mark_reachable;
-use crate::compiler::model::{FileId, Program};
+use crate::compiler::model::{Facts, FileId, Program};
 use crate::compiler::warnings::{is_program_source, unused_bindings, unused_declarations};
 
 #[cfg(test)]
@@ -54,7 +54,7 @@ pub(crate) fn diagnostics(
     // progress have none. When one exists, the declarations it never reaches
     // are unused.
     if let Some(main) = main {
-        let reachable = mark_reachable(&linked.program, main);
+        let reachable = mark_reachable(&linked.program, &linked.facts, main);
         diagnostics.extend(unused_declarations(&linked.program, &reachable));
     }
     // The embedded library is the compiler's, not the editor's: its files
@@ -91,11 +91,13 @@ pub(crate) fn semantic_tokens(
     semantic::tokens(&linked.loaded, &linked.program, FileId(index))
 }
 
-/// One tree after resolution and checking: its files, its model, the
-/// resolution's warnings, and every error the checker met.
+/// One tree after resolution and checking: its files, its immutable model, the
+/// facts the check derived, the resolution's warnings, and every error the
+/// checker met.
 struct Linked {
     loaded: LoadedProgram,
     program: Program,
+    facts: Facts,
     warnings: Vec<Diagnostic>,
     errors: Vec<Diagnostic>,
 }
@@ -119,10 +121,7 @@ fn link(
             }]);
         }
     };
-    let Analysis {
-        mut program,
-        warnings,
-    } = match resolve_tree(&loaded) {
+    let Analysis { program, warnings } = match resolve_tree(&loaded) {
         Ok(analysis) => analysis,
         Err(diagnostic) => {
             let mut diagnostics = loaded.syntax.clone();
@@ -131,10 +130,11 @@ fn link(
             return Err(group(&loaded, diagnostics));
         }
     };
-    let errors = validate_program(&mut program);
+    let (facts, errors) = validate_program(&program);
     Ok(Linked {
         loaded,
         program,
+        facts,
         warnings,
         errors,
     })

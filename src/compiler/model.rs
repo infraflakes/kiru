@@ -1,14 +1,16 @@
-//! The program model: the linked program graph, the type system, the
-//! structural visitors, and the structural verifier.
+//! The program model: the linked program graph, the type system, the derived
+//! facts, the structural visitors, and the structural verifier.
 //!
-//! A declaration is a node with identity, a reference is an edge to a node,
-//! and results a stage derives are properties of nodes. No stage keeps a table
-//! keyed by position; the resolution stage resolves every name, and no later
-//! stage repeats that work. The model is the shared intermediate the compiler
-//! builds and the runtime reads.
+//! A declaration is a node with identity, and a reference is an edge to a
+//! node. Resolution owns the names and edges and writes the graph; no later
+//! stage writes it. The facts a stage derives live in the separate `Facts`
+//! store, keyed by the node or the expression site they describe, and are
+//! disposable: the rules remain the source of truth. The model is the shared
+//! intermediate the compiler builds and the runtime reads.
 
 mod declarations;
 mod expressions;
+mod facts;
 mod ids;
 mod program;
 mod reads;
@@ -20,12 +22,13 @@ mod verify_spans;
 mod visitors;
 
 pub(crate) use declarations::{
-    Declaration, DeclarationKind, Derived, FunctionBinding, RuntimeType, TypeDecl, TypeFieldDecl,
-    TypeKind, TypeUse, VariantDecl,
+    Declaration, DeclarationKind, FunctionBinding, RuntimeType, TypeDecl, TypeFieldDecl, TypeKind,
+    TypeUse, VariantDecl,
 };
 pub(crate) use expressions::{
     Expression, Field, Function, MatchArm, MatchBody, Pattern, Statement, StringPart,
 };
+pub(crate) use facts::{Facts, Site};
 pub(crate) use ids::{DeclarationId, FileId, NamespaceId};
 /// The name hash a test reads to pin the compiled image's bytes; nothing in
 /// the model itself reads it.

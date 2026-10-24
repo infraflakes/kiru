@@ -37,8 +37,9 @@ pub(crate) trait Visitor {
     fn interpolated(&mut self, expression: &Expression);
     fn reference(&mut self, expression: &Expression);
     fn call(&mut self, expression: &Expression);
-    /// A family callee: a call whose bound function the check resolves. It
-    /// carries no edge, so only a pass that names the kinds acts on it.
+    /// A family callee: a call whose bound function the check selects. It
+    /// carries no graph edge; the check records its target in `Facts`, so only
+    /// a pass holding the facts acts on it.
     fn method(&mut self, expression: &Expression);
     fn field(&mut self, expression: &Expression);
     fn binary(&mut self, expression: &Expression);

@@ -8,7 +8,8 @@
 use crate::compiler::Diagnostic;
 use crate::compiler::diagnostic::expected_instead;
 use crate::compiler::model::{
-    Binding, Expression, Finite, MatchArm, MatchBody, Pattern, Type, TypeKind, finite, substitute,
+    Binding, Expression, Finite, MatchArm, MatchBody, Pattern, Site, Type, TypeKind, finite,
+    substitute,
 };
 use crate::syntax::Span;
 
@@ -143,7 +144,7 @@ impl<'a> Checker<'a> {
 
     /// The type a match compares. Its subject must produce a value: text, a
     /// map, or any other value, never a call that produces none.
-    pub(super) fn match_subject(&mut self, subject: &mut Expression) -> Result<Type, Diagnostic> {
+    pub(super) fn match_subject(&mut self, subject: &Expression) -> Result<Type, Diagnostic> {
         let Some(ty) = self.expression(subject, None)? else {
             return Err(self.error(subject.span(), "a match subject must have a value"));
         };
@@ -155,29 +156,23 @@ impl<'a> Checker<'a> {
     /// is one, is the type the whole match must have; it flows into each arm so
     /// a generic construction or a nominal literal takes its type from the
     /// match. The match must be exhaustive, so it always takes an arm and
-    /// always yields a value. `exhaustive` records the coverage the flow pass
-    /// reads.
+    /// always yields a value. The coverage the flow pass reads is recorded in
+    /// `Facts`, not written onto the node.
     pub(super) fn match_expression(
         &mut self,
         span: Span,
-        subject: &mut Expression,
-        cases: &mut [MatchArm],
-        default: &mut Option<MatchBody>,
+        subject: &Expression,
+        cases: &[MatchArm],
+        default: &Option<MatchBody>,
         expected: Option<&Type>,
-        exhaustive: &mut bool,
     ) -> Result<Option<Type>, Diagnostic> {
         let subject_type = self.match_subject(subject)?;
         let mut seen: Vec<&Expression> = Vec::new();
         let mut coverage = self.coverage(&subject_type);
         let mut result: Option<Option<Type>> = expected.map(|expected| Some(expected.clone()));
-        for arm in cases.iter_mut() {
-            self.match_pattern(
-                &mut arm.pattern,
-                &subject_type,
-                &mut seen,
-                coverage.as_mut(),
-            )?;
-            let ty = match (&mut arm.body, expected) {
+        for arm in cases {
+            self.match_pattern(&arm.pattern, &subject_type, &mut seen, coverage.as_mut())?;
+            let ty = match (&arm.body, expected) {
                 (MatchBody::Expression(expression), Some(expected)) => {
                     Some(self.require(expression, expected)?)
                 }
@@ -200,7 +195,7 @@ impl<'a> Checker<'a> {
             }
             result = Some(ty);
         }
-        if let Some(default) = default.as_mut() {
+        if let Some(default) = default {
             let ty = match (default, expected) {
                 (MatchBody::Expression(expression), Some(expected)) => {
                     Some(self.require(expression, expected)?)
@@ -225,7 +220,8 @@ impl<'a> Checker<'a> {
             result = Some(ty);
         }
         let complete = is_exhaustive(default, coverage.as_ref());
-        *exhaustive = complete;
+        self.facts
+            .set_match_exhaustive(Site::new(self.owner, span), complete);
         if !complete {
             return Err(self.error(
                 span,
@@ -255,20 +251,20 @@ impl<'a> Checker<'a> {
     }
 
     /// Validate one match arm's pattern against the subject type, tracking
-    /// duplicate value patterns and covered enum variants, and write each
-    /// binding's substituted type onto its declaration node. A binding is
-    /// created once, belongs to one pattern, and has one instantiation, so its
-    /// node is the only place its type is read.
+    /// duplicate value patterns and covered enum variants, and record each
+    /// binding's substituted type in `Facts`. A binding is created once,
+    /// belongs to one pattern, and has one instantiation, so its arm's fact is
+    /// the only place its instantiated type is read.
     pub(super) fn match_pattern<'e>(
         &mut self,
-        pattern: &'e mut Pattern,
+        pattern: &'e Pattern,
         subject_type: &Type,
         seen: &mut Vec<&'e Expression>,
         mut coverage: Option<&mut Coverage>,
     ) -> Result<(), Diagnostic> {
         match pattern {
             Pattern::Value(_) => {
-                // Mark coverage before the mutable borrow the typing needs.
+                // Mark coverage before typing the pattern's expression.
                 if let Some(coverage) = coverage.as_mut() {
                     coverage.mark(pattern);
                 }
@@ -296,13 +292,13 @@ impl<'a> Checker<'a> {
                 let tracker = coverage.is_some();
                 let already = coverage
                     .as_mut()
-                    .is_some_and(|coverage| coverage.mark(&*pattern));
+                    .is_some_and(|coverage| coverage.mark(pattern));
                 let Pattern::Variant {
                     ty,
                     index,
                     bindings,
                     span,
-                } = &*pattern
+                } = pattern
                 else {
                     unreachable!("the pattern is a variant pattern");
                 };
@@ -349,7 +345,7 @@ impl<'a> Checker<'a> {
                             &parameters,
                             Binding::Complete(subject_arguments),
                         );
-                        self.model.set_type(*binding, ty);
+                        self.facts.set_pattern_type(*binding, ty);
                     }
                 }
                 Ok(())

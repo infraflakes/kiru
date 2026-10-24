@@ -4,13 +4,14 @@
 //! parameter and local binding gets a fixed register, and each expression
 //! allocates the registers above them. A function value is made at the point
 //! it is used and called through its value; a native is dispatched by index. A
-//! reference names a register or a global, and a `match` lowers to a
-//! compare-and-jump chain that keeps the first-match order.
+//! reference names a register or a global, a method family lowers as the
+//! target the check recorded, and a `match` lowers to a compare-and-jump chain
+//! that keeps the first-match order.
 
 use std::collections::HashMap;
 
 use crate::compiler::bytecode::{Bytecode, Code, Instruction, ModuleValue};
-use crate::compiler::model::{DeclarationId, Program, Type};
+use crate::compiler::model::{DeclarationId, Facts, Program, Type};
 use crate::compiler::native_registry::{NativeSignature, argument_kind};
 
 /// Every lowering fact a declaration carries, read in one pass over the
@@ -90,10 +91,14 @@ pub(crate) fn declaration_codes(program: &Program) -> Vec<Option<u32>> {
     DeclarationLayout::of(program).codes
 }
 
-/// Lower a validated, pruned program to bytecode, starting from the entry.
-pub(crate) fn lower_bytecode(program: &Program, entry: DeclarationId) -> Bytecode {
+/// Lower a validated, pruned program to bytecode, starting from the entry. The
+/// check's facts supply every method call's target; the graph itself is only
+/// read.
+pub(crate) fn lower_bytecode(program: &Program, facts: &Facts, entry: DeclarationId) -> Bytecode {
     let mut lowerer = Lowerer {
         program,
+        facts,
+        current: entry,
         codes: Vec::new(),
         constants: Vec::new(),
         constant_index: HashMap::new(),
@@ -120,6 +125,11 @@ pub(crate) fn lower_bytecode(program: &Program, entry: DeclarationId) -> Bytecod
 
 pub(super) struct Lowerer<'a> {
     pub(super) program: &'a Program,
+    /// The check's settled store: the target of every method-family call.
+    pub(super) facts: &'a Facts,
+    /// The declaration whose body is being lowered. A method site is keyed by
+    /// this owner and the callee's span.
+    pub(super) current: DeclarationId,
     pub(super) codes: Vec<Code>,
     pub(super) constants: Vec<String>,
     pub(super) constant_index: HashMap<String, u32>,
@@ -167,6 +177,7 @@ impl Lowerer<'_> {
                 continue;
             };
             let declaration = &program.declarations[index];
+            self.current = DeclarationId(index);
             let code = if declaration.kind.callable() {
                 let function = declaration
                     .function()

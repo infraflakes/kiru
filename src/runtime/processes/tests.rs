@@ -10,8 +10,8 @@ use crate::runtime::Runtime;
 use crate::runtime::Value;
 
 fn runtime(source: &str) -> Runtime {
-    let (program, entry) = checked_program_and_entry(source);
-    Runtime::for_testing(program, entry)
+    let (program, facts, entry) = checked_program_and_entry(source);
+    Runtime::for_testing(program, facts, entry)
 }
 
 /// The process group table grows with the operating system's resources: no

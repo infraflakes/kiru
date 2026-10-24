@@ -2,9 +2,10 @@
 
 use crate::compiler::model::Type;
 use crate::compiler::model::{
-    DeclarationId, Expression, MatchBody, Pattern, Program, Statement, TypeHead, Visitor,
+    DeclarationId, Expression, MatchBody, Pattern, Program, Site, Statement, TypeHead, Visitor,
 };
-use crate::compiler::{checked_files, checked_program};
+use crate::compiler::{checked_files, checked_program_and_entry};
+use crate::syntax::Span;
 
 fn check(files: &[(&str, &str)]) -> Result<(), String> {
     checked_files(files).map(|_| ())
@@ -688,7 +689,7 @@ fn assignment_rules() {
 
 #[test]
 fn checks_the_shipped_library_types() {
-    let program = checked_program(
+    let (program, facts, _) = checked_program_and_entry(
         "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec Repo { dir: txt };\n\
          let backend: Repo = { dir = \"/kiru\" };\n\
          fn read(repo: Repo) -> txt { return repo.dir; };\n\
@@ -715,7 +716,7 @@ fn checks_the_shipped_library_types() {
     let eprint = declaration(&program, &["std"], "eprint");
     assert_eq!(value_type(&program, eprint), None);
     assert!(
-        program.declaration(eprint).derived.halts,
+        facts.halts(eprint),
         "eprint ends in `panic;`, so it stops the run"
     );
 
@@ -1396,12 +1397,12 @@ fn rule_conformance_visibility() {
     );
 }
 
-/// Counts the family callees a walk observes and the callee edges the calls it
-/// passes name. The check's dispatch is total when no family survives it and
-/// every resolved call's callee is the reference the check wrote.
+/// Records the family sites a walk observes and the callee edges the calls it
+/// passes name. A method family stays a family; the checker records its target
+/// in `Facts`, and a call whose callee is a reference still names that edge.
 #[derive(Default)]
 struct DispatchAudit {
-    families: usize,
+    family_sites: Vec<Span>,
     callees: Vec<DeclarationId>,
 }
 
@@ -1414,8 +1415,11 @@ impl Visitor for DispatchAudit {
             self.callees.push(*declaration);
         }
     }
-    fn method(&mut self, _: &Expression) {
-        self.families += 1;
+    fn method(&mut self, expression: &Expression) {
+        let Expression::Method { span, .. } = expression else {
+            unreachable!("the walk names a method family");
+        };
+        self.family_sites.push(*span);
     }
 
     fn text(&mut self, _: &Expression) {}
@@ -1450,12 +1454,12 @@ impl Visitor for DispatchAudit {
     }
 }
 
-/// The check's method dispatch is total: a checked program carries no family
-/// callee, because the check resolved every one into the reference edge its
-/// receiver's head selected — the edge every later pass reads.
+/// The check's method dispatch is total: every family callee stays the family
+/// it was written as, and the check records the target its receiver's head
+/// selected as a fact every later pass reads.
 #[test]
-fn the_check_writes_every_method_call_edge() {
-    let program = checked_program(
+fn the_check_records_every_method_call_target() {
+    let (program, facts, _) = checked_program_and_entry(
         "use std;\nuse std::dynamic;\nuse std::dynamic::Vec;\n\
          rec A { n: int };\nrec B { n: int };\n\
          impl A { pub fn describe(self: A) -> txt { return \"a\"; }; };\n\
@@ -1497,11 +1501,25 @@ fn the_check_writes_every_method_call_edge() {
         .body;
     let mut audit = DispatchAudit::default();
     crate::compiler::model::walk_statements(&mut audit, body);
-    assert_eq!(audit.families, 0, "the check resolved every family callee");
+    assert_eq!(
+        audit.family_sites.len(),
+        3,
+        "every method call stays a family"
+    );
     assert_eq!(
         audit.callees,
-        vec![print, a_method, print, b_method, print, a_method],
-        "each receiver's head selected its own method's edge"
+        vec![print, print, print],
+        "only the plain calls name a reference edge"
+    );
+    let targets: Vec<_> = audit
+        .family_sites
+        .iter()
+        .map(|span| facts.method_target(Site::new(main, *span)))
+        .collect();
+    assert_eq!(
+        targets,
+        vec![Some(a_method), Some(b_method), Some(a_method)],
+        "each receiver's head selected its own method as a target fact"
     );
 }
 

@@ -440,7 +440,20 @@ Two changes follow, and neither is a behavior-neutral prune:
 
 Everything else is already a migration stage: the verifier, type declarations, delivery status, entry/list/native/tree facts, pruning as a view, and the one report. There is no second standalone architecture prune.
 
-### 10.2 Delegation and stray handling
+### 10.2 Stage 1: the frozen checker
+
+Stage 1 makes the checked graph immutable. The checker reads it and records derived facts in a separate store; no pass writes a declaration or an expression after resolution.
+
+- The store is `Facts`, in `src/compiler/model/facts.rs`. It holds the halting fact of each callable, the target of each method-family call, the instantiated type of each variant-pattern binding, and the coverage result of each match. A fact is keyed by the node it describes, or by a `Site`: the declaration that owns a body and the span of the expression written there.
+- `ModelView` becomes a read-only view over `&Program`; `set_type` and `set_halts` are gone.
+- The checker no longer rewrites a method family into a reference. The callee stays `Expression::Method`; the checker records its target, and flow, reachability, and lowering read the target from `Facts`.
+- `Declaration.derived` and `Expression::Match.exhaustive` are removed. A declaration's `ty` is its declared type; the checker's instantiated pattern type is a fact. Match coverage is a fact; a non-exhaustive statement match is a fact the flow pass reads.
+- `validate_program` returns `(Facts, Vec<Diagnostic>)`. `Build` and the analyzer's `Linked` carry the store; `prune_unreachable` remaps it with the declaration ids. The remap is a migration fact until stage 5, when prune becomes a view.
+- A `Facts` store is disposable: the rules that compute it remain the source of truth. Nothing reads a fact as an input to a rule except a pass reading the check's settled result; the graph itself is never written.
+- The method target is a relation the verifier checks: at `Resolved` a family is a linked site with no target yet; at `Checked` and `Pruned` every family site has a target. `verify_reachability` follows the target fact. The old `MethodFamilyAfterCheck` violation is removed because a family surviving the check is now the correct graph.
+- The checker's test fixture returns the facts beside the program and the entry; every lowering caller passes them. The 237 tests and the payload sha are unchanged.
+
+### 10.3 Delegation and stray handling
 
 Each stage is delegated with a brief that leaves no decision to the delegate, and the result is inspected as a claim.
 

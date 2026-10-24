@@ -1,13 +1,11 @@
-//! A view of the model pieces a stage reads and the derived facts it writes.
+//! A read-only view of the model pieces a stage reads.
 //!
 //! The checker types a checked program and resolves a call's method while it
 //! does, so it reads the method pools and the interner through this view too.
 //! Both hands the slices they own to the one expression relation through this
 //! view, so the relation reads declarations, types, namespaces, and files the
-//! same way whichever stage is asking. The checker records the type of a
-//! variant-pattern binding on the binding node it belongs to, and the flow
-//! pass records whether a function stops the run on the function's
-//! declaration.
+//! same way whichever stage is asking. The view never writes: the facts a
+//! stage derives live in `Facts`, beside it.
 
 use super::super::declarations::{Declaration, TypeDecl};
 use super::super::ids::{DeclarationId, FileId, NamespaceId};
@@ -18,7 +16,7 @@ use super::namespace_paths::{join_path, namespace_path};
 
 /// The declarations, types, namespaces, and files a stage can see.
 pub(crate) struct ModelView<'a> {
-    declarations: &'a mut [Declaration],
+    declarations: &'a [Declaration],
     types: &'a [TypeDecl],
     namespaces: &'a [Namespace],
     files: &'a [File],
@@ -27,7 +25,7 @@ pub(crate) struct ModelView<'a> {
 
 impl<'a> ModelView<'a> {
     pub(crate) fn new(
-        declarations: &'a mut [Declaration],
+        declarations: &'a [Declaration],
         types: &'a [TypeDecl],
         namespaces: &'a [Namespace],
         files: &'a [File],
@@ -50,18 +48,6 @@ impl<'a> ModelView<'a> {
     /// node through `declaration`.
     pub(crate) fn declarations(&self) -> &[Declaration] {
         self.declarations
-    }
-
-    /// Write one fact onto a declaration node: the type a variant-pattern
-    /// binding holds once its arm instantiates the pattern.
-    pub(crate) fn set_type(&mut self, id: DeclarationId, ty: Type) {
-        self.declarations[id.0].ty = ty;
-    }
-
-    /// Record whether a function stops the run, the one derived fact the flow
-    /// fixpoint settles.
-    pub(crate) fn set_halts(&mut self, id: DeclarationId, halts: bool) {
-        self.declarations[id.0].derived.halts = halts;
     }
 
     pub(crate) fn type_decl(&self, id: TypeId) -> &TypeDecl {
@@ -116,8 +102,8 @@ impl<'a> ModelView<'a> {
     }
 }
 
-impl<'a> From<&'a mut Program> for ModelView<'a> {
-    fn from(program: &'a mut Program) -> Self {
+impl<'a> From<&'a Program> for ModelView<'a> {
+    fn from(program: &'a Program) -> Self {
         let Program {
             declarations,
             types,

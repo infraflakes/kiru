@@ -1,6 +1,6 @@
 //! The front half of a compile: load the program tree, resolve every name into
-//! an edge, and check every body. What it leaves is the checked program, its
-//! warnings, and the syntax errors recovery kept.
+//! an edge, and check every body. What it leaves is the checked program, the
+//! facts the check derived, its warnings, and the syntax errors recovery kept.
 
 mod failure;
 
@@ -8,7 +8,7 @@ use crate::compiler::compile::check::validate_program;
 use crate::compiler::compile::load::{LoadedProgram, ProgramSource, load_files};
 use crate::compiler::compile::resolve::{Analysis, resolve_tree};
 use crate::compiler::diagnostic::Diagnostic;
-use crate::compiler::model::Program;
+use crate::compiler::model::{Facts, Program};
 use crate::compiler::warnings::{is_program_source, unused_bindings};
 use crate::project::Project;
 
@@ -16,11 +16,12 @@ use failure::{failure, failure_from};
 
 pub use failure::BuildFailure;
 
-/// One build that checked: the loaded program, the model the check settled,
-/// and the warnings the unused syntax earned.
+/// One build that checked: the loaded program, the immutable model, the facts
+/// the check derived, and the warnings the unused syntax earned.
 pub struct Build {
     pub(crate) loaded: LoadedProgram,
     pub(crate) program: Program,
+    pub(crate) facts: Facts,
     pub(crate) warnings: Vec<Diagnostic>,
 }
 
@@ -54,10 +55,9 @@ pub(crate) fn build(project: &Project, source: &impl ProgramSource) -> Result<Bu
             return Err(failure_from(&loaded, diagnostics));
         }
     };
-    let mut program = program;
     let mut warnings = warnings;
     warnings.extend(unused_bindings(&program));
-    let errors = validate_program(&mut program);
+    let (facts, errors) = validate_program(&program);
     if !errors.is_empty() {
         // The checker's errors are facts among the file's facts: the
         // recovery's syntax errors, what the recovered tree kept unused, and
@@ -72,6 +72,7 @@ pub(crate) fn build(project: &Project, source: &impl ProgramSource) -> Result<Bu
     Ok(Build {
         loaded,
         program,
+        facts,
         warnings,
     })
 }

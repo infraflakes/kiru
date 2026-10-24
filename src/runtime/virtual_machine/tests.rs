@@ -8,8 +8,8 @@ use crate::runtime::Value;
 use super::Runtime;
 
 fn runtime(source: &str) -> Runtime {
-    let (program, entry) = checked_program_and_entry(source);
-    Runtime::for_testing(program, entry)
+    let (program, facts, entry) = checked_program_and_entry(source);
+    Runtime::for_testing(program, facts, entry)
 }
 
 fn call_text(runtime: &Runtime, name: &str) -> String {

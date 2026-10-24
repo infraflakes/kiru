@@ -5,9 +5,9 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 use crate::compiler::model::{
-    Declaration, DeclarationId, DeclarationKind, Derived, File, FileId, FunctionBinding, Group,
-    Interner, MethodTable, NameTable, Namespace, NamespaceId, Program, TypeDecl, TypeFieldDecl,
-    TypeKind, TypeTable, VariantDecl, first_duplicate,
+    Declaration, DeclarationId, DeclarationKind, File, FileId, FunctionBinding, Group, Interner,
+    MethodTable, NameTable, Namespace, NamespaceId, Program, TypeDecl, TypeFieldDecl, TypeKind,
+    TypeTable, VariantDecl, first_duplicate,
 };
 use crate::compiler::model::{Type, TypeHead, TypeId, TypeUse};
 use crate::compiler::native_registry::Native;
@@ -264,7 +264,6 @@ impl Builder {
                 ty,
                 value: None,
                 native: None,
-                derived: Derived { halts: false },
             },
             Some(Slot::Native(ty, native)) => Declaration {
                 kind,
@@ -278,7 +277,6 @@ impl Builder {
                 ty,
                 value: None,
                 native: Some(native),
-                derived: Derived { halts: false },
             },
             // A callable or module value: its phase fills the real type and
             // value. Until then it holds the placeholder type; no body is
@@ -295,7 +293,6 @@ impl Builder {
                 ty: Type::Text,
                 value: None,
                 native: None,
-                derived: Derived { halts: false },
             },
         };
         self.declarations.push(declaration);

@@ -27,8 +27,8 @@ mod tests {
 
     #[test]
     fn bytecode_round_trips_through_bytes() {
-        let (program, entry) = checked_program_and_entry(SOURCE);
-        let bytecode = lower_bytecode(&program, entry);
+        let (program, facts, entry) = checked_program_and_entry(SOURCE);
+        let bytecode = lower_bytecode(&program, &facts, entry);
 
         let bytes = super::serialize_bytecode(&bytecode).expect("serializes");
         let restored = super::deserialize_bytecode(&bytes).expect("deserializes");
@@ -41,9 +41,9 @@ mod tests {
     /// serialization is the contract the runtime reads, so it pins here.
     #[test]
     fn the_compiled_image_is_byte_identical() {
-        let (program, entry) = checked_program_and_entry(SOURCE);
-        let bytes =
-            super::serialize_bytecode(&lower_bytecode(&program, entry)).expect("serializes");
+        let (program, facts, entry) = checked_program_and_entry(SOURCE);
+        let bytes = super::serialize_bytecode(&lower_bytecode(&program, &facts, entry))
+            .expect("serializes");
         assert_eq!(bytes.len(), 17675);
         assert_eq!(name_hash(&bytes), 12749693456951739665);
     }

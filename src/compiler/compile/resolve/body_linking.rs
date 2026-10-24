@@ -8,7 +8,7 @@ use crate::compiler::Diagnostic;
 use crate::compiler::compile::load::LoadedProgram;
 use crate::compiler::model::Type;
 use crate::compiler::model::{
-    Declaration, DeclarationId, Derived, Expression, Field, FileId, Function, MatchArm, MatchBody,
+    Declaration, DeclarationId, Expression, Facts, Field, FileId, Function, MatchArm, MatchBody,
     NamespaceId, Program, Statement, StringPart,
 };
 use crate::syntax::Span;
@@ -40,6 +40,7 @@ pub(crate) fn resolve_tree(loaded: &LoadedProgram) -> Result<Analysis, Diagnosti
     #[cfg(debug_assertions)]
     crate::compiler::model::assert_known_relations(
         &program,
+        &Facts::default(),
         crate::compiler::model::RelationBoundary::Resolved,
     );
     Ok(Analysis { program, warnings })
@@ -104,7 +105,6 @@ impl Builder {
                 ty,
                 value: None,
                 native: None,
-                derived: Derived { halts: false },
             };
         }
         Ok(())
@@ -406,7 +406,6 @@ impl Builder {
                     subject: Box::new(subject),
                     cases: linked_cases,
                     default,
-                    exhaustive: false,
                     span: *span,
                 }
             }

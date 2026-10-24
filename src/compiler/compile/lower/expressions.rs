@@ -3,11 +3,12 @@
 //! Each expression allocates its result in a fresh register above the frame's
 //! parameters and locals. A function literal is lowered into its own code and
 //! called through a function value, a `match` becomes a compare-and-jump chain
-//! that keeps the first-match order, and a native call is dispatched by index.
+//! that keeps the first-match order, a native call is dispatched by index, and
+//! a method family is lowered as the target the check recorded in `Facts`.
 
 use crate::compiler::bytecode::{Code, Instruction};
 use crate::compiler::model::{
-    DeclarationId, Expression, Function, MatchArm, MatchBody, Pattern, Statement, StringPart,
+    DeclarationId, Expression, Function, MatchArm, MatchBody, Pattern, Site, Statement, StringPart,
 };
 use crate::compiler::operator_facts::BinaryInstruction;
 use crate::syntax::{BinaryOp, UnaryOp};
@@ -227,10 +228,10 @@ impl Lowerer<'_> {
                 dst
             }
             Expression::Reference { declaration, .. } => self.lower_reference(*declaration),
-            // The check resolves every family callee it accepts, so lowering
-            // reads only the reference edge it wrote.
+            // The check records a family callee's target in `Facts`; the
+            // family itself is only ever a call's callee.
             Expression::Method { .. } => {
-                unreachable!("the check resolved every call's callee");
+                unreachable!("a method family is only a call");
             }
             Expression::Function(function) => self.lower_function_expression(function),
             Expression::Call {
@@ -424,7 +425,13 @@ impl Lowerer<'_> {
                         node.is_anonymous_function(),
                         "a named function has a code from the declaration layout"
                     );
+                    // A method site inside the anonymous body is keyed by this
+                    // declaration, so the lazy code starts under its owner and
+                    // the enclosing body's owner is restored afterwards.
+                    let previous = self.current;
+                    self.current = declaration;
                     let code = self.lower_function_code(function);
+                    self.current = previous;
                     self.declaration_codes[declaration.0] = Some(code);
                     code
                 }
@@ -456,10 +463,45 @@ impl Lowerer<'_> {
             .collect()
     }
 
+    /// The declaration a method-family callee names, when it is one: the
+    /// target the check recorded. A missing fact is a compiler bug, since every
+    /// lowered body was checked.
+    fn method_target(&self, callee: &Expression) -> Option<DeclarationId> {
+        let Expression::Method { span, .. } = callee else {
+            return None;
+        };
+        Some(
+            self.facts
+                .method_target(Site::new(self.current, *span))
+                .expect("every method site has a target after the check"),
+        )
+    }
+
     /// Lower an application. A native is the one callable with no value form,
     /// so it is dispatched by index; every other callee is an expression whose
-    /// value is called.
+    /// value is called. A method family's target is a fact, and lowering it is
+    /// the same as lowering the reference the check selected: the callee value
+    /// first, then the arguments.
     fn lower_call(&mut self, callee: &Expression, arguments: &[Expression], dst: u16) {
+        if let Some(target) = self.method_target(callee) {
+            if let Some(native) = self.program.declaration(target).native {
+                let arguments = self.lower_arguments(arguments);
+                self.instructions.push(Instruction::CallNative {
+                    dst,
+                    native,
+                    arguments,
+                });
+                return;
+            }
+            let callee = self.lower_reference(target);
+            let arguments = self.lower_arguments(arguments);
+            self.instructions.push(Instruction::CallValue {
+                dst,
+                callee,
+                arguments,
+            });
+            return;
+        }
         if let Expression::Reference { declaration, .. } = callee
             && let Some(native) = self.program.declaration(*declaration).native
         {
@@ -489,6 +531,19 @@ impl Lowerer<'_> {
         else {
             unreachable!("the checker rejects `async` without a call");
         };
+        if let Some(target) = self.method_target(callee.as_ref()) {
+            if let Some(native) = self.program.declaration(target).native {
+                let arguments = self.lower_arguments(arguments);
+                self.instructions
+                    .push(Instruction::AsyncNative { native, arguments });
+                return;
+            }
+            let callee = self.lower_reference(target);
+            let arguments = self.lower_arguments(arguments);
+            self.instructions
+                .push(Instruction::AsyncValue { callee, arguments });
+            return;
+        }
         if let Expression::Reference { declaration, .. } = callee.as_ref()
             && let Some(native) = self.program.declaration(*declaration).native
         {

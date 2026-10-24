@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::compiler::model::{DeclarationId, Program};
+use crate::compiler::model::{DeclarationId, Facts, Program};
 use crate::compiler::{BuildFailure, ProgramSource, build, program_main};
 use crate::project::Project;
 
@@ -68,8 +68,9 @@ pub(crate) fn checked_program(source: &str) -> Program {
     checked_files(&[("main.kiru", source)]).expect("the program checks")
 }
 
-/// Build one source file, returning the checked program and its root `main`.
-pub(crate) fn checked_program_and_entry(source: &str) -> (Program, DeclarationId) {
+/// Build one source file, returning the checked program, the facts the check
+/// derived, and its root `main`.
+pub(crate) fn checked_program_and_entry(source: &str) -> (Program, Facts, DeclarationId) {
     let source = VirtualSource::new(&[("main.kiru", source)]);
     let built = build(&virtual_project(source.root()), &source).expect("the program checks");
     assert!(
@@ -80,7 +81,7 @@ pub(crate) fn checked_program_and_entry(source: &str) -> (Program, DeclarationId
     let main = program_main(&built.program)
         .expect("the entry is well formed")
         .expect("the program declares a root main");
-    (built.program, main)
+    (built.program, built.facts, main)
 }
 
 /// Build a set of named files, returning the checked program or the first

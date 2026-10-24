@@ -1,7 +1,7 @@
 //! Byte spans into source text.
 
 /// A half-open byte range `[start, end)` into one source file.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Span {
     pub start: usize,
     pub end: usize,

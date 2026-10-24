@@ -34,10 +34,6 @@ impl Program {
         &self.declarations[id.0]
     }
 
-    pub(crate) fn declaration_mut(&mut self, id: DeclarationId) -> &mut Declaration {
-        &mut self.declarations[id.0]
-    }
-
     /// A declared type by its id.
     pub(crate) fn namespace(&self, id: NamespaceId) -> &Namespace {
         &self.namespaces[id.0]

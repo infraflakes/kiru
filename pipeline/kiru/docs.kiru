@@ -1,4 +1,3 @@
-
 fn build_docs(docs: Project) {
   run(docs, "bun install --frozen-lockfile");
   run(docs, "bun run build");
