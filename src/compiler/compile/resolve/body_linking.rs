@@ -8,8 +8,8 @@ use crate::compiler::Diagnostic;
 use crate::compiler::compile::load::LoadedProgram;
 use crate::compiler::model::Type;
 use crate::compiler::model::{
-    Declaration, DeclarationId, Derived, Expression, Field, FileId, Function, MatchArm, MatchBody,
-    NamespaceId, Program, Statement, StringPart,
+    Declaration, DeclarationId, DeclarationKind, Derived, Expression, Field, FileId, Function,
+    FunctionBinding, MatchArm, MatchBody, NamespaceId, Program, Statement, StringPart,
 };
 use crate::syntax::Span;
 use crate::syntax::{Expression as ParsedExpression, Statement as ParsedStatement, TypeExpr};
@@ -91,6 +91,14 @@ impl Builder {
             };
             self.declarations[declaration_id.0] = Declaration {
                 kind: scoped.kind,
+                // A top-level `fn` owns its namespace name. A filed function
+                // is bound to its type instead, which is stage 0b-2's fact.
+                binding: match pending {
+                    Pending::Callable { .. } if scoped.kind == DeclarationKind::Function => {
+                        Some(FunctionBinding::Named)
+                    }
+                    Pending::Callable { .. } | Pending::ModuleValue { .. } => None,
+                },
                 name,
                 name_span: skeleton.name_span,
                 public: skeleton.public,
@@ -589,6 +597,16 @@ impl Builder {
         span: Span,
         context: &mut Context,
     ) -> Result<Expression, Diagnostic> {
+        // The literal is one anonymous function declaration. It is contained
+        // by the body that writes it and owns no namespace name, so the
+        // enclosing body holds a reference to it rather than the body itself.
+        let declaration =
+            self.declare_anonymous_function(context.current, context.file, context.namespace, span);
+        // The body's parameters and locals belong to the anonymous function,
+        // while the enclosing scopes stay open so an outer local still
+        // resolves and is captured.
+        let enclosing = context.current;
+        context.current = declaration;
         context.scopes.push();
         let mut parameter_ids = Vec::new();
         for parameter in parameters {
@@ -600,7 +618,7 @@ impl Builder {
                     namespace: context.namespace,
                     name: &parameter.name,
                     name_span: parameter.span,
-                    owner: context.current,
+                    owner: declaration,
                     ty,
                 },
             )?;
@@ -608,6 +626,7 @@ impl Builder {
         }
         let linked_body = self.link_statements(body, context)?;
         context.scopes.pop();
+        context.current = enclosing;
         let declared_return = match return_type {
             Some(expr) => Some(self.resolve_type(expr, context.namespace, context.file, &[])?),
             None => None,
@@ -615,14 +634,23 @@ impl Builder {
         // Capture only the enclosing locals the body reads, including those a
         // nested literal needs, not every local in scope.
         let captures = self.collect_captures(&linked_body, &parameter_ids);
-        Ok(Expression::Function(Function {
+        let ty = Type::Function {
+            parameters: parameter_ids
+                .iter()
+                .map(|parameter| self.declarations[parameter.0].ty.clone())
+                .collect(),
+            returns: declared_return.clone().map(Box::new),
+        };
+        self.declarations[declaration.0].ty = ty;
+        self.declarations[declaration.0].value = Some(Expression::Function(Function {
             declared_return,
             parameters: parameter_ids,
             body: linked_body,
             type_parameters: Vec::new(),
             captures,
             span,
-        }))
+        }));
+        Ok(Expression::Reference { declaration, span })
     }
 
     fn link_match_body(

@@ -164,11 +164,17 @@ impl<'a> Written<'a> {
         }
     }
 
-    /// Walk every body the file holds: a declaration's function body, a
-    /// module value's initializer, and a closure written inside either.
+    /// Walk every body the file holds: a named function's body, a module
+    /// value's initializer, and every closure literal's anonymous function.
+    /// An anonymous function carries the file its literal is written in even
+    /// though the file's declaration list does not contain it, and the
+    /// enclosing body holds only a reference to it, so each body is walked
+    /// once.
     fn walk(&mut self, program: &Program) {
-        for &declaration in &program.files[self.file.0].declarations {
-            let node = program.declaration(declaration);
+        for node in program.declarations.iter() {
+            if node.file != Some(self.file) {
+                continue;
+            }
             if let Some(function) = node.function() {
                 self.parameters(function);
                 walk_statements(self, &function.body);
@@ -189,7 +195,17 @@ impl<'a> Written<'a> {
     /// name it ends at carries a fact of its own.
     fn facts(&self, loaded: &LoadedProgram, program: &Program) -> (Vec<Named>, Vec<Span>) {
         let mut facts = Vec::new();
+        // A closure literal writes no name: the reference the enclosing body
+        // holds marks the literal's span, so it paints nothing and falls back
+        // to the lexer's roles like any other punctuation.
+        let closure_spans: Vec<Span> = self
+            .references
+            .iter()
+            .filter(|(_, declaration)| program.declaration(*declaration).is_anonymous_function())
+            .map(|(span, _)| *span)
+            .collect();
         let mut paths = self.paths.clone();
+        paths.retain(|path| !closure_spans.contains(path));
         let named = |facts: &mut Vec<Named>, span: Span, role: SemanticRole, declaration: bool| {
             facts.push(Named {
                 span,
@@ -198,7 +214,9 @@ impl<'a> Written<'a> {
             });
         };
         for (index, node) in program.declarations.iter().enumerate() {
-            if node.file != Some(self.file) {
+            // An anonymous function owns no namespace name, so it has no name
+            // fact. Its body's own tokens come from the walk above.
+            if node.file != Some(self.file) || node.is_anonymous_function() {
                 continue;
             }
             let declaration = DeclarationId(index);
@@ -272,6 +290,11 @@ impl<'a> Written<'a> {
         }
         for &(span, declaration) in &self.references {
             let node = program.declaration(declaration);
+            // The enclosing body's edge to a closure is a reference in the
+            // model, but the closure literal writes no name.
+            if node.is_anonymous_function() {
+                continue;
+            }
             named(
                 &mut facts,
                 written_name(self.source, span),

@@ -35,8 +35,12 @@ impl DeclarationLayout {
         let mut next_code = 0;
         let mut next_global = 0;
         for (index, declaration) in program.declarations.iter().enumerate() {
-            let has_code = (declaration.kind.has_body() && declaration.kind.callable())
-                || declaration.kind.module_value();
+            // An anonymous function owns no code at layout time: the
+            // enclosing body's reference allocates its code where the literal
+            // is lowered, so the code order stays the traversal's order.
+            let has_code = !declaration.is_anonymous_function()
+                && ((declaration.kind.has_body() && declaration.kind.callable())
+                    || declaration.kind.module_value());
             if has_code {
                 codes[index] = Some(next_code);
                 next_code += 1;

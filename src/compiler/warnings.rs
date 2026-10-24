@@ -30,6 +30,9 @@ pub(crate) fn unused_declarations(
         .iter()
         .enumerate()
         .filter(|(index, _)| !reachable.contains(&DeclarationId(*index)))
+        // An anonymous function is contained by the body that writes it and
+        // owns no namespace name, so it is never an unused declaration.
+        .filter(|(_, declaration)| !declaration.is_anonymous_function())
         .filter(|(_, declaration)| match declaration.kind {
             DeclarationKind::Function | DeclarationKind::ModuleValue => true,
             DeclarationKind::Local

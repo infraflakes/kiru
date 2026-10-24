@@ -20,8 +20,8 @@ mod verify_spans;
 mod visitors;
 
 pub(crate) use declarations::{
-    Declaration, DeclarationKind, Derived, RuntimeType, TypeDecl, TypeFieldDecl, TypeKind, TypeUse,
-    VariantDecl,
+    Declaration, DeclarationKind, Derived, FunctionBinding, RuntimeType, TypeDecl, TypeFieldDecl,
+    TypeKind, TypeUse, VariantDecl,
 };
 pub(crate) use expressions::{
     Expression, Field, Function, MatchArm, MatchBody, Pattern, Statement, StringPart,

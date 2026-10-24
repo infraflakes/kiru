@@ -125,6 +125,8 @@ A `rec`, an `enum`, a named function, an anonymous function, a module value, and
 
 A named function, an anonymous function, a method, and an associated function share one `Function` form. Body, signature, type, flow, call behavior, and ownership are the same in every binding. The difference is the binding and its environment: a named function owns a namespace name and has no captures; an anonymous function owns no namespace name, is contained by the function or value whose body writes it, and captures the enclosing function locals it reads. A method's receiver is the first parameter of a function whose binding says `Method`; an associated function has no receiver. A closure literal in the surface is an anonymous function; `fn name(...)` is a named function, and `fn(types) -> result` is a function type.
 
+A module value is not a function, but its initializer is a body: a match pattern binding written in that initializer is a local owned by the module value. A closure written in the initializer is an anonymous function and owns its own parameters and locals.
+
 The type parameters and fields are members of the type declaration.
 
 ### 5.3 One edge family
@@ -141,7 +143,7 @@ Every relation is an edge with a kind, a source, a target, and the source span t
 | `call` | Call site → Declaration | What a call runs | The callee is callable |
 | `use` | Use site → Declaration / Namespace | What a use brings in | The target is a namespace, type, or free function |
 | `delivery` | Namespace + name → target | What a use delivers | The status is one derived fact: taken, unused, redundant, shadowed |
-| `owner` | Member → Function | Which body owns a parameter or local | The owner is a named or anonymous function |
+| `owner` | Member → Function / Value | Which body owns a parameter or local | The owner is a named or anonymous function, or the module value whose initializer declares the local |
 | `capture` | Anonymous function → Local | A closure reads an outer local | The function is anonymous and the local is owned by an enclosing function |
 | `entry` | Tree → Declaration | Where the program starts | Exactly one for a program tree; none for the embedded library |
 | `origin` | Tree → Program / Embedded | Why the tree exists | A program tree comes from the manifest; the library is compiler input |
@@ -338,7 +340,7 @@ These are the invariants the verifier enforces. They are not documentation; they
 | 2 | Every edge endpoint exists and has the required kind | Build, derive |
 | 3 | Every name edge's key equals the target's name, and the target's namespace equals the source namespace | Build |
 | 4 | Every declaration is contained by exactly one file, or by the function or value whose body writes it, and names exactly one namespace | Build |
-| 5 | Every parameter/local is owned by exactly one function, named or anonymous; every capture is an outer local owned by an enclosing function; a named function has no captures | Build |
+| 5 | Every parameter/local is owned by exactly one function, named or anonymous, or by the module value whose initializer declares it; every capture is an outer local owned by an enclosing function; a named function has no captures | Build |
 | 6 | A method's binding receiver equals its first parameter's type; an associated function has no receiver; a named function owns one namespace name; an anonymous function owns none | Build |
 | 7 | Every type edge points at a type declaration; every type argument count matches | Derive |
 | 8 | Every resolved site's declaration is visible from the site's namespace | Derive |
@@ -410,7 +412,7 @@ The migration is staged so every stage has a proof and none requires a flag day.
 | **-1. Syntax boundary** | Make `src/syntax` independent of `crate::compiler`: remove the model declaration kind from the AST, move operator typing facts to the compiler, keep only spelling/precedence in the parser | Same output | `src/syntax` has no `crate::compiler` import; 237 tests; payload sha unchanged |
 | **0. Verifier** | Add the full relational verifier over the current model; run it after resolve, check, and prune | Unchanged | All existing tests; the verifier may report the graph defects listed in section 2 |
 | **0a. Closure literal syntax** | A closure literal is `[parameters] -> result? { body }`; `fn name(...)` is a named declaration, and `fn(types) -> result` is a function type | Same program semantics; source spelling changes | Parser/tree-sitter/docs agree; 237 tests; payload sha unchanged |
-| **0b. Function nodes and binding facts** | One `Function` form for named, anonymous, method, and associated functions; anonymous functions get declaration nodes; `owner` points at the function; remove the module-value owner exception | Same output | Payload sha unchanged; verifier green; no module-value owner exception |
+| **0b. Function nodes and binding facts** | One `Function` form for named, anonymous, method, and associated functions; anonymous functions get declaration nodes and own their parameters/locals; a module value keeps the pattern bindings its initializer declares | Same output | Payload sha unchanged; verifier green; no module-value exception for closure locals |
 | **1. Freeze the checker** | Move method selection, variant binding types, match exhaustiveness, and halting into derived facts; stop rewriting bodies | Same output | Payload sha unchanged; graph verifier green |
 | **2. Types as declarations** | One declaration form for types; remove the parallel type identity; add type edges | Same output | Payload sha unchanged; no dead `Rec`/`Enum` arms |
 | **3. Delivery facts** | Use sites and delivery status are derived facts; remove `used_uses`, the warning re-resolution, and the redundant-use special case | Same warnings | Warning tests; the duplicate case is one status, not a special rule |
@@ -421,7 +423,7 @@ The migration is staged so every stage has a proof and none requires a flag day.
 | **8. Incremental layer** | Query cache, durable embedded tree, per-file invalidation | Same results, faster | Cold/warm LSP timings; same diagnostics and tokens |
 | **9. Parallel layer** | Per-file and per-namespace work in parallel; deterministic merge | Same results | Byte-identical payload; graph verifier green |
 
-Stage 0 runs the relational verifier in debug builds after resolution, after a check that reported no diagnostics, and after prune. The verifier lives in `src/compiler/model/verify_relations.rs` until stage 7 moves it to `verify.rs`. It reports every violation; the only violations it accepts are the two current-graph defects the migration already names: a type is not a declaration node and is not listed in a file (fixed in stage 2), and prune does not remap `Namespace.brought` (fixed in stage 5). Every other violation is a compiler bug and panics. The resolved boundary treats a `Bind` target as a resolution fact while an `Assign`/`FieldAssign` target may still be a module value that the checker will reject; the checked and pruned boundaries require every binding target to be local. A module value may own the locals of a closure in its initializer until stage 0b gives function literals their own nodes; that stage removes the exception and the invariant becomes "the owner is a named or anonymous function."
+Stage 0 runs the relational verifier in debug builds after resolution, after a check that reported no diagnostics, and after prune. The verifier lives in `src/compiler/model/verify_relations.rs` until stage 7 moves it to `verify.rs`. It reports every violation; the only violations it accepts are the two current-graph defects the migration already names: a type is not a declaration node and is not listed in a file (fixed in stage 2), and prune does not remap `Namespace.brought` (fixed in stage 5). Every other violation is a compiler bug and panics. The resolved boundary treats a `Bind` target as a resolution fact while an `Assign`/`FieldAssign` target may still be a module value that the checker will reject; the checked and pruned boundaries require every binding target to be local. A module value may own the locals of a closure in its initializer until stage 0b gives function literals their own nodes; that stage removes the exception for closure locals. A module value still owns the pattern bindings its own initializer declares, because an initializer is a body. The invariant becomes "the owner is a named or anonymous function, or the module value whose initializer declares the local."
 
 The payload sha is the invariant for every behavior-preserving stage. A stage that changes a warning's semantics is not a refactor and needs the owner's word.
 
@@ -434,7 +436,7 @@ The syntax boundary prune is done. `src/syntax` imports no compiler model: a dec
 Two changes follow, and neither is a behavior-neutral prune:
 
 - **Stage 0a** changes the closure literal surface to `[parameters] -> result? { body }`. `fn name(...)` stays the named declaration and `fn(types) -> result` stays the function type. The program semantics do not change; the source spelling and the bracket diagnostics do. This is a language change, so tree-sitter, docs, `ROADMAP.md`, `AGENTS.md`, and the tests move with it.
-- **Stage 0b** gives an anonymous function its own declaration node and makes the function binding a fact. Named, anonymous, method, and associated functions share one `Function` form; every parameter/local is owned by its function. This is behavior-preserving and removes the module-value owner exception.
+- **Stage 0b** gives an anonymous function its own declaration node and makes the function binding a fact. Named, anonymous, method, and associated functions share one `Function` form; a closure's parameters/locals are owned by the closure, while a module value owns the pattern bindings its initializer declares. This is behavior-preserving and removes the module-value exception for closure locals.
 
 Everything else is already a migration stage: the verifier, type declarations, delivery status, entry/list/native/tree facts, pruning as a view, and the one report. There is no second standalone architecture prune.
 
@@ -506,7 +508,7 @@ The backend is consistent when all of these are true:
 - [ ] A pass cannot mutate the given graph; the API hands out read-only views.
 - [ ] A type is a declaration with one id; no parallel type identity exists.
 - [ ] A named function, an anonymous function, a method, and an associated function share one Function form; they differ by a binding fact, not by a pass's interpretation.
-- [ ] Every parameter/local is owned by its function node, named or anonymous.
+- [ ] Every parameter/local is owned by its function node, named or anonymous, or by the module value whose initializer declares it.
 - [ ] A call site keeps its written path; its target is a derived fact.
 - [ ] A use delivery has one status fact; no warning pass re-resolves it.
 - [ ] Entry, list, native, and tree origin are declared facts; no pass tests a path or a name for them.

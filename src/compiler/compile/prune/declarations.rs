@@ -3,8 +3,8 @@
 use std::collections::HashSet;
 
 use crate::compiler::model::{
-    Declaration, DeclarationId, Expression, MatchBody, Pattern, Program, Statement, VisitorMut,
-    walk_expression_mut,
+    Declaration, DeclarationId, Expression, FunctionBinding, MatchBody, Pattern, Program,
+    Statement, VisitorMut, walk_expression_mut,
 };
 
 /// Keep only the declarations the entry reaches, remapping every id, and
@@ -83,12 +83,16 @@ fn remap(program: &mut Program, mapping: &[Option<DeclarationId>]) {
     }
 }
 
-/// Remap the declaration-level edges: the owner, a function's parameters, and
-/// the body or initializer the declaration owns. The bodies are rewritten by
-/// the edge remapper, which owns every statement and expression variant.
+/// Remap the declaration-level edges: the owner, the container of an anonymous
+/// function, a function's parameters, and the body or initializer the
+/// declaration owns. The bodies are rewritten by the edge remapper, which owns
+/// every statement and expression variant.
 fn remap_declaration(declaration: &mut Declaration, mapping: &[Option<DeclarationId>]) {
     if let Some(owner) = &mut declaration.owner {
         *owner = mapped(mapping, *owner);
+    }
+    if let Some(FunctionBinding::Anonymous { container }) = &mut declaration.binding {
+        *container = mapped(mapping, *container);
     }
     let mut remapper = EdgeRemapper { mapping };
     if let Some(value) = &mut declaration.value {

@@ -108,6 +108,7 @@ impl Builder {
         let id = self.create_node(
             Skeleton {
                 kind: DeclarationKind::Native,
+                binding: None,
                 name: row.name.to_owned(),
                 name_span: Span::new(0, 0),
                 public: true,

@@ -5,9 +5,9 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 use crate::compiler::model::{
-    Declaration, DeclarationId, DeclarationKind, Derived, File, FileId, Group, Interner,
-    MethodTable, NameTable, Namespace, NamespaceId, Program, TypeDecl, TypeFieldDecl, TypeKind,
-    TypeTable, VariantDecl, first_duplicate,
+    Declaration, DeclarationId, DeclarationKind, Derived, File, FileId, FunctionBinding, Group,
+    Interner, MethodTable, NameTable, Namespace, NamespaceId, Program, TypeDecl, TypeFieldDecl,
+    TypeKind, TypeTable, VariantDecl, first_duplicate,
 };
 use crate::compiler::model::{Type, TypeHead, TypeId, TypeUse};
 use crate::compiler::native_registry::Native;
@@ -37,6 +37,9 @@ pub(in crate::compiler::compile::resolve) struct DeclarationSite<'a> {
 /// What is known about a declaration before its body is linked.
 pub(in crate::compiler::compile::resolve) struct Skeleton {
     pub(in crate::compiler::compile::resolve) kind: DeclarationKind,
+    /// How the declaration is bound when it is a function: a namespace name,
+    /// or the body that writes the closure literal. Every other kind has none.
+    pub(in crate::compiler::compile::resolve) binding: Option<FunctionBinding>,
     pub(in crate::compiler::compile::resolve) name: String,
     pub(in crate::compiler::compile::resolve) name_span: Span,
     /// Whether another namespace may reach the declaration.
@@ -236,6 +239,7 @@ impl Builder {
     ) -> DeclarationId {
         let id = DeclarationId(self.skeletons.len());
         let kind = skeleton.kind;
+        let binding = skeleton.binding;
         let name = skeleton.name.clone();
         let name_span = skeleton.name_span;
         let file = skeleton.file;
@@ -245,6 +249,7 @@ impl Builder {
         let declaration = match cell {
             Some(Slot::Binding(ty)) => Declaration {
                 kind,
+                binding,
                 name,
                 name_span,
                 public,
@@ -258,6 +263,7 @@ impl Builder {
             },
             Some(Slot::Native(ty, native)) => Declaration {
                 kind,
+                binding,
                 name,
                 name_span,
                 public,
@@ -274,6 +280,7 @@ impl Builder {
             // linked before the first pass settles every one of them.
             None => Declaration {
                 kind,
+                binding,
                 name,
                 name_span,
                 public,
@@ -320,9 +327,22 @@ impl Builder {
             file,
             reported_path,
         } = site;
+        // A namespace-level function owns its name; every other kind is
+        // registered under a name that belongs to a namespace, a type, an
+        // `impl` block, or a local scope instead of a function binding.
+        let binding = match kind {
+            DeclarationKind::Function => Some(FunctionBinding::Named),
+            DeclarationKind::ModuleValue
+            | DeclarationKind::Local
+            | DeclarationKind::Rec
+            | DeclarationKind::Enum
+            | DeclarationKind::Impl
+            | DeclarationKind::Native => None,
+        };
         let id = self.create_node(
             Skeleton {
                 kind,
+                binding,
                 name: name.to_owned(),
                 name_span,
                 public,
@@ -376,6 +396,35 @@ impl Builder {
             table.names.insert(symbol, id);
         }
         Ok(id)
+    }
+
+    /// Reserve the node a closure literal's value holds. The node owns no
+    /// namespace name and joins no registry: its container is the function or
+    /// module value whose body writes the literal, and its parameters and
+    /// locals are owned by the node itself. Its type and value are filled when
+    /// the literal is linked.
+    pub(in crate::compiler::compile::resolve) fn declare_anonymous_function(
+        &mut self,
+        container: DeclarationId,
+        file: FileId,
+        namespace: NamespaceId,
+        span: Span,
+    ) -> DeclarationId {
+        self.create_node(
+            Skeleton {
+                kind: DeclarationKind::Function,
+                binding: Some(FunctionBinding::Anonymous { container }),
+                name: "<closure>".to_owned(),
+                name_span: span,
+                public: false,
+                receiver_head: None,
+                associated_head: None,
+                file: Some(file),
+                namespace,
+            },
+            None,
+            None,
+        )
     }
 
     /// Whether `caller` may reach a bound function filed in `owner`: in its own

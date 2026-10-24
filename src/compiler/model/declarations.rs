@@ -1,10 +1,11 @@
 //! The declaration nodes: a name, the type it holds, and the value it holds.
 //!
-//! A declaration's value is an expression. A named function is a function
-//! expression, the same node as a `[...] { .. }` literal, so a function is
-//! not a separate kind of value. A parameter or local binding has no value
-//! form: its value is storage. A native is the one value the runtime provides
-//! rather than the program, so it carries a marker instead of an expression.
+//! A declaration's value is an expression. A named function and a closure
+//! literal are one `Function` form; the binding says which one it is, and a
+//! closure is contained by the body that writes it instead of owning a
+//! namespace name. A parameter or local binding has no value form: its value
+//! is storage. A native is the one value the runtime provides rather than the
+//! program, so it carries a marker instead of an expression.
 
 mod group;
 
@@ -17,12 +18,26 @@ use super::ids::{DeclarationId, FileId, NamespaceId};
 use crate::compiler::model::Type;
 use crate::syntax::Span;
 
+/// How a function declaration is bound to the program.
+///
+/// A named function owns a namespace name and has no capturing environment.
+/// An anonymous function owns no name: it is contained by the body that writes
+/// the closure literal, and it captures the enclosing locals that body reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FunctionBinding {
+    Named,
+    Anonymous { container: DeclarationId },
+}
+
 /// One declaration node: its kind, its name, the type it holds, and the value
 /// it holds. The kind is the one place every form fact is read from; a pass
 /// never re-derives it from the payload fields.
 #[derive(Debug)]
 pub(crate) struct Declaration {
     pub(crate) kind: DeclarationKind,
+    /// The binding of a function declaration. Every other kind has none: only
+    /// a function has a namespace name or a containing body to be bound to.
+    pub(crate) binding: Option<FunctionBinding>,
     pub(crate) name: String,
     /// The span of the written name, for a query that asks where a
     /// declaration's name stands. A native has none: its span is empty.
@@ -62,6 +77,36 @@ impl Declaration {
     /// The value expression when this node holds one.
     pub(crate) fn value(&self) -> Option<&Expression> {
         self.value.as_ref()
+    }
+
+    /// Whether this node is a closure literal's anonymous function.
+    pub(crate) fn is_anonymous_function(&self) -> bool {
+        matches!(self.binding, Some(FunctionBinding::Anonymous { .. }))
+    }
+
+    /// The body that contains an anonymous function: the function or module
+    /// value whose expression wrote the closure literal. No other node has a
+    /// container beyond its file.
+    #[cfg(debug_assertions)]
+    pub(crate) fn anonymous_container(&self) -> Option<DeclarationId> {
+        match self.binding {
+            Some(FunctionBinding::Anonymous { container }) => Some(container),
+            Some(FunctionBinding::Named) | None => None,
+        }
+    }
+
+    /// Whether the node owns a namespace name. An anonymous function is a
+    /// function by kind but belongs to the body that writes it, so it is never
+    /// a namespace-level name.
+    #[cfg(debug_assertions)]
+    pub(crate) fn owns_name(&self) -> bool {
+        self.kind.owns_name() && !self.is_anonymous_function()
+    }
+
+    /// Whether the node may be the program's entry. The entry is a named
+    /// namespace-level function, so an anonymous function is never one.
+    pub(crate) fn may_be_entry(&self) -> bool {
+        self.kind.may_be_entry() && !self.is_anonymous_function()
     }
 
     /// Whether the runtime provides this callable.

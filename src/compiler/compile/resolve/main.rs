@@ -61,7 +61,7 @@ pub(crate) fn program_main(
         .file
         .expect("a root main is a file declaration, so it has a file");
     let path = &program.files[file.0].path;
-    if !declaration.kind.may_be_entry() {
+    if !declaration.may_be_entry() {
         return Err(Diagnostic::new(
             path,
             declaration.name_span,

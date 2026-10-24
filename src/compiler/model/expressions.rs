@@ -6,9 +6,10 @@ use crate::syntax::{BinaryOp, Span, UnaryOp};
 
 use super::ids::{DeclarationId, NamespaceId};
 
-/// A function literal: a named `fn` declaration's body, or a `[...] { .. }`
-/// written in expression position. The same node either way; only the name of
-/// the declaration that holds it differs.
+/// A function body: a named `fn` declaration's body, or the body of the
+/// anonymous function a `[...] { .. }` literal declares. The same node either
+/// way; the holding declaration's binding names a namespace name or a
+/// containing body, and only an anonymous function captures an environment.
 #[derive(Debug)]
 pub(crate) struct Function {
     /// The return type the literal declares in its own annotation. A named
@@ -123,8 +124,9 @@ pub(crate) enum Expression {
         exhaustive: bool,
         span: Span,
     },
-    /// A function literal: a named function's value, or a `[...] { .. }`
-    /// written in expression position.
+    /// A function body: a named function's value, or the anonymous function a
+    /// closure literal declares. Only a holding declaration's value carries
+    /// this form; a body that writes a literal holds a reference to it.
     Function(Function),
 }
 

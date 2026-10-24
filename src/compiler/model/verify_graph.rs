@@ -11,7 +11,7 @@ use crate::compiler::model::{Type, TypeId};
 use crate::compiler::native_registry::native_shape;
 
 use super::Program;
-use super::declarations::TypeKind;
+use super::declarations::{DeclarationKind, FunctionBinding, TypeKind};
 use super::expressions::{Expression, MatchBody, Pattern, Statement};
 use super::ids::DeclarationId;
 use super::verify_spans::verify_spans;
@@ -87,6 +87,24 @@ pub(crate) fn validate_program_structure(program: &Program) -> Result<(), String
         )?;
         if let Some(owner) = declaration.owner {
             check_id(owner.0, declaration_count, "a declaration owner")?;
+        }
+        match declaration.binding {
+            // Only a function binds: a named one to a namespace name, an
+            // anonymous one to the body that writes its literal.
+            Some(FunctionBinding::Named) if declaration.kind != DeclarationKind::Function => {
+                return Err("a non-function declaration names a named binding".to_owned());
+            }
+            Some(FunctionBinding::Anonymous { container }) => {
+                if declaration.kind != DeclarationKind::Function {
+                    return Err("a non-function declaration names an anonymous binding".to_owned());
+                }
+                check_id(
+                    container.0,
+                    declaration_count,
+                    "an anonymous function's container",
+                )?;
+            }
+            Some(FunctionBinding::Named) | None => {}
         }
         check_type(&declaration.ty, type_count, "a declaration type")?;
         if declaration.kind.callable() && declaration.kind.has_body() {

@@ -1,9 +1,10 @@
 //! Closure capture analysis.
 //!
-//! A function literal captures only the enclosing locals its body reads,
-//! following into nested literals so a value they need is present in this
-//! frame too. A reference to a local the literal itself declares is not a
-//! capture.
+//! A function literal captures only the enclosing locals its body reads. A
+//! nested literal is an anonymous function declaration of its own, so the
+//! enclosing literal also carries the captures that nested function needs: a
+//! value a nested body reads must be present in this frame too. A reference to
+//! a local the literal itself declares is not a capture.
 
 use crate::compiler::model::{
     Declaration, DeclarationId, Expression, MatchBody, Pattern, Statement, walk_statements,
@@ -12,10 +13,10 @@ use crate::compiler::model::{
 use super::builder::Builder;
 
 impl Builder {
-    /// The enclosing locals a function literal body reads, following into
-    /// nested literals so a value they need is available in this frame. A
-    /// reference is a capture when it names a local of an enclosing function
-    /// that no function nested here owns.
+    /// The enclosing locals a function literal body reads, plus the enclosing
+    /// locals a nested literal's own captures name, so a value they need is
+    /// available in this frame. A reference is a capture when it names a local
+    /// of an enclosing function that this function does not declare.
     pub(in crate::compiler::compile::resolve) fn collect_captures(
         &self,
         body: &[Statement],
@@ -35,9 +36,9 @@ impl Builder {
     }
 }
 
-/// Collects the local declarations a function literal body introduces anywhere
-/// within it, including those of nested literals. A reference to one of these
-/// is not a capture of the enclosing literal.
+/// Collects the local declarations a function literal body introduces: its
+/// parameters and its bindings. A reference to one of these is not a capture
+/// of the literal.
 struct LocalCollector {
     locals: std::collections::HashSet<DeclarationId>,
 }
@@ -95,12 +96,25 @@ impl crate::compiler::model::Visitor for LocalCollector {
     }
 }
 
-/// Collects the enclosing locals a function literal body reads, following into
-/// nested literals so a value they need is present in this frame too.
+/// Collects the enclosing locals a function literal body reads, and the
+/// captures a nested literal declaration names, so a value they need is
+/// present in this frame too.
 struct CaptureCollector<'a> {
     declarations: &'a [Declaration],
     locals: &'a std::collections::HashSet<DeclarationId>,
     captures: Vec<DeclarationId>,
+}
+
+impl CaptureCollector<'_> {
+    /// Record one enclosing local, unless this function declares it or a
+    /// previous reference already named it.
+    fn record(&mut self, declaration: DeclarationId) {
+        let is_local = self.declarations[declaration.0].kind.local();
+        if is_local && !self.locals.contains(&declaration) && !self.captures.contains(&declaration)
+        {
+            self.captures.push(declaration);
+        }
+    }
 }
 
 impl crate::compiler::model::Visitor for CaptureCollector<'_> {
@@ -108,9 +122,22 @@ impl crate::compiler::model::Visitor for CaptureCollector<'_> {
         let Expression::Reference { declaration, .. } = expression else {
             unreachable!("the walk names a reference");
         };
-        let is_local = self.declarations[declaration.0].kind.local();
-        if is_local && !self.locals.contains(declaration) && !self.captures.contains(declaration) {
-            self.captures.push(*declaration);
+        let target = &self.declarations[declaration.0];
+        if target.kind.local() {
+            self.record(*declaration);
+            return;
+        }
+        // A nested literal is no longer written inside this body: the body
+        // holds a reference to its declaration. Carry the nested declaration's
+        // captures into this frame, minus the locals this function already
+        // declares.
+        if target.is_anonymous_function() {
+            let nested = target
+                .function()
+                .map_or_else(Vec::new, |function| function.captures.clone());
+            for capture in nested {
+                self.record(capture);
+            }
         }
     }
 

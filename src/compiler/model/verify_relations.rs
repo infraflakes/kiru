@@ -127,13 +127,19 @@ pub(crate) enum RelationViolationKind {
     /// A file declaration is listed more than once.
     FileDeclarationListedMoreThanOnce,
 
+    /// An anonymous function names a container past the declaration table.
+    AnonymousContainerOutOfRange,
+    /// An anonymous function's container is neither a function nor a module
+    /// value whose initializer writes the literal.
+    AnonymousContainerNotOwner,
+
     /// A local binding names no owner.
     LocalOwnerMissing,
     /// A local binding's owner points past the declaration table.
     LocalOwnerOutOfRange,
-    /// A local binding's owner is neither a callable with a body nor a module
-    /// value.
-    LocalOwnerNotCallableWithBody,
+    /// A local binding's owner is neither a function nor a module value whose
+    /// initializer declares it.
+    LocalOwnerNotFunctionOrValue,
     /// A local binding's owner is declared in another namespace.
     LocalOwnerNamespaceMismatch,
     /// A function parameter points past the declaration table.
@@ -208,6 +214,9 @@ pub(crate) enum RelationViolationKind {
     ReachableCaptureOutsideClosure,
     /// A reachable declaration's owner is outside the reachable set.
     ReachableOwnerOutsideClosure,
+    /// A reachable anonymous function's container is outside the reachable
+    /// set.
+    ReachableAnonymousContainerOutsideClosure,
     /// A reachable pattern binding is outside the reachable set.
     ReachablePatternBindingOutsideClosure,
     /// A reachable local binding names no owner.
@@ -252,6 +261,7 @@ pub(crate) fn verify_relations(
     check_types(program, &mut violations);
     check_method_pools(program, &mut violations);
     check_files(program, &mut violations);
+    check_anonymous_containers(program, &mut violations);
     check_owners(program, &mut violations);
     check_declaration_types(program, &mut violations);
     check_type_declarations(program, &mut violations);
@@ -323,6 +333,29 @@ pub(crate) fn verify_reachability(
                         "{} names {}, which is not reachable",
                         declaration_label(program, *id),
                         declaration_label(program, owner)
+                    ),
+                ));
+            }
+        }
+        // An anonymous function is reachable only through the body that writes
+        // its literal, so that container must be reachable too.
+        if let Some(container) = declaration.anonymous_container() {
+            if container.0 >= program.declarations.len() {
+                violations.push(violation(
+                    RelationViolationKind::ReachableAnonymousContainerOutsideClosure,
+                    format!(
+                        "{} names container id {}, which is out of range",
+                        declaration_label(program, *id),
+                        container.0
+                    ),
+                ));
+            } else if !reachable.contains(&container) {
+                violations.push(violation(
+                    RelationViolationKind::ReachableAnonymousContainerOutsideClosure,
+                    format!(
+                        "{} names {}, which is not reachable",
+                        declaration_label(program, *id),
+                        declaration_label(program, container)
                     ),
                 ));
             }
@@ -535,7 +568,7 @@ fn check_names(program: &Program, violations: &mut Vec<RelationViolation>) {
                     ),
                 ));
             }
-            if !declaration.kind.owns_name() {
+            if !declaration.owns_name() {
                 violations.push(violation(
                     RelationViolationKind::NameDeclarationDoesNotOwnName,
                     format!(
@@ -571,7 +604,7 @@ fn check_names(program: &Program, violations: &mut Vec<RelationViolation>) {
         })
         .collect();
     for (index, declaration) in program.declarations.iter().enumerate() {
-        if !declaration.kind.owns_name() {
+        if !declaration.owns_name() {
             continue;
         }
         let id = DeclarationId(index);
@@ -857,7 +890,12 @@ fn check_files(program: &Program, violations: &mut Vec<RelationViolation>) {
         }
     }
     for (index, declaration) in program.declarations.iter().enumerate() {
-        if declaration.file.is_none() || declaration.kind.local() {
+        // An anonymous function carries the file its literal is written in,
+        // but its container is its binding, not the file's declaration list.
+        if declaration.file.is_none()
+            || declaration.kind.local()
+            || declaration.is_anonymous_function()
+        {
             continue;
         }
         let id = DeclarationId(index);
@@ -881,12 +919,48 @@ fn check_files(program: &Program, violations: &mut Vec<RelationViolation>) {
     }
 }
 
-/// The current model's ownership fact: a local is owned by a callable with a
-/// body or by a module value. A module value has no `has_body()` body of its
-/// own, but its initializer is the code that owns the closures written in it,
-/// so its parameters and bindings are owned by the module value.
-fn can_own_locals(kind: DeclarationKind) -> bool {
+/// The ownership fact: a local is owned by a function, or by the module value
+/// whose initializer declares it. A named function and an anonymous function
+/// both carry a body. A module value is not callable, but its initializer is
+/// the body that owns the pattern bindings written in it; a closure in that
+/// initializer is an anonymous function and owns its own parameters and locals.
+fn owns_locals(kind: DeclarationKind) -> bool {
     (kind.callable() && kind.has_body()) || kind.module_value()
+}
+
+/// Check every anonymous function's containing edge: the container exists and
+/// is a body that can write a literal.
+fn check_anonymous_containers(program: &Program, violations: &mut Vec<RelationViolation>) {
+    let declaration_count = program.declarations.len();
+    for (index, declaration) in program.declarations.iter().enumerate() {
+        let Some(container) = declaration.anonymous_container() else {
+            continue;
+        };
+        let id = DeclarationId(index);
+        if container.0 >= declaration_count {
+            violations.push(violation(
+                RelationViolationKind::AnonymousContainerOutOfRange,
+                format!(
+                    "{} names container id {}, which is out of range",
+                    declaration_label(program, id),
+                    container.0
+                ),
+            ));
+            continue;
+        }
+        let container_declaration = &program.declarations[container.0];
+        if !owns_locals(container_declaration.kind) {
+            violations.push(violation(
+                RelationViolationKind::AnonymousContainerNotOwner,
+                format!(
+                    "{} names {}, whose kind {:?} owns no body or initializer",
+                    declaration_label(program, id),
+                    declaration_label(program, container),
+                    container_declaration.kind
+                ),
+            ));
+        }
+    }
 }
 
 fn check_owners(program: &Program, violations: &mut Vec<RelationViolation>) {
@@ -915,11 +989,11 @@ fn check_owners(program: &Program, violations: &mut Vec<RelationViolation>) {
             continue;
         }
         let owner_declaration = &program.declarations[owner.0];
-        if !can_own_locals(owner_declaration.kind) {
+        if !owns_locals(owner_declaration.kind) {
             violations.push(violation(
-                RelationViolationKind::LocalOwnerNotCallableWithBody,
+                RelationViolationKind::LocalOwnerNotFunctionOrValue,
                 format!(
-                    "{} names {}, whose kind {:?} is not a callable with a body or a module value",
+                    "{} names {}, whose kind {:?} is not a function or a module value",
                     declaration_label(program, id),
                     declaration_label(program, owner),
                     owner_declaration.kind
@@ -1062,7 +1136,7 @@ fn check_bodies(
                 verifier.check_capture(*capture);
             }
             if let Some(return_type) = &function.declared_return {
-                verifier.check_type(return_type, "a named function's return type");
+                verifier.check_type(return_type, "a function's return type");
             }
             walk_statements(&mut verifier, &function.body);
         } else {

@@ -51,14 +51,21 @@ impl Lowerer<'_> {
     /// into a new code, then make a function value that names that code.
     fn lower_function_expression(&mut self, function: &Function) -> u16 {
         let dst = self.fresh();
+        let code = self.lower_function_code(function);
+        self.make_function(dst, code, function);
+        dst
+    }
+
+    /// Lower a function body into a code of its own and return that code's id.
+    /// The body is lowered in a fresh register context; the enclosing context
+    /// is restored before the caller continues.
+    fn lower_function_code(&mut self, function: &Function) -> u32 {
         let code = self.codes.len() as u32;
         self.codes.push(Code {
             instructions: Vec::new(),
             registers: 0,
             arity: 0,
         });
-        // Lower the nested body in its own register context, then restore the
-        // enclosing one before making the function value.
         let saved_slots = std::mem::take(&mut self.slots);
         let saved_instructions = std::mem::take(&mut self.instructions);
         let saved_loop_breaks = std::mem::take(&mut self.loop_breaks);
@@ -70,8 +77,7 @@ impl Lowerer<'_> {
         self.loop_breaks = saved_loop_breaks;
         self.next = saved_next;
         self.codes[code as usize] = nested;
-        self.make_function(dst, code, function);
-        dst
+        code
     }
 
     /// Make a function value in `dst`: the code to call and the registers
@@ -407,7 +413,22 @@ impl Lowerer<'_> {
             let function = node
                 .function()
                 .expect("a callable body is a function expression");
-            let code = self.declaration_codes[declaration.0].expect("a function has a code");
+            // A named function's code was reserved with the declaration
+            // layout. An anonymous function has none yet: the reference is
+            // where its literal stands, so this is the traversal point that
+            // allocates its code while lowering the enclosing body.
+            let code = match self.declaration_codes[declaration.0] {
+                Some(code) => code,
+                None => {
+                    debug_assert!(
+                        node.is_anonymous_function(),
+                        "a named function has a code from the declaration layout"
+                    );
+                    let code = self.lower_function_code(function);
+                    self.declaration_codes[declaration.0] = Some(code);
+                    code
+                }
+            };
             self.make_function(dst, code, function);
         } else if node.kind.module_value() {
             let global =

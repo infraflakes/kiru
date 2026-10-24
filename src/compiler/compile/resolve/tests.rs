@@ -2,7 +2,9 @@
 
 use super::{program_main, resolve_tree};
 use crate::compiler::checked_program;
-use crate::compiler::model::{Expression, Program, Statement, TypeHead};
+use crate::compiler::model::{
+    DeclarationKind, Expression, FunctionBinding, Program, Statement, TypeHead,
+};
 
 fn linked(files: &[(&str, &str)]) -> Result<Program, String> {
     linked_with_entry(files).map(|(program, _)| program)
@@ -891,9 +893,30 @@ fn a_named_function_and_a_closure_are_the_same_value() {
     let Statement::Bind { value, .. } = &body[0] else {
         panic!("main binds a closure");
     };
+    let Expression::Reference { declaration, .. } = value else {
+        panic!("the enclosing body references the closure's declaration");
+    };
+    let closure = program.declaration(*declaration);
+    assert_eq!(
+        closure.kind,
+        DeclarationKind::Function,
+        "a closure literal is a function declaration"
+    );
     assert!(
-        matches!(value, Expression::Function(_)),
-        "a closure literal is the same function expression"
+        matches!(
+            closure.binding,
+            Some(FunctionBinding::Anonymous { container }) if container == main
+        ),
+        "the closure is contained by the body that writes it"
+    );
+    assert!(
+        closure.function().is_some(),
+        "the closure declaration holds the function body"
+    );
+    assert_eq!(
+        program.declaration(double).ty,
+        closure.ty,
+        "a named function and a closure are the same value"
     );
 }
 

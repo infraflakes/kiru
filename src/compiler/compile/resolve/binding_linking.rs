@@ -44,6 +44,7 @@ impl Builder {
         let id = self.create_node(
             Skeleton {
                 kind: DeclarationKind::Local,
+                binding: None,
                 name: name.to_owned(),
                 name_span,
                 public: false,
