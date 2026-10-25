@@ -235,11 +235,16 @@ pub(crate) enum RuntimeType {
     /// The declaration's group describes the value: a `rec` is built from its
     /// fields and an `enum` from its variants.
     Declared,
-    /// The runtime represents the value itself: it is built and changed only
-    /// through the type's own operations, and it has no literal form. The
-    /// compiler registers the one such declaration, the runtime's list, whose
-    /// single type parameter is its element.
+    /// The runtime represents the value as its list: it is built and changed
+    /// only through the type's own operations, and it has no literal form. The
+    /// compiler registers the declaration, whose single type parameter is its
+    /// element.
     List,
+    /// The runtime represents the value as its table: it is built and changed
+    /// only through the type's own operations, and it has no literal form. The
+    /// compiler registers the declaration, whose two type parameters are its
+    /// key and its value.
+    Table,
 }
 
 /// The body of a declared type.

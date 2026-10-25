@@ -16,10 +16,14 @@ pub(crate) struct Program {
     pub(crate) files: Vec<File>,
     pub(crate) namespaces: Vec<Namespace>,
     pub(crate) declarations: Vec<Declaration>,
-    /// The declaration the runtime represents itself, when the program has
-    /// one. The compiler registers it once; a pass reads this fact rather
+    /// The declaration the runtime represents as its list, when the program
+    /// has one. The compiler registers it once; a pass reads this fact rather
     /// than scanning declarations for the runtime marker.
     pub(crate) list_type: Option<DeclarationId>,
+    /// The declaration the runtime represents as its table, when the program
+    /// has one. The compiler registers it once; a pass reads this fact rather
+    /// than scanning declarations for the runtime marker.
+    pub(crate) table_type: Option<DeclarationId>,
     /// The module values in dependency order: each is evaluated once at
     /// startup, after the values its initializer reads.
     pub(crate) module_values: Vec<DeclarationId>,
@@ -43,11 +47,18 @@ impl Program {
         NamespaceId(0)
     }
 
-    /// The type the runtime represents itself, when the program has one. The
-    /// compiler registers it once and stores the fact; no pass scans the
+    /// The type the runtime represents as its list, when the program has one.
+    /// The compiler registers it once and stores the fact; no pass scans the
     /// declaration table for the runtime marker.
     pub(crate) fn list_type(&self) -> Option<DeclarationId> {
         self.list_type
+    }
+
+    /// The type the runtime represents as its table, when the program has one.
+    /// The compiler registers it once and stores the fact; no pass scans the
+    /// declaration table for the runtime marker.
+    pub(crate) fn table_type(&self) -> Option<DeclarationId> {
+        self.table_type
     }
 
     /// Whether a path belongs to the program tree. A project file is the

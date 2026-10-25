@@ -38,10 +38,11 @@ with `std::`. A program may declare its own `command` function in its own
 namespace, and `std::process::command` remains the shipped one.
 
 **The intrinsic type names are not reserved.** `txt`, `bool`, and `int` are
-ordinary identifiers: they are the runtime's own types, so they are visible in
-every namespace and a program writes one without a `use`. `Vec` is not an
-intrinsic: it is an ordinary declared `rec` in `std::dynamic`, reached by its
-path or with `use std::dynamic::Vec;`:
+ordinary identifiers: they are the language's scalar types, so they are visible
+in every namespace and a program writes one without a `use`. `Vec` and
+`HashMap` are not intrinsics: they are ordinary declared `rec`s in
+`std::dynamic`, reached by their paths or with `use std::dynamic::Vec;` and
+`use std::dynamic::HashMap;`:
 
 ```kiru
 use std;
@@ -60,7 +61,8 @@ dispatch keys on the receiver's type head, and the type and the function decide
 reachability.
 
 Because they are not keywords, a program may also use those words for its own
-declarations. `Vec` remains the natural name for the shipped type, but nothing
-stops a program from declaring a function named `Vec` or `map`. `Map` and `Set`
-are not built-ins at all: `std::dynamic` declares them as ordinary `rec`s
-([Map](/stdlib/map/) and [Set](/stdlib/set/)).
+declarations. `Vec` and `HashMap` remain the natural names for the shipped
+types, but nothing stops a program from declaring a function named `Vec` or
+`HashMap`. Neither is an intrinsic: `std::dynamic` declares both, and the
+runtime keeps their values ([Vec](/stdlib/vec/) and
+[HashMap](/stdlib/hashmap/)).

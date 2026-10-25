@@ -140,6 +140,9 @@ pub(in crate::compiler::derive::resolve) struct Builder {
     /// The runtime list the compiler registers, once, before any native row
     /// names it.
     pub(in crate::compiler::derive::resolve) list_type: Option<DeclarationId>,
+    /// The runtime table the compiler registers, once, before any native row
+    /// names it.
+    pub(in crate::compiler::derive::resolve) table_type: Option<DeclarationId>,
     pub(in crate::compiler::derive::resolve) pending: Vec<Pending>,
     /// Every module value, in declaration order. Registration is the one place
     /// that knows them, so ordering their initializers never scans the whole
@@ -170,6 +173,7 @@ impl Builder {
             declarations: Vec::new(),
             files: Vec::new(),
             list_type: None,
+            table_type: None,
             pending: Vec::new(),
             module_values: Vec::new(),
             intern: Interner::default(),
@@ -186,6 +190,7 @@ impl Builder {
             namespaces: self.namespaces,
             declarations: self.declarations,
             list_type: self.list_type,
+            table_type: self.table_type,
             module_values,
             intern: self.intern,
             type_uses: self.type_uses.into_inner(),

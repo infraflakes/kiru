@@ -95,7 +95,7 @@ checked exactly. A `Type.name` call reads the associated-function pool by the
 type's head.
 
 Because a bound function is filed under a type, a name may repeat in a namespace
-when the functions are bound to **different types**. `Map.len` and `Set.len`
+when the functions are bound to **different types**. `Vec.len` and `HashMap.len`
 share `len` in `std::dynamic`, and the receiver's type head selects between
 them:
 

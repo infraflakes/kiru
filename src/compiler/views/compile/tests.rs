@@ -139,7 +139,7 @@ fn retention_shrinks_the_payload() {
 #[test]
 fn a_retained_program_still_runs() {
     let (program, facts, entry, reachable) = checked(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn answer() -> txt { return \"42\"; };\n\
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn answer() -> txt { return \"42\"; };\n\
          fn main() { answer(); };",
     );
     let runtime = Runtime::for_testing(program, facts, entry, &reachable);
@@ -152,7 +152,7 @@ fn a_retained_program_still_runs() {
 #[test]
 fn retained_module_values_still_evaluate() {
     let (program, facts, entry, reachable) = checked(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nlet base: txt = \"a\";\n\
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nlet base: txt = \"a\";\n\
          fn f() -> txt { return \"@(base)b\"; };\n\
          fn main() { f(); };",
     );

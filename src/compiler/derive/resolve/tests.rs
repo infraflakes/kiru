@@ -274,12 +274,12 @@ fn a_use_shortens_paths() {
     // A type-`use` gives a bare type, and its bound functions come with it.
     accept(&[(
         "main.kiru",
-        "use std::dynamic::Map;\nfn main() { let m: Map<txt, int> = Map.new(); let n: int = m.len(); };",
+        "use std::dynamic::HashMap;\nfn main() { let m: HashMap<txt, int> = HashMap.new(); let n: int = m.len(); };",
     )]);
     // One level of braces names several things under one prefix.
     accept(&[(
         "main.kiru",
-        "use std::dynamic::{Map, text_order};\nfn main() { let m: Map<txt, int> = Map.new(); let b: bool = text_order(\"a\", \"b\"); };",
+        "use std::dynamic::{HashMap, text_order};\nfn main() { let m: HashMap<txt, int> = HashMap.new(); let b: bool = text_order(\"a\", \"b\"); };",
     )]);
 }
 
@@ -367,10 +367,10 @@ fn vec_is_a_declared_type_in_std_dynamic() {
 fn associated_functions_are_reached_through_the_type() {
     // A function in an `impl` block whose first parameter is not the block's
     // type is an associated function: `Vec.new()` finds the native vec `new`
-    // and `Map.new()` the map one, both filed under their type.
+    // and `HashMap.new()` the map one, both filed under their type.
     let program = accept(&[(
         "main.kiru",
-        "use std;\nuse std::dynamic;\nuse std::dynamic::Vec;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new(); let m: Map<txt, int> = Map.new(); };",
+        "use std;\nuse std::dynamic;\nuse std::dynamic::Vec;\nuse std::dynamic::HashMap;\nfn main() { let xs: Vec<int> = Vec.new(); let m: HashMap<txt, int> = HashMap.new(); };",
     )]);
     let root = program
         .namespace_at(&["root".to_owned()])
@@ -981,47 +981,47 @@ fn name_and_call_rules() {
     expect_checked_accepts(&[
         (
             "a local shadows a module value; a qualified path reaches it",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nuse root;\nlet value: txt = \"root\";\nfn main() {\nlet value: txt = \"local\";\nstd::print(value);\nstd::print(root::value);\n};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nuse root;\nlet value: txt = \"root\";\nfn main() {\nlet value: txt = \"local\";\nstd::print(value);\nstd::print(root::value);\n};",
         ),
         (
             "a function may call itself",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() { f(); };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() { f(); };\nfn main() {};",
         ),
     ]);
     expect_checked_rejections(&[
         (
             "a value and a function share a name",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn build() -> txt { return \"built\"; };\nlet build: txt = \"text\";\nfn main() { std::print(build); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn build() -> txt { return \"built\"; };\nlet build: txt = \"text\";\nfn main() { std::print(build); };",
             "`build` is declared more than once in this namespace",
         ),
         (
             "function value where a text is expected",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() {};\nfn main() { let x: txt = f; };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() {};\nfn main() { let x: txt = f; };",
             "expected txt, found fn()",
         ),
         (
             "calling a module value",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nlet x: txt = \"a\";\nfn main() { x(); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nlet x: txt = \"a\";\nfn main() { x(); };",
             "`root::x` is a value and cannot be called",
         ),
         (
             "calling a local",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let x: txt = \"a\"; x(); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn main() { let x: txt = \"a\"; x(); };",
             "`x` is a value and cannot be called",
         ),
         (
             "wrong arity",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f(a: txt) {};\nfn main() { f(); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f(a: txt) {};\nfn main() { f(); };",
             "`root::f` takes 1 argument, found 0",
         ),
         (
             "unknown absolute name",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nuse root;\nlet value: txt = \"root\";\nfn main() { std::print(root::missing); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nuse root;\nlet value: txt = \"root\";\nfn main() { std::print(root::missing); };",
             "unknown name `root::missing`",
         ),
         (
             "value self reference",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nlet x: txt = x;\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nlet x: txt = x;\nfn main() {};",
             "`x` is part of a cycle among module values",
         ),
     ]);
@@ -1031,23 +1031,23 @@ fn method_rules() {
     expect_checked_accepts(&[
         (
             "a method on a generic declared type",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec Bag<T> { items: Vec<T> };\nimpl Bag { pub fn tally<T>(self: Bag<T>) -> int { let n: int = 0; let index: int = 0; let total: int = self.items.len(); for { match index < total { false => { break; }; true => {}; }; n = n + 1; index = index + 1; }; return n; }; };\nfn main() { let bag: Bag<int> = { items = Vec.new().push(1).push(2) }; let n: int = bag.tally(); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Bag<T> { items: Vec<T> };\nimpl Bag { pub fn tally<T>(self: Bag<T>) -> int { let n: int = 0; let index: int = 0; let total: int = self.items.len(); for { match index < total { false => { break; }; true => {}; }; n = n + 1; index = index + 1; }; return n; }; };\nfn main() { let bag: Bag<int> = { items = Vec.new().push(1).push(2) }; let n: int = bag.tally(); };",
         ),
         (
             "a method on a declared type",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec Point { x: int, y: int };\nimpl Point { pub fn sum(self: Point) -> int { return self.x + self.y; }; };\nfn main() { let p: Point = { x = 1, y = 2 }; let n: int = p.sum(); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Point { x: int, y: int };\nimpl Point { pub fn sum(self: Point) -> int { return self.x + self.y; }; };\nfn main() { let p: Point = { x = 1, y = 2 }; let n: int = p.sum(); };",
         ),
         (
             "a method calling an earlier method",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec Bag<T> { items: Vec<T> };\nimpl Bag { pub fn tally<T>(self: Bag<T>) -> int { return 0; }; pub fn head<T>(self: Bag<T>) -> int { return self.tally(); }; };\nfn main() { let bag: Bag<int> = { items = Vec.new().push(1) }; let n: int = bag.head(); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Bag<T> { items: Vec<T> };\nimpl Bag { pub fn tally<T>(self: Bag<T>) -> int { return 0; }; pub fn head<T>(self: Bag<T>) -> int { return self.tally(); }; };\nfn main() { let bag: Bag<int> = { items = Vec.new().push(1) }; let n: int = bag.head(); };",
         ),
         (
             "the receiver parameter's name is irrelevant",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec Bag<T> { items: Vec<T> };\nimpl Bag { pub fn tally<T>(items: Bag<T>) -> int { return 0; }; };\nfn main() { let bag: Bag<int> = { items = Vec.new().push(1) }; let n: int = bag.tally(); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Bag<T> { items: Vec<T> };\nimpl Bag { pub fn tally<T>(items: Bag<T>) -> int { return 0; }; };\nfn main() { let bag: Bag<int> = { items = Vec.new().push(1) }; let n: int = bag.tally(); };",
         ),
         (
             "an associated function is reached through the type",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec Point { x: int };\nimpl Point { pub fn origin() -> Point { return { x = 0 }; }; };\nfn main() { let p: Point = Point.origin(); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Point { x: int };\nimpl Point { pub fn origin() -> Point { return { x = 0 }; }; };\nfn main() { let p: Point = Point.origin(); };",
         ),
         (
             "a method needs no use in the file",
@@ -1059,7 +1059,7 @@ fn method_rules() {
         ),
         (
             "a bound function is a value through its type",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec Point { x: int };\nimpl Point { pub fn origin() -> Point { return { x = 0 }; }; pub fn x_of(self: Point) -> int { return self.x; }; };\nfn main() { let make: fn() -> Point = Point.origin; let read: fn(Point) -> int = Point.x_of; let p: Point = make(); let n: int = read(p); std::print(\"@(n)\"); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Point { x: int };\nimpl Point { pub fn origin() -> Point { return { x = 0 }; }; pub fn x_of(self: Point) -> int { return self.x; }; };\nfn main() { let make: fn() -> Point = Point.origin; let read: fn(Point) -> int = Point.x_of; let p: Point = make(); let n: int = read(p); std::print(\"@(n)\"); };",
         ),
         (
             "a plain native is a namespace-level name",
@@ -1069,7 +1069,7 @@ fn method_rules() {
     expect_checked_rejections(&[
         (
             "an unknown method",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new().push(1).push(2); xs.nope(); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new().push(1).push(2); xs.nope(); };",
             "no method `nope` for this value",
         ),
         (
@@ -1089,22 +1089,22 @@ fn method_rules() {
         ),
         (
             "a duplicate name in one block",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec A { x: int };\nimpl A { pub fn tally(self: A) -> int { return 0; }; pub fn tally(self: A) -> int { return 1; }; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec A { x: int };\nimpl A { pub fn tally(self: A) -> int { return 0; }; pub fn tally(self: A) -> int { return 1; }; };\nfn main() {};",
             "`tally` is declared more than once for `A`",
         ),
         (
             "a plain function is not a method",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn tally(xs: Vec<txt>) -> int { return 0; };\nfn main() { let xs: Vec<int> = Vec.new().push(1); xs.tally(); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn tally(xs: Vec<txt>) -> int { return 0; };\nfn main() { let xs: Vec<int> = Vec.new().push(1); xs.tally(); };",
             "no method `tally` for this value",
         ),
         (
             "a method is not an associated function",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec A { x: int };\nimpl A { pub fn tally(self: A) -> int { return 0; }; };\nfn main() { let n: int = A.tally(); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec A { x: int };\nimpl A { pub fn tally(self: A) -> int { return 0; }; };\nfn main() { let n: int = A.tally(); };",
             "`A` has no associated function `tally`",
         ),
         (
             "an unknown associated function",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec Point { x: int };\nfn main() { let p: Point = Point.origin(); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Point { x: int };\nfn main() { let p: Point = Point.origin(); };",
             "`Point` has no associated function `origin`",
         ),
     ]);
@@ -1121,15 +1121,15 @@ fn rule_conformance_order_and_scope() {
     expect_checked_accepts(&[
         (
             "a local shadows a top-level value",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nlet a: int = 1;\nfn main() { let a: int = 2; std::print(\"@(a)\"); };\n",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nlet a: int = 1;\nfn main() { let a: int = 2; std::print(\"@(a)\"); };\n",
         ),
         (
             "a method name repeats once per receiver head",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec A { x: int };\nrec B { y: int };\nimpl A { pub fn about(self: A) -> int { return 1; }; };\nimpl B { pub fn about(self: B) -> int { return 2; }; };\nfn main() { std::print(\"ok\"); };\n",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec A { x: int };\nrec B { y: int };\nimpl A { pub fn about(self: A) -> int { return 1; }; };\nimpl B { pub fn about(self: B) -> int { return 2; }; };\nfn main() { std::print(\"ok\"); };\n",
         ),
         (
             "a method call dispatches on the receiver's type",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() {\n  let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\").push(\"c\");\n  let n: int = xs.len();\n  let m: int = \"abc\".strlen();\n  std::print(\"@(n) @(m)\");\n};\n",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn main() {\n  let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\").push(\"c\");\n  let n: int = xs.len();\n  let m: int = \"abc\".strlen();\n  std::print(\"@(n) @(m)\");\n};\n",
         ),
         (
             "a method needs no `use` in the file",
@@ -1137,61 +1137,61 @@ fn rule_conformance_order_and_scope() {
         ),
         (
             "an absolute path needs no `use`",
-            "fn main() { let m: std::dynamic::Map<txt, int> = std::dynamic::Map.new(); std::print(\"@(std::dynamic::len(m))\"); };\n",
+            "fn main() { let m: std::dynamic::HashMap<txt, int> = std::dynamic::HashMap.new(); std::print(\"@(std::dynamic::len(m))\"); };\n",
         ),
         (
             "a recursive declared type",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec Tree { name: txt, kids: Vec<Tree> };\nfn main() { let t: Tree = { name = \"r\", kids = Vec.new() }; std::print(t.name); };\n",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Tree { name: txt, kids: Vec<Tree> };\nfn main() { let t: Tree = { name = \"r\", kids = Vec.new() }; std::print(t.name); };\n",
         ),
         (
             "a forward reference resolves",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { std::print(banner()); };\nfn banner() -> txt { return \"x\"; };\n",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn main() { std::print(banner()); };\nfn banner() -> txt { return \"x\"; };\n",
         ),
         (
             "a function may call itself",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f(n: int) -> int { match n { 0 => { return 0; }; _ => {}; }; return f(n - 1); };\nfn main() { std::print(\"@(f(1))\"); };\n",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f(n: int) -> int { match n { 0 => { return 0; }; _ => {}; }; return f(n - 1); };\nfn main() { std::print(\"@(f(1))\"); };\n",
         ),
         (
             "a namespace function and a method may share a name",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec A { x: int };\nfn m() { std::print(\"outside\"); };\nimpl A { pub fn m(self: A) -> int { return self.x; }; };\nfn main() { let a: A = { x = 1 }; std::print(\"@(a.m())\"); };\n",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec A { x: int };\nfn m() { std::print(\"outside\"); };\nimpl A { pub fn m(self: A) -> int { return self.x; }; };\nfn main() { let a: A = { x = 1 }; std::print(\"@(a.m())\"); };\n",
         ),
         (
             "a module value and a method may share a name",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec A { x: int };\nlet m: int = 1;\nimpl A { pub fn m(self: A) -> int { return self.x; }; };\nfn main() { let a: A = { x = 1 }; std::print(\"@(a.m())\"); };\n",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec A { x: int };\nlet m: int = 1;\nimpl A { pub fn m(self: A) -> int { return self.x; }; };\nfn main() { let a: A = { x = 1 }; std::print(\"@(a.m())\"); };\n",
         ),
         (
             "a module value declared after a method shares its name",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec A { x: int };\nimpl A { pub fn m(self: A) -> int { return 2; }; };\nlet m: int = 1;\nfn main() {};\n",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec A { x: int };\nimpl A { pub fn m(self: A) -> int { return 2; }; };\nlet m: int = 1;\nfn main() {};\n",
         ),
         (
             "a `use` is order-free",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nuse root;\nfn main() {};\n",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nuse root;\nfn main() {};\n",
         ),
     ]);
     expect_checked_rejections(&[
         (
             "a value that references itself",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nlet x: int = x;\nfn main() { std::print(\"@(x)\"); };\n",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nlet x: int = x;\nfn main() { std::print(\"@(x)\"); };\n",
             "`x` is part of a cycle among module values",
         ),
         (
             "a duplicate local",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn main() { let a: int = 1; let a: int = 2; std::print(\"@(a)\"); };\n",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn main() { let a: int = 1; let a: int = 2; std::print(\"@(a)\"); };\n",
             "`a` is declared more than once",
         ),
         (
             "a value and a function share a name",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nlet thing: txt = \"v\";\nfn thing() -> txt { return \"f\"; };\nfn main() {};\n",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nlet thing: txt = \"v\";\nfn thing() -> txt { return \"f\"; };\nfn main() {};\n",
             "`thing` is declared more than once in this namespace",
         ),
         (
             "two methods for one receiver head",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nimpl txt { pub fn len(self: txt) -> int { return 1; }; pub fn len(self: txt) -> int { return 2; }; };\nfn main() { std::print(\"a\"); };\n",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nimpl txt { pub fn len(self: txt) -> int { return 1; }; pub fn len(self: txt) -> int { return 2; }; };\nfn main() { std::print(\"a\"); };\n",
             "`len` is declared more than once for `txt`",
         ),
         (
             "an associated function and a method share a name",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec A { x: int };\nimpl A { pub fn m() -> A { return { x = 1 }; }; pub fn m(self: A) -> int { return self.x; }; };\nfn main() { let a: A = A.m(); std::print(\"@(a.m())\"); };\n",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec A { x: int };\nimpl A { pub fn m() -> A { return { x = 1 }; }; pub fn m(self: A) -> int { return self.x; }; };\nfn main() { let a: A = A.m(); std::print(\"@(a.m())\"); };\n",
             "`m` is declared more than once for `A`",
         ),
     ]);

@@ -1,5 +1,5 @@
 //! Registering the runtime's natives into the builtin namespace, and the
-//! runtime's `Vec` type declaration beside them.
+//! runtime's container type declarations beside them.
 
 use std::path::Path;
 
@@ -9,7 +9,9 @@ use crate::compiler::graph::Type;
 use crate::compiler::graph::{
     DeclarationId, DeclarationKind, NamespaceId, RuntimeType, TypeBody, TypeHead, TypeKind,
 };
-use crate::compiler::native_registry::{Native, NativeRow, NativeType, native_rows};
+use crate::compiler::native_registry::{
+    Native, NativeParameter, NativeRow, NativeType, native_rows,
+};
 use crate::syntax::Span;
 
 use super::builder::{Builder, Skeleton, Slot};
@@ -20,13 +22,21 @@ impl Builder {
     /// and the runtime's marker. The marker is the one place the type's
     /// runtime representation, its missing literal shape, and its element
     /// parameter are declared. It is the one type declaration with no file.
-    pub(super) fn register_list_type(&mut self) -> Result<DeclarationId, Diagnostic> {
+    /// Register one container declaration the runtime represents itself: no
+    /// file, no fields, and no literal. Its parameters are its element, or its
+    /// key and its value; its operations are the natives that name it.
+    fn register_container_type(
+        &mut self,
+        name: &str,
+        parameters: Vec<String>,
+        runtime: RuntimeType,
+    ) -> Result<DeclarationId, Diagnostic> {
         let namespace = self.ensure_namespace(&["std".to_owned(), "dynamic".to_owned()]);
         let id = self.create_node(
             Skeleton {
                 kind: DeclarationKind::Rec,
                 binding: None,
-                name: "Vec".to_owned(),
+                name: name.to_owned(),
                 name_span: Span::new(0, 0),
                 public: true,
                 receiver_head: None,
@@ -37,19 +47,18 @@ impl Builder {
             None,
             None,
         );
-        let parameters = vec!["T".to_owned()];
         self.declarations[id.0].ty = Type::Named(
             id,
             parameters.iter().cloned().map(Type::Parameter).collect(),
         );
         self.declarations[id.0].type_body = Some(TypeBody {
             parameters,
-            runtime: RuntimeType::List,
+            runtime,
             kind: TypeKind::Rec(Vec::new()),
         });
         if let Err(existing) = self.namespaces[namespace.0]
             .types
-            .insert(self.intern.intern("Vec"), id)
+            .insert(self.intern.intern(name), id)
         {
             let declaration = &self.declarations[existing.0];
             let file = declaration
@@ -58,16 +67,35 @@ impl Builder {
             return Err(Diagnostic::new(
                 &self.files[file.0].path,
                 declaration.name_span,
-                duplicate_in_namespace("Vec"),
+                duplicate_in_namespace(name),
             ));
         }
+        Ok(id)
+    }
+
+    /// Register the runtime list, `std::dynamic::Vec`, whose one parameter is
+    /// its element.
+    pub(super) fn register_list_type(&mut self) -> Result<DeclarationId, Diagnostic> {
+        let id = self.register_container_type("Vec", vec!["T".to_owned()], RuntimeType::List)?;
         self.list_type = Some(id);
         Ok(id)
     }
 
+    /// Register the runtime table, `std::dynamic::HashMap`, whose two
+    /// parameters are its key and its value.
+    pub(super) fn register_table_type(&mut self) -> Result<DeclarationId, Diagnostic> {
+        let id = self.register_container_type(
+            "HashMap",
+            vec!["K".to_owned(), "V".to_owned()],
+            RuntimeType::Table,
+        )?;
+        self.table_type = Some(id);
+        Ok(id)
+    }
+
     /// Resolve one type a native row names. A path resolves through the
-    /// ordinary type resolver; the list's element is the parameter its own
-    /// declaration spells.
+    /// ordinary type resolver; a container parameter is the spelling the
+    /// container's own declaration gave it.
     fn resolve_native_type(
         &self,
         ty: &NativeType,
@@ -76,16 +104,22 @@ impl Builder {
     ) -> Result<Type, Diagnostic> {
         match ty {
             NativeType::Direct(ty) => Ok(ty.clone()),
-            NativeType::ListElement => {
-                let id = self
-                    .list_type
-                    .expect("the compiler registers the list before natives");
-                let element = self.declarations[id.0]
+            NativeType::Parameter(role) => {
+                let id = match role {
+                    NativeParameter::Element => self.list_type,
+                    NativeParameter::Key | NativeParameter::Value => self.table_type,
+                }
+                .expect("the compiler registers a container before the natives that name it");
+                let body = self.declarations[id.0]
                     .type_body()
-                    .expect("the runtime list is a type declaration")
-                    .element_parameter()
-                    .expect("the list declares its element parameter");
-                Ok(Type::Parameter(element.to_owned()))
+                    .expect("a runtime container is a type declaration");
+                let parameter = match role {
+                    NativeParameter::Element => body.element_parameter(),
+                    NativeParameter::Key => body.key_parameter(),
+                    NativeParameter::Value => body.value_parameter(),
+                }
+                .expect("the container declares the parameter the row names");
+                Ok(Type::Parameter(parameter.to_owned()))
             }
             NativeType::Path { path, arguments } => {
                 let mut resolved = Vec::with_capacity(arguments.len());
@@ -171,9 +205,10 @@ impl Builder {
     pub(in crate::compiler::derive::resolve) fn register_builtins(
         &mut self,
     ) -> Result<(), Diagnostic> {
-        // The runtime's list comes first: a native row that names it, and a row
-        // that names its element, need its declaration.
+        // The runtime containers come first: a native row that names one, and
+        // a row that names its parameters, need its declaration.
         self.register_list_type()?;
+        self.register_table_type()?;
         for (native, row) in native_rows() {
             let namespace = self.ensure_namespace(
                 &row.path

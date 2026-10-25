@@ -7,10 +7,10 @@ description: The builtins at the std root.
 rest: `std::process`, `std::syscalls`, `std::fs`, `std::text`, `std::dynamic`,
 and `std::cli`.
 
-The intrinsic types are `txt`, `bool`, and `int`: the runtime's own types,
-visible in every namespace. Everything else is a declaration. `Vec<T>`,
-`Map<K, V>`, and `Set<K>` are declared in `std::dynamic`; `Option<T>` is
-declared in `std`; and each is reached by its path or with a `use`.
+The intrinsic types are `txt`, `bool`, and `int`: the language's scalar types,
+visible in every namespace. Everything else is a declaration. `Vec<T>` and
+`HashMap<K, V>` are declared in `std::dynamic`; `Option<T>` is declared in
+`std`; and each is reached by its path or with a `use`.
 
 <details>
 <summary><code>print</code> — write a line to stdout</summary>
@@ -75,6 +75,6 @@ Related: [Panic and Failure](/failure/panic/).
 
 The command builder and `quote` live in [std::process](/stdlib/process/); the
 path helpers and file reads in [std::fs](/stdlib/fs/); the text methods in
-[std::text](/stdlib/text/); the containers in [Vec](/stdlib/vec/),
-[Map](/stdlib/map/), and [Set](/stdlib/set/); and the optional value in
+[std::text](/stdlib/text/); the containers in [Vec](/stdlib/vec/) and
+[HashMap](/stdlib/hashmap/); and the optional value in
 [std::Option](/stdlib/option/).

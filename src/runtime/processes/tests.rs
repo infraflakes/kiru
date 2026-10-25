@@ -40,7 +40,7 @@ fn call_text(runtime: &Runtime, name: &str) -> String {
 #[test]
 fn async_does_not_wait_for_the_call() {
     let runtime = runtime(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn worker() -> txt { return \"w\"; };\n\
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn worker() -> txt { return \"w\"; };\n\
          fn f() -> txt { async worker(); return \"done\"; };\n\
          fn main() {};",
     );
@@ -52,7 +52,7 @@ fn wait_blocks_until_the_thread_finishes() {
     let directory = tempfile::tempdir().expect("temp dir");
     let marker = directory.path().join("finished");
     let source = format!(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn worker() {{ std::process::command(\"sleep 0.2; touch {}\").run(); }};\n\
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn worker() {{ std::process::command(\"sleep 0.2; touch {}\").run(); }};\n\
          fn f() -> txt {{ async worker(); wait; return \"done\"; }};\n\
          fn main() {{}};",
         marker.display()
@@ -68,7 +68,7 @@ fn wait_joins_every_outstanding_thread() {
     let second = directory.path().join("second");
     let third = directory.path().join("third");
     let source = format!(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn work(marker: txt) {{ std::process::command(\"sleep 0.2; touch @(marker)\").run(); }};\n\
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn work(marker: txt) {{ std::process::command(\"sleep 0.2; touch @(marker)\").run(); }};\n\
          fn f() -> txt {{\n\
            async work(\"{first}\");\n\
            async work(\"{second}\");\n\
@@ -89,7 +89,7 @@ fn wait_joins_every_outstanding_thread() {
 #[test]
 fn a_second_wait_returns_immediately() {
     let runtime = runtime(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn worker() {};\n\
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn worker() {};\n\
          fn f() -> txt {\n\
            async worker();\n\
            wait;\n\
@@ -104,7 +104,7 @@ fn a_second_wait_returns_immediately() {
 #[test]
 fn wait_inside_a_spawned_thread_returns_without_joining_its_spawner() {
     let runtime = runtime(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn worker() { wait; };\n\
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn worker() { wait; };\n\
          fn f() -> txt { async worker(); wait; return \"done\"; };\n\
          fn main() {};",
     );
@@ -116,7 +116,7 @@ fn wait_inside_a_spawned_thread_joins_its_own_children() {
     let directory = tempfile::tempdir().expect("temp dir");
     let marker = directory.path().join("finished");
     let source = format!(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn child() {{ std::process::command(\"sleep 0.2; touch {}\").run(); }};\n\
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn child() {{ std::process::command(\"sleep 0.2; touch {}\").run(); }};\n\
          fn worker() {{ async child(); wait; }};\n\
          fn f() -> txt {{ async worker(); wait; return \"done\"; }};\n\
          fn main() {{}};",
@@ -132,7 +132,7 @@ fn wait_inside_a_spawned_thread_joins_its_own_children() {
 #[test]
 fn panic_in_an_async_thread_sets_the_panicked_flag() {
     let runtime = runtime(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn worker() { panic; };\n\
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn worker() { panic; };\n\
          fn f() -> txt { async worker(); return \"done\"; };\n\
          fn main() {};",
     );
@@ -151,7 +151,7 @@ fn panic_in_an_async_thread_sets_the_panicked_flag() {
 #[test]
 fn panic_in_a_waited_thread_fails_the_run() {
     let runtime = runtime(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn worker() { panic; };\n\
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn worker() { panic; };\n\
          fn f() -> txt { async worker(); wait; return \"done\"; };\nfn main() {};",
     );
     let _ = runtime.call_root("f", Vec::new());
@@ -163,7 +163,7 @@ fn async_over_a_command_call_runs_on_the_thread() {
     let directory = tempfile::tempdir().expect("temp dir");
     let marker = directory.path().join("ran");
     let source = format!(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt {{\n\
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt {{\n\
            async std::process::command(\"touch {}\").run();\n\
            wait;\n\
            return \"done\";\n\
@@ -180,7 +180,7 @@ fn async_of_a_command_call_runs_in_its_directory() {
     let directory = tempfile::tempdir().expect("temp dir");
     let marker = directory.path().join("ran");
     let source = format!(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn f() -> txt {{\n\
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt {{\n\
            async std::process::command(\"touch ran\").dir(\"{}\").run();\n\
            wait;\n\
            return \"done\";\n\
@@ -200,7 +200,7 @@ fn a_panic_cancels_other_threads_commands() {
     let directory = tempfile::tempdir().expect("temp dir");
     let marker = directory.path().join("survived");
     let source = format!(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nfn worker() {{ panic; }};\n\
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn worker() {{ panic; }};\n\
          fn other() {{ std::process::command(\"sleep 0.2; touch {}\").run(); }};\n\
          fn f() -> txt {{\n\
            async worker();\n\

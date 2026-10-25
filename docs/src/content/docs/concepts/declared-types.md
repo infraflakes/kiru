@@ -147,5 +147,5 @@ parameters, written `<A, B>` after its name; [Generics](/concepts/generics/)
 covers it.
 
 A field read is only for a declared field, and it has that field's declared
-type. A lookup in a `Map<K, V>` is a method call, `m.get(key)`, and it has the
-value type `V`; [Maps](/concepts/maps/) covers the difference.
+type. A lookup in a `HashMap<K, V>` is a method call, `m.get(key)`, and it has
+the value type `V`; [Hash maps](/concepts/hash-maps/) covers the difference.

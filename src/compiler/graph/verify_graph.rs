@@ -51,6 +51,17 @@ pub(crate) fn validate_program_structure(program: &Program) -> Result<(), String
             return Err("the runtime list does not declare one element parameter".to_owned());
         }
     }
+    if let Some(table) = program.table_type() {
+        check_id(table.0, declaration_count, "the runtime table type")?;
+        let body = program.declarations[table.0]
+            .type_body()
+            .ok_or("the runtime table type is not a type declaration")?;
+        if body.key_parameter().is_none() || body.value_parameter().is_none() {
+            return Err(
+                "the runtime table does not declare a key and a value parameter".to_owned(),
+            );
+        }
+    }
 
     for namespace in &program.namespaces {
         if let Some(parent) = namespace.parent {

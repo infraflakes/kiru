@@ -435,7 +435,7 @@ impl<'a> Checker<'a> {
     }
 
     /// Require a value that `@(…)` can insert: text, an integer, or a boolean.
-    /// A map, a Vec, and a no-value call have no display form.
+    /// A record, a container, and a no-value call have no display form.
     fn displayable(&mut self, expression: &Expression) -> Result<(), Diagnostic> {
         let Some(ty) = self.expression(expression, None)? else {
             return Err(self.error(
@@ -447,6 +447,7 @@ impl<'a> Checker<'a> {
             RuntimeShape::Text | RuntimeShape::Bool | RuntimeShape::Int => return Ok(()),
             RuntimeShape::Record
             | RuntimeShape::List
+            | RuntimeShape::Table
             | RuntimeShape::Variant
             | RuntimeShape::Function
             | RuntimeShape::Parameter
@@ -598,7 +599,7 @@ impl<'a> Checker<'a> {
     /// parameter and return types and, for a generic function, the type
     /// parameters the call instantiates. The expected type at the call site
     /// binds a type parameter the arguments cannot, so `empty()` may infer its
-    /// arguments from `let m: Map<txt, txt> = …`. A callable with no return
+    /// arguments from `let m: HashMap<txt, txt> = …`. A callable with no return
     /// type yields no type, so its calls produce no value.
     fn direct_call(
         &mut self,

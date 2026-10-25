@@ -6,7 +6,7 @@
 # (`wait_for`, `signal`, and the signal-name table) are the language's.
 #
 # A `rec` plus chained methods is how a command is configured; a
-# `std::dynamic::Map<K, V>` is how data is passed and returned. There is one
+# `std::dynamic::HashMap<K, V>` is how data is passed and returned. There is one
 # way to run a process — the builder — and one method that changes I/O:
 # `stream`. The functions in the `impl Command` block below are filed under
 # `Command`: those with a `Command` first parameter are methods, and `command`

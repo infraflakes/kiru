@@ -107,10 +107,10 @@ One level of braces shortens several names under one prefix:
 
 ```kiru
 use std;
-use std::dynamic::{Map, Vec};
+use std::dynamic::{HashMap, Vec};
 
 fn main() {
-  let m: Map<txt, int> = Map.new();
+  let m: HashMap<txt, int> = HashMap.new();
   let xs: Vec<int> = Vec.new();
   std::print("@(m.len()) @(xs.len())");
 };
@@ -193,7 +193,7 @@ fn thing() -> txt { return "function thing"; };
 
 The one exception is a bound function: two functions bound to different types
 may share a name, because the receiver's type head selects between them.
-`Map.len` and `Set.len` share `len` in `std::dynamic`. Two functions bound to
+`Vec.len` and `HashMap.len` share `len` in `std::dynamic`. Two functions bound to
 the same type, or two plain declarations of one name, are still an error.
 [Methods](/concepts/methods/) covers the rule.
 

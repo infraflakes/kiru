@@ -95,7 +95,7 @@ pub(crate) enum Shape {
     /// A type parameter: no literal of its own.
     Parameter,
     /// No literal form: the value is built and changed through the type's own
-    /// operations. The runtime list declares this.
+    /// operations. The runtime list and the runtime table declare this.
     None,
 }
 
@@ -133,8 +133,8 @@ pub(crate) enum Unification {
 /// `Value` invents nothing beside this declaration. The scalars are separate
 /// shapes, because an operation applies to exactly one scalar and no other;
 /// the `rec` and `enum` groups separate their shapes, so the runtime reads a
-/// list, a record, and a variant as three declared facts and not one object
-/// it splits by hand.
+/// record, a list, a table, and a variant as four declared facts and not one
+/// object it splits by hand.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RuntimeShape {
     /// The text scalar.
@@ -145,9 +145,13 @@ pub(crate) enum RuntimeShape {
     Int,
     /// A `rec` built from its fields: the record the program owns.
     Record,
-    /// The one `rec` the runtime represents itself: the list, built and
-    /// changed only through its own operations.
+    /// The runtime list: a declared `rec` the runtime represents itself, built
+    /// and changed only through its own operations.
     List,
+    /// The runtime table: a declared `rec` with a key and a value parameter,
+    /// represented by the runtime as a table keyed by structural equality and
+    /// built and changed only through its own operations.
+    Table,
     /// An `enum` construction: its declared variant tag and payload.
     Variant,
     /// A function value: its lowered code and the values it captured.
@@ -268,14 +272,14 @@ impl TypeBody {
     pub(crate) fn shape(&self) -> Shape {
         match self.runtime {
             RuntimeType::Declared => self.group().shape(),
-            RuntimeType::List => Shape::None,
+            RuntimeType::List | RuntimeType::Table => Shape::None,
         }
     }
 
     /// The runtime representation a value of this declaration is stored as.
     /// The kind's group declares the default and the runtime's marker
-    /// overrides it, exactly as the literal shape above does: the list is the
-    /// one declared type whose values the runtime keeps for itself.
+    /// overrides it, exactly as the literal shape above does: the containers
+    /// are the declared types whose values the runtime keeps for itself.
     pub(crate) fn runtime_shape(&self) -> RuntimeShape {
         match self.runtime {
             RuntimeType::Declared => match self.kind {
@@ -283,12 +287,18 @@ impl TypeBody {
                 TypeKind::Enum(_) => RuntimeShape::Variant,
             },
             RuntimeType::List => RuntimeShape::List,
+            RuntimeType::Table => RuntimeShape::Table,
         }
     }
 
-    /// Whether the runtime represents this type itself.
+    /// Whether the runtime represents this type as its list.
     pub(crate) fn is_list(&self) -> bool {
         self.runtime == RuntimeType::List
+    }
+
+    /// Whether the runtime represents this type as its table.
+    pub(crate) fn is_table(&self) -> bool {
+        self.runtime == RuntimeType::Table
     }
 
     /// The element parameter of the runtime list, by the spelling its
@@ -298,6 +308,24 @@ impl TypeBody {
             return None;
         }
         self.parameters.first().map(String::as_str)
+    }
+
+    /// The key parameter of the runtime table, by the spelling its declaration
+    /// gave it.
+    pub(crate) fn key_parameter(&self) -> Option<&str> {
+        if !self.is_table() {
+            return None;
+        }
+        self.parameters.first().map(String::as_str)
+    }
+
+    /// The value parameter of the runtime table, by the spelling its
+    /// declaration gave it.
+    pub(crate) fn value_parameter(&self) -> Option<&str> {
+        if !self.is_table() {
+            return None;
+        }
+        self.parameters.get(1).map(String::as_str)
     }
 
     /// The values this declaration can take, when it declares a finite set.

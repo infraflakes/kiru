@@ -46,6 +46,8 @@ pub(crate) enum NativeArgumentKind {
     Bool,
     /// The runtime list, passed as a shared Vec of values.
     List,
+    /// The runtime table, passed as a shared table of values.
+    Table,
     /// A declared record, an enum variant, or a map.
     Object,
     /// A function value.
@@ -65,6 +67,7 @@ pub(crate) fn argument_kind(ty: &Type, declarations: &[Declaration]) -> NativeAr
         RuntimeShape::Int => NativeArgumentKind::Int,
         RuntimeShape::Bool => NativeArgumentKind::Bool,
         RuntimeShape::List => NativeArgumentKind::List,
+        RuntimeShape::Table => NativeArgumentKind::Table,
         RuntimeShape::Record | RuntimeShape::Variant => NativeArgumentKind::Object,
         RuntimeShape::Function => NativeArgumentKind::Function,
         RuntimeShape::Parameter => NativeArgumentKind::Any,
@@ -92,9 +95,21 @@ pub(crate) enum NativeType {
         path: &'static [&'static str],
         arguments: Vec<NativeType>,
     },
-    /// The runtime list's element parameter, spelled by the list's own
-    /// declaration.
-    ListElement,
+    /// A parameter of the container the row names, spelled by that container's
+    /// own declaration.
+    Parameter(NativeParameter),
+}
+
+/// One parameter of a runtime container, named so a row can refer to it
+/// without repeating the spelling the declaration chose.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum NativeParameter {
+    /// The list's element.
+    Element,
+    /// The table's key.
+    Key,
+    /// The table's value.
+    Value,
 }
 
 impl From<Type> for NativeType {
@@ -111,6 +126,15 @@ fn list_of(element: impl Into<NativeType>) -> NativeType {
     }
 }
 
+/// The runtime table applied to `key` and `value`, named by the path of its
+/// declaration.
+fn hash_map_of(key: impl Into<NativeType>, value: impl Into<NativeType>) -> NativeType {
+    NativeType::Path {
+        path: &[STD_TREE, "dynamic", "HashMap"],
+        arguments: vec![key.into(), value.into()],
+    }
+}
+
 /// The standard library's `Option` applied to `element`, named by the path of
 /// its declaration.
 fn option_of(element: impl Into<NativeType>) -> NativeType {
@@ -124,7 +148,17 @@ fn option_of(element: impl Into<NativeType>) -> NativeType {
 /// the row is resolved. A call binds it through the receiver, the same `unify`
 /// every declaration uses.
 fn element() -> NativeType {
-    NativeType::ListElement
+    NativeType::Parameter(NativeParameter::Element)
+}
+
+/// The runtime table's key parameter.
+fn key() -> NativeType {
+    NativeType::Parameter(NativeParameter::Key)
+}
+
+/// The runtime table's value parameter.
+fn value() -> NativeType {
+    NativeType::Parameter(NativeParameter::Value)
 }
 
 /// One native row: its path, name, parameter types, and result type. A native
@@ -221,6 +255,17 @@ native_registry! {
     VecReplace { ["dynamic"], "replace", [list_of(element()), Type::Int, element()] -> list_of(element()) },
     VecAt { ["dynamic"], "at", [list_of(element()), Type::Int] -> element() },
     VecLen { ["dynamic"], "len", [list_of(element())] -> Type::Int },
+    // The pure hash map operations stay in `std::dynamic` beside the vec's.
+    // `find` answers `Option` so `get`, `get_or`, and `contains` are kiru over
+    // one lookup; every other operation is the one the runtime can do without
+    // walking a structure in the virtual machine.
+    HashMapNew { ["dynamic"], "new", [] -> hash_map_of(key(), value()) },
+    HashMapInsert { ["dynamic"], "insert", [hash_map_of(key(), value()), key(), value()] -> hash_map_of(key(), value()) },
+    HashMapFind { ["dynamic"], "find", [hash_map_of(key(), value()), key()] -> option_of(value()) },
+    HashMapRemove { ["dynamic"], "remove", [hash_map_of(key(), value()), key()] -> hash_map_of(key(), value()) },
+    HashMapLen { ["dynamic"], "len", [hash_map_of(key(), value())] -> Type::Int },
+    HashMapKeys { ["dynamic"], "keys", [hash_map_of(key(), value())] -> list_of(key()) },
+    HashMapValues { ["dynamic"], "values", [hash_map_of(key(), value())] -> list_of(value()) },
     // Reading and writing a path are file operations, not syscalls, so they
     // live beside the rest of `std::fs`.
     Read { ["fs"], "read", [Type::Text] -> Type::Text },
@@ -271,19 +316,17 @@ mod tests {
     }
 
     #[test]
-    fn native_paths_and_names_are_unique() {
-        // A name is unique in its namespace: two natives may never share a
-        // path and a name, whatever their parameters. The descriptor `write`
-        // and the path `write` are told apart by their namespaces, not their
-        // heads.
-        for (index, (_, row)) in NATIVE_SHAPES.iter().enumerate() {
-            for (_, other) in NATIVE_SHAPES.iter().skip(index + 1) {
+    fn every_native_has_exactly_one_shape() {
+        // A name is unique in a namespace unless the functions bind to
+        // different types: `Vec.len` and `HashMap.len` share the spelling
+        // `len`, and the receiver's head selects between them. The row table is
+        // keyed by the native itself, so one variant never gets two rows.
+        for (index, (native, row)) in NATIVE_SHAPES.iter().enumerate() {
+            for (other, other_row) in NATIVE_SHAPES.iter().skip(index + 1) {
                 assert_ne!(
-                    (row.path, row.name),
-                    (other.path, other.name),
-                    "natives `{}` and `{}` share a path",
-                    row.name,
-                    other.name
+                    native, other,
+                    "natives `{}` and `{}` share one shape row",
+                    row.name, other_row.name
                 );
             }
         }

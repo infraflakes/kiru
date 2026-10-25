@@ -7,12 +7,15 @@
 //! kernel. The failure it reports names the native by its row's qualified
 //! path.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::compiler::graph::RuntimeShape;
 use crate::compiler::native_registry::{Native, NativeArgumentKind, native_shape};
 use crate::runtime::Panic;
-use crate::runtime::natives::{environment, file_system, terminal_output, text_operations};
+use crate::runtime::natives::{
+    environment, file_system, option_none, option_some, terminal_output, text_operations,
+};
 use crate::runtime::processes as process;
 use crate::runtime::{Text, Value};
 
@@ -49,6 +52,14 @@ impl NativeArguments {
         }
     }
 
+    /// The table argument at a declared position, keeping the value shared.
+    fn table(&self, index: usize) -> Arc<HashMap<Value, Value>> {
+        match self.values[index].table() {
+            Some(entries) => Arc::clone(entries),
+            None => unreachable!("the decoder checked the row's declared kind"),
+        }
+    }
+
     /// Move the value at a declared position out of the argument list.
     fn take_value(&mut self, index: usize) -> Value {
         std::mem::replace(&mut self.values[index], Value::Nothing)
@@ -60,6 +71,16 @@ impl NativeArguments {
     fn take_list(&mut self, index: usize) -> Arc<Vec<Value>> {
         match self.take_value(index) {
             Value::Vec(values) => values,
+            _ => unreachable!("the decoder checked the row's declared kind"),
+        }
+    }
+
+    /// Move the table at a declared position out of the argument list. The
+    /// native that mutates a table is its last reader, so taking the value is
+    /// what lets `Arc::make_mut` see a unique table.
+    fn take_table(&mut self, index: usize) -> Arc<HashMap<Value, Value>> {
+        match self.take_value(index) {
+            Value::Table(entries) => entries,
             _ => unreachable!("the decoder checked the row's declared kind"),
         }
     }
@@ -109,6 +130,42 @@ impl Runtime {
             Native::VecLen => {
                 let vec = arguments.list(0);
                 Ok(Value::Int(vec.len() as i64))
+            }
+            Native::HashMapNew => Ok(Value::Table(Arc::new(HashMap::new()))),
+            Native::HashMapInsert => {
+                let mut table = arguments.take_table(0);
+                let key = arguments.take_value(1);
+                let value = arguments.take_value(2);
+                Arc::make_mut(&mut table).insert(key, value);
+                Ok(Value::Table(table))
+            }
+            Native::HashMapFind => {
+                let key = arguments.take_value(1);
+                let table = arguments.table(0);
+                match table.get(&key) {
+                    Some(value) => Ok(option_some(value.clone())),
+                    None => Ok(option_none()),
+                }
+            }
+            Native::HashMapRemove => {
+                let mut table = arguments.take_table(0);
+                let key = arguments.take_value(1);
+                Arc::make_mut(&mut table).remove(&key);
+                Ok(Value::Table(table))
+            }
+            Native::HashMapLen => {
+                let table = arguments.table(0);
+                Ok(Value::Int(table.len() as i64))
+            }
+            Native::HashMapKeys => {
+                let table = arguments.table(0);
+                let keys: Vec<Value> = table.keys().cloned().collect();
+                Ok(Value::Vec(Arc::new(keys)))
+            }
+            Native::HashMapValues => {
+                let table = arguments.table(0);
+                let values: Vec<Value> = table.values().cloned().collect();
+                Ok(Value::Vec(Arc::new(values)))
             }
             Native::PosixSpawn => {
                 let argv = arguments.list(0);
@@ -269,6 +326,7 @@ fn has_kind(kind: NativeArgumentKind, value: &Value) -> bool {
         NativeArgumentKind::Int => shape == RuntimeShape::Int,
         NativeArgumentKind::Bool => shape == RuntimeShape::Bool,
         NativeArgumentKind::List => shape == RuntimeShape::List,
+        NativeArgumentKind::Table => shape == RuntimeShape::Table,
         NativeArgumentKind::Object => {
             shape == RuntimeShape::Record || shape == RuntimeShape::Variant
         }

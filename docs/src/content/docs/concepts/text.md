@@ -115,7 +115,7 @@ fn main() {
 };
 ```
 
-A `Map` and a vec cannot be ordered, only compared for equality.
+A hash map and a vec cannot be ordered, only compared for equality.
 
 ## Bytes
 

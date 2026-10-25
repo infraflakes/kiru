@@ -67,9 +67,9 @@ visible in every namespace, so writing one needs no `use`.
 
 Everything else is a declared type: a `rec` or an `enum`, written `<Name>` or
 applied to type arguments (`Vec<T>`). `Vec<T>`, the sequence type, is such a
-declared `rec` in `std::dynamic`; so are `Map<K, V>` and `Set<K>`, and `Option<T>`
-in `std`. A declared type is reached by its path or with a `use`, exactly as any
-other name is.
+declared `rec` in `std::dynamic`; so is `HashMap<K, V>`, and `Option<T>` is a
+declared `enum` in `std`. A declared type is reached by its path or with a
+`use`, exactly as any other name is.
 
 Text is the interchange type at the OS boundary — paths, versions, and command
 output are text — while `bool` and `int` are for decisions and counting inside a
@@ -164,7 +164,7 @@ that). Every other type comes from the declaration or the expression form:
 - `left + right` is int, and both sides must be int;
 - a comparison yields bool, and its operands are checked per operator;
 - `&&` and `||` require bool on both sides and yield bool;
-- a field access is only for a declared field and has that field's type, and a `Map` lookup `m.get(key)` has the value type `V`; [Maps](/concepts/maps/) covers it;
+- a field access is only for a declared field and has that field's type, and a `HashMap` lookup `m.get(key)` has the value type `V`; [Hash maps](/concepts/hash-maps/) covers it;
 - `xs.at(i)` has the element type of `Vec<T>`, and the index must be `int`;
 - a call has the type the callee declares; a call that returns nothing has no type and may only stand as a statement;
 - a parameter's type is written after a colon at its declaration, and every call is checked against it;

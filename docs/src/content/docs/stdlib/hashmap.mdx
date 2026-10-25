@@ -1,0 +1,259 @@
+---
+title: HashMap
+description: The HashMap record and its methods.
+---
+
+`HashMap<K, V>` is a declared `rec` in `std::dynamic`, an association keyed by
+equality. It is a built-in named type, not an intrinsic: the runtime keeps its
+value as a table, so it has no fields and no literal, and it is built and read
+only through the methods below. A method whose first parameter is a
+`HashMap<K, V>` is callable as `m.name(...)`; an associated function is reached
+as `HashMap.name(...)`. `use std::dynamic;` brings the type and its methods into
+scope, and a qualified `std::dynamic::HashMap` names the type without it.
+[Hash maps](/concepts/hash-maps/) covers the narrative.
+
+The keys are unordered: no method promises insertion order, and output that must
+be stable sorts what it reads.
+
+<details>
+<summary><code>new</code> — the empty map</summary>
+
+```text
+std::dynamic::HashMap.new<K, V>() -> HashMap<K, V>
+```
+
+- Returns a map with no entries.
+
+`new` has no argument to solve `K` and `V` from, so the call takes them from
+its expected type: write the annotation and it works.
+
+```kiru
+use std;
+use std::dynamic::HashMap;
+fn main() {
+  let m: HashMap<txt, txt> = HashMap.new();
+  std::print("@(m.len())");   # 0
+};
+```
+
+</details>
+
+<details>
+<summary><code>insert</code> — a new map with one key written</summary>
+
+```text
+map.insert(key: K, value: V) -> HashMap<K, V>
+```
+
+- `key` — the key to write.
+- `value` — the value to store for it.
+- Returns a new map: an existing key has its value replaced, a new key adds an
+  entry. The map it is called on is unchanged.
+
+```kiru
+use std;
+use std::dynamic::HashMap;
+fn main() {
+  let m: HashMap<txt, txt> = HashMap.new();
+  m = m.insert("a", "1");
+  let n: HashMap<txt, txt> = m.insert("b", "2");
+  std::print("@(n.len())");   # 2
+};
+```
+
+</details>
+
+<details>
+<summary><code>get</code> — the value stored for a key</summary>
+
+```text
+map.get(key: K) -> V
+```
+
+- `key` — the key to read.
+- Returns the value stored for `key`. A key the map does not have has no value,
+  so `get` stops the run with `get: the hash map has no entry for the key`; a
+  caller that cannot promise the key is present uses `get_or`.
+
+```kiru
+use std;
+use std::dynamic::HashMap;
+fn main() {
+  let m: HashMap<txt, txt> = HashMap.new();
+  m = m.insert("a", "1");
+  std::print(m.get("a"));   # 1
+};
+```
+
+</details>
+
+<details>
+<summary><code>get_or</code> — the value stored for a key, or a fallback</summary>
+
+```text
+map.get_or(key: K, fallback: V) -> V
+```
+
+- `key` — the key to read.
+- `fallback` — the value to return when the key is absent.
+- Returns the value stored for `key`, or `fallback` when the map does not have
+  it.
+
+```kiru
+use std;
+use std::dynamic::HashMap;
+fn main() {
+  let m: HashMap<txt, txt> = HashMap.new();
+  m = m.insert("a", "1");
+  std::print(m.get_or("a", "missing"));   # 1
+  std::print(m.get_or("z", "missing"));   # missing
+};
+```
+
+</details>
+
+<details>
+<summary><code>find</code> — the value stored for a key, as an option</summary>
+
+```text
+map.find(key: K) -> Option<V>
+```
+
+- `key` — the key to read.
+- Returns `std::Option.some(value)` for a present key and
+  `std::Option.none` for an absent one.
+- `get`, `get_or`, and `contains` are written on this one lookup, so a caller
+  that must branch on presence can use it directly.
+
+```kiru
+use std;
+use std::dynamic::HashMap;
+use std::Option;
+fn main() {
+  let m: HashMap<txt, txt> = HashMap.new();
+  m = m.insert("a", "1");
+  let found: Option<txt> = m.find("a");
+  std::print(match found { Option.some(v) => v; Option.none => "missing"; });   # 1
+};
+```
+
+</details>
+
+<details>
+<summary><code>contains</code> — whether a key is present</summary>
+
+```text
+map.contains(key: K) -> bool
+```
+
+- `key` — the key to test.
+- Returns `true` or `false`.
+
+```kiru
+use std;
+use std::dynamic::HashMap;
+fn main() {
+  let m: HashMap<txt, txt> = HashMap.new();
+  m = m.insert("a", "1");
+  std::print("@(m.contains("a")) @(m.contains("z"))");   # true false
+};
+```
+
+</details>
+
+<details>
+<summary><code>remove</code> — a new map without one key</summary>
+
+```text
+map.remove(key: K) -> HashMap<K, V>
+```
+
+- `key` — the key to remove.
+- Returns a new map without `key`. A key that is absent leaves the map as it
+  was. The map it is called on is unchanged.
+
+```kiru
+use std;
+use std::dynamic::HashMap;
+fn main() {
+  let m: HashMap<txt, txt> = HashMap.new();
+  m = m.insert("a", "1");
+  m = m.insert("b", "2");
+  m = m.remove("a");
+  m = m.remove("z");
+  std::print("@(m.len())");   # 1
+};
+```
+
+</details>
+
+<details>
+<summary><code>keys</code> — the keys</summary>
+
+```text
+map.keys() -> Vec<K>
+```
+
+- Returns a new vec of the keys, in the table's own order.
+- The order is not insertion order and is not promised; sort the vec before
+  printing it.
+
+```kiru
+use std;
+use std::dynamic::HashMap;
+use std::dynamic::Vec;
+fn main() {
+  let m: HashMap<txt, txt> = HashMap.new();
+  m = m.insert("a", "1");
+  m = m.insert("b", "2");
+  let keys: Vec<txt> = m.keys().sort();
+  std::print(keys.join(","));   # a,b
+};
+```
+
+</details>
+
+<details>
+<summary><code>values</code> — the values</summary>
+
+```text
+map.values() -> Vec<V>
+```
+
+- Returns a new vec of the values, in the table's own order.
+- The order lines up with `keys()` for the same map value; it is not promised
+  across two maps.
+
+```kiru
+use std;
+use std::dynamic::HashMap;
+fn main() {
+  let m: HashMap<txt, txt> = HashMap.new();
+  m = m.insert("a", "1");
+  std::print(m.values().at(0));   # 1
+};
+```
+
+</details>
+
+<details>
+<summary><code>len</code> — the number of entries</summary>
+
+```text
+map.len() -> int
+```
+
+- Returns the entry count.
+
+```kiru
+use std;
+use std::dynamic::HashMap;
+fn main() {
+  let m: HashMap<txt, txt> = HashMap.new();
+  m = m.insert("a", "1");
+  m = m.insert("b", "2");
+  std::print("@(m.len())");   # 2
+};
+```
+
+</details>

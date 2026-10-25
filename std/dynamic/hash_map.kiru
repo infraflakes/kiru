@@ -1,0 +1,43 @@
+# std/dynamic/hash_map.kiru
+#
+# The hash map: an association from keys to values, kept by the runtime as a
+# table keyed by structural equality. `std::dynamic::HashMap<K, V>` is a
+# declared `rec` the compiler registers in this namespace; the runtime provides
+# its operations as natives (`new`, `insert`, `find`, `remove`, `len`, `keys`,
+# `values`), listed in `natives.md`. It has no fields and no literal: a value is
+# built and changed only through its operations.
+#
+# A map is a hash map, so its keys are unordered. `keys` and `values` walk the
+# table once each, in the same order for the same map value; a program that
+# needs a stable order sorts what it reads. Two maps with the same entries are
+# equal whatever their order.
+#
+# This file writes full paths: it uses no `use`, and every bound function is
+# reached through its absolute path.
+
+impl HashMap {
+  # The value stored for `key`. A missing key has no value, so it stops the run.
+  pub fn get<K, V>(self: std::dynamic::HashMap<K, V>, key: K) -> V {
+    match std::dynamic::find(self, key) {
+      std::Option.some(value) => { return value; };
+      std::Option.none => {};
+    };
+    std::eprint("get: the hash map has no entry for the key");
+  };
+
+  # The value stored for `key`, or `fallback` when it is missing.
+  pub fn get_or<K, V>(self: std::dynamic::HashMap<K, V>, key: K, fallback: V) -> V {
+    match std::dynamic::find(self, key) {
+      std::Option.some(value) => { return value; };
+      std::Option.none => { return fallback; };
+    };
+  };
+
+  # Whether `key` is present.
+  pub fn contains<K, V>(self: std::dynamic::HashMap<K, V>, key: K) -> bool {
+    match std::dynamic::find(self, key) {
+      std::Option.some(_) => { return true; };
+      std::Option.none => { return false; };
+    };
+  };
+};

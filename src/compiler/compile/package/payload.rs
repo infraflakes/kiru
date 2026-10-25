@@ -57,7 +57,7 @@ mod tests {
             &all_declarations(&program),
         ))
         .expect("serializes");
-        assert_eq!(bytes.len(), 14823);
-        assert_eq!(name_hash(&bytes), 17224016530320777019);
+        assert_eq!(bytes.len(), 12123);
+        assert_eq!(name_hash(&bytes), 8410953220798926407);
     }
 }

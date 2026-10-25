@@ -23,7 +23,7 @@ This holds names that mean a type:
 - `rec` declarations
 - `enum` declarations
 - the scalar names `txt`, `bool`, `int`
-- declared type names from the library, such as `Vec`, `Map`, `Set`, and `Option`
+- declared type names from the library, such as `Vec`, `HashMap`, and `Option`
 
 A type name is unique inside its namespace. A type can share a spelling with a value, because they are different pools.
 
@@ -99,7 +99,7 @@ std::Option.some(1)
 ```
 use std::dynamic;          # dynamic::Vec<T>
 use std::dynamic::Vec;     # Vec<T>
-use std::dynamic::{Map, Vec};
+use std::dynamic::{HashMap, Vec};
 ```
 
 Things to remember:
@@ -220,7 +220,9 @@ The type groups are:
 
 A declared type is one declaration. A reference to it is an edge to that declaration, not a second type identity.
 
-`Vec<T>` is an ordinary declared `rec` in `std::dynamic`. It is not an intrinsic, it has no literal, and it has no index syntax. You build and change it with its operations:
+`Vec<T>` is an ordinary declared `rec` in `std::dynamic`. It is a built-in named
+type, not an intrinsic, it has no literal, and it has no index syntax. You build
+and change it with its operations:
 
 ```
 use std::dynamic::Vec;
@@ -229,6 +231,22 @@ let values: Vec<int> = Vec.new().push(1).push(2);
 let size: int = values.len();
 let first: int = values.at(0);
 ```
+
+`HashMap<K, V>` is a declared `rec` in `std::dynamic` in the same way. The
+runtime keeps its value as a hash table, so it has no fields and no literal
+either, and its keys are unordered:
+
+```
+use std::dynamic::HashMap;
+
+let counts: HashMap<txt, int> = HashMap.new().insert("a", 1);
+let one: int = counts.get("a");
+let maybe: int = counts.get_or("b", 0);
+let present: bool = counts.contains("a");
+let fewer: HashMap<txt, int> = counts.remove("a");
+```
+
+A key is compared by `==`, so any value can be a key.
 
 `Option<T>` is an ordinary declared `enum` in `std`:
 
@@ -318,7 +336,10 @@ A native is the runtime's floor. It is public, it has no body, and it has no sou
 - A native is bound to a type when its first parameter is that type, or when it takes no parameters and returns a declared type.
 - Every directory under the library root has a `natives.md` listing that namespace's natives.
 
-`Vec`, `Map`, `Set`, and `Option` are ordinary declarations, not natives and not intrinsics. Their methods may call natives underneath.
+`Vec`, `HashMap`, and `Option` are declared types, not intrinsics: `Vec` and
+`HashMap` are `rec`s whose values the runtime keeps itself, and `Option` is an
+`enum`. The containers' operations are natives underneath; a type is never a
+native and never an intrinsic.
 
 The runtime executes bytecode. It owns the virtual machine, native dispatch, values, and the process, thread, and signal pools.
 

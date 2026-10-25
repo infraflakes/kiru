@@ -124,7 +124,7 @@ tracked so they are settled before they block a phase.
   table and no separate `stdin`/`stdout`/`stderr`/`quiet` methods. Every method
   says one thing and takes the type it means — a timeout, an exit code, and a
   pid are `int`s, not text. A `rec` plus chained methods is how anything is
-  configured; a `Map<K, V>` (in `std::dynamic`) is how data is passed and returned.
+  configured; a `HashMap<K, V>` (in `std::dynamic`) is how data is passed and returned.
 - **`( ... )` groups an expression.** `(a + b) * c`. The parentheses carry no
   node: they only steer precedence, which the tree already records. (Added:
   without them the expression grammar had no way to group at all.)
@@ -133,17 +133,18 @@ tracked so they are settled before they block a phase.
   and `enum`. `Vec<T>` is **not** an intrinsic: it is an ordinary declared `rec`
   in the `std::dynamic` category (`std/dynamic/vec.kiru`), a `rec` whose
   operations are the `new`/`push`/`replace`/`at`/`len` natives, so
-  `use std::dynamic;` brings the type and its methods. `Map<K, V>` and `Set<K>`
-  are ordinary declared types beside it (`std/dynamic/map.kiru`,
-  `std/dynamic/set.kiru`), each a `rec` over a `Vec`. Nothing about them needs a
-  native — the runtime represents a `Map` and a `Set` like any other rec. A
+  `use std::dynamic;` brings the type and its methods. `HashMap<K, V>` is a
+  declared `rec` beside it (`std/dynamic/hash_map.kiru`) that the runtime keeps
+  as a hash table, so its operations are natives and its keys are unordered. It
+  is a built-in named type, not an intrinsic. A
   field read `r.field` is only for a field of a declared `rec`; the second rule
   — `m.k` on a map, yielding `Option<V>` — is gone, and a map lookup is
   `m.get(k)`. A `{ k = v }` literal is only ever a declared-type literal, so it
   still needs an expected type and a `{ … }` with none is an error. (Supersedes
   the earlier decision that `map<K, V>` replaced the anonymous record: there is
-  no anonymous record type at all, and `Map` is a stdlib rec rather than a
-  runtime intrinsic.)
+  no anonymous record type at all, and `HashMap` is a declared rec rather than a
+  runtime intrinsic. `Set` is gone: a set is a sorted vec with `dedup`, or a
+  `HashMap<K, bool>` for membership.)
 - **A type name is an ordinary name; the intrinsics are built in, not
   declared.** Every written type — `txt`, `bool`, `int`, `Vec<T>`, a declared
   `rec`/`enum`, a type parameter — parses as one `TypeExpr::Named` and resolves
@@ -212,7 +213,7 @@ tracked so they are settled before they block a phase.
   segment spells (`use std::dynamic;` then `dynamic::Vec`); a type gives that
   type bare (`use std::dynamic::Vec;` then `Vec<T>`); a plain function gives
   that one name bare (`use std::fs::glob;` then `glob`). One level of braces
-  shortens several names under one prefix (`use std::dynamic::{Map, Vec};`).
+  shortens several names under one prefix (`use std::dynamic::{HashMap, Vec};`).
   There is no alias and no `as`. A `use` sits at the top of its file, ahead of
   any declaration, and covers every declaration of the namespace that wrote it,
   whichever file declared it. It does not reach sub-namespaces and does not
@@ -301,11 +302,11 @@ tracked so they are settled before they block a phase.
   reached as a value call (`xs.len()`) or a `Type.name` call; its parameter's
   type is the dispatch target and its name is irrelevant. Every other function
   in the block is an associated function, reached as `Type.name(...)`
-  (`Vec.new()`, `Map.from_entries(entries)`). A bound function is never a
+  (`Vec.new()`, `HashMap.new()`). A bound function is never a
   namespace-level name, so a `use` never shortens it and a bare name never
   reaches it. Its reachability is `pub` on the function and `pub` on the type,
   never a `use`. A name may repeat in a namespace only when the functions are
-  bound to different types: `Map.len` and `Set.len` share `len` in
+  bound to different types: `Vec.len` and `HashMap.len` share `len` in
   `std::dynamic`, and the receiver's type head selects between them. Every other
   declaration makes a name unique, so a genuine duplicate is an error. First
   user: the `std::process` command builder (`command(line).dir(...).run()`).
@@ -429,7 +430,7 @@ orchestration programs smaller and clearer?
    (a) ✅ The literal never names its type: `Expression::Struct` (`Name { … }`)
    is gone, so a `{ … }` shape is typed by its annotation and the brace
    ambiguity is gone with it. (b) ✅ `rec` only declares; there is no anonymous
-   record type, and the key-valued container is the ordinary `std::dynamic::Map`.
+   record type, and the key-valued container is the ordinary `std::dynamic::HashMap`.
    (c) ✅ A generic
    literal cannot carry type arguments, which no longer arises: the literal
    carries no type at all.
@@ -455,7 +456,7 @@ orchestration programs smaller and clearer?
 - ✅ A record literal works as a `match` subject (Rust needs parens), and no
   literal names its type.
 - ✅ `rec` declares a nominal shape; the key-valued container is the ordinary
-  `std::dynamic::Map`, a `rec` over a `Vec` of entries.
+  `std::dynamic::HashMap`, a declared `rec` the runtime keeps as a hash table.
 
 ## Intrinsic-surface budget
 
@@ -480,11 +481,18 @@ gains capability.
 | `std::syscalls::getcwd` | `getcwd` | floor |
 | `std::fs::read` | `open`/`read` | path convenience |
 | `std::fs::write` | `open`/`write` | path convenience |
-| `std::dynamic::new` | an empty container | container |
-| `std::dynamic::push` | append one element | container |
-| `std::dynamic::replace` | replace one element | container |
-| `std::dynamic::at` | read one element | container |
-| `std::dynamic::len` | element count | container |
+| `std::dynamic::Vec.new` | an empty vec | container |
+| `std::dynamic::Vec.push` | append one element | container |
+| `std::dynamic::Vec.replace` | replace one element | container |
+| `std::dynamic::Vec.at` | read one element | container |
+| `std::dynamic::Vec.len` | element count | container |
+| `std::dynamic::HashMap.new` | an empty hash map | container |
+| `std::dynamic::HashMap.insert` | write one key | container |
+| `std::dynamic::HashMap.find` | read one key, as an option | container |
+| `std::dynamic::HashMap.remove` | delete one key | container |
+| `std::dynamic::HashMap.len` | entry count | container |
+| `std::dynamic::HashMap.keys` | collect the keys | container |
+| `std::dynamic::HashMap.values` | collect the values | container |
 | `std::text::strlen` | byte length | kernel |
 | `std::text::byte_at` | byte read | kernel |
 | `std::text::memchr` | byte search | kernel |
@@ -493,7 +501,7 @@ gains capability.
 | ~~`std::text::trim`~~ | Unicode policy | **deleted** — kiru over `byte_at`/`substr` |
 | ~~`std::text::split`~~ | Unicode policy | **deleted** — kiru over `memchr`/`substr` |
 
-Floor: 13 syscalls, plus the two `std::fs` path conveniences, the five
+Floor: 13 syscalls, plus the two `std::fs` path conveniences, the twelve
 `std::dynamic` container operations, and the four-native byte kernel. A native
 that touches the operating system lives in `std::syscalls` under its syscall or
 C library name; a pure one stays with its kind. The rule: **a native earns its

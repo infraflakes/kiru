@@ -180,7 +180,7 @@ fn parses_a_use_of_a_name() {
 fn parses_a_use_group() {
     // One level of braces names several things under one prefix: one `use`
     // item expands to one path per name.
-    let file = parse("use std::dynamic::{Map, text_order};\nfn f() {};");
+    let file = parse("use std::dynamic::{HashMap, text_order};\nfn f() {};");
     let Item::Use(use_item) = &file.items[0] else {
         panic!("expected a use");
     };
@@ -192,7 +192,7 @@ fn parses_a_use_group() {
     assert_eq!(
         segments,
         vec![
-            vec!["std".to_owned(), "dynamic".to_owned(), "Map".to_owned()],
+            vec!["std".to_owned(), "dynamic".to_owned(), "HashMap".to_owned()],
             vec![
                 "std".to_owned(),
                 "dynamic".to_owned(),

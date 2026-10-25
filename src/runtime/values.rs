@@ -1,5 +1,6 @@
-//! The runtime values: text, a map of values, a Vec of text, a boolean, an
-//! integer, or the no-value result of a call that returns nothing.
+//! The runtime values: text, a record, a Vec, a hash map, a boolean, an
+//! integer, an enum variant, a function value, or the no-value result of a call
+//! that returns nothing.
 //!
 //! The kinds of value are not the runtime's to invent: the compiler's group
 //! model declares the runtime shapes, and every `Value` carries one of them
@@ -8,12 +9,14 @@
 //!
 //! The language has copy semantics: a value behaves as if it were copied on
 //! every assignment, pass, and write. The representation makes the copy cheap
-//! instead of eager — text, Vecs, maps, variant payloads, and closure
-//! captures are refcounted and shared, and a write unshares first. A clone is
-//! then constant time, and a value still behaves as if it were copied: no
-//! mutation is ever visible through another reference.
+//! instead of eager — text, Vecs, records, hash maps, variant payloads, and
+//! closure captures are refcounted and shared, and a write unshares first. A
+//! clone is then constant time, and a value still behaves as if it were
+//! copied: no mutation is ever visible through another reference.
 
+use std::collections::HashMap;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, OnceLock};
 
 use crate::compiler::graph::RuntimeShape;
@@ -24,6 +27,8 @@ pub(crate) enum Value {
     Text(Text),
     Record(Map),
     Vec(Arc<Vec<Value>>),
+    /// The runtime hash map, keyed by structural equality.
+    Table(Arc<HashMap<Value, Value>>),
     /// A constructed enum variant: its declared variant index and payload.
     Variant {
         tag: u16,
@@ -55,6 +60,7 @@ impl Value {
             Value::Text(_) => RuntimeShape::Text,
             Value::Record(_) => RuntimeShape::Record,
             Value::Vec(_) => RuntimeShape::List,
+            Value::Table(_) => RuntimeShape::Table,
             Value::Variant { .. } => RuntimeShape::Variant,
             Value::Function { .. } => RuntimeShape::Function,
             Value::Bool(_) => RuntimeShape::Bool,
@@ -135,6 +141,18 @@ impl Value {
         Some(values)
     }
 
+    /// The table this value stores, kept shared, or `None` when its shape is
+    /// not the table shape.
+    pub(crate) fn table(&self) -> Option<&Arc<HashMap<Value, Value>>> {
+        if self.runtime_shape() != RuntimeShape::Table {
+            return None;
+        }
+        let Value::Table(entries) = self else {
+            unreachable!("a value whose shape is the table shape stores a table");
+        };
+        Some(entries)
+    }
+
     /// The variant this value is: its declared tag and its payload, copied as
     /// a shared count, or `None` when its shape is not the variant shape.
     pub(crate) fn variant(&self) -> Option<(u16, Arc<Vec<Value>>)> {
@@ -171,6 +189,7 @@ impl Value {
             RuntimeShape::Bool => self.boolean().map(|value| Text::from(value.to_string())),
             RuntimeShape::Record
             | RuntimeShape::List
+            | RuntimeShape::Table
             | RuntimeShape::Variant
             | RuntimeShape::Function
             | RuntimeShape::Nothing
@@ -197,6 +216,38 @@ impl Value {
     /// value fit every shape but this one.
     pub(crate) fn carries(&self) -> bool {
         self.runtime_shape() != RuntimeShape::Nothing
+    }
+}
+
+/// A value hashes by what makes it equal: its shape and its content. Text
+/// hashes by its bytes whatever representation holds them, a record and a
+/// table hash without regard to entry order, and a Vec and a variant hash in
+/// their own order. Two equal values must hash alike, or a table key would be
+/// found by equality and missed by its bucket.
+impl Hash for Value {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Value::Text(text) => text.hash(state),
+            Value::Record(record) => record.hash(state),
+            Value::Vec(values) => values.hash(state),
+            Value::Table(entries) => hash_unordered(
+                entries.len(),
+                entries.iter().map(|(key, value)| entry_hash(key, value)),
+                state,
+            ),
+            Value::Variant { tag, payload } => {
+                tag.hash(state);
+                payload.hash(state);
+            }
+            Value::Function { code, captures } => {
+                code.hash(state);
+                captures.hash(state);
+            }
+            Value::Bool(value) => value.hash(state),
+            Value::Int(number) => number.hash(state),
+            Value::Nothing => {}
+        }
     }
 }
 
@@ -366,6 +417,14 @@ impl PartialEq for Text {
 
 impl Eq for Text {}
 
+/// Text hashes by its bytes, whatever representation holds them: a flat text,
+/// a rope, and a slice of the same content are one value and must hash alike.
+impl Hash for Text {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_str().hash(state);
+    }
+}
+
 impl fmt::Debug for Text {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(self.as_str(), formatter)
@@ -425,6 +484,36 @@ impl PartialEq for Map {
     }
 }
 
+/// A record hashes by its length and its entries combined without regard to
+/// order, because its equality ignores order too.
+impl Hash for Map {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        hash_unordered(
+            self.entries.len(),
+            self.entries
+                .iter()
+                .map(|(key, value)| entry_hash(key, value)),
+            state,
+        );
+    }
+}
+
+/// Hash one key and its value into a single number.
+fn entry_hash<K: Hash, V: Hash>(key: &K, value: &V) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut hasher);
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Hash a keyed collection as its length and the sum of its entry hashes, so
+/// two collections that differ only in entry order hash the same. A collision
+/// only puts unequal values in one bucket; equality still decides.
+fn hash_unordered<H: Hasher>(count: usize, entries: impl Iterator<Item = u64>, state: &mut H) {
+    count.hash(state);
+    entries.fold(0u64, u64::wrapping_add).hash(state);
+}
+
 impl Map {
     /// Replace any value already stored for `key`.
     pub(crate) fn set(&mut self, key: String, value: Value) {
@@ -448,6 +537,55 @@ impl Map {
 mod tests {
     use super::*;
 
+    // The lint sees `Text`'s flatten cache as interior mutability. A key's
+    // bytes, and so its equality and its hash, never change; the cache only
+    // makes the first read of a rope cheaper.
+    #[allow(clippy::mutable_key_type)]
+    #[test]
+    fn equal_values_hash_alike() {
+        // A table key is found by equality and by its bucket, so two equal
+        // values must hash alike. Text is the trap: one content has three
+        // representations, and a record ignores field order.
+        let flat = Value::Text(Text::from("ab"));
+        let rope = Value::Text(Text::concat(Text::from("a"), Text::from("b")));
+        let slice = Value::Text(
+            Text::from("xabx")
+                .slice(1, 3)
+                .expect("the range is inside the text"),
+        );
+        for other in [&rope, &slice] {
+            assert_eq!(&flat, other, "one content is one value");
+            assert_eq!(hash_of(&flat), hash_of(other), "equal values hash alike");
+        }
+
+        let mut left = Map::default();
+        left.set("a".to_owned(), Value::Int(1));
+        left.set("b".to_owned(), Value::Int(2));
+        let mut right = Map::default();
+        right.set("b".to_owned(), Value::Int(2));
+        right.set("a".to_owned(), Value::Int(1));
+        assert_eq!(
+            hash_of(&Value::Record(left)),
+            hash_of(&Value::Record(right)),
+            "a record hashes without regard to field order"
+        );
+
+        let mut table = HashMap::new();
+        table.insert(Value::Text(Text::from("ab")), Value::Int(1));
+        assert_eq!(
+            table.get(&slice),
+            Some(&Value::Int(1)),
+            "a key is found from another representation of its content"
+        );
+    }
+
+    /// The hash a value contributes to a table bucket.
+    fn hash_of(value: &Value) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        value.hash(&mut hasher);
+        hasher.finish()
+    }
+
     #[test]
     fn every_value_carries_the_shape_the_model_declares() {
         // The one reading between storage and the model: every shape the
@@ -458,6 +596,7 @@ mod tests {
             (Value::Text(Text::from("a")), RuntimeShape::Text),
             (Value::Record(Map::default()), RuntimeShape::Record),
             (Value::Vec(Arc::new(Vec::new())), RuntimeShape::List),
+            (Value::Table(Arc::new(HashMap::new())), RuntimeShape::Table),
             (
                 Value::Variant {
                     tag: 0,
@@ -476,7 +615,7 @@ mod tests {
             (Value::Int(1), RuntimeShape::Int),
             (Value::Nothing, RuntimeShape::Nothing),
         ];
-        assert_eq!(values.len(), 8, "the runtime stores eight shapes");
+        assert_eq!(values.len(), 9, "the runtime stores nine shapes");
         for (value, shape) in values {
             assert_eq!(value.runtime_shape(), shape, "each shape read once");
             assert_eq!(
