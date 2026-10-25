@@ -2,6 +2,7 @@
 bin/
 out/
 pipeline/main
+pipeline/check-main
 result
 target/
 vendor/

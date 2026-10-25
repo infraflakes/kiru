@@ -24,18 +24,15 @@ fn flag_of(context: std::cli::Context) -> txt {
 };
 
 fn run_kiru(context: std::cli::Context) -> int {
-  kiru::kiru_command(kiru, flag_of(context));
-  return 0;
+  return kiru::kiru_command(kiru, flag_of(context));
 };
 
 fn run_docs(context: std::cli::Context) -> int {
-  kiru::docs_command(docs, flag_of(context));
-  return 0;
+  return kiru::docs_command(docs, flag_of(context));
 };
 
 fn run_all(context: std::cli::Context) -> int {
-  kiru::all_command(kiru, docs, flag_of(context));
-  return 0;
+  return kiru::all_command(kiru, docs, flag_of(context));
 };
 
 fn run_usage(context: std::cli::Context) -> int {

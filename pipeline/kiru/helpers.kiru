@@ -10,12 +10,26 @@ fn wrap(project: Project, line: txt) -> txt {
   return wrapped;
 };
 
-# Sequential step: stream the command's output; a non-zero exit stops the run.
-fn run(project: Project, line: txt) {
+# Sequential step: stream the command's output and return its exit code.
+fn run(project: Project, line: txt) -> int {
   std::log("Running '@(line)'");
   let code: int = std::process::command(wrap(project, line)).dir(project.Dir).run();
   match code {
     0 => { std::log("'@(line)' ran successfully"); };
     _ => { std::eprint("'@(line)' failed"); };
   };
+  return code;
+};
+
+# Run steps in order and return the first non-zero exit code.
+fn run_steps(project: Project, lines: std::dynamic::Vec<txt>) -> int {
+  let index: int = 0;
+  let count: int = std::dynamic::len(lines);
+  for {
+    match index < count { false => { break; }; true => {}; };
+    let code: int = run(project, std::dynamic::at(lines, index));
+    match code { 0 => {}; _ => { return code; }; };
+    index = index + 1;
+  };
+  return 0;
 };

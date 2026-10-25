@@ -1,18 +1,26 @@
-fn build_docs(docs: Project) {
-  run(docs, "bun install --frozen-lockfile");
-  run(docs, "bun run build");
+use std::dynamic::Vec;
+
+fn build_docs(docs: Project) -> int {
+  let steps: Vec<txt> = Vec.new()
+    .push("bun install --frozen-lockfile")
+    .push("bun run build");
+  return run_steps(docs, steps);
 };
 
-fn check_docs(docs: Project) {
-  run(docs, "bun run check");
-  run(docs, "bun run types");
+fn check_docs(docs: Project) -> int {
+  let steps: Vec<txt> = Vec.new()
+    .push("bun run check")
+    .push("bun run types");
+  return run_steps(docs, steps);
 };
 
-fn format_docs(docs: Project) {
-  run(docs, "bun run fix");
+fn format_docs(docs: Project) -> int {
+  return run(docs, "bun run fix");
 };
 
-fn update_docs(docs: Project) {
-  run(docs, "bun update");
-  run(docs, "biome migrate");
+fn update_docs(docs: Project) -> int {
+  let steps: Vec<txt> = Vec.new()
+    .push("bun update")
+    .push("biome migrate");
+  return run_steps(docs, steps);
 };

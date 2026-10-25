@@ -1,19 +1,29 @@
-fn build_kiru(project: Project) {
-  run(project, "nix build .#default");
+
+fn build_kiru(project: Project) -> int {
+  return run(project, "nix build .#default");
 };
 
-fn check_kiru(project: Project) {
-  run(project, "cargo test");
-  run(project, "cargo clippy --all-targets -- -D warnings");
-  run(project, "cargo fmt --check");
+fn check_kiru(project: Project) -> int {
+  let steps: Vec<txt> = Vec.new()
+    .push("cargo test")
+    .push("cargo test --release")
+    .push("cargo clippy --all-targets -- -D warnings")
+    .push("cargo fmt --check")
+    .push("cargo build --release")
+    .push("cargo run --release -- pipeline/check/kiru.toml");
+  return run_steps(project, steps);
 };
 
-fn format_kiru(project: Project) {
-  run(project, "cargo clippy --fix --allow-dirty --all-targets");
-  run(project, "cargo fmt");
+fn format_kiru(project: Project) -> int {
+  let steps: Vec<txt> = Vec.new()
+    .push("cargo clippy --fix --allow-dirty --all-targets")
+    .push("cargo fmt");
+  return run_steps(project, steps);
 };
 
-fn update_kiru(kiru: Project) {
-  run(kiru, "cargo update --verbose");
-  run(kiru, "cargo upgrade --verbose --verbose");
+fn update_kiru(kiru: Project) -> int {
+  let steps: Vec<txt> = Vec.new()
+    .push("cargo update --verbose")
+    .push("cargo upgrade --verbose --verbose");
+  return run_steps(kiru, steps);
 };
