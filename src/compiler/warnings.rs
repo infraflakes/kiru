@@ -13,8 +13,8 @@
 use std::collections::HashSet;
 
 use crate::compiler::Diagnostic;
-use crate::compiler::model::collect_reads;
-use crate::compiler::model::{
+use crate::compiler::graph::collect_reads;
+use crate::compiler::graph::{
     DeclarationId, DeclarationKind, FileOrigin, FunctionBinding, Program, join_path, namespace_path,
 };
 

@@ -1,4 +1,3 @@
-
 fn build_kiru(project: Project) {
   run(project, "nix build .#default");
 };

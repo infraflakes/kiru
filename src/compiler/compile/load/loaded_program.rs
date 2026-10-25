@@ -8,7 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::compiler::Diagnostic;
-use crate::compiler::model::{DeclarationKind, FileOrigin};
+use crate::compiler::graph::{DeclarationKind, FileOrigin};
 use crate::syntax::{Declaration, Span, TypeExpr};
 
 /// One loaded source file, kept for diagnostics.

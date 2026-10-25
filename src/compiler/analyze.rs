@@ -8,21 +8,17 @@
 //! Both share the load, the resolution, and the check, so neither can disagree
 //! with the other about what the tree means.
 
-mod semantic;
-
 use std::path::Path;
 
-use crate::compiler::compile::check::validate_program;
 use crate::compiler::compile::load::{LoadedProgram, ProgramSource, load_files};
-use crate::compiler::compile::resolve::{Analysis, program_main, resolve_tree};
+use crate::compiler::derive::validate_program;
+use crate::compiler::derive::{Analysis, program_main, resolve_tree};
 use crate::compiler::diagnostic::{Diagnostic, FileDiagnostics, group};
+use crate::compiler::graph::{Facts, FileId, Program};
 use crate::compiler::mark_reachable;
-use crate::compiler::model::{Facts, FileId, Program};
+use crate::compiler::views::tokens::{self, SemanticToken};
 use crate::compiler::warnings::{unused_bindings, unused_declarations};
-
-#[cfg(test)]
-pub(crate) use semantic::SemanticRole;
-pub(crate) use semantic::{SemanticToken, TOKEN_MODIFIERS, TOKEN_TYPES};
+use crate::compiler::{Report, ReportRule};
 
 /// The facts of the whole tree, file by file. A file with no facts is absent;
 /// a caller that reports one file publishes an empty list when its entry is
@@ -39,14 +35,15 @@ pub(crate) fn diagnostics(
     };
     // A recovered tree still reports: its syntax errors, every error the
     // checker met, and every unused fact the recovery kept.
-    let mut diagnostics = linked.loaded.syntax.clone();
-    diagnostics.extend(linked.errors);
-    diagnostics.extend(linked.warnings);
-    diagnostics.extend(unused_bindings(&linked.program));
+    let mut report = Report::new();
+    report.extend(ReportRule::Load, linked.loaded.syntax.clone());
+    report.append(linked.errors);
+    report.append(linked.warnings);
+    report.extend(ReportRule::Unused, unused_bindings(&linked.program));
     let main = match program_main(&linked.program) {
         Ok(main) => main,
         Err(diagnostic) => {
-            diagnostics.push(diagnostic);
+            report.push(ReportRule::Entry, diagnostic);
             None
         }
     };
@@ -55,11 +52,15 @@ pub(crate) fn diagnostics(
     // are unused.
     if let Some(main) = main {
         let reachable = mark_reachable(&linked.program, &linked.facts, main);
-        diagnostics.extend(unused_declarations(&linked.program, &reachable));
+        report.extend(
+            ReportRule::Unused,
+            unused_declarations(&linked.program, &reachable),
+        );
     }
     // The embedded library is the compiler's, not the editor's: its files
     // have no real path, and a fact about one cannot be published.
-    diagnostics.retain(|diagnostic| linked.program.is_program_path(&diagnostic.path));
+    report.retain(|entry| linked.program.is_program_path(&entry.diagnostic.path));
+    let mut diagnostics = report.into_diagnostics();
     diagnostics.sort_by(|left, right| {
         left.path
             .cmp(&right.path)
@@ -88,7 +89,7 @@ pub(crate) fn semantic_tokens(
     else {
         return Vec::new();
     };
-    semantic::tokens(&linked.loaded, &linked.program, FileId(index))
+    tokens::tokens(&linked.loaded, &linked.program, FileId(index))
 }
 
 /// One tree after resolution and checking: its files, its immutable model, the
@@ -98,8 +99,8 @@ struct Linked {
     loaded: LoadedProgram,
     program: Program,
     facts: Facts,
-    warnings: Vec<Diagnostic>,
-    errors: Vec<Diagnostic>,
+    warnings: Report,
+    errors: Report,
 }
 
 /// Load, resolve, and check one tree. A load or resolution failure is the
@@ -124,10 +125,11 @@ fn link(
     let Analysis { program, warnings } = match resolve_tree(&loaded) {
         Ok(analysis) => analysis,
         Err(diagnostic) => {
-            let mut diagnostics = loaded.syntax.clone();
-            diagnostics.push(diagnostic);
-            diagnostics.retain(|diagnostic| loaded.is_program_path(&diagnostic.path));
-            return Err(group(&loaded, diagnostics));
+            let mut report = Report::new();
+            report.extend(ReportRule::Load, loaded.syntax.clone());
+            report.push(ReportRule::Resolve, diagnostic);
+            report.retain(|entry| loaded.is_program_path(&entry.diagnostic.path));
+            return Err(group(&loaded, report.into_diagnostics()));
         }
     };
     let (facts, errors) = validate_program(&program);

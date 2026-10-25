@@ -1,6 +1,7 @@
 //! The failure a build stopped on: its diagnostics, file by file, and the
 //! rendering a terminal prints for them.
 
+use crate::compiler::Report;
 use crate::compiler::compile::load::{LoadError, LoadedProgram};
 use crate::compiler::diagnostic::{Diagnostic, FileDiagnostics, group, render};
 
@@ -28,7 +29,8 @@ impl BuildFailure {
 /// Assemble the failure a build stopped on from every diagnostic it
 /// gathered, rendered in the order it gathered them. The program's files
 /// carry the sources the spans name; the library's files publish nothing.
-pub(super) fn failure_from(loaded: &LoadedProgram, gathered: Vec<Diagnostic>) -> BuildFailure {
+pub(super) fn failure_from(loaded: &LoadedProgram, report: Report) -> BuildFailure {
+    let gathered = report.into_diagnostics();
     let rendered = gathered
         .iter()
         .map(|diagnostic| render(loaded, diagnostic))

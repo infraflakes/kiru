@@ -8,10 +8,10 @@
 //! target the check recorded, and a `match` lowers to a compare-and-jump chain
 //! that keeps the first-match order.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::compiler::bytecode::{Bytecode, Code, Instruction, ModuleValue};
-use crate::compiler::model::{DeclarationId, Facts, Program, Type};
+use crate::compiler::graph::{DeclarationId, Facts, Program, Type};
 use crate::compiler::native_registry::{NativeSignature, argument_kind};
 
 /// Every lowering fact a declaration carries, read in one pass over the
@@ -29,13 +29,16 @@ pub(crate) struct DeclarationLayout {
 }
 
 impl DeclarationLayout {
-    fn of(program: &Program) -> Self {
+    fn of(program: &Program, reachable: &HashSet<DeclarationId>) -> Self {
         let mut codes = vec![None; program.declarations.len()];
         let mut globals = vec![None; program.declarations.len()];
         let mut natives = Vec::new();
         let mut next_code = 0;
         let mut next_global = 0;
         for (index, declaration) in program.declarations.iter().enumerate() {
+            if !reachable.contains(&DeclarationId(index)) {
+                continue;
+            }
             // An anonymous function owns no code at layout time: the
             // enclosing body's reference allocates its code where the literal
             // is lowered, so the code order stays the traversal's order.
@@ -64,13 +67,15 @@ impl DeclarationLayout {
             }
         }
         // The startup order is the resolver's dependency order, while the
-        // global a value is stored in is its declaration-order slot.
+        // global a value is stored in is its declaration-order slot. A value
+        // the entry never reaches has no instructions in the payload.
         let module_values = program
             .module_values
             .iter()
+            .filter(|id| reachable.contains(id))
             .map(|id| ModuleValue {
-                code: codes[id.0].expect("a module value has a code"),
-                global: globals[id.0].expect("a module value has a global"),
+                code: codes[id.0].expect("a reachable module value has a code"),
+                global: globals[id.0].expect("a reachable module value has a global"),
             })
             .collect();
         Self {
@@ -87,14 +92,22 @@ impl DeclarationLayout {
 /// none. The ids follow declaration order, so this one mapping is where that
 /// numbering is written and every reader of a code id reads it here.
 #[cfg(test)]
-pub(crate) fn declaration_codes(program: &Program) -> Vec<Option<u32>> {
-    DeclarationLayout::of(program).codes
+pub(crate) fn declaration_codes(
+    program: &Program,
+    reachable: &HashSet<DeclarationId>,
+) -> Vec<Option<u32>> {
+    DeclarationLayout::of(program, reachable).codes
 }
 
-/// Lower a validated, pruned program to bytecode, starting from the entry. The
-/// check's facts supply every method call's target; the graph itself is only
-/// read.
-pub(crate) fn lower_bytecode(program: &Program, facts: &Facts, entry: DeclarationId) -> Bytecode {
+/// Lower a validated program to bytecode, starting from the entry. The check's
+/// facts supply every method call's target, and the reachable set filters what
+/// the payload carries; the graph itself is only read.
+pub(crate) fn lower_bytecode(
+    program: &Program,
+    facts: &Facts,
+    entry: DeclarationId,
+    reachable: &HashSet<DeclarationId>,
+) -> Bytecode {
     let mut lowerer = Lowerer {
         program,
         facts,
@@ -111,8 +124,9 @@ pub(crate) fn lower_bytecode(program: &Program, facts: &Facts, entry: Declaratio
         loop_breaks: Vec::new(),
         next: 0,
     };
-    lowerer.assign_layout(DeclarationLayout::of(program));
+    lowerer.assign_layout(DeclarationLayout::of(program, reachable));
     lowerer.lower_all();
+    super::last_use::rewrite(&mut lowerer.codes);
     let entry = lowerer.declaration_codes[entry.0].expect("the entry has a code");
     Bytecode {
         codes: lowerer.codes,

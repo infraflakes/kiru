@@ -7,7 +7,7 @@
 //! a method family is lowered as the target the check recorded in `Facts`.
 
 use crate::compiler::bytecode::{Code, Instruction};
-use crate::compiler::model::{
+use crate::compiler::graph::{
     DeclarationId, Expression, Function, MatchArm, MatchBody, Pattern, Site, Statement, StringPart,
 };
 use crate::compiler::operator_facts::BinaryInstruction;
@@ -407,10 +407,10 @@ impl Lowerer<'_> {
     /// Lower a name to a value: a binding reads its register, a module value
     /// reads its global, and a function value makes a function.
     fn lower_reference(&mut self, declaration: DeclarationId) -> u16 {
-        let dst = self.fresh();
         let program = self.program;
         let node = program.declaration(declaration);
         if node.kind.callable() && node.kind.has_body() {
+            let dst = self.fresh();
             let function = node
                 .function()
                 .expect("a callable body is a function expression");
@@ -437,22 +437,25 @@ impl Lowerer<'_> {
                 }
             };
             self.make_function(dst, code, function);
-        } else if node.kind.module_value() {
+            return dst;
+        }
+        if node.kind.module_value() {
+            let dst = self.fresh();
             let global =
                 self.declaration_globals[declaration.0].expect("a module value has a global");
             self.instructions
                 .push(Instruction::LoadGlobal { dst, global });
-        } else {
-            // The checker rejects a native used as a value, because a native has
-            // no value form; the invariant is enforced in every build.
-            assert!(
-                !node.kind.native(),
-                "the checker rejects a native used as a value"
-            );
-            let slot = self.slot(declaration);
-            self.instructions.push(Instruction::LoadLocal { dst, slot });
+            return dst;
         }
-        dst
+        // The checker rejects a native used as a value, because a native has
+        // no value form; the invariant is enforced in every build. Every
+        // other reference reads the binding's own register, so a last use can
+        // move the value instead of copying it.
+        assert!(
+            !node.kind.native(),
+            "the checker rejects a native used as a value"
+        );
+        self.slot(declaration)
     }
 
     /// Lower a call's arguments to registers, in order.

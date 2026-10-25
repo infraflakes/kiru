@@ -12,7 +12,7 @@ use std::path::Path;
 use super::sources::ProgramSource;
 use crate::compiler::compile::load::load_error::LoadError;
 use crate::compiler::compile::load::loaded_program::LoadedProgram;
-use crate::compiler::model::FileOrigin;
+use crate::compiler::graph::FileOrigin;
 
 use super::record::Loader;
 

@@ -6,6 +6,7 @@
 //! are the only inputs.
 
 mod expressions;
+mod last_use;
 mod program;
 
 #[cfg(test)]

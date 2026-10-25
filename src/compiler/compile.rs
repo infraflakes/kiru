@@ -12,19 +12,16 @@ use std::path::Path;
 use super::warnings::unused_declarations;
 use crate::compiler::diagnostic::render;
 use crate::compiler::{
-    Build, DIAGNOSTIC_PREFIX, MISSING_MAIN, ProgramSource, attach_trailer, build, lower_bytecode,
-    mark_reachable, prune_unreachable, serialize_bytecode,
+    Build, DIAGNOSTIC_PREFIX, MISSING_MAIN, ProgramSource, ReportRule, attach_trailer, build,
+    lower_bytecode, mark_reachable, serialize_bytecode, verify_reachable,
 };
 use crate::project::Project;
 use package::make_writable_executable;
 
 pub(crate) mod build;
-pub(crate) mod check;
 pub(crate) mod load;
 pub(crate) mod lower;
 pub(crate) mod package;
-pub(crate) mod prune;
-pub(crate) mod resolve;
 
 #[cfg(test)]
 mod tests;
@@ -39,15 +36,13 @@ pub(crate) fn compile(
 ) -> Result<(), String> {
     let Build {
         loaded,
-        mut program,
-        facts: mut derived_facts,
+        program,
+        facts: derived_facts,
         warnings,
         entry,
     } = build(project, source).map_err(|failure| failure.rendered().to_owned())?;
-    let mut facts: Vec<_> = warnings
-        .into_iter()
-        .filter(|fact| program.is_program_path(&fact.path))
-        .collect();
+    let mut report = warnings;
+    report.retain(|entry| program.is_program_path(&entry.diagnostic.path));
     // The entry is the manifest's program main. A missing one is the
     // project's fact; a malformed one is the file's, and the diagnostic names
     // it.
@@ -56,10 +51,10 @@ pub(crate) fn compile(
     let main = match entry {
         Ok(Some(main)) => {
             // The reachable set is the compile's second reading of the graph:
-            // what no reachable body reads is a warning, then it is dropped
-            // before lowering.
+            // what no reachable body reads is a warning, then it is filtered
+            // out before lowering.
             let marked = mark_reachable(&program, &derived_facts, main);
-            facts.extend(unused_declarations(&program, &marked));
+            report.extend(ReportRule::Unused, unused_declarations(&program, &marked));
             reachable = Some(marked);
             Some(main)
         }
@@ -68,7 +63,7 @@ pub(crate) fn compile(
             None
         }
         Err(diagnostic) => {
-            facts.push(diagnostic);
+            report.push(ReportRule::Entry, diagnostic);
             None
         }
     };
@@ -77,7 +72,11 @@ pub(crate) fn compile(
     // entry's own fact.
     if !loaded.syntax.is_empty() || main.is_none() {
         let mut message = String::new();
-        for diagnostic in loaded.syntax.iter().chain(facts.iter()) {
+        for diagnostic in loaded
+            .syntax
+            .iter()
+            .chain(report.iter().map(|entry| &entry.diagnostic))
+        {
             message.push_str(&render(&loaded, diagnostic));
         }
         if missing_main {
@@ -88,13 +87,13 @@ pub(crate) fn compile(
         }
         return Err(message);
     }
-    for warning in &facts {
-        eprint!("{}", render(&loaded, warning));
+    for entry in report.iter() {
+        eprint!("{}", render(&loaded, &entry.diagnostic));
     }
     let main = main.expect("the entry was settled above");
     let reachable = reachable.expect("a setted entry has its reachable set");
-    let main = prune_unreachable(&mut program, &mut derived_facts, main, &reachable);
-    let bytecode = lower_bytecode(&program, &derived_facts, main);
+    verify_reachable(&program, &derived_facts, main, &reachable);
+    let bytecode = lower_bytecode(&program, &derived_facts, main, &reachable);
 
     let bytes = serialize_bytecode(&bytecode)
         .map_err(|error| format!("{DIAGNOSTIC_PREFIX}: cannot serialize the program: {error}\n"))?;

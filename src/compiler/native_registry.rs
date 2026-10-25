@@ -31,7 +31,7 @@
 //! the parameters the row declares.
 
 use crate::compiler::STD_TREE;
-use crate::compiler::model::{Declaration, RuntimeShape, Type};
+use crate::compiler::graph::{Declaration, RuntimeShape, Type};
 
 /// How the runtime decodes one native argument: the parameter type the row
 /// declares, reduced to the runtime shape the decoder enforces. A handler then

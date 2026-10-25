@@ -24,6 +24,18 @@ pub enum Severity {
     Warning,
 }
 
+/// The rule that produced one diagnostic. A report entry names its rule; a
+/// rule's own pass is the only place its diagnostic is produced.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReportRule {
+    Load,
+    Resolve,
+    Check,
+    Use,
+    Unused,
+    Entry,
+}
+
 /// One other place a diagnostic points at: the span and the fact it states.
 #[derive(Clone, Debug)]
 pub struct RelatedSpan {
@@ -67,6 +79,78 @@ pub(crate) fn group(
         });
     }
     files
+}
+
+/// One report entry: the rule that produced the fact and the fact itself.
+#[derive(Clone, Debug)]
+pub(crate) struct ReportEntry {
+    pub(crate) rule: ReportRule,
+    pub(crate) diagnostic: Diagnostic,
+}
+
+/// The one ordered report. Every stage appends its rule's facts here; the
+/// terminal and the editor read the same order.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Report {
+    entries: Vec<ReportEntry>,
+}
+
+impl Report {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn push(&mut self, rule: ReportRule, diagnostic: Diagnostic) {
+        debug_assert!(
+            matches!(rule, ReportRule::Use | ReportRule::Unused)
+                == (diagnostic.severity == Severity::Warning),
+            "a rule and its diagnostic agree on severity"
+        );
+        self.entries.push(ReportEntry { rule, diagnostic });
+    }
+
+    pub(crate) fn extend(
+        &mut self,
+        rule: ReportRule,
+        diagnostics: impl IntoIterator<Item = Diagnostic>,
+    ) {
+        for diagnostic in diagnostics {
+            self.push(rule, diagnostic);
+        }
+    }
+
+    pub(crate) fn append(&mut self, mut other: Report) {
+        self.entries.append(&mut other.entries);
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &ReportEntry> {
+        self.entries.iter()
+    }
+
+    pub(crate) fn retain(&mut self, keep: impl FnMut(&ReportEntry) -> bool) {
+        self.entries.retain(keep);
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub(crate) fn into_diagnostics(self) -> Vec<Diagnostic> {
+        let mut diagnostics = Vec::with_capacity(self.entries.len());
+        for entry in self.entries {
+            debug_assert!(
+                matches!(entry.rule, ReportRule::Use | ReportRule::Unused)
+                    == (entry.diagnostic.severity == Severity::Warning),
+                "a rule and its diagnostic agree on severity"
+            );
+            diagnostics.push(entry.diagnostic);
+        }
+        diagnostics
+    }
 }
 
 /// One compiler fact tied to a source file and byte range.

@@ -14,7 +14,9 @@ pub(crate) fn deserialize_bytecode(bytes: &[u8]) -> Result<Bytecode, String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::compiler::model::name_hash;
+    use std::collections::HashSet;
+
+    use crate::compiler::graph::{DeclarationId, name_hash};
     use crate::compiler::{checked_program_and_entry, lower_bytecode};
 
     /// The same source as the round-trip test, so one program is pinned twice:
@@ -25,10 +27,16 @@ mod tests {
         let title: txt = \"kiru\";\n\
         fn main() { std::print(title); };";
 
+    /// The fixture lowers every declaration, so its bytes pin the serializer
+    /// rather than the reachability view.
+    fn all_declarations(program: &crate::compiler::graph::Program) -> HashSet<DeclarationId> {
+        (0..program.declarations.len()).map(DeclarationId).collect()
+    }
+
     #[test]
     fn bytecode_round_trips_through_bytes() {
         let (program, facts, entry) = checked_program_and_entry(SOURCE);
-        let bytecode = lower_bytecode(&program, &facts, entry);
+        let bytecode = lower_bytecode(&program, &facts, entry, &all_declarations(&program));
 
         let bytes = super::serialize_bytecode(&bytecode).expect("serializes");
         let restored = super::deserialize_bytecode(&bytes).expect("deserializes");
@@ -42,9 +50,14 @@ mod tests {
     #[test]
     fn the_compiled_image_is_byte_identical() {
         let (program, facts, entry) = checked_program_and_entry(SOURCE);
-        let bytes = super::serialize_bytecode(&lower_bytecode(&program, &facts, entry))
-            .expect("serializes");
-        assert_eq!(bytes.len(), 17675);
-        assert_eq!(name_hash(&bytes), 12749693456951739665);
+        let bytes = super::serialize_bytecode(&lower_bytecode(
+            &program,
+            &facts,
+            entry,
+            &all_declarations(&program),
+        ))
+        .expect("serializes");
+        assert_eq!(bytes.len(), 14783);
+        assert_eq!(name_hash(&bytes), 9353485939272338317);
     }
 }

@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::compiler::model::{DeclarationId, Facts, Program};
+use crate::compiler::graph::{DeclarationId, Facts, Program};
 use crate::compiler::{BuildFailure, ProgramSource, build, program_main};
 use crate::project::Project;
 

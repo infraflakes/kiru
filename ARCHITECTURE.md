@@ -1,7 +1,7 @@
 # The Fact Graph
 
-**Status:** proposal, not implemented.  
-**Scope:** the compiler and analysis backend of kiru.  
+**Status:** implemented.
+**Scope:** the compiler and analysis backend of kiru.
 **Goal:** scale the language and the editor without adding another special case for every rule.
 
 ---
@@ -27,25 +27,6 @@ kiru.toml + source files
 The given graph is built once. Every later answer — a name's declaration, a call's target, a type, reachability, halting, a warning — is a derived fact computed by a rule. No pass rewrites the graph. A view is a read-only slice of the same facts.
 
 This is not a new database server and it is not a second language. It is a shape for the backend we already have: one node family, one edge family, one place where each rule lives, one verifier.
-
----
-
-## 2. Why the current backend cannot scale
-
-The current graph is implicit. It lives inside expression nodes, name tables, method tables, use deliveries, and a few builder-only side tables. Every consumer walks it again.
-
-| Current symptom | Where it shows | Consequence | This design |
-|---|---|---|---|
-| Types are not declaration nodes | `register_declarations.rs` reserves a `TypeDecl` and returns before declaring a node | `Rec`/`Enum` arms are dead in declaration passes; type references are not graph edges; types are never pruned | A type is a declaration form with one id; type references are edges |
-| The checker writes edges | `expression_typing.rs` replaces a method family with a reference | The graph means different things before and after checking; a resolve-only consumer sees an incomplete graph | Resolution is a derived fact; the given graph is never written by a pass |
-| Prune renumbers every declaration | `prune/declarations.rs` compacts and remaps by hand | Every edge must be rewritten; `brought` is missed; verification is debug-only | Stable ids; pruning is a view, not a rewrite |
-| Six independent walkers | reachability, reads, remap, verifier, semantic, checker/lower | A new edge must be added in several places; a missed one is silent or a panic | The schema owns traversal; rules read relations |
-| Use status was outside the graph | `Builder.used_uses`, `brought`, warning pass, semantic pass | The same delivery was resolved and judged more than once; duplicates were once called unused | A delivery is a derived fact with a status |
-| Paths and names decide semantics | `is_absolute`, `<std>`, `root`, `main`, `std`, list path | The model has special cases that every pass must remember | Tree origin, entry, list, and natives are declared facts |
-| Verification is range-only and debug-only | `verify_graph.rs` checks ids, not relations | A table can point at the wrong name or namespace and still pass | A full relational verifier at every boundary |
-| Diagnostics are hand-written per case | one function and one message per fact | Adding one warning touches the enum, policy, config, and a pass | Rules emit diagnostic facts through one report |
-
-The two recent warning patches — the receiver exemption and the redundant-use classification — are symptoms of this shape, not separate bugs. A binding-role fact and a delivery-status fact would have made both rules ordinary.
 
 ---
 
@@ -142,7 +123,7 @@ Every relation is an edge with a kind, a source, a target, and the source span t
 | `resolve` | Ref site → Declaration | What a written name means | The declaration is visible from the site's namespace |
 | `call` | Call site → Declaration | What a call runs | The callee is callable |
 | `use` | Use site → Declaration / Namespace | What a use brings in | The target is a namespace, type, or free function |
-| `delivery` | Namespace + name → target | What a use delivers | The status is one derived fact: taken, unused, redundant, shadowed |
+| `delivery` | Namespace + name → target | What a use delivers | The status is one derived fact: taken, unused, or redundant; shadowed waits for a rule |
 | `owner` | Member → Function / Value | Which body owns a parameter or local | The owner is a named or anonymous function, or the module value whose initializer declares the local |
 | `capture` | Anonymous function → Local | A closure reads an outer local | The function is anonymous and the local is owned by an enclosing function |
 | `entry` | Tree → Declaration | Where the program starts | Exactly one for a program tree; none for the embedded library |
@@ -190,68 +171,27 @@ The dashed line is the important one: a site knows the **written path**, not a d
 
 ### 5.6 Where this lives in the repository
 
-The outer processes keep their meaning. The compiler's internals are replaced, not renamed around: `resolve/`, `check/`, `prune/`, and most of `model/` stop being stages. That is a real directory overhaul, done as the last migration stage.
+The compiler tree follows the model.
 
 ```
 src/compiler/
-  graph.rs + graph/       # given: schema, build, store, indexes
-  derive.rs + derive/     # rules: names, types, methods, uses,
-                          #        entry, reachability, halting, unused
-  views.rs + views/       # compile, editor, tokens
+  graph.rs + graph/       # given: ids, nodes, edges, tables, facts, visitors
+  derive.rs + derive/     # rules: resolve and check
+  views.rs + views/       # compile reachable set, token roles
   verify.rs               # relational invariants
-  compile.rs + compile/   # process: load, lower, package
-  analyze.rs + analyze/   # process: editor + token views
+  compile.rs + compile/   # process: load, build, lower, package
+  analyze.rs + analyze/   # process: editor diagnostics and tokens
   types/                  # type algebra (group facts), not the graph
   bytecode/
   native_registry.rs      # given native table
   diagnostic.rs           # one report
 ```
 
-| Today | Becomes |
-|---|---|
-| `src/syntax/` | Parser and immutable body trees (unchanged, and with no compiler imports) |
-| `src/project/` | Manifest and tree origin (unchanged) |
-| `src/compiler/model/` | `graph/` (ids, nodes, edges, tables, indexes) plus `types/` (the algebra) |
-| `src/compiler/compile/load/` | Shared loading under the compile process; `graph::build` consumes it |
-| `src/compiler/compile/resolve/` | `graph/build` for given facts; `derive/` for names, types, methods, uses |
-| `src/compiler/compile/check/` | `derive/` rules; the checker becomes a read-only rule set |
-| `src/compiler/compile/prune/` | `views/compile` (reachable set, stable ids) |
-| `src/compiler/analyze/` | `analyze` process over `views/editor` and `views/tokens` |
-| `src/compiler/diagnostic.rs` | The one report |
-| `src/lsp/` | Publication of the editor view (unchanged) |
-| `src/compiler/bytecode/`, `src/runtime/` | Lowering and execution; no semantic graph |
+The compile process runs load, resolve, check, the reachable view, lower, and package. The analyzer reuses load, resolve, and check, then groups the facts by file and projects tokens. No stage receives `&mut Graph` after resolution.
 
-The public shape is deliberately small:
+### 5.7 Layering
 
-```rust
-let graph = build(&project, &source)?;   // given facts, read-only
-let facts = derive(&graph)?;             // derived facts, read-only
-let view  = compile_view(&graph, &facts); // reachable set, stable ids
-```
-
-No stage receives `&mut Graph`.
-
-### 5.7 Directory contracts
-
-Once the majority of the migration is settled, every directory under `src/`, including every nested directory, carries a `CONTRACT.md`. It is a local, binding contract, not a tutorial.
-
-| Section | Content |
-|---|---|
-| Purpose | One sentence: what this directory exists to do |
-| Owns | The facts, types, or process steps that live here |
-| Must not | The things that belong elsewhere; the special cases that are forbidden |
-| Allowed dependencies | Which sibling directories may be imported |
-| Invariants | The local rules the verifier or the type system enforces |
-| Entry and children | The entry file and the subdirectories it owns |
-| Extension | The one place to add a fact, node, edge, rule, view, or diagnostic |
-
-Rules for the contracts:
-
-- `AGENTS.md` is the undisputed rule. A `CONTRACT.md` may narrow it locally and may never contradict it. On conflict, `AGENTS.md` wins and the contract is wrong.
-- A change that moves a directory's role updates that directory's `CONTRACT.md` and `AGENTS.md` in the same change.
-- A contract is short: one screen. It states rules, not history and not a walkthrough.
-- Presence is enforced by a test that every directory under `src/` has `CONTRACT.md`.
-- Layer boundaries are enforced by Rust visibility and by structural tests, not by prose: for example, `src/syntax` may not import `crate::compiler`; `derive` may not mutate; `views` may not import another view's private data.
+Layer boundaries are enforced by Rust visibility and by structural tests, not by prose: for example, `src/syntax` may not import `crate::compiler`; `derive` may not mutate the graph; `views` may not import another view's private data. The directory map in this document is documentation, not a build input.
 
 ---
 
@@ -344,7 +284,7 @@ These are the invariants the verifier enforces. They are not documentation; they
 | 6 | A method's binding receiver equals its first parameter's type; an associated function has no receiver; a named function owns one namespace name; an anonymous function owns none | Build |
 | 7 | Every type edge points at a type declaration; every type argument count matches | Derive |
 | 8 | Every resolved site's declaration is visible from the site's namespace | Derive |
-| 9 | Every delivery's status is exactly one of taken, unused, redundant, shadowed | Derive |
+| 9 | Every delivery's status is exactly one of taken, unused, or redundant; shadowed waits for a rule | Derive |
 | 10 | The entry is a root-namespace function with the declared shape; a program tree has exactly one | Derive |
 | 11 | Reachability is closed under the resolved edges: no reachable body points at an unreachable declaration | Derive |
 | 12 | Every source diagnostic names a rule, a severity, a site, and a span | Report |
@@ -355,166 +295,11 @@ Two more rules are structural rather than relational:
 - **One writer.** Only the builder creates given facts. Every later stage has a read-only handle.
 - **No semantic side tables.** If a fact is semantic, it is a node, edge, or derived relation. There is no `filed` set, no `used_uses` set, no `type_uses` span list outside the graph. Indexes and query caches are generated from the schema and are disposable; they are never a source of truth.
 
-The verifier runs after build, after derive, and after a view is produced. In development it panics on a violation; in release it returns a structured error at the boundary instead of silently continuing. A release build does not skip graph verification; it runs the cheap invariants and the full check on a debug flag.
+The relational verifier runs after build, after derive, and after a view is produced in development builds; a violation is a compiler bug and panics with its boundary, kind, and detail. Release builds keep the structural verifier compiled and use the release self-compile as the graph gate.
 
 ---
 
-## 9. Scaling
-
-The graph is stable, so scaling is about work avoided, not work rewritten.
-
-| Problem | Current cost | Fact Graph response |
-|---|---|---|
-| Editing one body | Re-resolve the whole tree | Body queries depend on the file; global facts depend on signatures only |
-| Adding a warning | Edit enum, policy, config, pass | Add one rule row; the report discovers it |
-| Pruning | Renumber every declaration and rewrite every edge | Compute a reachable set; keep ids |
-| Editor request | Re-run the analyzer | Read cached derived facts for the file |
-| Large codebase | One process, one pass | Per-file parse/build in parallel; per-namespace rules; deterministic merge |
-| Repeated std | Parse and check std every run | Durable embedded tree; its facts are cacheable for the session |
-| Cyclic flow | Manual two-phase pass | Fixed point in the halting rule |
-
-### 9.1 Incremental shape
-
-```mermaid
-flowchart LR
-  A[File changed] --> B[Parse that file]
-  B --> C[Replace that file's nodes]
-  C --> D[Invalidate queries that read those nodes]
-  D --> E[Recompute names, types, calls]
-  E --> F[Recompute reachability and halting]
-  F --> G[Publish the file view]
-```
-
-The key dependency rule is the one rust-analyzer states for its own compiler layer: **typing inside a function body must not invalidate global derived data**. A body edit invalidates that body's sites and type facts. It does not invalidate another function's signature, another namespace's names, or the method table unless the signature changed.
-
-The first implementation does not need a full Salsa dependency graph. A small cache keyed by `(node id, revision)` with a recorded dependency list is enough. The interface should be query-shaped from the start so the engine can be replaced without changing rules.
-
-### 9.2 When differential dataflow is worth it
-
-Differential dataflow is attractive for reachability and fixed points over very large graphs because it updates only the affected part. It is not needed for a 100k-line codebase. The design keeps the relation layer separate so it can be swapped in later without changing the schema or the rules.
-
-### 9.3 Parallelism
-
-- Files parse and build independently.
-- Namespaces resolve independently once names are collected.
-- Type checking is per body.
-- Reachability and halting are global fixed points; they run after the parallel layers.
-- Results are merged in id order, so the output is deterministic.
-
----
-
-## 10. Migration plan
-
-The migration is staged so every stage has a proof and none requires a flag day.
-
-| Stage | Change | Behavior | Proof |
-|---|---|---|---|
-| **-1. Syntax boundary** | Make `src/syntax` independent of `crate::compiler`: remove the model declaration kind from the AST, move operator typing facts to the compiler, keep only spelling/precedence in the parser | Same output | `src/syntax` has no `crate::compiler` import; 237 tests; payload sha unchanged |
-| **0. Verifier** | Add the full relational verifier over the current model; run it after resolve, check, and prune | Unchanged | All existing tests; the verifier may report the graph defects listed in section 2 |
-| **0a. Closure literal syntax** | A closure literal is `[parameters] -> result? { body }`; `fn name(...)` is a named declaration, and `fn(types) -> result` is a function type | Same program semantics; source spelling changes | Parser/tree-sitter/docs agree; 237 tests; payload sha unchanged |
-| **0b. Function nodes and binding facts** | One `Function` form for named, anonymous, method, and associated functions; anonymous functions get declaration nodes and own their parameters/locals; a module value keeps the pattern bindings its initializer declares | Same output | Payload sha unchanged; verifier green; no module-value exception for closure locals |
-| **1. Freeze the checker** | Move method selection, variant binding types, match exhaustiveness, and halting into derived facts; stop rewriting bodies | Same output | Payload sha unchanged; graph verifier green |
-| **2. Types as declarations** | One declaration form for types; remove the parallel type identity; add type edges | Same output | Payload sha unchanged; no dead `Rec`/`Enum` arms |
-| **3. Delivery facts** | Use sites and delivery status are derived facts; remove `used_uses`, the warning re-resolution, and the redundant-use special case | Same warnings | Warning tests; the duplicate case is one status, not a special rule |
-| **4. Declared special facts** | Entry, list, native body, and tree origin are nodes/facts; remove `is_absolute`, `<std>`, `main`, list-path checks from passes | Same output | Payload sha unchanged; LSP requires the manifest |
-| **5. Prune as a view** | Stable ids; reachable set; lowering filters; no remap | Same payload | Payload sha unchanged; no remapping code |
-| **6. One report** | Every diagnostic is a rule fact; remove per-kind plumbing | Same warnings/errors | All diagnostics still reported; no config |
-| **7. Directory move and contracts** | Move `resolve/`, `check/`, `prune/`, `model/` into `graph/`, `derive/`, `views/`, `verify.rs`; write every `CONTRACT.md`; update `AGENTS.md` | Same results | 237 tests; payload sha unchanged; every directory has a contract; `syntax` has no compiler import |
-| **8. Incremental layer** | Query cache, durable embedded tree, per-file invalidation | Same results, faster | Cold/warm LSP timings; same diagnostics and tokens |
-| **9. Parallel layer** | Per-file and per-namespace work in parallel; deterministic merge | Same results | Byte-identical payload; graph verifier green |
-
-Stage 0 runs the relational verifier in debug builds after resolution, after a check that reported no diagnostics, and after prune. The verifier lives in `src/compiler/model/verify_relations.rs` until stage 7 moves it to `verify.rs`. It reports every violation; the only violation it accepts is the one current-graph defect the migration already names: prune does not remap `Namespace.brought` (fixed in stage 5). The other defect stage 0 named, a type not being a declaration node and not listed in a file, is fixed by stage 2. Every other violation is a compiler bug and panics. The resolved boundary treats a `Bind` target as a resolution fact while an `Assign`/`FieldAssign` target may still be a module value that the checker will reject; the checked and pruned boundaries require every binding target to be local. A module value may own the locals of a closure in its initializer until stage 0b gives function literals their own nodes; that stage removes the exception for closure locals. A module value still owns the pattern bindings its own initializer declares, because an initializer is a body. The invariant becomes "the owner is a named or anonymous function, or the module value whose initializer declares the local."
-
-The payload sha is the invariant for every behavior-preserving stage. A stage that changes a warning's semantics is not a refactor and needs the owner's word.
-
-### 10.1 Last pruning before the migration
-
-The syntax boundary prune is done. `src/syntax` imports no compiler model: a declaration carries only its surface form, the loader derives the model declaration kind once, operator spelling and precedence stay in syntax, and operand/result/instruction facts live in `src/compiler/operator_facts.rs`. The gate is `grep -rn 'crate::compiler' src/syntax` empty, 237 tests, and payload sha unchanged.
-
-`Expression::Wildcard` is settled by the owner: it stays. `_` is the wildcard in a match pattern, and outside a pattern the general name and type rules handle it; there is no special parse error.
-
-Two changes follow, and neither is a behavior-neutral prune:
-
-- **Stage 0a** changes the closure literal surface to `[parameters] -> result? { body }`. `fn name(...)` stays the named declaration and `fn(types) -> result` stays the function type. The program semantics do not change; the source spelling and the bracket diagnostics do. This is a language change, so tree-sitter, docs, `ROADMAP.md`, `AGENTS.md`, and the tests move with it.
-- **Stage 0b** gives an anonymous function its own declaration node and makes the function binding a fact. Named, anonymous, method, and associated functions share one `Function` form; a closure's parameters/locals are owned by the closure, while a module value owns the pattern bindings its initializer declares. This is behavior-preserving and removes the module-value exception for closure locals.
-
-Everything else is already a migration stage: the verifier, type declarations, delivery status, entry/list/native/tree facts, pruning as a view, and the one report. There is no second standalone architecture prune.
-
-### 10.2 Stage 1: the frozen checker
-
-Stage 1 makes the checked graph immutable. The checker reads it and records derived facts in a separate store; no pass writes a declaration or an expression after resolution.
-
-- The store is `Facts`, in `src/compiler/model/facts.rs`. It holds the halting fact of each callable, the target of each method-family call, the instantiated type of each variant-pattern binding, and the coverage result of each match. A fact is keyed by the node it describes, or by a `Site`: the declaration that owns a body and the span of the expression written there.
-- `ModelView` becomes a read-only view over `&Program`; `set_type` and `set_halts` are gone.
-- The checker no longer rewrites a method family into a reference. The callee stays `Expression::Method`; the checker records its target, and flow, reachability, and lowering read the target from `Facts`.
-- `Declaration.derived` and `Expression::Match.exhaustive` are removed. A declaration's `ty` is its declared type; the checker's instantiated pattern type is a fact. Match coverage is a fact; a non-exhaustive statement match is a fact the flow pass reads.
-- `validate_program` returns `(Facts, Vec<Diagnostic>)`. `Build` and the analyzer's `Linked` carry the store; `prune_unreachable` remaps it with the declaration ids. The remap is a migration fact until stage 5, when prune becomes a view.
-- A `Facts` store is disposable: the rules that compute it remain the source of truth. Nothing reads a fact as an input to a rule except a pass reading the check's settled result; the graph itself is never written.
-- The method target is a relation the verifier checks: at `Resolved` a family is a linked site with no target yet; at `Checked` and `Pruned` every family site has a target. `verify_reachability` follows the target fact. The old `MethodFamilyAfterCheck` violation is removed because a family surviving the check is now the correct graph.
-- The checker's test fixture returns the facts beside the program and the entry; every lowering caller passes them. The 237 tests and the payload sha are unchanged.
-
-### 10.3 Stage 2: types as declarations
-
-Stage 2 gives a declared type one identity: the declaration node. The parallel `TypeId` table is removed; the namespace type registry becomes a type-name index over declaration nodes.
-
-- `Declaration` gains a type body for the `Rec` and `Enum` kinds. The body carries the type parameters, the runtime marker, and the fields or variants. The declaration carries the name, name span, file, visibility, and namespace. A type declaration's `ty` is `Type::Named` of its own id applied to its parameters; the type body is not a second identity.
-- `Type::Named(DeclarationId, arguments)` and `TypeHead::Named(DeclarationId)`. `TypeId` and `Program.types` are gone. `Namespace.types` and `TypeTable` return as the type-name index: they map a name to the type's declaration id, never to a second type identity. The group, head, name, shape, runtime shape, finiteness, type arguments, and list marker read a declaration and its type body.
-- Type names and value names are different pools, as they are in Rust. `Namespace.names` holds value and function names; `Namespace.types` holds declared type names. A type name and a value name may share a spelling, and a type position reads only the type pool while a value position reads only the value pool. `UseTarget::Type` carries the type's `DeclarationId`.
-- The resolver reserves every type declaration node before any field is resolved, so a type may name itself or any other type in any order. The runtime list is an ordinary declaration registered in `std::dynamic`; its marker is its type body's runtime fact. `register_declarations` fills the reserved body and does not declare a second node.
-- Type references are edges. Every `Type::Named` in a declaration's type, a function signature, a field, a variant payload, an expression variant, a pattern, a function binding's head, a method-pool key, or the check's derived pattern type is an edge. Reachability follows them, and prune remaps the type ids everywhere it remaps a declaration id. A type declaration is retained or dropped like any other node.
-- A method or associated-function pool is keyed by the type declaration's id; pruning remaps the key with the value, and a retained method's head type is retained by the same edge walk.
-- The verifier's `TypeNotInFile` defect is fixed because a type is now in `File.declarations`; `check_types` is gone, and the value-name, type-name, and file checks cover types. After this stage the known-defect ledger holds only `BroughtNotRemapped`; stage 5 removes it.
-- The payload is unchanged: a type declaration owns no bytecode, so it reserves no code id and the body order that fixes code ids is unchanged. The 237 tests and the payload sha are the gate.
-
-### 10.4 Stage 3: delivery facts
-
-Stage 3 moves the `use` facts onto the delivery edges. A `use` item is still one item in the loaded stream, and its index is its stable id.
-
-- `Delivery` carries the target, the use item's index, and a `taken` flag. A resolution that reads a delivery marks that edge; there is no separate `used_uses` set.
-- `use_warnings` no longer resolves a `use` path. It reads the delivery edges once, settles one status per item, and emits the warning from that status.
-- The statuses this stage settles are `Taken`, `Unused`, and `Redundant`. `Redundant` means every target the item delivers was already delivered by an earlier item under the same name; a later item that adds one new target is not redundant. `Shadowed` waits for a rule that names it.
-- A type and a function may share a spelling, so one `use` can deliver both. One item still earns one warning: unused when no target is read, redundant only when every target was already delivered.
-- The warning text, span, related span, and order are unchanged. The 241 tests, the same warnings, and the payload sha are the gate.
-
-### 10.5 Stage 4: declared special facts
-
-Stage 4 moves the remaining special facts onto the nodes that own them.
-
-- A `File` carries its origin: `Program` for the manifest's tree, `Embedded` for the library table. The loader records it when it adds a file, and the compiler, analyzer, and failure report read it. `is_program_source` and the absolute-path test are gone; `<std>` is a display path, not the fact that decides whether a file is the program's.
-- `Program` carries `list_type`, the declaration the runtime represents itself. The builder records it when `Vec` is registered, native rows read that fact, and every later pass reads the field. The free `list_type` scan is gone. Prune remaps the fact with the declaration ids.
-- `Build` carries the selected entry: `Ok(Some(id))`, `Ok(None)` for a library, or the malformed-entry diagnostic. `program_main` is still the one selection rule; the checked `Program` carries no entry, so the analyzer can analyze a tree without selecting one.
-- A native's body is already the declaration's `native` fact, not a path or a name check. The stage keeps that shape and adds no second native table.
-- The 241 tests, the same outputs, and the payload sha are the gate.
-
-### 10.6 Delegation and stray handling
-
-Each stage is delegated with a brief that leaves no decision to the delegate, and the result is inspected as a claim.
-
-| Brief field | Content |
-|---|---|
-| Repository and base | Absolute path, current commit, clean worktree |
-| Stage | The exact stage and its goal |
-| Files | Exact paths to read and change; explicit non-goals |
-| Rules | The invariants and contracts that apply; `AGENTS.md` is supreme |
-| Expected result | Test count (241 until a test is intentionally added), payload sha, diagnostics |
-| Forbidden | Owner's `pipeline/*` edits; new dependencies; new special cases; semantic changes; commits |
-| Stop conditions | Any significant stray, any unstated decision, any behavior change |
-
-A **significant stray** is any of:
-
-- a behavior change in diagnostics, output, or payload;
-- a rule or semantics change, or a new special case;
-- an unexpected test count change;
-- a payload sha change;
-- a file changed outside the brief;
-- a discovered inconsistency in the model, a dependency violation, or a contract/AGENTS conflict;
-- a decision the brief did not authorize.
-
-The delegate stops and reports a stray; it does not fix it. It works in a worktree, does not commit, and reports the exact files changed, the four check results, the test count, the payload sha, and every stray. The review is independent: read the full diff, run the four checks, verify the payload, run the LSP smoke test, compare the facts, and check the directory contracts and `AGENTS.md`. A green test suite is not a substitute for the contract.
-
----
-
-## 11. Alternatives considered
+## 9. Alternatives considered
 
 | Alternative | Why not, or when |
 |---|---|
@@ -527,16 +312,14 @@ The delegate stops and reports a stray; it does not fix it. It works in a worktr
 
 ---
 
-## 12. Risks and non-goals
+## 10. Risks and non-goals
 
 | Risk | Mitigation |
 |---|---|
 | The graph is larger than the current model | Only semantic sites are nodes; bodies stay trees; ids are compact; indexes are generated from the schema |
-| Fixed points can be slow | Start with reachability and halting; they are small; cache per revision |
-| Incremental invalidation is hard to get right | Start with whole-file recomputation and a correct cache; add red-green only after the verifier is trusted |
-| The migration touches every pass | Stage 0 verifier and the payload gate; each stage is independently revertible |
+| Fixed points can be slow | Reachability and halting are small and bounded; no cache is needed yet |
 | A general rule engine becomes a second language | Rules are Rust functions with typed inputs and outputs; no external DSL at first |
-| Graph verification costs time | Run full checks in development; run cheap invariants in release; make the full check a flag |
+| Graph verification costs time | Run full checks in development; the release self-compile is the payload gate |
 
 **Non-goals**
 
@@ -547,26 +330,26 @@ The delegate stops and reports a stray; it does not fix it. It works in a worktr
 
 ---
 
-## 13. Definition of done
+## 11. Definition of done
 
 The backend is consistent when all of these are true:
 
-- [ ] A pass cannot mutate the given graph; the API hands out read-only views.
-- [ ] A type is a declaration with one id; no parallel type identity exists.
-- [ ] A named function, an anonymous function, a method, and an associated function share one Function form; they differ by a binding fact, not by a pass's interpretation.
-- [ ] Every parameter/local is owned by its function node, named or anonymous, or by the module value whose initializer declares it.
-- [ ] A call site keeps its written path; its target is a derived fact.
-- [ ] A use delivery has one status fact; no warning pass re-resolves it.
-- [ ] Entry, list, native, and tree origin are declared facts; no pass tests a path or a name for them.
-- [ ] Pruning is a reachable set; no declaration is renumbered and no edge is remapped.
-- [ ] Every diagnostic names a rule, a severity, a site, and a span; there is one report.
-- [ ] The verifier checks the invariants in this document after build and derive: the full set in development, the cheap set in release, and the full set on demand in release.
-- [ ] The compile and editor processes read the same facts.
-- [ ] The payload sha is unchanged for every behavior-preserving stage.
+- [x] A pass cannot mutate the given graph; the API hands out read-only views.
+- [x] A type is a declaration with one id; no parallel type identity exists.
+- [x] A named function, an anonymous function, a method, and an associated function share one Function form; they differ by a binding fact, not by a pass's interpretation.
+- [x] Every parameter/local is owned by its function node, named or anonymous, or by the module value whose initializer declares it.
+- [x] A call site keeps its written path; its target is a derived fact.
+- [x] A use delivery has one status fact; no warning pass re-resolves it.
+- [x] Entry, list, native, and tree origin are declared facts; no pass tests a path or a name for them.
+- [x] Pruning is a reachable set; no declaration is renumbered and no edge is remapped.
+- [x] Every diagnostic names a rule, a severity, a site, and a span; there is one report.
+- [x] The full relational verifier runs in development; release keeps the structural verifier and the release self-compile is the graph gate.
+- [x] The compile and editor processes read the same facts.
+- [x] The release self-compile and release tests are the final gate.
 
 ---
 
-## 14. Sources
+## 12. Sources
 
 - rust-analyzer architecture — ground state vs derived state, Salsa, API boundaries, incrementality: <https://rust-analyzer.github.io/book/contributing/architecture.html>
 - Salsa overview — queries, inputs, memoization, accumulators: <https://salsa-rs.github.io/salsa/overview.html>

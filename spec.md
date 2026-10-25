@@ -1,7 +1,5 @@
 # Kiru language spec
 
-This document describes the language itself. `AGENTS.md` holds the working rules for changing the compiler. The point is to keep the language small, strict, and predictable for DevOps work.
-
 ## The basics
 
 Kiru has three scalars: `txt`, `bool`, and `int`.
@@ -340,33 +338,33 @@ The rest of `main` is a normal function: the same parameters, the same body chec
 
 This table is only for the places where Kiru differs from Rust. If a concept is not listed, assume it works the same way or that Kiru does not have it.
 
-| Rust | Kiru | What is different |
-|---|---|---|
-| `struct` | `rec` | A `rec` is a named bundle of fields. |
-| `enum` | `enum` | Same idea: one of several variants, each with its own payload. |
-| `trait` | none | There are no traits, interfaces, or trait objects. |
-| `impl Trait for Type` | none | `impl Type` only adds inherent methods and associates. |
-| `mod`, `crate` | directory namespace, `kiru.toml` | Directories are namespaces; the manifest names the project tree. |
-| `use` | path shortening | A name brings its type and function together; there is no `as`. |
-| `pub(crate)`, `pub(super)` | `pub` or private | Visibility is one bit. |
-| `String`, `&str` | `txt` | One text type. |
-| `i8` ... `i128`, `u8` ... `u128` | `int` | One integer type. |
-| floats, chars | none | Kiru has `txt`, `bool`, and `int`, and nothing else. |
-| arrays, slices | `Vec<T>` | No fixed arrays, no list literal, no indexing, no slicing. |
-| `Option<T>` | `std::Option<T>` | Constructed as `Option.some(value)` or `Option.none`. |
-| `Result<T, E>`, `?` | none | Stop with `panic;` or use `Option` and match it. |
-| `Box`, `Rc`, `Arc` | none | No source-level pointer or reference types. |
-| `&T`, `&mut T`, lifetimes | none | No borrowing, no ownership, no lifetimes. |
-| `Type::new()` | `Type.new()` | `.` is for association; `::` is for namespace paths. |
-| `fn method(&self)` | `fn method(self: Type)` | The first parameter's type decides method vs associate; `self` is only a name. |
-| `if`, `while`, `for x in` | `match`, `for { ... }` | There is no `if`, `while`, or `for-in`. |
-| closure `|x| x + 1` | `[x] -> int { ... }` | Brackets are the closure delimiters. |
-| `async` / `.await` | `async call;` / `wait;` | Async is a statement form, not a value type. |
-| `panic!` | `panic;` | A statement, not a macro. |
-| macros, attributes, derives | none | No macro system and no attributes. |
-| `const`, `static` | top-level `let` | A module value is evaluated once and is not `pub`. |
-| `mut` local | `let` local | Locals are mutable by default; redeclaration is rejected. |
-| `main` | ordinary named function | The compiler selects it as the entry; the process interface is the only special part. |
+| Rust                             | Kiru                             | What is different                                                                     |
+| -------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------- |
+| `struct`                         | `rec`                            | A `rec` is a named bundle of fields.                                                  |
+| `enum`                           | `enum`                           | Same idea: one of several variants, each with its own payload.                        |
+| `trait`                          | none                             | There are no traits, interfaces, or trait objects.                                    |
+| `impl Trait for Type`            | none                             | `impl Type` only adds inherent methods and associates.                                |
+| `mod`, `crate`                   | directory namespace, `kiru.toml` | Directories are namespaces; the manifest names the project tree.                      |
+| `use`                            | path shortening                  | A name brings its type and function together; there is no `as`.                       |
+| `pub(crate)`, `pub(super)`       | `pub` or private                 | Visibility is one bit.                                                                |
+| `String`, `&str`                 | `txt`                            | One text type.                                                                        |
+| `i8` ... `i128`, `u8` ... `u128` | `int`                            | One integer type.                                                                     |
+| floats, chars                    | none                             | Kiru has `txt`, `bool`, and `int`, and nothing else.                                  |
+| arrays, slices                   | `Vec<T>`                         | No fixed arrays, no list literal, no indexing, no slicing.                            |
+| `Option<T>`                      | `std::Option<T>`                 | Constructed as `Option.some(value)` or `Option.none`.                                 |
+| `Result<T, E>`, `?`              | none                             | Stop with `panic;` or use `Option` and match it.                                      |
+| `Box`, `Rc`, `Arc`               | none                             | No source-level pointer or reference types.                                           |
+| `&T`, `&mut T`, lifetimes        | none                             | No borrowing, no ownership, no lifetimes.                                             |
+| `Type::new()`                    | `Type.new()`                     | `.` is for association; `::` is for namespace paths.                                  |
+| `fn method(&self)`               | `fn method(self: Type)`          | The first parameter's type decides method vs associate; `self` is only a name.        |
+| `if`, `while`, `for x in`        | `match`, `for { ... }`           | There is no `if`, `while`, or `for-in`.                                               |
+| closure `                        | x                                | x + 1`                                                                                | `[x] -> int { ... }` | Brackets are the closure delimiters. |
+| `async` / `.await`               | `async call;` / `wait;`          | Async is a statement form, not a value type.                                          |
+| `panic!`                         | `panic;`                         | A statement, not a macro.                                                             |
+| macros, attributes, derives      | none                             | No macro system and no attributes.                                                    |
+| `const`, `static`                | top-level `let`                  | A module value is evaluated once and is not `pub`.                                    |
+| `mut` local                      | `let` local                      | Locals are mutable by default; redeclaration is rejected.                             |
+| `main`                           | ordinary named function          | The compiler selects it as the entry; the process interface is the only special part. |
 
 ## Things Kiru does not have
 
@@ -385,5 +383,3 @@ This list is here so nobody accidentally assumes Rust behavior:
 - no exceptions; `panic;` stops the run
 - no `pub` module values
 - no cross-namespace `impl` blocks
-
-

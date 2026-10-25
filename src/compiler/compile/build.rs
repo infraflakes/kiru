@@ -4,12 +4,13 @@
 
 mod failure;
 
-use crate::compiler::compile::check::validate_program;
 use crate::compiler::compile::load::{LoadedProgram, ProgramSource, load_files};
-use crate::compiler::compile::resolve::{Analysis, program_main, resolve_tree};
+use crate::compiler::derive::validate_program;
+use crate::compiler::derive::{Analysis, program_main, resolve_tree};
 use crate::compiler::diagnostic::Diagnostic;
-use crate::compiler::model::{DeclarationId, Facts, Program};
+use crate::compiler::graph::{DeclarationId, Facts, Program};
 use crate::compiler::warnings::unused_bindings;
+use crate::compiler::{Report, ReportRule};
 use crate::project::Project;
 
 use failure::{failure, failure_from};
@@ -22,7 +23,7 @@ pub struct Build {
     pub(crate) loaded: LoadedProgram,
     pub(crate) program: Program,
     pub(crate) facts: Facts,
-    pub(crate) warnings: Vec<Diagnostic>,
+    pub(crate) warnings: Report,
     /// The entry the root namespace declares, settled once after resolution:
     /// `Ok(Some(id))` is the entry, `Ok(None)` is a library with no entry, and
     /// `Err` is a malformed entry. The checked program itself carries no
@@ -55,24 +56,26 @@ pub(crate) fn build(project: &Project, source: &impl ProgramSource) -> Result<Bu
     let Analysis { program, warnings } = match resolve_tree(&loaded) {
         Ok(analysis) => analysis,
         Err(diagnostic) => {
-            let mut diagnostics = loaded.syntax.clone();
-            diagnostics.push(diagnostic);
-            return Err(failure_from(&loaded, diagnostics));
+            let mut report = Report::new();
+            report.extend(ReportRule::Load, loaded.syntax.clone());
+            report.push(ReportRule::Resolve, diagnostic);
+            return Err(failure_from(&loaded, report));
         }
     };
     let mut warnings = warnings;
-    warnings.extend(unused_bindings(&program));
+    warnings.extend(ReportRule::Unused, unused_bindings(&program));
     let (facts, errors) = validate_program(&program);
     if !errors.is_empty() {
         // The checker's errors are facts among the file's facts: the
         // recovery's syntax errors, what the recovered tree kept unused, and
-        // every error the checker met all report.
-        let mut diagnostics = loaded.syntax.clone();
-        diagnostics.extend(errors);
-        let mut program_warnings = warnings.clone();
-        program_warnings.retain(|warning| program.is_program_path(&warning.path));
-        diagnostics.extend(program_warnings);
-        return Err(failure_from(&loaded, diagnostics));
+        // every error the checker met all report in one order.
+        let mut report = Report::new();
+        report.extend(ReportRule::Load, loaded.syntax.clone());
+        report.append(errors);
+        let mut program_warnings = warnings;
+        program_warnings.retain(|entry| program.is_program_path(&entry.diagnostic.path));
+        report.append(program_warnings);
+        return Err(failure_from(&loaded, report));
     }
     let entry = program_main(&program);
     Ok(Build {

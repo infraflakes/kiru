@@ -9,7 +9,7 @@ use crate::compiler::compile::load::load_error::LoadError;
 use crate::compiler::compile::load::loaded_program::{
     ImplTarget, LoadedFile, LoadedProgram, ScopedDeclaration, ScopedUse,
 };
-use crate::compiler::model::{DeclarationKind, FileOrigin};
+use crate::compiler::graph::{DeclarationKind, FileOrigin};
 use crate::syntax;
 use crate::syntax::{Declaration, DeclarationForm, Item, TypeDeclarationKind};
 

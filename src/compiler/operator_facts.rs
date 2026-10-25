@@ -5,7 +5,7 @@
 //! live with the syntax tree. The compiler owns the rest, so no parser depends
 //! on a compiler model.
 
-use crate::compiler::model::Type;
+use crate::compiler::graph::Type;
 use crate::syntax::BinaryOp;
 
 /// What the two operands of a binary operator must be.

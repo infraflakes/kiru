@@ -149,8 +149,8 @@ impl Runtime {
                     frame.registers[*dst as usize] =
                         self.globals.read_unpoisoned()[*global as usize].clone();
                 }
-                Instruction::LoadLocal { dst, slot } => {
-                    frame.registers[*dst as usize] = frame.registers[*slot as usize].clone();
+                Instruction::Copy { dst, src } => {
+                    frame.registers[*dst as usize] = frame.registers[*src as usize].clone();
                 }
                 Instruction::StoreLocal { slot, src } => {
                     frame.registers[*slot as usize] = frame.registers[*src as usize].clone();
@@ -345,7 +345,10 @@ impl Runtime {
                     frame.registers[*dst as usize] = value;
                 }
                 Instruction::Return { value } => {
-                    return Ok(frame.registers[*value as usize].clone());
+                    return Ok(std::mem::replace(
+                        &mut frame.registers[*value as usize],
+                        Value::Nothing,
+                    ));
                 }
                 Instruction::Panic => {
                     self.state.panic();
@@ -402,10 +405,12 @@ impl Runtime {
     }
 
     /// The values of the argument registers, in order.
-    fn argument_values(&self, frame: &Frame, arguments: &[u16]) -> Vec<Value> {
+    fn argument_values(&self, frame: &mut Frame, arguments: &[u16]) -> Vec<Value> {
         arguments
             .iter()
-            .map(|argument| frame.registers[*argument as usize].clone())
+            .map(|argument| {
+                std::mem::replace(&mut frame.registers[*argument as usize], Value::Nothing)
+            })
             .collect()
     }
 

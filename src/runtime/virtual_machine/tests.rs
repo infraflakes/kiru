@@ -9,7 +9,7 @@ use super::Runtime;
 
 fn runtime(source: &str) -> Runtime {
     let (program, facts, entry) = checked_program_and_entry(source);
-    Runtime::for_testing(program, facts, entry)
+    Runtime::for_testing_all(program, facts, entry)
 }
 
 fn call_text(runtime: &Runtime, name: &str) -> String {

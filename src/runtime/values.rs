@@ -16,7 +16,7 @@
 use std::fmt;
 use std::sync::{Arc, OnceLock};
 
-use crate::compiler::model::RuntimeShape;
+use crate::compiler::graph::RuntimeShape;
 
 /// A runtime value.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -45,7 +45,7 @@ pub(crate) enum Value {
 
 impl Value {
     /// The declared shape this value carries, read once from the shape set
-    /// the group model declares in `crate::compiler::model`. The runtime's
+    /// the group model declares in `crate::compiler::graph`. The runtime's
     /// `Value` names storage only: every operation that needs to tell a kind
     /// of value reads the shape below, so the runtime invents no kind beside
     /// the model's, and a kind the runtime gains without the model declaring

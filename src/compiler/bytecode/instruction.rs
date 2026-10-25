@@ -54,9 +54,12 @@ pub(crate) enum Instruction {
         dst: u16,
         global: u32,
     },
-    LoadLocal {
+    /// Copy a value into a fresh register: `dst = src`. A copy is inserted
+    /// only when a call argument's register is still read after the call; a
+    /// last use is moved instead.
+    Copy {
         dst: u16,
-        slot: u16,
+        src: u16,
     },
     StoreLocal {
         slot: u16,

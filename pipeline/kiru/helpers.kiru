@@ -1,13 +1,10 @@
-# The built-in type categories whose names this namespace writes bare.
-use std::process;
-
 # The project a build script operates on.
 pub rec Project { pub name: txt, pub Dir: txt, pub Nix: bool };
 
 # Wrap a line in `nix develop` when the project asks for it.
 fn wrap(project: Project, line: txt) -> txt {
   let wrapped: txt = match project.Nix {
-    true => "nix develop -c sh -c @(process::quote(line))";
+    true => "nix develop -c sh -c @(std::process::quote(line))";
     _ => line;
   };
   return wrapped;
@@ -21,9 +18,4 @@ fn run(project: Project, line: txt) {
     0 => { std::log("'@(line)' ran successfully"); };
     _ => { std::eprint("'@(line)' failed"); };
   };
-};
-
-# Orchestrated step: hide stdout, keep stderr for debugging, return the code.
-fn status(project: Project, line: txt) -> int {
-  return process::command(wrap(project, line)).dir(project.Dir).stream(process::Stream.stdout, "/dev/null").run();
 };

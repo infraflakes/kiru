@@ -39,7 +39,11 @@ fn run_all(context: std::cli::Context) -> int {
 };
 
 fn run_usage(context: std::cli::Context) -> int {
-  std::eprint(kiru::usage());
+  let words: Vec<txt> = context.args();
+  match words.len() {
+    0 => { std::eprint(kiru::usage()); };
+    _ => { std::eprint("unknown argument `@(words.at(0))`\n\n@(kiru::usage())"); };
+  };
   return 1;
 };
 

@@ -77,9 +77,9 @@ fn validate_instruction(
             slot(*dst)?;
             global(*g)?;
         }
-        Instruction::LoadLocal { dst, slot: s } => {
+        Instruction::Copy { dst, src } => {
             slot(*dst)?;
-            slot(*s)?;
+            slot(*src)?;
         }
         Instruction::StoreLocal { slot: s, src } => {
             slot(*s)?;

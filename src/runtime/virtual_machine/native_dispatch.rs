@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use crate::compiler::model::RuntimeShape;
+use crate::compiler::graph::RuntimeShape;
 use crate::compiler::native_registry::{Native, NativeArgumentKind, native_shape};
 use crate::runtime::Panic;
 use crate::runtime::natives::{environment, file_system, terminal_output, text_operations};
@@ -25,11 +25,6 @@ struct NativeArguments {
 }
 
 impl NativeArguments {
-    /// The argument at a declared position, as any value.
-    fn value(&self, index: usize) -> Value {
-        self.values[index].clone()
-    }
-
     /// The text argument at a declared position.
     fn text(&self, index: usize) -> &Text {
         match self.values[index].text() {
@@ -53,6 +48,21 @@ impl NativeArguments {
             None => unreachable!("the decoder checked the row's declared kind"),
         }
     }
+
+    /// Move the value at a declared position out of the argument list.
+    fn take_value(&mut self, index: usize) -> Value {
+        std::mem::replace(&mut self.values[index], Value::Nothing)
+    }
+
+    /// Move the list at a declared position out of the argument list. The
+    /// native that mutates a list is its last reader, so taking the value is
+    /// what lets `Arc::make_mut` see a unique vector.
+    fn take_list(&mut self, index: usize) -> Arc<Vec<Value>> {
+        match self.take_value(index) {
+            Value::Vec(values) => values,
+            _ => unreachable!("the decoder checked the row's declared kind"),
+        }
+    }
 }
 
 impl Runtime {
@@ -60,20 +70,19 @@ impl Runtime {
     /// order and the type of every parameter, so the decoder checks the call
     /// once and the handler reads each argument by that position.
     pub(super) fn call_native(&self, native: Native, values: Vec<Value>) -> Result<Value, Panic> {
-        let arguments = self.decode_arguments(native, values)?;
+        let mut arguments = self.decode_arguments(native, values)?;
         match native {
             Native::VecNew => Ok(Value::Vec(Arc::new(Vec::new()))),
             Native::VecPush => {
-                let mut vec = arguments.list(0);
-                let item = arguments.value(1);
-                // Unshare before writing, so the copy a clone made is real.
+                let mut vec = arguments.take_list(0);
+                let item = arguments.take_value(1);
                 Arc::make_mut(&mut vec).push(item);
                 Ok(Value::Vec(vec))
             }
             Native::VecReplace => {
-                let mut vec = arguments.list(0);
+                let mut vec = arguments.take_list(0);
                 let index = arguments.int(1);
-                let item = arguments.value(2);
+                let item = arguments.take_value(2);
                 let length = vec.len();
                 if index >= 0 && (index as usize) < length {
                     // Unshare before writing, so the copy a clone made is real.
