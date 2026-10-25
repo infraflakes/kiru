@@ -5,16 +5,17 @@
 //! order-free, so the stream is just every declaration, each with the file it
 //! came from and the namespace it joins.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::compiler::Diagnostic;
-use crate::compiler::model::DeclarationKind;
+use crate::compiler::model::{DeclarationKind, FileOrigin};
 use crate::syntax::{Declaration, Span, TypeExpr};
 
 /// One loaded source file, kept for diagnostics.
 #[derive(Debug)]
 pub(crate) struct LoadedFile {
     pub(crate) path: PathBuf,
+    pub(crate) origin: FileOrigin,
     pub(crate) source: String,
     /// The namespace the file's directory names, as the loader derived it.
     pub(crate) namespace: Vec<String>,
@@ -68,4 +69,15 @@ pub(crate) struct LoadedProgram {
     /// The syntax errors recovery found, positioned in the files they came
     /// from. A lexer error fails the load instead of filling this list.
     pub(crate) syntax: Vec<Diagnostic>,
+}
+
+impl LoadedProgram {
+    /// Whether a path belongs to the program tree. A path the loaded files do
+    /// not name is a project fact, so it is treated as the program's.
+    pub(crate) fn is_program_path(&self, path: &Path) -> bool {
+        self.files
+            .iter()
+            .find(|file| file.path == path)
+            .is_none_or(|file| file.origin == FileOrigin::Program)
+    }
 }

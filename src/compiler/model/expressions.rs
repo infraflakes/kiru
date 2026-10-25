@@ -1,7 +1,7 @@
 //! The linked expressions and statements. Every name is already an edge to a
 //! declaration node.
 
-use crate::compiler::model::{Shape, Type, TypeId};
+use crate::compiler::model::{Shape, Type};
 use crate::syntax::{BinaryOp, Span, UnaryOp};
 
 use super::ids::{DeclarationId, NamespaceId};
@@ -51,7 +51,7 @@ pub(crate) enum Expression {
     },
     /// A constructed enum variant: `Name.Variant(payload, ...)`.
     Variant {
-        ty: TypeId,
+        ty: DeclarationId,
         index: usize,
         payload: Vec<Expression>,
         span: Span,
@@ -279,7 +279,7 @@ pub(crate) enum Pattern {
     /// `Name.Variant(bind, ...)`: matches one enum variant. `bindings` has one
     /// entry per payload position: the local it binds, or `None` for `_`.
     Variant {
-        ty: TypeId,
+        ty: DeclarationId,
         index: usize,
         bindings: Vec<Option<DeclarationId>>,
         span: Span,

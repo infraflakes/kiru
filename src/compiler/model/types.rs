@@ -18,18 +18,14 @@ mod group;
 mod relation;
 
 pub(crate) use group::{
-    Arity, Finite, Group, RuntimeShape, Shape, display_name, finite, list_type, scalar_from_name,
-    type_name,
+    Arity, Finite, Group, RuntimeShape, Shape, display_name, finite, scalar_from_name, type_name,
 };
 pub(crate) use relation::{Binding, fits, has_parameter, substitute, type_parameters_of, unify};
 
 use group::Substitution;
 
-use super::declarations::TypeDecl;
-
-/// The identity of a declared type, indexing the program's type table.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct TypeId(pub(crate) usize);
+use super::declarations::Declaration;
+use super::ids::DeclarationId;
 
 /// A type.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -40,7 +36,7 @@ pub(crate) enum Type {
     /// A declared type applied to arguments: `Name<T1, ...>`. A declaration
     /// with no parameters is applied to no arguments. The runtime's `Vec<T>`
     /// is one such declaration, registered by the compiler.
-    Named(TypeId, Vec<Type>),
+    Named(DeclarationId, Vec<Type>),
     /// A type parameter of the enclosing declaration, by name (for example `T`
     /// in `enum Option<T>`).
     Parameter(String),
@@ -63,7 +59,7 @@ pub(crate) enum TypeHead {
     /// A scalar, by the word that names it (`txt`, `bool`, `int`).
     Scalar(&'static str),
     /// A declared type, by its declaration.
-    Named(TypeId),
+    Named(DeclarationId),
     /// A function type.
     Function,
     /// A bare type parameter; it has no methods and matches no impl.
@@ -71,15 +67,46 @@ pub(crate) enum TypeHead {
 }
 
 impl Type {
+    /// Rewrite every named type id through `mapping`, recursing through the
+    /// arguments and function types. A retained type edge always maps to a
+    /// retained type declaration: retention follows every type edge, so a
+    /// dropped id here is a compiler bug.
+    pub(crate) fn remap(&mut self, mapping: &[Option<DeclarationId>]) {
+        match self {
+            Type::Named(id, arguments) => {
+                *id =
+                    mapping[id.0].expect("a retained type edge names a retained type declaration");
+                for argument in arguments {
+                    argument.remap(mapping);
+                }
+            }
+            Type::Function {
+                parameters,
+                returns,
+            } => {
+                for parameter in parameters {
+                    parameter.remap(mapping);
+                }
+                if let Some(returns) = returns {
+                    returns.remap(mapping);
+                }
+            }
+            Type::Text | Type::Bool | Type::Int | Type::Parameter(_) => {}
+        }
+    }
+
     /// The group this type belongs to: the kind of thing it is. The marking is
     /// the one derivation from a type to its kind, and a declared type reads it
-    /// from its declaration, so `Vec` is a `Rec` and every relation that reads
-    /// its group learns that in one step. `types` is the program's declared
-    /// types.
-    pub(crate) fn group(&self, types: &[TypeDecl]) -> Group {
+    /// from its declaration's type body, so `Vec` is a `Rec` and every relation
+    /// that reads its group learns that in one step. `declarations` is the
+    /// program's declaration table.
+    pub(crate) fn group(&self, declarations: &[Declaration]) -> Group {
         match self {
             Type::Text | Type::Bool | Type::Int => Group::Scalar,
-            Type::Named(id, _) => types[id.0].group(),
+            Type::Named(id, _) => declarations[id.0]
+                .type_body()
+                .expect("a named type names a type declaration")
+                .group(),
             Type::Function { .. } => Group::Function,
             Type::Parameter(_) => Group::Parameter,
         }
@@ -89,8 +116,8 @@ impl Type {
     /// applied-type fact plus the type's identity. Dispatch keys on the
     /// specific type, so a method declared for `Vec<T>` answers a `Vec<int>`
     /// receiver and the scalars stay distinct.
-    pub(crate) fn head(&self, types: &[TypeDecl]) -> TypeHead {
-        match self.group(types).substitution() {
+    pub(crate) fn head(&self, declarations: &[Declaration]) -> TypeHead {
+        match self.group(declarations).substitution() {
             Substitution::Applied => {
                 let Type::Named(id, _) = self else {
                     unreachable!("an applied type is a named type");
@@ -108,8 +135,8 @@ impl Type {
     /// The return type of a function type, or `None` when it declares none or
     /// the type is not a function type. One definition serves a declaration, a
     /// function literal, and a call's result.
-    pub(crate) fn return_type(&self, types: &[TypeDecl]) -> Option<Type> {
-        match self.group(types) {
+    pub(crate) fn return_type(&self, declarations: &[Declaration]) -> Option<Type> {
+        match self.group(declarations) {
             Group::Function => {
                 let Type::Function { returns, .. } = self else {
                     unreachable!("a function group is a function type");
@@ -120,6 +147,18 @@ impl Type {
             Group::Rec => None,
             Group::Enum => None,
             Group::Parameter => None,
+        }
+    }
+}
+
+impl TypeHead {
+    /// Rewrite a named head through `mapping`. A head with no declaration id
+    /// maps to itself; a named head maps only when its type declaration is
+    /// retained.
+    pub(crate) fn remap(self, mapping: &[Option<DeclarationId>]) -> Option<Self> {
+        match self {
+            TypeHead::Named(id) => mapping[id.0].map(TypeHead::Named),
+            TypeHead::Scalar(_) | TypeHead::Function | TypeHead::Parameter => Some(self),
         }
     }
 }
@@ -223,29 +262,34 @@ mod tests {
         let program = checked_program(
             "enum Color { Red, Green };\nrec Point { x: int };\nfn main() { let xs: std::dynamic::Vec<int> = std::dynamic::Vec.new(); return; };",
         );
-        let color = program
-            .types
-            .iter()
-            .position(|declaration| declaration.group() == Group::Enum);
-        let point = program
-            .types
-            .iter()
-            .position(|declaration| declaration.group() == Group::Rec);
+        let color = program.declarations.iter().position(|declaration| {
+            declaration
+                .type_body()
+                .is_some_and(|body| body.group() == Group::Enum)
+        });
+        let point = program.declarations.iter().position(|declaration| {
+            declaration
+                .type_body()
+                .is_some_and(|body| body.group() == Group::Rec)
+        });
         let list = program
             .list_type()
             .expect("the compiler registers the runtime list");
         assert_eq!(
-            Type::Named(TypeId(color.expect("an enum is declared")), Vec::new())
-                .runtime_shape(&program.types),
+            Type::Named(
+                DeclarationId(color.expect("an enum is declared")),
+                Vec::new()
+            )
+            .runtime_shape(&program.declarations),
             RuntimeShape::Variant
         );
         assert_eq!(
-            Type::Named(TypeId(point.expect("a rec is declared")), Vec::new())
-                .runtime_shape(&program.types),
+            Type::Named(DeclarationId(point.expect("a rec is declared")), Vec::new())
+                .runtime_shape(&program.declarations),
             RuntimeShape::Record
         );
         assert_eq!(
-            Type::Named(list, vec![Type::Int]).runtime_shape(&program.types),
+            Type::Named(list, vec![Type::Int]).runtime_shape(&program.declarations),
             RuntimeShape::List
         );
     }
@@ -281,14 +325,25 @@ mod tests {
             .list_type()
             .expect("the compiler registers the runtime list");
         let applied = Type::Named(vec, vec![Type::Int]);
-        assert_eq!(applied.group(&program.types), Group::Rec);
-        assert_eq!(applied.head(&program.types), TypeHead::Named(vec));
+        assert_eq!(applied.group(&program.declarations), Group::Rec);
+        assert_eq!(applied.head(&program.declarations), TypeHead::Named(vec));
         assert_eq!(
-            program.types[vec.0].group().arity(),
+            program.declarations[vec.0]
+                .type_body()
+                .expect("Vec is a type declaration")
+                .group()
+                .arity(),
             Arity::Declared,
             "Vec takes the declaration's one type parameter"
         );
-        assert_eq!(program.types[vec.0].parameters.len(), 1);
+        assert_eq!(
+            program.declarations[vec.0]
+                .type_body()
+                .expect("Vec is a type declaration")
+                .parameters
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -298,16 +353,28 @@ mod tests {
              fn main() { let p: Point = { x = 1 }; let c: Choice = Choice.a; return; };",
         );
         let point = program
-            .types
+            .declarations
             .iter()
             .position(|declaration| declaration.name == "Point")
             .expect("Point is declared");
         let choice = program
-            .types
+            .declarations
             .iter()
             .position(|declaration| declaration.name == "Choice")
             .expect("Choice is declared");
-        assert_eq!(program.types[point].group(), Group::Rec);
-        assert_eq!(program.types[choice].group(), Group::Enum);
+        assert_eq!(
+            program.declarations[point]
+                .type_body()
+                .expect("Point is a type declaration")
+                .group(),
+            Group::Rec
+        );
+        assert_eq!(
+            program.declarations[choice]
+                .type_body()
+                .expect("Choice is a type declaration")
+                .group(),
+            Group::Enum
+        );
     }
 }

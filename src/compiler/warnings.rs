@@ -15,7 +15,7 @@ use std::collections::HashSet;
 use crate::compiler::Diagnostic;
 use crate::compiler::model::collect_reads;
 use crate::compiler::model::{
-    DeclarationId, DeclarationKind, FunctionBinding, Program, join_path, namespace_path,
+    DeclarationId, DeclarationKind, FileOrigin, FunctionBinding, Program, join_path, namespace_path,
 };
 
 /// The warnings for the program declarations no reachable body reads. Only a
@@ -53,10 +53,11 @@ pub(crate) fn unused_declarations(
         })
         .filter_map(|(_, declaration)| {
             let file = declaration.file?;
-            let path = &program.files[file.0].path;
-            if !is_program_source(path) {
+            let source = &program.files[file.0];
+            if source.origin != FileOrigin::Program {
                 return None;
             }
+            let path = &source.path;
             let mut qualified = namespace_path(&program.namespaces, declaration.namespace);
             qualified.push(declaration.name.clone());
             Some(Diagnostic::warning(
@@ -72,13 +73,6 @@ pub(crate) fn unused_declarations(
             .then(left.span.start.cmp(&right.span.start))
     });
     warnings
-}
-
-/// Whether a file is the program's own. The embedded library's files name no
-/// disk path, so a file with an absolute path is the program's and a warning
-/// about the library is the compiler's, not the program's.
-pub(crate) fn is_program_source(path: &std::path::Path) -> bool {
-    path.is_absolute()
 }
 
 /// The warnings for the local bindings the program declares but never reads.
@@ -152,13 +146,22 @@ mod tests {
     }
 
     #[test]
-    fn the_librarys_files_are_not_the_programs() {
-        assert!(is_program_source(std::path::Path::new(
-            "/program/main.kiru"
-        )));
-        assert!(!is_program_source(std::path::Path::new(
-            "<std>/dynamic/vec.kiru"
-        )));
+    fn both_tree_origins_are_recorded() {
+        let (program, _, _) = checked_program_and_entry("fn main() {};");
+        assert!(
+            program
+                .files
+                .iter()
+                .any(|file| file.origin == FileOrigin::Program),
+            "the program tree records its own files"
+        );
+        assert!(
+            program
+                .files
+                .iter()
+                .any(|file| file.origin == FileOrigin::Embedded),
+            "the embedded library records its files"
+        );
     }
 
     #[test]
@@ -174,10 +177,7 @@ mod tests {
                     declaration.kind == DeclarationKind::Function
                         && !reachable.contains(&DeclarationId(index))
                         && declaration.file.is_some_and(|file| {
-                            program.files[file.0]
-                                .path
-                                .to_string_lossy()
-                                .starts_with("<std>/")
+                            program.files[file.0].origin == FileOrigin::Embedded
                         })
                 });
         assert!(

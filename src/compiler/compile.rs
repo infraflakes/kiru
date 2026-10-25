@@ -9,11 +9,11 @@
 
 use std::path::Path;
 
-use super::warnings::{is_program_source, unused_declarations};
+use super::warnings::unused_declarations;
 use crate::compiler::diagnostic::render;
 use crate::compiler::{
     Build, DIAGNOSTIC_PREFIX, MISSING_MAIN, ProgramSource, attach_trailer, build, lower_bytecode,
-    mark_reachable, program_main, prune_unreachable, serialize_bytecode,
+    mark_reachable, prune_unreachable, serialize_bytecode,
 };
 use crate::project::Project;
 use package::make_writable_executable;
@@ -42,17 +42,18 @@ pub(crate) fn compile(
         mut program,
         facts: mut derived_facts,
         warnings,
+        entry,
     } = build(project, source).map_err(|failure| failure.rendered().to_owned())?;
     let mut facts: Vec<_> = warnings
         .into_iter()
-        .filter(|fact| is_program_source(&fact.path))
+        .filter(|fact| program.is_program_path(&fact.path))
         .collect();
     // The entry is the manifest's program main. A missing one is the
     // project's fact; a malformed one is the file's, and the diagnostic names
     // it.
     let mut missing_main = false;
     let mut reachable = None;
-    let main = match program_main(&program) {
+    let main = match entry {
         Ok(Some(main)) => {
             // The reachable set is the compile's second reading of the graph:
             // what no reachable body reads is a warning, then it is dropped

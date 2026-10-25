@@ -40,7 +40,7 @@ The current graph is implicit. It lives inside expression nodes, name tables, me
 | The checker writes edges | `expression_typing.rs` replaces a method family with a reference | The graph means different things before and after checking; a resolve-only consumer sees an incomplete graph | Resolution is a derived fact; the given graph is never written by a pass |
 | Prune renumbers every declaration | `prune/declarations.rs` compacts and remaps by hand | Every edge must be rewritten; `brought` is missed; verification is debug-only | Stable ids; pruning is a view, not a rewrite |
 | Six independent walkers | reachability, reads, remap, verifier, semantic, checker/lower | A new edge must be added in several places; a missed one is silent or a panic | The schema owns traversal; rules read relations |
-| Use status is outside the graph | `Builder.used_uses`, `brought`, warning pass, semantic pass | The same delivery is resolved and judged more than once; duplicates were once called unused | A delivery is a derived fact with a status |
+| Use status was outside the graph | `Builder.used_uses`, `brought`, warning pass, semantic pass | The same delivery was resolved and judged more than once; duplicates were once called unused | A delivery is a derived fact with a status |
 | Paths and names decide semantics | `is_absolute`, `<std>`, `root`, `main`, `std`, list path | The model has special cases that every pass must remember | Tree origin, entry, list, and natives are declared facts |
 | Verification is range-only and debug-only | `verify_graph.rs` checks ids, not relations | A table can point at the wrong name or namespace and still pass | A full relational verifier at every boundary |
 | Diagnostics are hand-written per case | one function and one message per fact | Adding one warning touches the enum, policy, config, and a pass | Rules emit diagnostic facts through one report |
@@ -148,7 +148,7 @@ Every relation is an edge with a kind, a source, a target, and the source span t
 | `entry` | Tree → Declaration | Where the program starts | Exactly one for a program tree; none for the embedded library |
 | `origin` | Tree → Program / Embedded | Why the tree exists | A program tree comes from the manifest; the library is compiler input |
 
-Names, methods, associates, captures, use deliveries, module-value order, and type references are all edges. A named function and an anonymous function are both `Function` nodes; only the named one has a `name` edge. There are no parallel name/method/type tables whose keys can disagree with the nodes.
+Names, methods, associates, captures, use deliveries, module-value order, and type references are all edges. A named function and an anonymous function are both `Function` nodes; only the named one has a `name` edge. The value-name, type-name, and method tables are indexes into those nodes; the verifier checks every key, and no table owns a second identity.
 
 ### 5.4 The manifest is the only program tree
 
@@ -423,7 +423,7 @@ The migration is staged so every stage has a proof and none requires a flag day.
 | **8. Incremental layer** | Query cache, durable embedded tree, per-file invalidation | Same results, faster | Cold/warm LSP timings; same diagnostics and tokens |
 | **9. Parallel layer** | Per-file and per-namespace work in parallel; deterministic merge | Same results | Byte-identical payload; graph verifier green |
 
-Stage 0 runs the relational verifier in debug builds after resolution, after a check that reported no diagnostics, and after prune. The verifier lives in `src/compiler/model/verify_relations.rs` until stage 7 moves it to `verify.rs`. It reports every violation; the only violations it accepts are the two current-graph defects the migration already names: a type is not a declaration node and is not listed in a file (fixed in stage 2), and prune does not remap `Namespace.brought` (fixed in stage 5). Every other violation is a compiler bug and panics. The resolved boundary treats a `Bind` target as a resolution fact while an `Assign`/`FieldAssign` target may still be a module value that the checker will reject; the checked and pruned boundaries require every binding target to be local. A module value may own the locals of a closure in its initializer until stage 0b gives function literals their own nodes; that stage removes the exception for closure locals. A module value still owns the pattern bindings its own initializer declares, because an initializer is a body. The invariant becomes "the owner is a named or anonymous function, or the module value whose initializer declares the local."
+Stage 0 runs the relational verifier in debug builds after resolution, after a check that reported no diagnostics, and after prune. The verifier lives in `src/compiler/model/verify_relations.rs` until stage 7 moves it to `verify.rs`. It reports every violation; the only violation it accepts is the one current-graph defect the migration already names: prune does not remap `Namespace.brought` (fixed in stage 5). The other defect stage 0 named, a type not being a declaration node and not listed in a file, is fixed by stage 2. Every other violation is a compiler bug and panics. The resolved boundary treats a `Bind` target as a resolution fact while an `Assign`/`FieldAssign` target may still be a module value that the checker will reject; the checked and pruned boundaries require every binding target to be local. A module value may own the locals of a closure in its initializer until stage 0b gives function literals their own nodes; that stage removes the exception for closure locals. A module value still owns the pattern bindings its own initializer declares, because an initializer is a body. The invariant becomes "the owner is a named or anonymous function, or the module value whose initializer declares the local."
 
 The payload sha is the invariant for every behavior-preserving stage. A stage that changes a warning's semantics is not a refactor and needs the owner's word.
 
@@ -455,18 +455,38 @@ Stage 1 makes the checked graph immutable. The checker reads it and records deri
 
 ### 10.3 Stage 2: types as declarations
 
-Stage 2 gives a declared type one identity: the declaration node. The parallel `TypeId` table and the `Namespace` type registry are removed.
+Stage 2 gives a declared type one identity: the declaration node. The parallel `TypeId` table is removed; the namespace type registry becomes a type-name index over declaration nodes.
 
 - `Declaration` gains a type body for the `Rec` and `Enum` kinds. The body carries the type parameters, the runtime marker, and the fields or variants. The declaration carries the name, name span, file, visibility, and namespace. A type declaration's `ty` is `Type::Named` of its own id applied to its parameters; the type body is not a second identity.
-- `Type::Named(DeclarationId, arguments)` and `TypeHead::Named(DeclarationId)`. `TypeId`, `Program.types`, `Namespace.types`, and `TypeTable` are gone. The group, head, name, shape, runtime shape, finiteness, type arguments, and list marker read a declaration and its type body.
-- `Namespace.names` is the one namespace name table. A type is a namespace name, so the one-name rule applies to a type and a value in the same namespace. `UseTarget::Type` carries the type's `DeclarationId`.
+- `Type::Named(DeclarationId, arguments)` and `TypeHead::Named(DeclarationId)`. `TypeId` and `Program.types` are gone. `Namespace.types` and `TypeTable` return as the type-name index: they map a name to the type's declaration id, never to a second type identity. The group, head, name, shape, runtime shape, finiteness, type arguments, and list marker read a declaration and its type body.
+- Type names and value names are different pools, as they are in Rust. `Namespace.names` holds value and function names; `Namespace.types` holds declared type names. A type name and a value name may share a spelling, and a type position reads only the type pool while a value position reads only the value pool. `UseTarget::Type` carries the type's `DeclarationId`.
 - The resolver reserves every type declaration node before any field is resolved, so a type may name itself or any other type in any order. The runtime list is an ordinary declaration registered in `std::dynamic`; its marker is its type body's runtime fact. `register_declarations` fills the reserved body and does not declare a second node.
 - Type references are edges. Every `Type::Named` in a declaration's type, a function signature, a field, a variant payload, an expression variant, a pattern, a function binding's head, a method-pool key, or the check's derived pattern type is an edge. Reachability follows them, and prune remaps the type ids everywhere it remaps a declaration id. A type declaration is retained or dropped like any other node.
 - A method or associated-function pool is keyed by the type declaration's id; pruning remaps the key with the value, and a retained method's head type is retained by the same edge walk.
-- The verifier's `TypeNotInFile` defect is fixed because a type is now in `File.declarations`; `check_types` and the parallel-table checks are removed. The name table and file checks cover types. After this stage the known-defect ledger holds only `BroughtNotRemapped`; stage 5 removes it.
+- The verifier's `TypeNotInFile` defect is fixed because a type is now in `File.declarations`; `check_types` is gone, and the value-name, type-name, and file checks cover types. After this stage the known-defect ledger holds only `BroughtNotRemapped`; stage 5 removes it.
 - The payload is unchanged: a type declaration owns no bytecode, so it reserves no code id and the body order that fixes code ids is unchanged. The 237 tests and the payload sha are the gate.
 
-### 10.4 Delegation and stray handling
+### 10.4 Stage 3: delivery facts
+
+Stage 3 moves the `use` facts onto the delivery edges. A `use` item is still one item in the loaded stream, and its index is its stable id.
+
+- `Delivery` carries the target, the use item's index, and a `taken` flag. A resolution that reads a delivery marks that edge; there is no separate `used_uses` set.
+- `use_warnings` no longer resolves a `use` path. It reads the delivery edges once, settles one status per item, and emits the warning from that status.
+- The statuses this stage settles are `Taken`, `Unused`, and `Redundant`. `Redundant` means every target the item delivers was already delivered by an earlier item under the same name; a later item that adds one new target is not redundant. `Shadowed` waits for a rule that names it.
+- A type and a function may share a spelling, so one `use` can deliver both. One item still earns one warning: unused when no target is read, redundant only when every target was already delivered.
+- The warning text, span, related span, and order are unchanged. The 241 tests, the same warnings, and the payload sha are the gate.
+
+### 10.5 Stage 4: declared special facts
+
+Stage 4 moves the remaining special facts onto the nodes that own them.
+
+- A `File` carries its origin: `Program` for the manifest's tree, `Embedded` for the library table. The loader records it when it adds a file, and the compiler, analyzer, and failure report read it. `is_program_source` and the absolute-path test are gone; `<std>` is a display path, not the fact that decides whether a file is the program's.
+- `Program` carries `list_type`, the declaration the runtime represents itself. The builder records it when `Vec` is registered, native rows read that fact, and every later pass reads the field. The free `list_type` scan is gone. Prune remaps the fact with the declaration ids.
+- `Build` carries the selected entry: `Ok(Some(id))`, `Ok(None)` for a library, or the malformed-entry diagnostic. `program_main` is still the one selection rule; the checked `Program` carries no entry, so the analyzer can analyze a tree without selecting one.
+- A native's body is already the declaration's `native` fact, not a path or a name check. The stage keeps that shape and adds no second native table.
+- The 241 tests, the same outputs, and the payload sha are the gate.
+
+### 10.6 Delegation and stray handling
 
 Each stage is delegated with a brief that leaves no decision to the delegate, and the result is inspected as a claim.
 
@@ -476,7 +496,7 @@ Each stage is delegated with a brief that leaves no decision to the delegate, an
 | Stage | The exact stage and its goal |
 | Files | Exact paths to read and change; explicit non-goals |
 | Rules | The invariants and contracts that apply; `AGENTS.md` is supreme |
-| Expected result | Test count (237 until a test is intentionally added), payload sha, diagnostics |
+| Expected result | Test count (241 until a test is intentionally added), payload sha, diagnostics |
 | Forbidden | Owner's `pipeline/*` edits; new dependencies; new special cases; semantic changes; commits |
 | Stop conditions | Any significant stray, any unstated decision, any behavior change |
 

@@ -1,15 +1,17 @@
-//! The name registries a namespace keeps: namespace-level names, the method
-//! and associated-function pools, and declared type names.
+//! The name registries a namespace keeps: value names, type names, and the
+//! method and associated-function pools.
 //!
 //! Every table keys a name by the `Symbol` the program's one interner gave
 //! it, so a name is hashed once when interned and never again, and a symbol
-//! resolves back to its spelling through that interner.
+//! resolves back to its spelling through that interner. Value names and type
+//! names are different pools: a type and a value may share a spelling, and a
+//! lookup reads the pool the position asks for.
 
 use std::collections::HashMap;
 
 use super::super::ids::DeclarationId;
 use super::interner::Symbol;
-use crate::compiler::model::{TypeHead, TypeId};
+use crate::compiler::model::TypeHead;
 
 /// Keep only the ids the mapping keeps, and rewrite each surviving id through
 /// it. Both registries that hold declaration ids remap through this one scan.
@@ -62,6 +64,57 @@ impl NameTable {
 
     /// Keep only the entries whose id the mapping keeps, and rewrite each
     /// surviving id through it. Retention compacts the declaration table.
+    pub(crate) fn remap(&mut self, mapping: &[Option<DeclarationId>]) {
+        self.entries.retain(|_, id| remap_id(id, mapping));
+    }
+}
+
+/// One namespace's type-name registry: the type declaration each type name
+/// holds. Types and values are separate name pools, so a type name and a value
+/// name may be the same spelling; a type position reads this table and never
+/// the value table. The table is an index over declaration nodes, not a second
+/// identity: every entry names the one declaration the type is.
+#[derive(Debug, Default)]
+pub(crate) struct TypeTable {
+    entries: HashMap<Symbol, DeclarationId>,
+}
+
+impl TypeTable {
+    /// Register a type declaration under a name. Returns the declaration
+    /// already registered under it when the name is taken, and registers
+    /// nothing then.
+    pub(crate) fn insert(&mut self, name: Symbol, id: DeclarationId) -> Result<(), DeclarationId> {
+        match self.entries.entry(name) {
+            std::collections::hash_map::Entry::Occupied(entry) => Err(*entry.get()),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(id);
+                Ok(())
+            }
+        }
+    }
+
+    /// The type declaration registered under a name, if any.
+    pub(crate) fn get(&self, name: Symbol) -> Option<DeclarationId> {
+        self.entries.get(&name).copied()
+    }
+
+    /// The registered type declaration ids, in no particular order.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &DeclarationId> {
+        self.entries.values()
+    }
+
+    /// Every registered symbol and the type declaration it names, in no
+    /// particular order. A relation that proves the key against the
+    /// declaration's name reads the pair here.
+    #[cfg(debug_assertions)]
+    pub(crate) fn iter_entries(&self) -> impl Iterator<Item = (Symbol, DeclarationId)> + '_ {
+        self.entries
+            .iter()
+            .map(|(&symbol, &declaration)| (symbol, declaration))
+    }
+
+    /// Keep only the entries whose declaration the mapping keeps, and rewrite
+    /// each surviving id through it. Retention compacts the declaration table.
     pub(crate) fn remap(&mut self, mapping: &[Option<DeclarationId>]) {
         self.entries.retain(|_, id| remap_id(id, mapping));
     }
@@ -124,48 +177,18 @@ impl MethodTable {
         })
     }
 
-    /// Keep only the entries whose id the mapping keeps, and rewrite each
-    /// surviving id through it. Retention compacts the declaration table.
+    /// Keep only the entries whose key and id the mapping keeps, and rewrite
+    /// each surviving key and id through it. Retention compacts the
+    /// declaration table; a pool keyed by a dropped type head is dropped with
+    /// its methods.
     pub(crate) fn remap(&mut self, mapping: &[Option<DeclarationId>]) {
-        self.entries.retain(|_, methods| {
-            methods.retain(|_, id| remap_id(id, mapping));
-            !methods.is_empty()
-        });
-    }
-}
-
-/// A namespace's type registry: declared type names, unique within it. Types
-/// are compile-time only, so unlike a `NameTable` it never needs remapping.
-#[derive(Debug, Default)]
-pub(crate) struct TypeTable {
-    entries: HashMap<Symbol, TypeId>,
-}
-
-impl TypeTable {
-    /// Register a type name. Returns the id already registered under it when
-    /// the name is taken, and registers nothing then.
-    pub(crate) fn insert(&mut self, name: Symbol, id: TypeId) -> Result<(), TypeId> {
-        match self.entries.entry(name) {
-            std::collections::hash_map::Entry::Occupied(entry) => Err(*entry.get()),
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(id);
-                Ok(())
-            }
-        }
-    }
-
-    /// The type registered under a name, if any.
-    pub(crate) fn get(&self, name: Symbol) -> Option<TypeId> {
-        self.entries.get(&name).copied()
-    }
-
-    /// Every registered symbol and the type it names, in no particular order.
-    /// A relation that proves the key against the type's name reads the pair
-    /// here.
-    #[cfg(debug_assertions)]
-    pub(crate) fn iter_entries(&self) -> impl Iterator<Item = (Symbol, TypeId)> + '_ {
-        self.entries
-            .iter()
-            .map(|(&symbol, &declaration)| (symbol, declaration))
+        self.entries = std::mem::take(&mut self.entries)
+            .into_iter()
+            .filter_map(|(head, mut methods)| {
+                let head = head.remap(mapping)?;
+                methods.retain(|_, id| remap_id(id, mapping));
+                (!methods.is_empty()).then_some((head, methods))
+            })
+            .collect();
     }
 }

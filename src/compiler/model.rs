@@ -22,7 +22,7 @@ mod verify_spans;
 mod visitors;
 
 pub(crate) use declarations::{
-    Declaration, DeclarationKind, FunctionBinding, RuntimeType, TypeDecl, TypeFieldDecl, TypeKind,
+    Declaration, DeclarationKind, FunctionBinding, RuntimeType, TypeBody, TypeFieldDecl, TypeKind,
     TypeUse, VariantDecl,
 };
 pub(crate) use expressions::{
@@ -35,14 +35,14 @@ pub(crate) use ids::{DeclarationId, FileId, NamespaceId};
 #[cfg(test)]
 pub(crate) use program::name_hash;
 pub(crate) use program::{
-    Delivery, File, Interner, MethodTable, ModelView, NameTable, Namespace, Program, Symbol,
-    TypeTable, UseTarget, bound_reachable, first_duplicate, join_path, namespace_at,
+    Delivery, File, FileOrigin, Interner, MethodTable, ModelView, NameTable, Namespace, Program,
+    Symbol, TypeTable, UseTarget, bound_reachable, first_duplicate, join_path, namespace_at,
     namespace_path, reachable, rec_field,
 };
 pub(crate) use reads::collect_reads;
 pub(crate) use types::{
-    Arity, Binding, Finite, Group, RuntimeShape, Shape, Type, TypeHead, TypeId, finite, fits,
-    has_parameter, list_type, scalar_from_name, substitute, type_name, type_parameters_of, unify,
+    Arity, Binding, Finite, Group, RuntimeShape, Shape, Type, TypeHead, finite, fits,
+    has_parameter, scalar_from_name, substitute, type_name, type_parameters_of, unify,
 };
 pub(crate) use verify_graph::verify_program;
 #[cfg(debug_assertions)]

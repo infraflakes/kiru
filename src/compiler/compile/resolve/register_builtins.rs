@@ -4,10 +4,10 @@
 use std::path::Path;
 
 use crate::compiler::Diagnostic;
+use crate::compiler::duplicate_in_namespace;
 use crate::compiler::model::Type;
 use crate::compiler::model::{
-    DeclarationId, DeclarationKind, NamespaceId, RuntimeType, TypeDecl, TypeHead, TypeId, TypeKind,
-    list_type,
+    DeclarationId, DeclarationKind, NamespaceId, RuntimeType, TypeBody, TypeHead, TypeKind,
 };
 use crate::compiler::native_registry::{Native, NativeRow, NativeType, native_rows};
 use crate::syntax::Span;
@@ -19,25 +19,50 @@ impl Builder {
     /// `std::dynamic` namespace: kind `Rec`, one type parameter, no fields,
     /// and the runtime's marker. The marker is the one place the type's
     /// runtime representation, its missing literal shape, and its element
-    /// parameter are declared.
-    pub(super) fn register_list_type(&mut self) -> TypeId {
+    /// parameter are declared. It is the one type declaration with no file.
+    pub(super) fn register_list_type(&mut self) -> Result<DeclarationId, Diagnostic> {
         let namespace = self.ensure_namespace(&["std".to_owned(), "dynamic".to_owned()]);
-        let id = TypeId(self.types.len());
-        self.types.push(TypeDecl {
-            name: "Vec".to_owned(),
-            name_span: Span::new(0, 0),
-            file: None,
-            public: true,
-            namespace,
-            parameters: vec!["T".to_owned()],
+        let id = self.create_node(
+            Skeleton {
+                kind: DeclarationKind::Rec,
+                binding: None,
+                name: "Vec".to_owned(),
+                name_span: Span::new(0, 0),
+                public: true,
+                receiver_head: None,
+                associated_head: None,
+                file: None,
+                namespace,
+            },
+            None,
+            None,
+        );
+        let parameters = vec!["T".to_owned()];
+        self.declarations[id.0].ty = Type::Named(
+            id,
+            parameters.iter().cloned().map(Type::Parameter).collect(),
+        );
+        self.declarations[id.0].type_body = Some(TypeBody {
+            parameters,
             runtime: RuntimeType::List,
             kind: TypeKind::Rec(Vec::new()),
         });
-        self.namespaces[namespace.0]
+        if let Err(existing) = self.namespaces[namespace.0]
             .types
             .insert(self.intern.intern("Vec"), id)
-            .expect("the compiler registers the list before any file declares types");
-        id
+        {
+            let declaration = &self.declarations[existing.0];
+            let file = declaration
+                .file
+                .expect("a source type is the only earlier type name");
+            return Err(Diagnostic::new(
+                &self.files[file.0].path,
+                declaration.name_span,
+                duplicate_in_namespace("Vec"),
+            ));
+        }
+        self.list_type = Some(id);
+        Ok(id)
     }
 
     /// Resolve one type a native row names. A path resolves through the
@@ -52,9 +77,12 @@ impl Builder {
         match ty {
             NativeType::Direct(ty) => Ok(ty.clone()),
             NativeType::ListElement => {
-                let id =
-                    list_type(&self.types).expect("the compiler registers the list before natives");
-                let element = self.types[id.0]
+                let id = self
+                    .list_type
+                    .expect("the compiler registers the list before natives");
+                let element = self.declarations[id.0]
+                    .type_body()
+                    .expect("the runtime list is a type declaration")
                     .element_parameter()
                     .expect("the list declares its element parameter");
                 Ok(Type::Parameter(element.to_owned()))
@@ -97,8 +125,11 @@ impl Builder {
                 parameters,
                 returns,
             } => match parameters.first() {
-                Some(parameter) => (Some(parameter.head(&self.types)), None),
-                None => match returns.as_ref().map(|returns| returns.head(&self.types)) {
+                Some(parameter) => (Some(parameter.head(&self.declarations)), None),
+                None => match returns
+                    .as_ref()
+                    .map(|returns| returns.head(&self.declarations))
+                {
                     Some(head @ TypeHead::Named(_)) => (None, Some(head)),
                     _ => (None, None),
                 },
@@ -125,21 +156,14 @@ impl Builder {
         // belongs to. A bound function is not a namespace-level name, so it
         // does not join the name pool; a plain native does.
         let symbol = self.intern.intern(row.name);
-        let table = &mut self.namespaces[namespace.0];
         if let Some(head) = receiver_head {
-            table
-                .methods
-                .insert(head, symbol, id)
+            self.insert_bound_function(namespace, head, symbol, id, true)
                 .expect("a native's name and head are unique, so a builtin never collides");
-            table.filed.insert(symbol);
         } else if let Some(head) = associated_head {
-            table
-                .associates
-                .insert(head, symbol, id)
+            self.insert_bound_function(namespace, head, symbol, id, false)
                 .expect("a native's name and head are unique, so a builtin never collides");
-            table.filed.insert(symbol);
         } else {
-            table.names.insert(symbol, id);
+            self.namespaces[namespace.0].names.insert(symbol, id);
         }
         id
     }
@@ -149,7 +173,7 @@ impl Builder {
     ) -> Result<(), Diagnostic> {
         // The runtime's list comes first: a native row that names it, and a row
         // that names its element, need its declaration.
-        self.register_list_type();
+        self.register_list_type()?;
         for (native, row) in native_rows() {
             let namespace = self.ensure_namespace(
                 &row.path

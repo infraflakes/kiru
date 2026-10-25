@@ -3,7 +3,7 @@
 use crate::compiler::Diagnostic;
 use crate::compiler::compile::load::PROGRAM_TREE;
 use crate::compiler::model::Type;
-use crate::compiler::model::{DeclarationId, ENTRY_FUNCTION, TypeDecl, fits, list_type};
+use crate::compiler::model::{DeclarationId, ENTRY_FUNCTION, fits};
 
 /// The fact a compilation reports when the root namespace declares no entry.
 pub(crate) const MISSING_MAIN: &str = "the program has no root `main` function";
@@ -32,8 +32,7 @@ impl EntryShape {
     }
 
     /// The type the entry's one parameter declares: the runtime list of text.
-    pub(crate) fn parameter_type(types: &[TypeDecl]) -> Type {
-        let list = list_type(types).expect("the compiler registers the runtime list");
+    pub(crate) fn parameter_type(list: DeclarationId) -> Type {
         Type::Named(list, vec![Type::Text])
     }
 
@@ -85,8 +84,12 @@ pub(crate) fn program_main(
     if let Some(parameter) = parameters.first()
         && !fits(
             parameter,
-            &EntryShape::parameter_type(&program.types),
-            &program.types,
+            &EntryShape::parameter_type(
+                program
+                    .list_type()
+                    .expect("the compiler registers the runtime list"),
+            ),
+            &program.declarations,
         )
     {
         return Err(Diagnostic::new(

@@ -7,7 +7,7 @@
 //! during development. The untrusted decode boundary is
 //! `validate_bytecode_structure`, which runs on the lowered bytecode.
 
-use crate::compiler::model::{Type, TypeId};
+use crate::compiler::model::{Type, TypeHead};
 use crate::compiler::native_registry::native_shape;
 
 use super::Program;
@@ -30,7 +30,6 @@ pub(crate) fn validate_program_structure(program: &Program) -> Result<(), String
     let declaration_count = program.declarations.len();
     let file_count = program.files.len();
     let namespace_count = program.namespaces.len();
-    let type_count = program.types.len();
 
     // The entry's own id is guaranteed by selection, so only the table-wide
     // edges are checked here.
@@ -44,8 +43,11 @@ pub(crate) fn validate_program_structure(program: &Program) -> Result<(), String
         return Err("the root namespace is missing".to_owned());
     }
     if let Some(list) = program.list_type() {
-        check_id(list.0, type_count, "the runtime list type")?;
-        if program.types[list.0].element_parameter().is_none() {
+        check_id(list.0, declaration_count, "the runtime list type")?;
+        let body = program.declarations[list.0]
+            .type_body()
+            .ok_or("the runtime list type is not a type declaration")?;
+        if body.element_parameter().is_none() {
             return Err("the runtime list does not declare one element parameter".to_owned());
         }
     }
@@ -59,6 +61,13 @@ pub(crate) fn validate_program_structure(program: &Program) -> Result<(), String
         }
         for declaration in namespace.names.iter() {
             check_id(declaration.0, declaration_count, "a registered declaration")?;
+        }
+        for declaration in namespace.types.iter() {
+            check_id(
+                declaration.0,
+                declaration_count,
+                "a registered type declaration",
+            )?;
         }
         for declaration in namespace.methods.iter() {
             check_id(declaration.0, declaration_count, "a registered method")?;
@@ -105,17 +114,54 @@ pub(crate) fn validate_program_structure(program: &Program) -> Result<(), String
                     "an anonymous function's container",
                 )?;
             }
-            Some(FunctionBinding::Method { .. } | FunctionBinding::Associated { .. })
-                if declaration.kind != DeclarationKind::Function =>
-            {
-                return Err("a non-function declaration names a bound-function binding".to_owned());
+            Some(FunctionBinding::Method { receiver }) => {
+                if declaration.kind != DeclarationKind::Function {
+                    return Err(
+                        "a non-function declaration names a bound-function binding".to_owned()
+                    );
+                }
+                check_head(program, receiver, "a method receiver")?;
             }
-            Some(FunctionBinding::Named)
-            | Some(FunctionBinding::Method { .. })
-            | Some(FunctionBinding::Associated { .. })
-            | None => {}
+            Some(FunctionBinding::Associated { owner }) => {
+                if declaration.kind != DeclarationKind::Function {
+                    return Err(
+                        "a non-function declaration names a bound-function binding".to_owned()
+                    );
+                }
+                check_head(program, owner, "an associated function's type")?;
+            }
+            Some(FunctionBinding::Named) | None => {}
         }
-        check_type(&declaration.ty, type_count, "a declaration type")?;
+        check_type(program, &declaration.ty, "a declaration type")?;
+        match (&declaration.kind, &declaration.type_body) {
+            (DeclarationKind::Rec | DeclarationKind::Enum, None) => {
+                return Err("a type declaration carries no type body".to_owned());
+            }
+            (DeclarationKind::Rec | DeclarationKind::Enum, Some(body)) => match &body.kind {
+                TypeKind::Rec(fields) => {
+                    if declaration.kind != DeclarationKind::Rec {
+                        return Err("a rec body belongs to an enum declaration".to_owned());
+                    }
+                    for field in fields {
+                        check_type(program, &field.ty, "a type field")?;
+                    }
+                }
+                TypeKind::Enum(variants) => {
+                    if declaration.kind != DeclarationKind::Enum {
+                        return Err("an enum body belongs to a rec declaration".to_owned());
+                    }
+                    for variant in variants {
+                        for ty in &variant.payload {
+                            check_type(program, ty, "a variant payload")?;
+                        }
+                    }
+                }
+            },
+            (_, Some(_)) => {
+                return Err("a value declaration carries a type body".to_owned());
+            }
+            (_, None) => {}
+        }
         if declaration.kind.callable() && declaration.kind.has_body() {
             let function = declaration
                 .function()
@@ -138,34 +184,33 @@ pub(crate) fn validate_program_structure(program: &Program) -> Result<(), String
             native_shape(native);
         }
     }
-    for declaration in &program.types {
-        check_id(declaration.namespace.0, namespace_count, "a type namespace")?;
-        match &declaration.kind {
-            TypeKind::Rec(fields) => {
-                for field in fields {
-                    check_type(&field.ty, type_count, "a type field")?;
-                }
-            }
-            TypeKind::Enum(variants) => {
-                for variant in variants {
-                    for ty in &variant.payload {
-                        check_type(ty, type_count, "a variant payload")?;
-                    }
-                }
-            }
-        }
+    Ok(())
+}
+
+/// Check a type head names a type declaration.
+fn check_head(program: &Program, head: TypeHead, what: &str) -> Result<(), String> {
+    if let TypeHead::Named(id) = head {
+        check_named_type(program, id, what)?;
     }
     Ok(())
 }
 
-/// Reject a `Named` type whose id points past the type table, and check its
-/// arguments recursively.
-fn check_type(ty: &Type, type_count: usize, what: &str) -> Result<(), String> {
+/// Reject a `Named` type whose id points past the declaration table or names a
+/// declaration that is not a type, and check its arguments recursively. A
+/// named type applies as many arguments as its body declares parameters.
+fn check_type(program: &Program, ty: &Type, what: &str) -> Result<(), String> {
     match ty {
         Type::Named(id, arguments) => {
-            check_id(id.0, type_count, what)?;
+            let body = check_named_type(program, *id, what)?;
+            if arguments.len() != body.parameters.len() {
+                return Err(format!(
+                    "{what} applies {} argument(s) to a type that declares {}",
+                    arguments.len(),
+                    body.parameters.len()
+                ));
+            }
             for argument in arguments {
-                check_type(argument, type_count, what)?;
+                check_type(program, argument, what)?;
             }
         }
         Type::Function {
@@ -173,10 +218,10 @@ fn check_type(ty: &Type, type_count: usize, what: &str) -> Result<(), String> {
             returns,
         } => {
             for parameter in parameters {
-                check_type(parameter, type_count, what)?;
+                check_type(program, parameter, what)?;
             }
             if let Some(returns) = returns {
-                check_type(returns, type_count, what)?;
+                check_type(program, returns, what)?;
             }
         }
         // The leaf variants carry no nested type, so there is nothing below
@@ -184,6 +229,34 @@ fn check_type(ty: &Type, type_count: usize, what: &str) -> Result<(), String> {
         Type::Text | Type::Bool | Type::Int | Type::Parameter(_) => {}
     }
     Ok(())
+}
+
+/// The type body a named type id names, or an error when the id points at no
+/// type declaration.
+fn check_named_type<'a>(
+    program: &'a Program,
+    id: DeclarationId,
+    what: &str,
+) -> Result<&'a super::declarations::TypeBody, String> {
+    let declaration = program
+        .declarations
+        .get(id.0)
+        .ok_or_else(|| format!("{what} points past the declarations"))?;
+    if !matches!(
+        declaration.kind,
+        DeclarationKind::Rec | DeclarationKind::Enum
+    ) {
+        return Err(format!(
+            "{what} names declaration id {}, which is not a type declaration",
+            id.0
+        ));
+    }
+    declaration.type_body().ok_or_else(|| {
+        format!(
+            "{what} names declaration id {}, which has no type body",
+            id.0
+        )
+    })
 }
 
 /// Reject an id that points past the table it indexes.
@@ -230,10 +303,17 @@ impl EdgeCheck<'_> {
         }
     }
 
-    /// Check a struct literal's declared type points into the type table.
-    fn check_type(&mut self, ty: TypeId) {
-        if self.error.is_none() && ty.0 >= self.program.types.len() {
-            self.error = Some("a struct type points past the types".to_owned());
+    /// Check a variant's declared type points at a type declaration.
+    fn check_type(&mut self, ty: DeclarationId) {
+        if self.error.is_none()
+            && self
+                .program
+                .declarations
+                .get(ty.0)
+                .and_then(|declaration| declaration.type_body())
+                .is_none()
+        {
+            self.error = Some("a variant type points past the type declarations".to_owned());
         }
     }
 }

@@ -12,6 +12,7 @@ use std::path::Path;
 use super::sources::ProgramSource;
 use crate::compiler::compile::load::load_error::LoadError;
 use crate::compiler::compile::load::loaded_program::LoadedProgram;
+use crate::compiler::model::FileOrigin;
 
 use super::record::Loader;
 
@@ -63,7 +64,7 @@ fn add_tree(
         };
         let namespace = namespace_of(&relative, tree);
         let source = read_source(program_source, &path)?;
-        loader.add(path, source, namespace)?;
+        loader.add(path, FileOrigin::Program, source, namespace)?;
     }
     Ok(())
 }

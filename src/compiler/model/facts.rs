@@ -93,7 +93,11 @@ impl Facts {
         let pattern_types = std::mem::take(&mut self.pattern_types);
         self.pattern_types = pattern_types
             .into_iter()
-            .filter_map(|(binding, ty)| retained(mapping, binding).map(|binding| (binding, ty)))
+            .filter_map(|(binding, mut ty)| {
+                let binding = retained(mapping, binding)?;
+                ty.remap(mapping);
+                Some((binding, ty))
+            })
             .collect();
 
         let match_coverage = std::mem::take(&mut self.match_coverage);

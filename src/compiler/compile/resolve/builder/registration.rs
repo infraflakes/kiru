@@ -2,14 +2,14 @@
 //! filling a type's fields.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::compiler::model::{
     Declaration, DeclarationId, DeclarationKind, File, FileId, FunctionBinding, Group, Interner,
-    MethodTable, NameTable, Namespace, NamespaceId, Program, TypeDecl, TypeFieldDecl, TypeKind,
-    TypeTable, VariantDecl, first_duplicate,
+    MethodTable, NameTable, Namespace, NamespaceId, Program, RuntimeType, Symbol, TypeBody,
+    TypeFieldDecl, TypeKind, TypeTable, VariantDecl, first_duplicate,
 };
-use crate::compiler::model::{Type, TypeHead, TypeId, TypeUse};
+use crate::compiler::model::{Type, TypeHead, TypeUse};
 use crate::compiler::native_registry::Native;
 use crate::compiler::{Diagnostic, duplicate_field, duplicate_in_namespace};
 use crate::syntax::{Span, TypeDeclaration};
@@ -137,7 +137,9 @@ pub(in crate::compiler::compile::resolve) struct Builder {
     /// the body is typed. A parameter and a local are created with their type.
     pub(in crate::compiler::compile::resolve) declarations: Vec<Declaration>,
     pub(in crate::compiler::compile::resolve) files: Vec<File>,
-    pub(in crate::compiler::compile::resolve) types: Vec<TypeDecl>,
+    /// The runtime list the compiler registers, once, before any native row
+    /// names it.
+    pub(in crate::compiler::compile::resolve) list_type: Option<DeclarationId>,
     pub(in crate::compiler::compile::resolve) pending: Vec<Pending>,
     /// Every module value, in declaration order. Registration is the one place
     /// that knows them, so ordering their initializers never scans the whole
@@ -146,12 +148,6 @@ pub(in crate::compiler::compile::resolve) struct Builder {
     /// The one interner every name-table key came from. Registration interns
     /// a declaration's, a namespace's, and a type's name exactly once.
     pub(in crate::compiler::compile::resolve) intern: Interner,
-    /// Which `use` items a resolution actually read, as the loaded stream's
-    /// indices. The reads record themselves where they happen, so this is the
-    /// one fact the unused-`use` warning reads. The resolution's lookup
-    /// methods take `&self`, so the set keeps to the cell until the read
-    /// sites collect it.
-    pub(in crate::compiler::compile::resolve) used_uses: RefCell<HashSet<usize>>,
     /// Every written type name the resolution met, in source order.
     pub(in crate::compiler::compile::resolve) type_uses: RefCell<Vec<TypeUse>>,
 }
@@ -163,22 +159,20 @@ impl Builder {
             parent: None,
             children: HashMap::new(),
             names: NameTable::default(),
+            types: TypeTable::default(),
             methods: MethodTable::default(),
             associates: MethodTable::default(),
-            types: TypeTable::default(),
             brought: HashMap::new(),
-            filed: HashSet::new(),
         };
         Self {
             namespaces: vec![root],
             skeletons: Vec::new(),
             declarations: Vec::new(),
             files: Vec::new(),
-            types: Vec::new(),
+            list_type: None,
             pending: Vec::new(),
             module_values: Vec::new(),
             intern: Interner::default(),
-            used_uses: RefCell::new(HashSet::new()),
             type_uses: RefCell::new(Vec::new()),
         }
     }
@@ -191,7 +185,7 @@ impl Builder {
             files: self.files,
             namespaces: self.namespaces,
             declarations: self.declarations,
-            types: self.types,
+            list_type: self.list_type,
             module_values,
             intern: self.intern,
             type_uses: self.type_uses.into_inner(),
@@ -217,11 +211,10 @@ impl Builder {
                         parent: Some(current),
                         children: HashMap::new(),
                         names: NameTable::default(),
+                        types: TypeTable::default(),
                         methods: MethodTable::default(),
                         associates: MethodTable::default(),
-                        types: TypeTable::default(),
                         brought: HashMap::new(),
-                        filed: HashSet::new(),
                     });
                     self.namespaces[current.0].children.insert(symbol, child);
                     child
@@ -264,6 +257,7 @@ impl Builder {
                 ty,
                 value: None,
                 native: None,
+                type_body: None,
             },
             Some(Slot::Native(ty, native)) => Declaration {
                 kind,
@@ -277,6 +271,7 @@ impl Builder {
                 ty,
                 value: None,
                 native: Some(native),
+                type_body: None,
             },
             // A callable or module value: its phase fills the real type and
             // value. Until then it holds the placeholder type; no body is
@@ -293,6 +288,7 @@ impl Builder {
                 ty: Type::Text,
                 value: None,
                 native: None,
+                type_body: None,
             },
         };
         self.declarations.push(declaration);
@@ -362,31 +358,38 @@ impl Builder {
         );
         let filed = self.skeletons[id.0].filed();
         let symbol = self.intern.intern(name);
-        // A name-owning declaration may repeat a name only against nothing; a
-        // filed declaration collides with it by name alone, because the filed
-        // declaration is reached through its type, never by the name.
-        let owning = self.namespaces[namespace.0].names.get(symbol);
-        let duplicate = if let Some(existing) = owning {
-            Err(existing)
-        } else {
-            let table = &mut self.namespaces[namespace.0];
-            match receiver_head {
-                Some(head) => table.methods.insert(head, symbol, id),
-                None => match associated_head {
-                    Some(head) => table.associates.insert(head, symbol, id),
-                    None if !filed && table.filed.contains(&symbol) => Err(id),
-                    None => Ok(()),
-                },
+        // A namespace-level function or value owns its name in the value
+        // pool. A filed function owns its name inside its type's impl scope
+        // and never collides with the namespace-level pool. Methods and
+        // associates share the impl scope, so the same type head and name
+        // cannot be both.
+        let duplicate = if filed {
+            match (receiver_head, associated_head) {
+                (Some(head), None) => self.insert_bound_function(namespace, head, symbol, id, true),
+                (None, Some(head)) => {
+                    self.insert_bound_function(namespace, head, symbol, id, false)
+                }
+                (None, None) => unreachable!("a filed declaration carries a type head"),
+                (Some(_), Some(_)) => {
+                    unreachable!("a declaration carries one binding head")
+                }
             }
+        } else {
+            self.namespaces[namespace.0]
+                .names
+                .get(symbol)
+                .map_or(Ok(()), Err)
         };
         if let Err(existing) = duplicate {
-            let mut diagnostic =
-                Diagnostic::new(reported_path, name_span, duplicate_in_namespace(name));
-            // The filed pool knows a name was taken, not by which node, so the
-            // first place is attached only when it is known.
-            if existing != id
-                && let Some(related_file) = self.skeletons[existing.0].file
-            {
+            let message = match receiver_head.or(associated_head) {
+                Some(head) => format!(
+                    "`{name}` is declared more than once for `{}`",
+                    self.head_name(head)
+                ),
+                None => duplicate_in_namespace(name),
+            };
+            let mut diagnostic = Diagnostic::new(reported_path, name_span, message);
+            if let Some(related_file) = self.skeletons[existing.0].file {
                 diagnostic = diagnostic.with_related(
                     self.files[related_file.0].path.clone(),
                     self.skeletons[existing.0].name_span,
@@ -395,13 +398,56 @@ impl Builder {
             }
             return Err(diagnostic);
         }
-        let table = &mut self.namespaces[namespace.0];
-        if filed {
-            table.filed.insert(symbol);
-        } else {
-            table.names.insert(symbol, id);
+        if !filed {
+            self.namespaces[namespace.0].names.insert(symbol, id);
         }
         Ok(id)
+    }
+
+    /// The written name of a type head, for a diagnostic. A named type head
+    /// names its declaration, a scalar head names its word, and the two
+    /// structural heads have no declared name.
+    fn head_name(&self, head: TypeHead) -> String {
+        match head {
+            TypeHead::Scalar(name) => (*name).to_owned(),
+            TypeHead::Named(id) => self.declarations[id.0].name.clone(),
+            TypeHead::Function => "fn".to_owned(),
+            TypeHead::Parameter => "a type parameter".to_owned(),
+        }
+    }
+
+    /// Register a method or associate in its type's impl scope. A method and
+    /// an associate share that scope, so both pools are checked before the
+    /// declaration joins one of them. The existing declaration is returned
+    /// when the head and name are already taken.
+    pub(in crate::compiler::compile::resolve) fn insert_bound_function(
+        &mut self,
+        namespace: NamespaceId,
+        head: TypeHead,
+        symbol: Symbol,
+        id: DeclarationId,
+        method: bool,
+    ) -> Result<(), DeclarationId> {
+        let table = &mut self.namespaces[namespace.0];
+        if let Some(existing) = table
+            .methods
+            .get(head, symbol)
+            .or_else(|| table.associates.get(head, symbol))
+        {
+            return Err(existing);
+        }
+        if method {
+            debug_assert!(
+                table.methods.insert(head, symbol, id).is_ok(),
+                "the impl scope was checked before insertion"
+            );
+        } else {
+            debug_assert!(
+                table.associates.insert(head, symbol, id).is_ok(),
+                "the impl scope was checked before insertion"
+            );
+        }
+        Ok(())
     }
 
     /// Reserve the node a closure literal's value holds. The node owns no
@@ -445,7 +491,7 @@ impl Builder {
     ) -> bool {
         let skeleton = &self.skeletons[declaration.0];
         let type_public = match skeleton.receiver_head.or(skeleton.associated_head) {
-            Some(TypeHead::Named(id)) => Some(self.types[id.0].public),
+            Some(TypeHead::Named(id)) => Some(self.declarations[id.0].public),
             _ => None,
         };
         crate::compiler::model::bound_reachable(skeleton.public, type_public, owner, caller)
@@ -470,58 +516,86 @@ impl Builder {
         Ok(())
     }
 
-    /// Reserve a declared type: check its parameters, allocate its id, and
-    /// register its name, before any field type is resolved. Every declared type
-    /// is reserved before any is filled, so a type may name itself and any other
-    /// type, whatever the declaration order.
+    /// Reserve a declared type: check its parameters, create its declaration
+    /// node, and register its one type name in its namespace's type pool,
+    /// before any field type is resolved. Every declared type is reserved
+    /// before any is filled, so a type may name itself and any other type,
+    /// whatever the declaration order. The type pool is separate from the
+    /// value names, so a type and a value may share a spelling. The node's
+    /// type is the type constructor applied to its own parameters, and its
+    /// body starts empty and is filled later.
     pub(in crate::compiler::compile::resolve) fn reserve_type(
         &mut self,
         declaration: &TypeDeclaration,
+        kind: DeclarationKind,
         public: bool,
         namespace: NamespaceId,
         file: FileId,
         reported_path: &std::path::Path,
-    ) -> Result<TypeId, Diagnostic> {
+    ) -> Result<DeclarationId, Diagnostic> {
         self.check_type_parameters(
             &declaration.parameters,
             declaration.name_span,
             reported_path,
         )?;
-        // A `rec` and an `enum` are filled by `fill_type`; the placeholder
-        // keeps every reserved id valid while the remaining types are reserved.
-        let kind = TypeKind::Rec(Vec::new());
-        let id = TypeId(self.types.len());
-        self.types.push(TypeDecl {
-            name: declaration.name.clone(),
-            name_span: declaration.name_span,
-            file: Some(file),
-            public,
-            namespace,
-            parameters: declaration.parameters.clone(),
-            runtime: crate::compiler::model::RuntimeType::Declared,
-            kind,
+        let body_kind = match kind {
+            DeclarationKind::Rec => TypeKind::Rec(Vec::new()),
+            DeclarationKind::Enum => TypeKind::Enum(Vec::new()),
+            _ => unreachable!("only a type declaration reserves a type body"),
+        };
+        let id = self.create_node(
+            Skeleton {
+                kind,
+                binding: None,
+                name: declaration.name.clone(),
+                name_span: declaration.name_span,
+                public,
+                receiver_head: None,
+                associated_head: None,
+                file: Some(file),
+                namespace,
+            },
+            None,
+            None,
+        );
+        let parameters = declaration.parameters.clone();
+        self.declarations[id.0].ty = Type::Named(
+            id,
+            parameters.iter().cloned().map(Type::Parameter).collect(),
+        );
+        self.declarations[id.0].type_body = Some(TypeBody {
+            parameters,
+            runtime: RuntimeType::Declared,
+            kind: body_kind,
         });
-        if self.namespaces[namespace.0]
+        if let Err(existing) = self.namespaces[namespace.0]
             .types
             .insert(self.intern.intern(&declaration.name), id)
-            .is_err()
         {
-            return Err(Diagnostic::new(
+            let mut diagnostic = Diagnostic::new(
                 reported_path,
                 declaration.name_span,
                 duplicate_in_namespace(&declaration.name),
-            ));
+            );
+            if let Some(related_file) = self.skeletons[existing.0].file {
+                diagnostic = diagnostic.with_related(
+                    self.files[related_file.0].path.clone(),
+                    self.skeletons[existing.0].name_span,
+                    crate::compiler::diagnostic::first_declaration(&declaration.name),
+                );
+            }
+            return Err(diagnostic);
         }
         Ok(id)
     }
 
-    /// Fill a reserved declared type: resolve its field or variant types and
-    /// record them.
+    /// Fill a reserved declared type: resolve its field or variant types into
+    /// its body.
     pub(in crate::compiler::compile::resolve) fn fill_type(
         &mut self,
         file: FileId,
         declaration: &TypeDeclaration,
-        id: TypeId,
+        id: DeclarationId,
         group: Group,
         namespace: NamespaceId,
         reported_path: &std::path::Path,
@@ -586,7 +660,11 @@ impl Builder {
             }
             TypeKind::Enum(declared)
         };
-        self.types[id.0].kind = kind;
+        self.declarations[id.0]
+            .type_body
+            .as_mut()
+            .expect("a reserved type declaration carries its type body")
+            .kind = kind;
         Ok(())
     }
 }

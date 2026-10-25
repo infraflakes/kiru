@@ -6,9 +6,11 @@
 
 use crate::compiler::Diagnostic;
 use crate::compiler::compile::load::LoadedProgram;
+#[cfg(debug_assertions)]
+use crate::compiler::model::Facts;
 use crate::compiler::model::Type;
 use crate::compiler::model::{
-    Declaration, DeclarationId, Expression, Facts, Field, FileId, Function, MatchArm, MatchBody,
+    Declaration, DeclarationId, Expression, Field, FileId, Function, MatchArm, MatchBody,
     NamespaceId, Program, Statement, StringPart,
 };
 use crate::syntax::Span;
@@ -105,6 +107,7 @@ impl Builder {
                 ty,
                 value: None,
                 native: None,
+                type_body: None,
             };
         }
         Ok(())

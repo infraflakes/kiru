@@ -39,7 +39,7 @@ fn first_parameter(program: &Program, id: DeclarationId) -> DeclarationId {
 fn value_type(program: &Program, id: DeclarationId) -> Option<Type> {
     let declaration = program.declaration(id);
     if declaration.function().is_some() || declaration.is_native() {
-        return declaration.return_type(&program.types);
+        return declaration.return_type(&program.declarations);
     }
     Some(declaration.ty.clone())
 }
@@ -704,7 +704,7 @@ fn checks_the_shipped_library_types() {
         panic!("`std::process::command` returns a declared type");
     };
     assert!(arguments.is_empty());
-    assert_eq!(program.types[id.0].name, "Command");
+    assert_eq!(program.declaration(id).name, "Command");
 
     let print = declaration(&program, &["std"], "print");
     assert_eq!(
@@ -724,7 +724,7 @@ fn checks_the_shipped_library_types() {
     let Some(Type::Named(id, _)) = value_type(&program, first_parameter(&program, read)) else {
         panic!("`read` takes a declared type");
     };
-    assert_eq!(program.types[id.0].name, "Repo");
+    assert_eq!(program.declaration(id).name, "Repo");
 }
 
 #[test]
@@ -1474,12 +1474,8 @@ fn the_check_records_every_method_call_target() {
         .namespace_at(&["root".to_owned()])
         .expect("the program root exists");
     let namespace = program.namespace(root);
-    let a = namespace
-        .type_id(&program.intern, "A")
-        .expect("A is declared");
-    let b = namespace
-        .type_id(&program.intern, "B")
-        .expect("B is declared");
+    let a = program.type_id(root, "A").expect("A is declared");
+    let b = program.type_id(root, "B").expect("B is declared");
     let symbol = program
         .intern
         .resolve("describe")

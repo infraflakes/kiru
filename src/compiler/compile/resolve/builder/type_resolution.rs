@@ -2,8 +2,8 @@
 
 use crate::compiler::Diagnostic;
 use crate::compiler::model::{
-    Arity, FileId, Group, NamespaceId, Type, TypeHead, TypeId, TypeKind, TypeUse, UseTarget,
-    VariantDecl, join_path, reachable, scalar_from_name,
+    Arity, DeclarationId, FileId, Group, NamespaceId, Type, TypeHead, TypeKind, TypeUse, UseTarget,
+    VariantDecl, join_path, namespace_path, reachable, scalar_from_name,
 };
 use crate::syntax::{Span, TypeExpr};
 
@@ -14,7 +14,7 @@ use super::registration::Builder;
 /// resolved, so a caller that needs the variant's name or payload reads it from
 /// here rather than looking it up again.
 pub(in crate::compiler::compile::resolve) struct Variant<'a> {
-    pub(in crate::compiler::compile::resolve) ty: TypeId,
+    pub(in crate::compiler::compile::resolve) ty: DeclarationId,
     pub(in crate::compiler::compile::resolve) index: usize,
     pub(in crate::compiler::compile::resolve) declaration: &'a VariantDecl,
 }
@@ -130,7 +130,7 @@ impl Builder {
         // A scalar takes no arguments, so its count is settled before any
         // argument is resolved.
         if let NamedType::Scalar(scalar) = &named {
-            let parameter_count = type_argument_count(scalar.group(&self.types), 0);
+            let parameter_count = type_argument_count(scalar.group(&self.declarations), 0);
             if parameter_count != arguments.len() {
                 return Err(Diagnostic::new(
                     reported_path,
@@ -158,16 +158,18 @@ impl Builder {
         match named {
             NamedType::Scalar(_) => unreachable!("the scalar case was settled above"),
             NamedType::Declared(id) => {
-                let declared = &self.types[id.0];
-                let parameter_count =
-                    type_argument_count(declared.group(), declared.parameters.len());
+                let declaration = &self.declarations[id.0];
+                let body = declaration
+                    .type_body()
+                    .expect("a named type names a type declaration");
+                let parameter_count = type_argument_count(body.group(), body.parameters.len());
                 if parameter_count != arguments.len() {
                     return Err(Diagnostic::new(
                         reported_path,
                         *span,
                         format!(
                             "`{}` takes {}, found {}",
-                            declared.name,
+                            declaration.name,
                             crate::compiler::diagnostic::count(parameter_count, "type argument"),
                             arguments.len()
                         ),
@@ -236,7 +238,7 @@ impl Builder {
                 ty.span(),
                 format!(
                     "`{}` cannot carry methods",
-                    crate::compiler::model::type_name(&resolved, &self.types)
+                    crate::compiler::model::type_name(&resolved, &self.declarations)
                 ),
             ));
         };
@@ -247,22 +249,46 @@ impl Builder {
                 name: Span::new(path_span.end - last.len(), path_span.end),
             });
         }
-        let resolved =
-            match self.named_type(WrittenType { path, span }, namespace, reported_path)? {
-                NamedType::Scalar(scalar) => scalar,
-                NamedType::Declared(id) => Type::Named(id, Vec::new()),
-            };
-        if !resolved.group(&self.types).binds_methods() {
+        let resolved = match self.named_type(
+            WrittenType { path, span },
+            namespace,
+            reported_path,
+        )? {
+            NamedType::Scalar(scalar) => scalar,
+            NamedType::Declared(id) => {
+                let declaration = &self.declarations[id.0];
+                if declaration.namespace != namespace {
+                    let declared_in = {
+                        let declared_path = namespace_path(&self.namespaces, declaration.namespace);
+                        if declared_path.is_empty() {
+                            "the root namespace".to_owned()
+                        } else {
+                            format!("`{}`", join_path(&declared_path))
+                        }
+                    };
+                    return Err(Diagnostic::new(
+                        reported_path,
+                        ty.span(),
+                        format!(
+                            "`{}` is declared in {declared_in}; its methods must be declared there",
+                            declaration.name
+                        ),
+                    ));
+                }
+                Type::Named(id, Vec::new())
+            }
+        };
+        if !resolved.group(&self.declarations).binds_methods() {
             return Err(Diagnostic::new(
                 reported_path,
                 ty.span(),
                 format!(
                     "`{}` cannot carry methods",
-                    crate::compiler::model::type_name(&resolved, &self.types)
+                    crate::compiler::model::type_name(&resolved, &self.declarations)
                 ),
             ));
         }
-        Ok(resolved.head(&self.types))
+        Ok(resolved.head(&self.declarations))
     }
 
     /// Apply a declared type named by a path to already-resolved arguments. A
@@ -284,9 +310,12 @@ impl Builder {
                 format!("unknown type `{}`", join_path(path)),
             ));
         };
-        let declared = &self.types[id.0];
+        let declared = &self.declarations[id.0];
+        let body = declared
+            .type_body()
+            .expect("a named type names a type declaration");
         let name = declared.name.clone();
-        let parameter_count = type_argument_count(declared.group(), declared.parameters.len());
+        let parameter_count = type_argument_count(body.group(), body.parameters.len());
         if parameter_count != arguments.len() {
             return Err(Diagnostic::new(
                 reported_path,
@@ -314,10 +343,13 @@ impl Builder {
             return None;
         }
         let id = self.find_type(namespace, type_segments)?;
-        if !self.types[id.0].group().has_variants() {
+        let body = self.declarations[id.0]
+            .type_body()
+            .expect("a named type names a type declaration");
+        if !body.group().has_variants() {
             return None;
         }
-        let TypeKind::Enum(variants) = &self.types[id.0].kind else {
+        let TypeKind::Enum(variants) = &body.kind else {
             unreachable!("a group with variants is an enum");
         };
         let index = variants
@@ -330,10 +362,12 @@ impl Builder {
         })
     }
 
-    /// The declared type a bare name sees: the current namespace's own, then a
-    /// type a name-`use` brings in. The `use`'s target was resolved once, when
-    /// the namespace's index was built, so this reads that recording.
-    fn bare_type(&self, namespace: NamespaceId, name: &str) -> Option<TypeId> {
+    /// The declared type a bare name sees: the current namespace's type pool,
+    /// then a type a name-`use` brings in. Type names and value names are
+    /// different pools, so a value named `Foo` never hides a type named `Foo`.
+    /// The `use`'s target was resolved once, when the namespace's index was
+    /// built, so this reads that recording.
+    fn bare_type(&self, namespace: NamespaceId, name: &str) -> Option<DeclarationId> {
         let symbol = self.intern.resolve(name)?;
         let namespace_table = &self.namespaces[namespace.0];
         if let Some(found) = namespace_table.types.get(symbol) {
@@ -341,11 +375,10 @@ impl Builder {
         }
         let entries = namespace_table.brought.get(&symbol)?;
         let taken = entries.iter().position(|entry| match entry.target {
-            UseTarget::Type(found) => reachable(
-                self.types[found.0].public,
-                self.types[found.0].namespace,
-                namespace,
-            ),
+            UseTarget::Type(found) => {
+                let declaration = &self.declarations[found.0];
+                reachable(declaration.public, declaration.namespace, namespace)
+            }
             _ => false,
         })?;
         self.record_delivery(entries, taken);
@@ -363,7 +396,7 @@ impl Builder {
         &self,
         namespace: NamespaceId,
         path: &[String],
-    ) -> Option<TypeId> {
+    ) -> Option<DeclarationId> {
         let (name, prefix) = path
             .split_last()
             .expect("a type path has at least one segment");
@@ -372,7 +405,8 @@ impl Builder {
         }
         let target = self.namespace_of_path(namespace, prefix)?;
         let found = self.namespaces[target.0].type_id(&self.intern, name)?;
-        reachable(self.types[found.0].public, target, namespace).then_some(found)
+        let declaration = &self.declarations[found.0];
+        reachable(declaration.public, target, namespace).then_some(found)
     }
 }
 
@@ -387,5 +421,5 @@ struct WrittenType<'a> {
 /// applied: a scalar intrinsic, or a declared type by its id.
 enum NamedType {
     Scalar(Type),
-    Declared(TypeId),
+    Declared(DeclarationId),
 }

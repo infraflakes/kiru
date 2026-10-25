@@ -95,7 +95,11 @@ impl Builder {
         }
         // The receiver names an enum, but not this variant: say so precisely.
         if let Some(id) = self.find_type(context.namespace, path)
-            && self.types[id.0].group().has_variants()
+            && self.declarations[id.0]
+                .type_body()
+                .expect("a named type names a type declaration")
+                .group()
+                .has_variants()
         {
             let (member, type_path) = full
                 .split_last()

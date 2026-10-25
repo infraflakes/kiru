@@ -1,7 +1,6 @@
 //! The program graph: the program, its files and namespaces, the name
 //! registries a namespace keeps, type-name rendering, namespace paths, and the
 //! field lookups the linker and the checker share.
-
 mod fields;
 mod graph;
 mod interner;
@@ -11,7 +10,9 @@ mod view;
 mod visibility;
 
 pub(crate) use fields::rec_field;
-pub(crate) use graph::{Delivery, File, Namespace, Program, UseTarget, first_duplicate};
+pub(crate) use graph::{
+    Delivery, File, FileOrigin, Namespace, Program, UseTarget, first_duplicate,
+};
 /// The name hash a test reads to pin the compiled image's bytes; nothing in
 /// the model itself reads it.
 #[cfg(test)]

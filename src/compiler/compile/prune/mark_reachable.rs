@@ -3,14 +3,15 @@
 use std::collections::HashSet;
 
 use crate::compiler::model::{
-    DeclarationId, Expression, Facts, MatchBody, Pattern, Program, Site, Statement, Visitor,
-    walk_expression,
+    DeclarationId, Expression, Facts, FunctionBinding, MatchBody, Pattern, Program, Site,
+    Statement, Type, TypeHead, TypeKind, Visitor, walk_expression,
 };
 
-/// The declarations reachable from the entry: every function's parameters and
-/// the bindings, references, and callees in the bodies and initializers it
-/// reaches. A method family's callee is the target the check recorded, read
-/// from `Facts`. Visited nodes are recorded, so a shared callee is walked once.
+/// The declarations reachable from the entry: every function's parameters, the
+/// bindings, references, and callees in the bodies and initializers it
+/// reaches, and every type declaration those declarations name. A method
+/// family's callee is the target the check recorded, read from `Facts`. Visited
+/// nodes are recorded, so a shared callee is walked once.
 pub(crate) fn mark_reachable(
     program: &Program,
     facts: &Facts,
@@ -28,6 +29,41 @@ pub(crate) fn mark_reachable(
         }
         collector.owner = id;
         let declaration = program.declaration(id);
+        // Every type position is an edge: a value's declared type, a type
+        // body, a function's own annotation, and the head that files a method
+        // or associated function. A type declaration's self edge is harmless;
+        // its body's fields and payloads are the real edges.
+        mark_type(&declaration.ty, &mut collector.pending);
+        if let Some(body) = declaration.type_body() {
+            match &body.kind {
+                TypeKind::Rec(fields) => {
+                    for field in fields {
+                        mark_type(&field.ty, &mut collector.pending);
+                    }
+                }
+                TypeKind::Enum(variants) => {
+                    for variant in variants {
+                        for ty in &variant.payload {
+                            mark_type(ty, &mut collector.pending);
+                        }
+                    }
+                }
+            }
+        }
+        match declaration.binding {
+            Some(FunctionBinding::Method {
+                receiver: TypeHead::Named(id),
+            })
+            | Some(FunctionBinding::Associated {
+                owner: TypeHead::Named(id),
+            }) => collector.pending.push(id),
+            _ => {}
+        }
+        if let Some(function) = declaration.function()
+            && let Some(declared_return) = &function.declared_return
+        {
+            mark_type(declared_return, &mut collector.pending);
+        }
         if let Some(value) = declaration.value() {
             walk_expression(&mut collector, value);
         }
@@ -35,10 +71,35 @@ pub(crate) fn mark_reachable(
     reachable
 }
 
+/// Mark every type declaration a type names, recursing through arguments and
+/// function types.
+fn mark_type(ty: &Type, pending: &mut Vec<DeclarationId>) {
+    match ty {
+        Type::Named(id, arguments) => {
+            pending.push(*id);
+            for argument in arguments {
+                mark_type(argument, pending);
+            }
+        }
+        Type::Function {
+            parameters,
+            returns,
+        } => {
+            for parameter in parameters {
+                mark_type(parameter, pending);
+            }
+            if let Some(returns) = returns {
+                mark_type(returns, pending);
+            }
+        }
+        Type::Text | Type::Bool | Type::Int | Type::Parameter(_) => {}
+    }
+}
+
 /// Collects the declaration ids a body points at: the binding a statement
-/// declares, the declaration a reference names, and the target of a call's
-/// family. Every node kind is listed, so a new edge-bearing kind fails to
-/// compile.
+/// declares, the declaration a reference names, the target of a call's family,
+/// and the type a variant names. Every node kind is listed, so a new
+/// edge-bearing kind fails to compile.
 struct ReachableCollector<'f> {
     pending: Vec<DeclarationId>,
     facts: &'f Facts,
@@ -97,10 +158,19 @@ impl Visitor for ReachableCollector<'_> {
         self.declared(statement);
     }
 
+    // A variant construction names its type declaration.
+    fn variant(&mut self, expression: &Expression) {
+        let Expression::Variant { ty, .. } = expression else {
+            unreachable!("the walk names a variant");
+        };
+        self.pending.push(*ty);
+    }
+
     fn variant_pattern(&mut self, pattern: &Pattern) {
-        let Pattern::Variant { bindings, .. } = pattern else {
+        let Pattern::Variant { ty, bindings, .. } = pattern else {
             unreachable!("the walk names a variant pattern");
         };
+        self.pending.push(*ty);
         for id in bindings.iter().flatten() {
             self.pending.push(*id);
         }
@@ -110,7 +180,6 @@ impl Visitor for ReachableCollector<'_> {
     fn map(&mut self, _: &Expression) {}
     fn boolean(&mut self, _: &Expression) {}
     fn integer(&mut self, _: &Expression) {}
-    fn variant(&mut self, _: &Expression) {}
     fn interpolated(&mut self, _: &Expression) {}
     fn call(&mut self, _: &Expression) {}
     fn field(&mut self, _: &Expression) {}

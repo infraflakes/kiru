@@ -21,58 +21,78 @@ impl Builder {
     /// of this method covers.
     pub(in crate::compiler::compile::resolve) fn index_uses(&mut self, loaded: &LoadedProgram) {
         for (use_index, used) in loaded.uses.iter().enumerate() {
-            let Some(target) = self.resolve_use(&used.path) else {
+            let targets = self.resolve_uses(&used.path);
+            if targets.is_empty() {
                 continue;
-            };
+            }
             let (last, _) = used.path.split_last().expect("a `use` path is not empty");
             let symbol = self.intern.intern(last);
             let namespace = self.ensure_namespace(&used.namespace);
             let brought = &mut self.namespaces[namespace.0].brought;
             let entries = brought.entry(symbol).or_default();
-            // One use item is recorded once, by the two indexing passes; two
-            // items that deliver the same target both stay, so the redundant
-            // fact can name the later one.
-            if !entries.iter().any(|entry| entry.use_index == use_index) {
-                entries.push(Delivery { target, use_index });
+            // One use item is recorded once per target, by the two indexing
+            // passes. A name may deliver both a type and a function, so the
+            // entry check names both the item and the target. Two items that
+            // deliver the same target both stay, so the redundant fact can
+            // name the later one.
+            for target in targets {
+                if !entries
+                    .iter()
+                    .any(|entry| entry.use_index == use_index && entry.target == target)
+                {
+                    entries.push(Delivery {
+                        target,
+                        use_index,
+                        taken: std::cell::Cell::new(false),
+                    });
+                }
             }
         }
     }
 
-    /// Mark the `use` item a read resolution took as used. A second item that
-    /// delivered the same target is not marked: it was never taken, and the
-    /// redundant fact names it for what it is.
+    /// Mark the delivery a read resolution took. The edge carries the fact;
+    /// a second item that delivered the same target is not marked, because it
+    /// was never taken.
     pub(in crate::compiler::compile::resolve) fn record_delivery(
         &self,
         entries: &[Delivery],
         taken: usize,
     ) {
-        self.used_uses.borrow_mut().insert(entries[taken].use_index);
+        entries[taken].taken.set(true);
     }
 
-    /// Resolve a `use` path to the one thing it reaches. The path is absolute:
-    /// its prefix names a namespace from the root. This is the one resolution
-    /// every pass that reads a `use` directly asks for; the index built from
-    /// it answers the repeated reads.
-    /// Resolve a `use` path to the one thing a use reaches: a namespace, a
-    /// type, or a plain function. Any other declaration is no candidate at
-    /// all, so the lookup never names one.
-    pub(in crate::compiler::compile::resolve) fn resolve_use(
+    /// Resolve a `use` path to everything it reaches. The path is absolute:
+    /// its prefix names a namespace from the root. A path that names a
+    /// namespace delivers that namespace alone. A path that names a name
+    /// delivers every public type and plain function that name denotes: the
+    /// type pool and the value pool are separate, so one name can deliver
+    /// both. Any other declaration is no candidate at all, so the lookup never
+    /// names one.
+    pub(in crate::compiler::compile::resolve) fn resolve_uses(
         &self,
         path: &[String],
-    ) -> Option<UseTarget> {
+    ) -> Vec<UseTarget> {
         if let Some(namespace) = namespace_at(&self.intern, &self.namespaces, path) {
-            return Some(UseTarget::Namespace(namespace));
+            return vec![UseTarget::Namespace(namespace)];
         }
-        let (name, prefix) = path.split_last()?;
-        let namespace = namespace_at(&self.intern, &self.namespaces, prefix)?;
+        let Some((name, prefix)) = path.split_last() else {
+            return Vec::new();
+        };
+        let Some(namespace) = namespace_at(&self.intern, &self.namespaces, prefix) else {
+            return Vec::new();
+        };
         let namespace_table = &self.namespaces[namespace.0];
+        let mut targets = Vec::new();
         if let Some(found) = namespace_table.type_id(&self.intern, name) {
-            return Some(UseTarget::Type(found));
+            targets.push(UseTarget::Type(found));
         }
-        namespace_table
+        if let Some(found) = namespace_table
             .get(&self.intern, name)
-            .filter(|declaration| self.skeletons[declaration.0].kind.useable())
-            .map(UseTarget::Function)
+            .filter(|declaration| self.declarations[declaration.0].kind.useable())
+        {
+            targets.push(UseTarget::Function(found));
+        }
+        targets
     }
 
     /// The namespace a qualified path's first segment names, through the
@@ -130,10 +150,10 @@ impl Builder {
         self.namespace_at_from(base, &prefix[1..])
     }
 
-    /// The declaration a bare name sees: the current namespace's own, then a
-    /// plain function a name-`use` brings in. A namespace `use` does not bring
-    /// its names bare, a filed function is not a name, and a type is not a
-    /// value.
+    /// The declaration a bare name sees: the current namespace's own value or
+    /// callable, then a plain function a name-`use` brings in. A namespace
+    /// `use` does not bring its names bare, a filed function is not a name, and
+    /// a type is not a value.
     pub(in crate::compiler::compile::resolve) fn bare_declaration(
         &self,
         namespace: NamespaceId,
@@ -142,7 +162,10 @@ impl Builder {
         let symbol = self.intern.resolve(name)?;
         let namespace_table = &self.namespaces[namespace.0];
         if let Some(found) = namespace_table.names.get(symbol) {
-            return Some(found);
+            let kind = self.declarations[found.0].kind;
+            if kind.callable() || kind.has_value() {
+                return Some(found);
+            }
         }
         let entries = namespace_table.brought.get(&symbol)?;
         let taken = entries.iter().position(|entry| match entry.target {

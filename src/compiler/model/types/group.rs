@@ -8,9 +8,8 @@
 //! relations in `relation.rs` read these facts instead of matching a type's own
 //! variants, so a new kind is described in this one place.
 
-use super::super::declarations::{RuntimeType, TypeDecl, TypeKind};
+use super::super::declarations::{Declaration, RuntimeType, TypeBody, TypeKind};
 use super::Type;
-use super::TypeId;
 
 /// The kind of thing a type is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -250,7 +249,7 @@ impl Group {
     }
 }
 
-impl TypeDecl {
+impl TypeBody {
     /// The group a declared type belongs to: a `rec` is `Rec`, an `enum` is
     /// `Enum`. This is the one place a declaration's kind becomes a group, so
     /// every `Type::Named` reads its group from here.
@@ -316,12 +315,15 @@ impl Type {
     /// set rather than the group's whole family, because an operation applies
     /// to exactly one scalar; a declared type reads its declaration, and a
     /// function type and a type parameter are their own.
-    pub(crate) fn runtime_shape(&self, types: &[TypeDecl]) -> RuntimeShape {
+    pub(crate) fn runtime_shape(&self, declarations: &[Declaration]) -> RuntimeShape {
         match self {
             Type::Text => RuntimeShape::Text,
             Type::Bool => RuntimeShape::Bool,
             Type::Int => RuntimeShape::Int,
-            Type::Named(id, _) => types[id.0].runtime_shape(),
+            Type::Named(id, _) => declarations[id.0]
+                .type_body()
+                .expect("a named type names a type declaration")
+                .runtime_shape(),
             Type::Function { .. } => RuntimeShape::Function,
             Type::Parameter(_) => RuntimeShape::Parameter,
         }
@@ -331,8 +333,8 @@ impl Type {
 /// The values a subject can take. A scalar's name declares whether it is a
 /// finite set; a declared type's group says whether its declaration enumerates
 /// its values. Every caller that covers a subject reads this one fact.
-pub(crate) fn finite(ty: &Type, types: &[TypeDecl]) -> Finite {
-    match ty.group(types) {
+pub(crate) fn finite(ty: &Type, declarations: &[Declaration]) -> Finite {
+    match ty.group(declarations) {
         Group::Scalar => Group::Scalar
             .names()
             .iter()
@@ -343,19 +345,12 @@ pub(crate) fn finite(ty: &Type, types: &[TypeDecl]) -> Finite {
             let Type::Named(id, _) = ty else {
                 unreachable!("an enum is a named type");
             };
-            types[id.0].finite()
+            declarations[id.0]
+                .type_body()
+                .expect("a named type names a type declaration")
+                .finite()
         }
     }
-}
-
-/// The id of the declaration the runtime represents itself, when the program
-/// has one. The marker lives on the declaration, so this reads it rather than
-/// any stage carrying the id.
-pub(crate) fn list_type(types: &[TypeDecl]) -> Option<TypeId> {
-    types
-        .iter()
-        .position(|declaration| declaration.is_list())
-        .map(TypeId)
 }
 
 /// The scalar type a written name denotes, or `None` when the runtime provides
@@ -383,13 +378,13 @@ pub(crate) fn display_name(ty: &Type) -> Option<&'static str> {
 /// and arguments, a parameter shows its name, a scalar shows its word, and a
 /// function type shows its written form. The rendering is a fact of each group,
 /// so a new kind declares how it is shown beside every other fact.
-pub(crate) fn type_name(ty: &Type, types: &[TypeDecl]) -> String {
-    match ty.group(types).substitution() {
+pub(crate) fn type_name(ty: &Type, declarations: &[Declaration]) -> String {
+    match ty.group(declarations).substitution() {
         Substitution::Applied => {
             let Type::Named(id, arguments) = ty else {
                 unreachable!("an applied type is a named type");
             };
-            named_type_name(&types[id.0].name, arguments, types)
+            named_type_name(&declarations[id.0].name, arguments, declarations)
         }
         Substitution::Leaf => display_name(ty)
             .expect("a leaf has a declared name")
@@ -404,13 +399,17 @@ pub(crate) fn type_name(ty: &Type, types: &[TypeDecl]) -> String {
             };
             let parts: Vec<String> = parameters
                 .iter()
-                .map(|parameter| type_name(parameter, types))
+                .map(|parameter| type_name(parameter, declarations))
                 .collect();
             // A function with no return type has no `->` in its written form,
             // because it has no return type to write.
             match returns {
                 Some(returns) => {
-                    format!("fn({}) -> {}", parts.join(", "), type_name(returns, types))
+                    format!(
+                        "fn({}) -> {}",
+                        parts.join(", "),
+                        type_name(returns, declarations)
+                    )
                 }
                 None => format!("fn({})", parts.join(", ")),
             }
@@ -426,13 +425,13 @@ pub(crate) fn type_name(ty: &Type, types: &[TypeDecl]) -> String {
 
 /// The name of an applied declared type: its declared name, with its arguments
 /// in `<>` when it has any.
-fn named_type_name(name: &str, arguments: &[Type], types: &[TypeDecl]) -> String {
+fn named_type_name(name: &str, arguments: &[Type], declarations: &[Declaration]) -> String {
     if arguments.is_empty() {
         return name.to_owned();
     }
     let parts: Vec<String> = arguments
         .iter()
-        .map(|argument| type_name(argument, types))
+        .map(|argument| type_name(argument, declarations))
         .collect();
     format!("{name}<{}>", parts.join(", "))
 }

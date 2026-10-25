@@ -215,8 +215,13 @@ impl<'a> Written<'a> {
         };
         for (index, node) in program.declarations.iter().enumerate() {
             // An anonymous function owns no namespace name, so it has no name
-            // fact. Its body's own tokens come from the walk above.
-            if node.file != Some(self.file) || node.is_anonymous_function() {
+            // fact. Its body's own tokens come from the walk above. A declared
+            // type is painted by the type loop below, so its name is painted
+            // once as a type.
+            if node.file != Some(self.file)
+                || node.is_anonymous_function()
+                || node.type_body().is_some()
+            {
                 continue;
             }
             let declaration = DeclarationId(index);
@@ -239,9 +244,9 @@ impl<'a> Written<'a> {
             );
         }
         for type_declaration in program
-            .types
+            .declarations
             .iter()
-            .filter(|type_declaration| type_declaration.file == Some(self.file))
+            .filter(|node| node.file == Some(self.file) && node.type_body().is_some())
         {
             named(
                 &mut facts,
@@ -249,7 +254,10 @@ impl<'a> Written<'a> {
                 SemanticRole::Type,
                 true,
             );
-            match &type_declaration.kind {
+            let body = type_declaration
+                .type_body()
+                .expect("the filter keeps type declarations");
+            match &body.kind {
                 TypeKind::Rec(fields) => {
                     for field in fields {
                         named(&mut facts, field.name_span, SemanticRole::Property, true);
@@ -478,17 +486,36 @@ fn role_of_target(
     }
 }
 
-/// Every `use` delivery in the program, keyed by the item that wrote it.
+/// Every `use` delivery in the program, keyed by the item that wrote it. One
+/// item can deliver both a type and a function; the token the item writes is
+/// painted with the type role first, then the function role, then the
+/// namespace role, so a name in both pools keeps the role it had when a use
+/// named one target.
 fn deliveries(program: &Program) -> HashMap<usize, UseTarget> {
     let mut deliveries = HashMap::new();
     for namespace in &program.namespaces {
         for entries in namespace.brought.values() {
             for delivery in entries {
-                deliveries.insert(delivery.use_index, delivery.target);
+                let replace = deliveries.get(&delivery.use_index).is_none_or(|current| {
+                    delivery_priority(delivery.target) > delivery_priority(*current)
+                });
+                if replace {
+                    deliveries.insert(delivery.use_index, delivery.target);
+                }
             }
         }
     }
     deliveries
+}
+
+/// The role priority of a delivery target when one `use` delivers more than
+/// one. A type wins over a function, and a function wins over a namespace.
+fn delivery_priority(target: UseTarget) -> u8 {
+    match target {
+        UseTarget::Type(_) => 3,
+        UseTarget::Function(_) => 2,
+        UseTarget::Namespace(_) => 1,
+    }
 }
 
 /// The span of the name a written path ends at: the text after its last `::`.

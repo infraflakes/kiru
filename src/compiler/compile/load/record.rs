@@ -9,7 +9,7 @@ use crate::compiler::compile::load::load_error::LoadError;
 use crate::compiler::compile::load::loaded_program::{
     ImplTarget, LoadedFile, LoadedProgram, ScopedDeclaration, ScopedUse,
 };
-use crate::compiler::model::DeclarationKind;
+use crate::compiler::model::{DeclarationKind, FileOrigin};
 use crate::syntax;
 use crate::syntax::{Declaration, DeclarationForm, Item, TypeDeclarationKind};
 
@@ -52,6 +52,7 @@ impl Loader {
             let path = format!("<{STD_TREE}>/{relative}");
             self.add(
                 PathBuf::from(path),
+                FileOrigin::Embedded,
                 (*embedded_source).to_owned(),
                 namespace,
             )?;
@@ -66,6 +67,7 @@ impl Loader {
     pub(super) fn add(
         &mut self,
         path: PathBuf,
+        origin: FileOrigin,
         source: String,
         namespace: Vec<String>,
     ) -> Result<usize, LoadError> {
@@ -87,6 +89,7 @@ impl Loader {
         }
         self.files.push(LoadedFile {
             path,
+            origin,
             source,
             namespace: namespace.clone(),
         });

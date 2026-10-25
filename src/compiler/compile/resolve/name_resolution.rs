@@ -111,7 +111,9 @@ impl Builder {
         }
         let namespace = self.namespace_of_path(context.namespace, prefix)?;
         // A declaration reached in its own namespace is visible whatever its
-        // visibility; across a namespace it must be `pub`.
+        // visibility; across a namespace it must be `pub`. The value pool never
+        // holds a declared type, so a type path in value position names no
+        // value by construction.
         let declaration = self.namespaces[namespace.0].get(&self.intern, name)?;
         reachable(
             self.skeletons[declaration.0].public,

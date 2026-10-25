@@ -18,7 +18,7 @@ use crate::compiler::compile::resolve::{Analysis, program_main, resolve_tree};
 use crate::compiler::diagnostic::{Diagnostic, FileDiagnostics, group};
 use crate::compiler::mark_reachable;
 use crate::compiler::model::{Facts, FileId, Program};
-use crate::compiler::warnings::{is_program_source, unused_bindings, unused_declarations};
+use crate::compiler::warnings::{unused_bindings, unused_declarations};
 
 #[cfg(test)]
 pub(crate) use semantic::SemanticRole;
@@ -59,7 +59,7 @@ pub(crate) fn diagnostics(
     }
     // The embedded library is the compiler's, not the editor's: its files
     // have no real path, and a fact about one cannot be published.
-    diagnostics.retain(|diagnostic| is_program_source(&diagnostic.path));
+    diagnostics.retain(|diagnostic| linked.program.is_program_path(&diagnostic.path));
     diagnostics.sort_by(|left, right| {
         left.path
             .cmp(&right.path)
@@ -126,7 +126,7 @@ fn link(
         Err(diagnostic) => {
             let mut diagnostics = loaded.syntax.clone();
             diagnostics.push(diagnostic);
-            diagnostics.retain(|diagnostic| is_program_source(&diagnostic.path));
+            diagnostics.retain(|diagnostic| loaded.is_program_path(&diagnostic.path));
             return Err(group(&loaded, diagnostics));
         }
     };
@@ -273,6 +273,25 @@ mod tests {
         assert!(
             facts.contains(&"redundant use `std::process`".to_owned()),
             "the second item duplicates the first: {facts:?}"
+        );
+    }
+
+    #[test]
+    fn a_use_of_a_name_in_both_pools_warns_once() {
+        let facts = messages(&[
+            ("main.kiru", "use root::api::Item;\nfn main() {};"),
+            (
+                "api/mod.kiru",
+                "pub rec Item { name: txt };\npub fn Item() -> Item { return { name = \"api\" }; };",
+            ),
+        ]);
+        assert_eq!(
+            facts
+                .iter()
+                .filter(|fact| *fact == "unused use `root::api::Item`")
+                .count(),
+            1,
+            "one use item is one warning: {facts:?}"
         );
     }
 

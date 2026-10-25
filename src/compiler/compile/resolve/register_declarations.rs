@@ -18,6 +18,7 @@ impl Builder {
             self.ensure_namespace(&file.namespace);
             self.files.push(File {
                 path: file.path.clone(),
+                origin: file.origin,
                 declarations: Vec::new(),
             });
         }
@@ -30,13 +31,16 @@ impl Builder {
                     .type_declaration()
                     .expect("a type declaration carries its body");
                 let namespace = self.ensure_namespace(&scoped.namespace);
-                self.reserve_type(
+                let file = FileId(scoped.file);
+                let id = self.reserve_type(
                     type_declaration,
+                    scoped.kind,
                     declaration.public,
                     namespace,
-                    FileId(scoped.file),
+                    file,
                     &loaded.files[scoped.file].path,
                 )?;
+                self.files[file.0].declarations.push(id);
             }
         }
         Ok(())
@@ -68,17 +72,29 @@ impl Builder {
             "every registered declaration introduces a name"
         );
         let namespace = self.ensure_namespace(&scoped.namespace);
-        // A declared type has no body and no node; its name was reserved in the
-        // first pass, so its fields fill in here.
+        // A declared type's node was reserved in the first pass; this fills
+        // its body and does not declare a second node or a second file entry.
         if scoped.kind.declares_type() {
             let type_declaration = declaration
                 .type_declaration()
                 .expect("a type declaration carries its body");
-            let id = self
+            let symbol = self
                 .intern
                 .resolve(&declaration.name)
-                .and_then(|symbol| self.namespaces[namespace.0].types.get(symbol))
-                .expect("every declared type was reserved");
+                .expect("a reserved type's name was interned");
+            let id = self.namespaces[namespace.0]
+                .types
+                .get(symbol)
+                .expect("every declared type was reserved in its type pool");
+            let reserved = &self.declarations[id.0];
+            debug_assert_eq!(
+                reserved.kind, scoped.kind,
+                "the reserved node has the declaration's type kind"
+            );
+            debug_assert!(
+                reserved.type_body.is_some(),
+                "the reserved node carries its type body"
+            );
             let group = scoped
                 .kind
                 .group()
@@ -131,7 +147,7 @@ impl Builder {
                         &function.type_parameters,
                         &loaded_file.path,
                     )?
-                    .head(&self.types),
+                    .head(&self.declarations),
                 ),
                 None => None,
             };

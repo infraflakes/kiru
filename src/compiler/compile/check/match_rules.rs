@@ -234,7 +234,7 @@ impl<'a> Checker<'a> {
     /// The coverage tracker for a subject: every value its type declares it can
     /// take, or `None` when it declares no finite set.
     pub(super) fn coverage(&self, subject_type: &Type) -> Option<Coverage> {
-        let finite = finite(subject_type, self.model.types());
+        let finite = finite(subject_type, self.model.declarations());
         let value_count = match finite {
             Finite::Variants => {
                 let Type::Named(id, _) = subject_type else {
@@ -324,14 +324,14 @@ impl<'a> Checker<'a> {
                     return Err(self.error(*span, "duplicate match pattern"));
                 }
                 let (variant_name, parameters, public, declared) = {
-                    let declaration = self.model.type_decl(*ty);
-                    let TypeKind::Enum(variants) = &declaration.kind else {
+                    let body = self.model.type_decl(*ty);
+                    let TypeKind::Enum(variants) = &body.kind else {
                         unreachable!("a variant pattern names an enum");
                     };
                     let variant = &variants[*index];
                     (
                         variant.name.clone(),
-                        declaration.parameters.clone(),
+                        body.parameters.clone(),
                         variant.public,
                         variant.payload.clone(),
                     )
@@ -341,7 +341,7 @@ impl<'a> Checker<'a> {
                     if let Some(binding) = binding {
                         let ty = substitute(
                             field_type,
-                            self.model.types(),
+                            self.model.declarations(),
                             &parameters,
                             Binding::Complete(subject_arguments),
                         );

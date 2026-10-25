@@ -31,7 +31,7 @@
 //! the parameters the row declares.
 
 use crate::compiler::STD_TREE;
-use crate::compiler::model::{RuntimeShape, Type, TypeDecl};
+use crate::compiler::model::{Declaration, RuntimeShape, Type};
 
 /// How the runtime decodes one native argument: the parameter type the row
 /// declares, reduced to the runtime shape the decoder enforces. A handler then
@@ -59,8 +59,8 @@ pub(crate) enum NativeArgumentKind {
 /// word of its own kind, a declared type is a record, the runtime list, or a
 /// variant, a function is a function value, and a type parameter is the
 /// caller's type, so it admits any value.
-pub(crate) fn argument_kind(ty: &Type, types: &[TypeDecl]) -> NativeArgumentKind {
-    match ty.runtime_shape(types) {
+pub(crate) fn argument_kind(ty: &Type, declarations: &[Declaration]) -> NativeArgumentKind {
+    match ty.runtime_shape(declarations) {
         RuntimeShape::Text => NativeArgumentKind::Text,
         RuntimeShape::Int => NativeArgumentKind::Int,
         RuntimeShape::Bool => NativeArgumentKind::Bool,

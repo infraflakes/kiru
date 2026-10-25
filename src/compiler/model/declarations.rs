@@ -8,6 +8,11 @@
 //! value form: its value is storage. A native is the one value the runtime
 //! provides rather than the program, so it carries a marker instead of an
 //! expression.
+//!
+//! A declared type is one declaration node too: its name, span, file,
+//! visibility, and namespace are the declaration's ordinary fields, and its
+//! parameters, runtime marker, and fields or variants are its type body. A
+//! type reference is an edge to that node, never a second identity.
 
 mod group;
 
@@ -99,6 +104,10 @@ pub(crate) struct Declaration {
     /// runtime provides rather than the program, so it carries this marker
     /// instead of an expression.
     pub(crate) native: Option<Native>,
+    /// The body of a declared type: its parameters, runtime marker, and fields
+    /// or variants. Every other kind has none. The name, span, file,
+    /// visibility, and namespace of the type are the declaration's own fields.
+    pub(crate) type_body: Option<TypeBody>,
 }
 
 impl Declaration {
@@ -171,37 +180,45 @@ impl Declaration {
     }
 
     /// The declared return type of a callable, or `None` for any other name.
-    pub(crate) fn return_type(&self, types: &[TypeDecl]) -> Option<Type> {
-        self.ty.return_type(types)
+    pub(crate) fn return_type(&self, declarations: &[Declaration]) -> Option<Type> {
+        self.ty.return_type(declarations)
     }
 
     /// The type parameters a call binds: a function's declared ones, or the
     /// parameters a native's row mentions, in order of first appearance. A
     /// native has no function node, so its row's function type is the
     /// declaration.
-    pub(crate) fn type_parameters(&self, types: &[TypeDecl]) -> Vec<String> {
+    pub(crate) fn type_parameters(&self, declarations: &[Declaration]) -> Vec<String> {
         match self.function() {
             Some(function) => function.type_parameters.clone(),
-            None => crate::compiler::model::type_parameters_of(&self.ty, types),
+            None => crate::compiler::model::type_parameters_of(&self.ty, declarations),
         }
+    }
+
+    /// The body of a declared type, when this node declares one.
+    pub(crate) fn type_body(&self) -> Option<&TypeBody> {
+        self.type_body.as_ref()
+    }
+
+    /// The body of a declared type, asserting the node is one. A caller that
+    /// has already proved the declaration's kind reads its body here.
+    #[cfg(debug_assertions)]
+    pub(crate) fn expect_type_body(&self) -> &TypeBody {
+        debug_assert!(
+            matches!(self.kind, DeclarationKind::Rec | DeclarationKind::Enum),
+            "a type body belongs to a rec or enum declaration"
+        );
+        self.type_body
+            .as_ref()
+            .expect("a type declaration carries its type body")
     }
 }
 
-/// A nominal type: a `rec` with fields, or an `enum` with variants.
+/// The body of a declared type: what the type is made of, beside the identity
+/// the declaration node carries. The name, written span, file, visibility, and
+/// namespace are the declaration's fields, not the body's.
 #[derive(Debug)]
-pub(crate) struct TypeDecl {
-    pub(crate) name: String,
-    /// The span of the type's written name. A type the compiler registers
-    /// itself is written in no file and carries an empty span.
-    pub(crate) name_span: Span,
-    /// The file the type is written in, or `None` for one the compiler
-    /// registers.
-    pub(crate) file: Option<FileId>,
-    /// Whether another namespace may reach the type.
-    pub(crate) public: bool,
-    /// The namespace that declares the type. A field or variant is reached
-    /// from here freely and from another namespace only when it is `pub`.
-    pub(crate) namespace: NamespaceId,
+pub(crate) struct TypeBody {
     /// The type parameters in `Name<A, B>`, in order; empty when there are
     /// none.
     pub(crate) parameters: Vec<String>,
@@ -244,8 +261,8 @@ pub(crate) struct TypeFieldDecl {
 }
 
 /// A written type name in a file: the path it spells and the name the path
-/// ends at. A written type resolves to an id and leaves no node, so this is
-/// the fact that says where the name stands.
+/// ends at. The written name resolves to a type declaration; this records where
+/// the name stands so a later pass can paint it.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct TypeUse {
     pub(crate) file: FileId,

@@ -58,7 +58,7 @@ impl DeclarationLayout {
                     native,
                     parameters: parameters
                         .iter()
-                        .map(|ty| argument_kind(ty, &program.types))
+                        .map(|ty| argument_kind(ty, &program.declarations))
                         .collect(),
                 });
             }

@@ -6,10 +6,10 @@ mod failure;
 
 use crate::compiler::compile::check::validate_program;
 use crate::compiler::compile::load::{LoadedProgram, ProgramSource, load_files};
-use crate::compiler::compile::resolve::{Analysis, resolve_tree};
+use crate::compiler::compile::resolve::{Analysis, program_main, resolve_tree};
 use crate::compiler::diagnostic::Diagnostic;
-use crate::compiler::model::{Facts, Program};
-use crate::compiler::warnings::{is_program_source, unused_bindings};
+use crate::compiler::model::{DeclarationId, Facts, Program};
+use crate::compiler::warnings::unused_bindings;
 use crate::project::Project;
 
 use failure::{failure, failure_from};
@@ -23,6 +23,11 @@ pub struct Build {
     pub(crate) program: Program,
     pub(crate) facts: Facts,
     pub(crate) warnings: Vec<Diagnostic>,
+    /// The entry the root namespace declares, settled once after resolution:
+    /// `Ok(Some(id))` is the entry, `Ok(None)` is a library with no entry, and
+    /// `Err` is a malformed entry. The checked program itself carries no
+    /// entry; the analyzer may analyze a tree without selecting one.
+    pub(crate) entry: Result<Option<DeclarationId>, Diagnostic>,
 }
 
 impl std::fmt::Debug for Build {
@@ -65,14 +70,16 @@ pub(crate) fn build(project: &Project, source: &impl ProgramSource) -> Result<Bu
         let mut diagnostics = loaded.syntax.clone();
         diagnostics.extend(errors);
         let mut program_warnings = warnings.clone();
-        program_warnings.retain(|warning| is_program_source(&warning.path));
+        program_warnings.retain(|warning| program.is_program_path(&warning.path));
         diagnostics.extend(program_warnings);
         return Err(failure_from(&loaded, diagnostics));
     }
+    let entry = program_main(&program);
     Ok(Build {
         loaded,
         program,
         facts,
         warnings,
+        entry,
     })
 }

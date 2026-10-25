@@ -37,7 +37,7 @@ pub(super) fn failure_from(loaded: &LoadedProgram, gathered: Vec<Diagnostic>) ->
     // nothing; they are still rendered above.
     let published = gathered
         .iter()
-        .filter(|diagnostic| diagnostic.path.is_absolute())
+        .filter(|diagnostic| loaded.is_program_path(&diagnostic.path))
         .cloned();
     BuildFailure {
         diagnostics: group(loaded, published),

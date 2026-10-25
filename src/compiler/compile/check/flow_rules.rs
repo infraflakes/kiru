@@ -152,7 +152,7 @@ impl<'m, 'v, 'f> FlowWalk<'m, 'v, 'f> {
             file: declaration
                 .file
                 .expect("a body declaration is a file declaration"),
-            return_type: declaration.return_type(model.types()),
+            return_type: declaration.return_type(model.declarations()),
             name: BodyName::Declaration(id),
             report,
         }

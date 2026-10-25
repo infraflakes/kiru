@@ -9,7 +9,7 @@
 
 use crate::compiler::model::{
     Binding, DeclarationId, Expression, Field, Function, Group, MatchBody, NamespaceId,
-    RuntimeShape, Shape, Site, StringPart, Type, TypeHead, TypeId, TypeKind, bound_reachable,
+    RuntimeShape, Shape, Site, StringPart, Type, TypeHead, TypeKind, bound_reachable,
     first_duplicate, fits, has_parameter, join_path, rec_field, substitute, unify,
 };
 use crate::compiler::operator_facts::BinaryOperands;
@@ -208,22 +208,23 @@ impl<'a> Checker<'a> {
                 };
                 match target_type {
                     Type::Named(id, arguments) => {
-                        let declaration = self.model.type_decl(id);
-                        if declaration.group().has_variants() {
+                        let declaration = self.model.declaration(id);
+                        let body = self.model.type_decl(id);
+                        if body.group().has_variants() {
                             return Err(self.error(
                                 *name_span,
                                 format!("`{}` is an enum; match it", declaration.name),
                             ));
                         }
-                        let Some(field) = rec_field(self.model.types(), id, name) else {
+                        let Some(field) = rec_field(self.model.declarations(), id, name) else {
                             let message = format!("`{}` has no field `{name}`", declaration.name);
                             return Err(self.error(*name_span, message));
                         };
                         self.check_member(id, name, field.public, *name_span)?;
                         let ty = substitute(
                             &field.ty,
-                            self.model.types(),
-                            &declaration.parameters,
+                            self.model.declarations(),
+                            &body.parameters,
                             Binding::Complete(&arguments),
                         );
                         Ok(Some(ty))
@@ -240,7 +241,9 @@ impl<'a> Checker<'a> {
             Expression::Unary { op, operand, .. } => self.unary(*op, operand),
         }?;
         match (&actual, expected) {
-            (Some(actual), Some(required)) if !fits(actual, required, self.model.types()) => {
+            (Some(actual), Some(required))
+                if !fits(actual, required, self.model.declarations()) =>
+            {
                 return Err(self.error(
                     expression.span(),
                     expected_instead(&self.type_name(required), &self.type_name(actual)),
@@ -325,7 +328,7 @@ impl<'a> Checker<'a> {
             && let Some(return_type) = self
                 .model
                 .declaration(*declaration)
-                .return_type(self.model.types())
+                .return_type(self.model.declarations())
         {
             return Some(return_type);
         }
@@ -338,7 +341,7 @@ impl<'a> Checker<'a> {
             let head = arguments
                 .first()
                 .and_then(|receiver| self.derived_type(receiver))?
-                .head(self.model.types());
+                .head(self.model.declarations());
             let declaration = self
                 .select_method(*namespace, path, Some(head), *span)
                 .ok()
@@ -346,9 +349,10 @@ impl<'a> Checker<'a> {
             return self
                 .model
                 .declaration(declaration)
-                .return_type(self.model.types());
+                .return_type(self.model.declarations());
         }
-        self.derived_type(callee)?.return_type(self.model.types())
+        self.derived_type(callee)?
+            .return_type(self.model.declarations())
     }
 
     /// The type of a declared field of `target`, substituting the declared
@@ -357,10 +361,10 @@ impl<'a> Checker<'a> {
         let Type::Named(id, arguments) = target else {
             return None;
         };
-        let field = rec_field(self.model.types(), *id, name)?;
+        let field = rec_field(self.model.declarations(), *id, name)?;
         Some(substitute(
             &field.ty,
-            self.model.types(),
+            self.model.declarations(),
             &self.model.type_decl(*id).parameters,
             Binding::Complete(arguments),
         ))
@@ -439,7 +443,7 @@ impl<'a> Checker<'a> {
                 "`@(…)` inserts text, an integer, or a boolean, found no value",
             ));
         };
-        match ty.runtime_shape(self.model.types()) {
+        match ty.runtime_shape(self.model.declarations()) {
             RuntimeShape::Text | RuntimeShape::Bool | RuntimeShape::Int => return Ok(()),
             RuntimeShape::Record
             | RuntimeShape::List
@@ -523,7 +527,7 @@ impl<'a> Checker<'a> {
         let head = arguments
             .first()
             .and_then(|receiver| self.derived_type(receiver))
-            .map(|ty| ty.head(self.model.types()));
+            .map(|ty| ty.head(self.model.declarations()));
         let Some(declaration) = self.select_method(namespace, path, head, callee_span)? else {
             return Err(self.error(callee_span, family_rejected(namespace, path)));
         };
@@ -584,7 +588,7 @@ impl<'a> Checker<'a> {
     fn method_reachable(&self, declaration: DeclarationId, head: TypeHead) -> bool {
         let node = self.model.declaration(declaration);
         let type_public = match head {
-            TypeHead::Named(id) => Some(self.model.type_decl(id).public),
+            TypeHead::Named(id) => Some(self.model.declaration(id).public),
             _ => None,
         };
         bound_reachable(node.public, type_public, node.namespace, self.namespace)
@@ -605,9 +609,9 @@ impl<'a> Checker<'a> {
     ) -> Result<Option<Type>, Diagnostic> {
         let (returns, type_parameters, declared) = {
             let node = self.model.declaration(callee);
-            let returns = node.return_type(self.model.types());
-            let type_parameters = node.type_parameters(self.model.types());
-            let declared = match node.ty.group(self.model.types()) {
+            let returns = node.return_type(self.model.declarations());
+            let type_parameters = node.type_parameters(self.model.declarations());
+            let declared = match node.ty.group(self.model.declarations()) {
                 Group::Function => {
                     let Type::Function { parameters, .. } = &node.ty else {
                         unreachable!("a function group is a function type");
@@ -634,7 +638,7 @@ impl<'a> Checker<'a> {
             && !unify(
                 returns,
                 expected,
-                self.model.types(),
+                self.model.declarations(),
                 &type_parameters,
                 &mut expected_bindings,
             )
@@ -650,7 +654,7 @@ impl<'a> Checker<'a> {
         // argument with a type of its own is typed on its own, so a
         // conflicting one still reports against the argument.
         for (argument, parameter) in arguments.iter().zip(&declared) {
-            if has_parameter(parameter, self.model.types()) {
+            if has_parameter(parameter, self.model.declarations()) {
                 let mut hint_solution = solution.clone();
                 for (slot, expected) in hint_solution.iter_mut().zip(&expected_bindings) {
                     if slot.is_none() {
@@ -659,12 +663,12 @@ impl<'a> Checker<'a> {
                 }
                 let hint_bound = substitute(
                     parameter,
-                    self.model.types(),
+                    self.model.declarations(),
                     &type_parameters,
                     Binding::Partial(&hint_solution),
                 );
-                let hint = (!has_parameter(&hint_bound, self.model.types())
-                    && (parameter.group(self.model.types()) != Group::Parameter
+                let hint = (!has_parameter(&hint_bound, self.model.declarations())
+                    && (parameter.group(self.model.declarations()) != Group::Parameter
                         || is_record_literal(argument)))
                 .then_some(&hint_bound);
                 let Some(actual) = self.expression(argument, hint)? else {
@@ -679,7 +683,7 @@ impl<'a> Checker<'a> {
                 if !unify(
                     parameter,
                     &actual,
-                    self.model.types(),
+                    self.model.declarations(),
                     &type_parameters,
                     &mut solution,
                 ) {
@@ -716,7 +720,7 @@ impl<'a> Checker<'a> {
         for (argument, parameter) in arguments.iter().zip(&declared) {
             let required = substitute(
                 parameter,
-                self.model.types(),
+                self.model.declarations(),
                 &type_parameters,
                 Binding::Partial(&solution),
             );
@@ -725,7 +729,7 @@ impl<'a> Checker<'a> {
         Ok(returns.map(|returns| {
             substitute(
                 &returns,
-                self.model.types(),
+                self.model.declarations(),
                 &type_parameters,
                 Binding::Partial(&solution),
             )
@@ -748,7 +752,7 @@ impl<'a> Checker<'a> {
             }
             return Err(self.error(callee.span(), "a call's callee must produce a value"));
         };
-        if callee_type.group(self.model.types()) != Group::Function {
+        if callee_type.group(self.model.declarations()) != Group::Function {
             if let Expression::Reference { declaration, .. } = callee {
                 let declaration = *declaration;
                 let span = callee.span();
@@ -824,20 +828,21 @@ impl<'a> Checker<'a> {
     /// field types are substituted with the applied type arguments.
     fn map_against(
         &mut self,
-        id: TypeId,
+        id: DeclarationId,
         arguments: &[Type],
         fields: &[Field],
         span: Span,
     ) -> Result<(), Diagnostic> {
-        let declaration = self.model.type_decl(id);
-        if declaration.shape() != Shape::Record {
+        let declaration = self.model.declaration(id);
+        let body = self.model.type_decl(id);
+        if body.shape() != Shape::Record {
             return Err(self.error(span, format!("`{}` has no fields", declaration.name)));
         }
-        let TypeKind::Rec(declared_fields) = &declaration.kind else {
+        let TypeKind::Rec(declared_fields) = &body.kind else {
             unreachable!("a group with fields is a rec");
         };
         let name = declaration.name.clone();
-        let parameters = declaration.parameters.clone();
+        let parameters = body.parameters.clone();
         let declared: Vec<(String, bool, Type)> = declared_fields
             .iter()
             .map(|field| {
@@ -846,7 +851,7 @@ impl<'a> Checker<'a> {
                     field.public,
                     substitute(
                         &field.ty,
-                        self.model.types(),
+                        self.model.declarations(),
                         &parameters,
                         Binding::Complete(arguments),
                     ),
@@ -877,18 +882,19 @@ impl<'a> Checker<'a> {
     /// the payload count matches, and every payload fits the substituted type.
     fn variant_against(
         &mut self,
-        id: TypeId,
+        id: DeclarationId,
         index: usize,
         arguments: &[Type],
         payload: &[Expression],
         span: Span,
     ) -> Result<(), Diagnostic> {
         let (name, variant_name, public, parameters, declared) = {
-            let declaration = self.model.type_decl(id);
-            if declaration.shape() != Shape::Variant {
+            let declaration = self.model.declaration(id);
+            let body = self.model.type_decl(id);
+            if body.shape() != Shape::Variant {
                 return Err(self.error(span, format!("`{}` is not an enum", declaration.name)));
             }
-            let TypeKind::Enum(variants) = &declaration.kind else {
+            let TypeKind::Enum(variants) = &body.kind else {
                 unreachable!("a group with variants is an enum");
             };
             let Some(variant) = variants.get(index) else {
@@ -898,7 +904,7 @@ impl<'a> Checker<'a> {
                 declaration.name.clone(),
                 variant.name.clone(),
                 variant.public,
-                declaration.parameters.clone(),
+                body.parameters.clone(),
                 variant.payload.clone(),
             )
         };
@@ -915,7 +921,7 @@ impl<'a> Checker<'a> {
         for (argument, required) in payload.iter().zip(&declared) {
             let required = substitute(
                 required,
-                self.model.types(),
+                self.model.declarations(),
                 &parameters,
                 Binding::Complete(arguments),
             );

@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use crate::compiler::model::{
     Declaration, DeclarationId, Expression, Facts, FunctionBinding, MatchBody, Pattern, Program,
-    Statement, VisitorMut, walk_expression_mut,
+    Statement, TypeHead, TypeKind, VisitorMut, walk_expression_mut,
 };
 
 /// Keep only the declarations the entry reaches, remapping every id in the
@@ -69,6 +69,7 @@ fn compact(
 /// Rewrite every `DeclarationId` occurrence through the mapping, and drop the
 /// names and file entries that point at dropped declarations.
 fn remap(program: &mut Program, mapping: &[Option<DeclarationId>]) {
+    program.list_type = program.list_type.and_then(|id| mapping[id.0]);
     program.module_values.retain(|id| mapping[id.0].is_some());
     for id in &mut program.module_values {
         *id = mapped(mapping, *id);
@@ -84,26 +85,59 @@ fn remap(program: &mut Program, mapping: &[Option<DeclarationId>]) {
     }
     for namespace in &mut program.namespaces {
         namespace.names.remap(mapping);
+        namespace.types.remap(mapping);
         namespace.methods.remap(mapping);
         namespace.associates.remap(mapping);
     }
 }
 
-/// Remap the declaration-level edges: the owner, the container of an anonymous
-/// function, a function's parameters, and the body or initializer the
+/// Remap the declaration-level edges: the owner, the function binding's head or
+/// container, the declared type and type body, and the body or initializer the
 /// declaration owns. The bodies are rewritten by the edge remapper, which owns
 /// every statement and expression variant.
 fn remap_declaration(declaration: &mut Declaration, mapping: &[Option<DeclarationId>]) {
+    declaration.ty.remap(mapping);
+    if let Some(body) = &mut declaration.type_body {
+        match &mut body.kind {
+            TypeKind::Rec(fields) => {
+                for field in fields {
+                    field.ty.remap(mapping);
+                }
+            }
+            TypeKind::Enum(variants) => {
+                for variant in variants {
+                    for ty in &mut variant.payload {
+                        ty.remap(mapping);
+                    }
+                }
+            }
+        }
+    }
     if let Some(owner) = &mut declaration.owner {
         *owner = mapped(mapping, *owner);
     }
-    if let Some(FunctionBinding::Anonymous { container }) = &mut declaration.binding {
-        *container = mapped(mapping, *container);
+    match &mut declaration.binding {
+        Some(FunctionBinding::Anonymous { container }) => {
+            *container = mapped(mapping, *container);
+        }
+        Some(FunctionBinding::Method { receiver }) => {
+            *receiver = remapped_head(*receiver, mapping);
+        }
+        Some(FunctionBinding::Associated { owner }) => {
+            *owner = remapped_head(*owner, mapping);
+        }
+        Some(FunctionBinding::Named) | None => {}
     }
     let mut remapper = EdgeRemapper { mapping };
     if let Some(value) = &mut declaration.value {
         walk_expression_mut(&mut remapper, value);
     }
+}
+
+/// A retained function binding's head names a retained type declaration.
+fn remapped_head(head: TypeHead, mapping: &[Option<DeclarationId>]) -> TypeHead {
+    head.remap(mapping)
+        .expect("a retained type edge names a retained type declaration")
 }
 
 /// Rewrites the edges a statement or expression carries: the binding a
@@ -138,12 +172,22 @@ impl VisitorMut for EdgeRemapper<'_> {
         let Expression::Function(function) = expression else {
             unreachable!("the walk names a function");
         };
+        if let Some(declared_return) = &mut function.declared_return {
+            declared_return.remap(self.mapping);
+        }
         for parameter in &mut function.parameters {
             *parameter = mapped(self.mapping, *parameter);
         }
         for capture in &mut function.captures {
             *capture = mapped(self.mapping, *capture);
         }
+    }
+
+    fn variant(&mut self, expression: &mut Expression) {
+        let Expression::Variant { ty, .. } = expression else {
+            unreachable!("the walk names a variant");
+        };
+        *ty = mapped(self.mapping, *ty);
     }
 
     fn bind(&mut self, statement: &mut Statement) {
@@ -157,9 +201,10 @@ impl VisitorMut for EdgeRemapper<'_> {
     }
 
     fn variant_pattern(&mut self, pattern: &mut Pattern) {
-        let Pattern::Variant { bindings, .. } = pattern else {
+        let Pattern::Variant { ty, bindings, .. } = pattern else {
             unreachable!("the walk names a variant pattern");
         };
+        *ty = mapped(self.mapping, *ty);
         for id in bindings.iter_mut().flatten() {
             *id = mapped(self.mapping, *id);
         }
@@ -169,7 +214,6 @@ impl VisitorMut for EdgeRemapper<'_> {
     fn map(&mut self, _: &mut Expression) {}
     fn boolean(&mut self, _: &mut Expression) {}
     fn integer(&mut self, _: &mut Expression) {}
-    fn variant(&mut self, _: &mut Expression) {}
     fn interpolated(&mut self, _: &mut Expression) {}
     fn call(&mut self, _: &mut Expression) {}
     fn method(&mut self, _: &mut Expression) {}

@@ -3,21 +3,20 @@
 //! The checker types a checked program and resolves a call's method while it
 //! does, so it reads the method pools and the interner through this view too.
 //! Both hands the slices they own to the one expression relation through this
-//! view, so the relation reads declarations, types, namespaces, and files the
-//! same way whichever stage is asking. The view never writes: the facts a
-//! stage derives live in `Facts`, beside it.
+//! view, so the relation reads declarations, namespaces, and files the same way
+//! whichever stage is asking. The view never writes: the facts a stage derives
+//! live in `Facts`, beside it.
 
-use super::super::declarations::{Declaration, TypeDecl};
+use super::super::declarations::{Declaration, TypeBody};
 use super::super::ids::{DeclarationId, FileId, NamespaceId};
-use super::super::types::{Type, TypeId, type_name};
+use super::super::types::{Type, type_name};
 use super::graph::{File, Namespace, Program};
 use super::interner::Interner;
 use super::namespace_paths::{join_path, namespace_path};
 
-/// The declarations, types, namespaces, and files a stage can see.
+/// The declarations, namespaces, and files a stage can see.
 pub(crate) struct ModelView<'a> {
     declarations: &'a [Declaration],
-    types: &'a [TypeDecl],
     namespaces: &'a [Namespace],
     files: &'a [File],
     intern: &'a Interner,
@@ -26,14 +25,12 @@ pub(crate) struct ModelView<'a> {
 impl<'a> ModelView<'a> {
     pub(crate) fn new(
         declarations: &'a [Declaration],
-        types: &'a [TypeDecl],
         namespaces: &'a [Namespace],
         files: &'a [File],
         intern: &'a Interner,
     ) -> Self {
         Self {
             declarations,
-            types,
             namespaces,
             files,
             intern,
@@ -50,12 +47,13 @@ impl<'a> ModelView<'a> {
         self.declarations
     }
 
-    pub(crate) fn type_decl(&self, id: TypeId) -> &TypeDecl {
-        &self.types[id.0]
-    }
-
-    pub(crate) fn types(&self) -> &[TypeDecl] {
-        self.types
+    /// The body of a declared type. The declaration node carries the name,
+    /// file, visibility, and namespace; the body carries what the type is made
+    /// of.
+    pub(crate) fn type_decl(&self, id: DeclarationId) -> &TypeBody {
+        self.declaration(id)
+            .type_body()
+            .expect("a named type names a type declaration")
     }
 
     /// One namespace node, by id: its method pools and its children.
@@ -98,7 +96,7 @@ impl<'a> ModelView<'a> {
 
     /// The name of a type for a diagnostic, rendered by its group's fact.
     pub(crate) fn type_name(&self, ty: &Type) -> String {
-        type_name(ty, self.types)
+        type_name(ty, self.declarations)
     }
 }
 
@@ -106,12 +104,11 @@ impl<'a> From<&'a Program> for ModelView<'a> {
     fn from(program: &'a Program) -> Self {
         let Program {
             declarations,
-            types,
             namespaces,
             files,
             intern,
             ..
         } = program;
-        Self::new(declarations, types, namespaces, files, intern)
+        Self::new(declarations, namespaces, files, intern)
     }
 }

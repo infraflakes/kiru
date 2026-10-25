@@ -6,7 +6,7 @@
 //! substitutes and how it unifies, so a new kind is described once, in
 //! `group.rs`, and every relation follows.
 
-use super::super::declarations::TypeDecl;
+use super::super::declarations::Declaration;
 use super::Type;
 use super::group::{Substitution, Unification};
 
@@ -25,11 +25,11 @@ pub(crate) enum Binding<'a> {
 /// an unbound parameter in place.
 pub(crate) fn substitute(
     ty: &Type,
-    types: &[TypeDecl],
+    declarations: &[Declaration],
     parameters: &[String],
     binding: Binding<'_>,
 ) -> Type {
-    match ty.group(types).substitution() {
+    match ty.group(declarations).substitution() {
         Substitution::Leaf => ty.clone(),
         Substitution::Parameter => bound_parameter(ty, parameters, binding),
         Substitution::Applied => {
@@ -40,7 +40,7 @@ pub(crate) fn substitute(
                 *id,
                 arguments
                     .iter()
-                    .map(|argument| substitute(argument, types, parameters, binding))
+                    .map(|argument| substitute(argument, declarations, parameters, binding))
                     .collect(),
             )
         }
@@ -55,11 +55,11 @@ pub(crate) fn substitute(
             Type::Function {
                 parameters: declared
                     .iter()
-                    .map(|parameter| substitute(parameter, types, parameters, binding))
+                    .map(|parameter| substitute(parameter, declarations, parameters, binding))
                     .collect(),
-                returns: returns
-                    .as_ref()
-                    .map(|returns| Box::new(substitute(returns, types, parameters, binding))),
+                returns: returns.as_ref().map(|returns| {
+                    Box::new(substitute(returns, declarations, parameters, binding))
+                }),
             }
         }
     }
@@ -89,8 +89,8 @@ fn bound_parameter(ty: &Type, parameters: &[String], binding: Binding<'_>) -> Ty
 /// are exact, so this is `unify` with no binders: every type parameter is a
 /// literal name and every leaf is equality. It is the one compatibility
 /// relation — `unify` binds a declaration's type parameters, `fits` binds none.
-pub(crate) fn fits(actual: &Type, required: &Type, types: &[TypeDecl]) -> bool {
-    unify(required, actual, types, &[], &mut [])
+pub(crate) fn fits(actual: &Type, required: &Type, declarations: &[Declaration]) -> bool {
+    unify(required, actual, declarations, &[], &mut [])
 }
 
 /// The one relation over two types: match a `declared` type (which may contain
@@ -102,11 +102,11 @@ pub(crate) fn fits(actual: &Type, required: &Type, types: &[TypeDecl]) -> bool {
 pub(crate) fn unify(
     declared: &Type,
     actual: &Type,
-    types: &[TypeDecl],
+    declarations: &[Declaration],
     parameters: &[String],
     solution: &mut [Option<Type>],
 ) -> bool {
-    match declared.group(types).unification() {
+    match declared.group(declarations).unification() {
         Unification::Equality => declared == actual,
         Unification::Parameter => {
             let Type::Parameter(name) = declared else {
@@ -129,7 +129,7 @@ pub(crate) fn unify(
             let Type::Named(id, arguments) = declared else {
                 unreachable!("an applied group is a named type");
             };
-            match actual.group(types).unification() {
+            match actual.group(declarations).unification() {
                 Unification::Applied => {
                     let Type::Named(other, other_arguments) = actual else {
                         unreachable!("an applied group is a named type");
@@ -140,7 +140,7 @@ pub(crate) fn unify(
                             .iter()
                             .zip(other_arguments)
                             .all(|(declared, actual)| {
-                                unify(declared, actual, types, parameters, solution)
+                                unify(declared, actual, declarations, parameters, solution)
                             })
                 }
                 Unification::Equality | Unification::Callable | Unification::Parameter => false,
@@ -154,7 +154,7 @@ pub(crate) fn unify(
             else {
                 unreachable!("a callable group is a function type");
             };
-            match actual.group(types).unification() {
+            match actual.group(declarations).unification() {
                 Unification::Callable => {
                     let Type::Function {
                         parameters: actual_parameters,
@@ -166,12 +166,12 @@ pub(crate) fn unify(
                     declared_parameters.len() == actual_parameters.len()
                         && declared_parameters.iter().zip(actual_parameters).all(
                             |(declared, actual)| {
-                                unify(declared, actual, types, parameters, solution)
+                                unify(declared, actual, declarations, parameters, solution)
                             },
                         )
                         && match (returns, actual_returns) {
                             (Some(declared), Some(actual)) => {
-                                unify(declared, actual, types, parameters, solution)
+                                unify(declared, actual, declarations, parameters, solution)
                             }
                             (None, None) => true,
                             _ => false,
@@ -186,24 +186,24 @@ pub(crate) fn unify(
 /// Every type parameter `ty` mentions, in order of first appearance. A native's
 /// row is a function type that names the parameters a call binds, and a
 /// declaration without a function node reads them from here.
-pub(crate) fn type_parameters_of(ty: &Type, types: &[TypeDecl]) -> Vec<String> {
+pub(crate) fn type_parameters_of(ty: &Type, declarations: &[Declaration]) -> Vec<String> {
     let mut found = Vec::new();
-    collect_type_parameters(ty, types, &mut found);
+    collect_type_parameters(ty, declarations, &mut found);
     found
 }
 
 /// Whether `ty` mentions any type parameter. The "any?" caller of the one walk
 /// that answers which parameters a type contains.
-pub(crate) fn has_parameter(ty: &Type, types: &[TypeDecl]) -> bool {
-    !type_parameters_of(ty, types).is_empty()
+pub(crate) fn has_parameter(ty: &Type, declarations: &[Declaration]) -> bool {
+    !type_parameters_of(ty, declarations).is_empty()
 }
 
 /// The one walk over a type that answers which parameters it contains. The walk
 /// follows the group's substitution structure: a leaf holds none, a parameter
 /// holds itself, an applied type holds its arguments', and a function holds its
 /// parameters' and its return's.
-fn collect_type_parameters(ty: &Type, types: &[TypeDecl], found: &mut Vec<String>) {
-    match ty.group(types).substitution() {
+fn collect_type_parameters(ty: &Type, declarations: &[Declaration], found: &mut Vec<String>) {
+    match ty.group(declarations).substitution() {
         Substitution::Leaf => {}
         Substitution::Parameter => {
             let Type::Parameter(name) = ty else {
@@ -218,7 +218,7 @@ fn collect_type_parameters(ty: &Type, types: &[TypeDecl], found: &mut Vec<String
                 unreachable!("an applied group is a named type");
             };
             for argument in arguments {
-                collect_type_parameters(argument, types, found);
+                collect_type_parameters(argument, declarations, found);
             }
         }
         Substitution::Callable => {
@@ -230,10 +230,10 @@ fn collect_type_parameters(ty: &Type, types: &[TypeDecl], found: &mut Vec<String
                 unreachable!("a callable group is a function type");
             };
             for parameter in parameters {
-                collect_type_parameters(parameter, types, found);
+                collect_type_parameters(parameter, declarations, found);
             }
             if let Some(returns) = returns {
-                collect_type_parameters(returns, types, found);
+                collect_type_parameters(returns, declarations, found);
             }
         }
     }
@@ -241,36 +241,50 @@ fn collect_type_parameters(ty: &Type, types: &[TypeDecl], found: &mut Vec<String
 
 #[cfg(test)]
 mod tests {
-    use crate::compiler::model::{NamespaceId, TypeDecl, TypeId, TypeKind};
+    use crate::compiler::model::{
+        Declaration, DeclarationId, DeclarationKind, NamespaceId, RuntimeType, TypeBody, TypeKind,
+    };
+    use crate::syntax::Span;
 
     use super::{Binding, Type, fits, substitute};
 
-    /// A table of `rec` declarations, one per index, so a named type has a
-    /// group to read.
-    fn declared_types(count: usize) -> Vec<TypeDecl> {
+    /// A table of `rec` declaration nodes, one per index, so a named type has a
+    /// declaration and a body to read.
+    fn declared_types(count: usize) -> Vec<Declaration> {
         (0..count)
-            .map(|index| TypeDecl {
-                name: format!("T{index}"),
-                name_span: crate::syntax::Span::new(0, 0),
-                file: None,
-                public: true,
-                namespace: NamespaceId(0),
-                parameters: Vec::new(),
-                runtime: crate::compiler::model::RuntimeType::Declared,
-                kind: TypeKind::Rec(Vec::new()),
+            .map(|index| {
+                let id = DeclarationId(index);
+                Declaration {
+                    kind: DeclarationKind::Rec,
+                    binding: None,
+                    name: format!("T{index}"),
+                    name_span: Span::new(0, 0),
+                    public: true,
+                    file: None,
+                    namespace: NamespaceId(0),
+                    owner: None,
+                    ty: Type::Named(id, Vec::new()),
+                    value: None,
+                    native: None,
+                    type_body: Some(TypeBody {
+                        parameters: Vec::new(),
+                        runtime: RuntimeType::Declared,
+                        kind: TypeKind::Rec(Vec::new()),
+                    }),
+                }
             })
             .collect()
     }
 
     #[test]
     fn a_value_fits_only_its_own_type() {
-        let types = declared_types(4);
+        let declarations = declared_types(4);
         let cases = [
             Type::Text,
             Type::Bool,
             Type::Int,
-            Type::Named(TypeId(3), vec![Type::Text]),
-            Type::Named(TypeId(3), vec![Type::Int]),
+            Type::Named(DeclarationId(3), vec![Type::Text]),
+            Type::Named(DeclarationId(3), vec![Type::Int]),
             Type::Parameter("T".to_owned()),
             Type::Function {
                 parameters: vec![Type::Int],
@@ -280,7 +294,7 @@ mod tests {
         for actual in &cases {
             for required in &cases {
                 assert_eq!(
-                    fits(actual, required, &types),
+                    fits(actual, required, &declarations),
                     actual == required,
                     "{actual:?} against {required:?}"
                 );
@@ -290,12 +304,17 @@ mod tests {
 
     #[test]
     fn substitute_replaces_parameters() {
-        let types = declared_types(8);
+        let declarations = declared_types(8);
         let parameters = vec!["T".to_owned()];
-        let ty = Type::Named(TypeId(7), vec![Type::Parameter("T".to_owned())]);
+        let ty = Type::Named(DeclarationId(7), vec![Type::Parameter("T".to_owned())]);
         assert_eq!(
-            substitute(&ty, &types, &parameters, Binding::Complete(&[Type::Int])),
-            Type::Named(TypeId(7), vec![Type::Int])
+            substitute(
+                &ty,
+                &declarations,
+                &parameters,
+                Binding::Complete(&[Type::Int])
+            ),
+            Type::Named(DeclarationId(7), vec![Type::Int])
         );
     }
 }

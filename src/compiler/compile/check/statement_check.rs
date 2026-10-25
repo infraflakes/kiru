@@ -16,7 +16,7 @@
 use crate::compiler::model::Type;
 use crate::compiler::model::{
     Binding, DeclarationId, Expression, Facts, FileId, Function, MatchArm, MatchBody, ModelView,
-    NamespaceId, Site, Statement, TypeId, reachable, rec_field, substitute,
+    NamespaceId, Site, Statement, reachable, rec_field, substitute,
 };
 use crate::compiler::{Diagnostic, private_member};
 use crate::syntax::Span;
@@ -92,12 +92,12 @@ impl<'a> Checker<'a> {
     /// pattern.
     pub(super) fn check_member(
         &self,
-        type_id: TypeId,
+        type_id: DeclarationId,
         name: &str,
         public: bool,
         span: Span,
     ) -> Result<(), Diagnostic> {
-        let declaration = self.model.type_decl(type_id);
+        let declaration = self.model.declaration(type_id);
         if self.member_reachable(public, declaration.namespace) {
             return Ok(());
         }
@@ -255,18 +255,18 @@ impl<'a> Checker<'a> {
         let name = self.model.declaration(declaration).name.clone();
         match self.assignment_target(declaration, name_span)? {
             Type::Named(id, arguments) => {
-                let declaration = self.model.type_decl(id);
-                if declaration.group().has_variants() {
+                let body = self.model.type_decl(id);
+                if body.group().has_variants() {
                     return Err(self.error(name_span, format!("`{name}` is an enum; match it")));
                 }
-                let Some(field_decl) = rec_field(self.model.types(), id, field) else {
+                let Some(field_decl) = rec_field(self.model.declarations(), id, field) else {
                     return Err(self.error(name_span, format!("`{name}` has no field `{field}`")));
                 };
                 self.check_member(id, field, field_decl.public, name_span)?;
                 let ty = substitute(
                     &field_decl.ty,
-                    self.model.types(),
-                    &declaration.parameters,
+                    self.model.declarations(),
+                    &body.parameters,
                     Binding::Complete(&arguments),
                 );
                 self.require(value, &ty)?;

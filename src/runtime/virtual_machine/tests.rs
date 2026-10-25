@@ -647,8 +647,8 @@ fn grouping_evaluates() {
 fn methods_evaluate() {
     expect_text_results(&[
         (
-            "a Vec method counts elements",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nimpl Vec { fn tally<T>(self: Vec<T>) -> int { return self.len(); }; };\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3); return \"@(xs.tally())\"; };\nfn main() {};",
+            "a declared-type method counts elements",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec Bag { items: Vec<int> };\nimpl Bag { fn tally(self: Bag) -> int { return self.items.len(); }; };\nfn f() -> txt { let bag: Bag = { items = Vec.new().push(1).push(2).push(3) }; return \"@(bag.tally())\"; };\nfn main() {};",
             "f",
             "3",
         ),
@@ -660,7 +660,7 @@ fn methods_evaluate() {
         ),
         (
             "a method chains into another",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nimpl Vec { fn tally<T>(self: Vec<T>) -> int { return self.len(); }; fn doubled<T>(self: Vec<T>) -> int { return self.tally() + self.tally(); }; };\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2); return \"@(xs.doubled())\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Map;\nuse std::dynamic::Vec;\nrec Bag { items: Vec<int> };\nimpl Bag { fn tally(self: Bag) -> int { return self.items.len(); }; fn doubled(self: Bag) -> int { return self.tally() + self.tally(); }; };\nfn f() -> txt { let bag: Bag = { items = Vec.new().push(1).push(2) }; return \"@(bag.doubled())\"; };\nfn main() {};",
             "f",
             "4",
         ),

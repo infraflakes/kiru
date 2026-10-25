@@ -2,24 +2,25 @@
 //!
 //! The structural verifier proves that every id points at a node of the right
 //! table. This verifier proves the relations between those nodes: the namespace
-//! tree, the name and type registries, the method pools, file membership,
-//! ownership, visibility, type arity, module values, deliveries, and the
+//! tree, the value and type name registries, the method pools, file
+//! membership, ownership,
+//! visibility, type declarations and arity, module values, deliveries, and the
 //! closure of the reachable set. It runs after resolution, after checking, and
 //! after pruning, and it reports every violation instead of stopping at the
 //! first one.
 //!
-//! A violation is a compiler bug unless it is one of the two known graph
-//! defects the migration ledger names. The boundary decides which checks are
-//! meaningful: a method family is a linked site with no target before the
-//! check and must have a target after it, and a delivery target is valid
-//! before pruning and not remapped after it. The ledger is deliberately small:
-//! a new entry needs the owner's decision, never a delegate's.
+//! A violation is a compiler bug unless it is the one known graph defect the
+//! migration ledger names. The boundary decides which checks are meaningful: a
+//! method family is a linked site with no target before the check and must have
+//! a target after it, and a delivery target is valid before pruning and not
+//! remapped after it. The ledger is deliberately small: a new entry needs the
+//! owner's decision, never a delegate's.
 
 use std::collections::HashSet;
 
 use crate::compiler::model::{
-    DeclarationId, DeclarationKind, Expression, Facts, FileId, Function, FunctionBinding,
-    NamespaceId, Pattern, Program, Site, Statement, Symbol, Type, TypeDecl, TypeHead, TypeId,
+    Declaration, DeclarationId, DeclarationKind, Expression, Facts, FileId, Function,
+    FunctionBinding, NamespaceId, Pattern, Program, Site, Statement, Symbol, Type, TypeHead,
     TypeKind, UseTarget, Visitor, reachable, walk_expression, walk_statements,
 };
 use crate::syntax::Span;
@@ -77,16 +78,23 @@ pub(crate) enum RelationViolationKind {
     /// A name-owning declaration outside every method pool is not in its
     /// namespace's name table.
     OwnedDeclarationMissingFromNames,
+    /// A value name table entry names a type declaration.
+    NameDeclarationIsType,
 
-    /// A type table entry points past the type table.
-    TypeEntryOutOfRange,
-    /// A type table entry names a type declared in another namespace.
-    TypeNamespaceMismatch,
-    /// A type table key is not the symbol of the type's name.
-    TypeSymbolMismatch,
-    /// A file-backed type is not listed in the file's declarations. A type is
-    /// not a declaration node, so this is the known stage 2 defect.
-    TypeNotInFile,
+    /// A type name table entry points past the declaration table.
+    TypeNameDeclarationOutOfRange,
+    /// A type name table entry names a declaration from another namespace.
+    TypeNameDeclarationNamespaceMismatch,
+    /// A type name table entry names a declaration that declares no type.
+    TypeNameDeclarationNotType,
+    /// A type name table key is not the symbol of the declaration's name.
+    TypeNameSymbolMismatch,
+    /// A type declaration is not in its namespace's type name table.
+    TypeDeclarationMissingFromTypes,
+
+    /// A type declaration's kind, body kind, or self-applied type does not
+    /// agree with the declaration.
+    TypeDeclarationMismatch,
 
     /// A method pool entry points past the declaration table.
     MethodEntryOutOfRange,
@@ -118,6 +126,9 @@ pub(crate) enum RelationViolationKind {
     /// An associated function's first parameter has the pool's own head, so it
     /// is a method.
     AssociateReceiverMismatch,
+    /// A method or associate pool's type head is declared in another
+    /// namespace, so the block is outside the type's namespace.
+    BoundTypeNamespaceMismatch,
 
     /// A file declaration list points past the declaration table.
     FileDeclarationOutOfRange,
@@ -177,7 +188,8 @@ pub(crate) enum RelationViolationKind {
     /// A reference names a declaration its site namespace may not reach.
     ReferenceNotReachable,
 
-    /// A named type points past the type table.
+    /// A named type points past the declaration table or at a declaration
+    /// that carries no type body.
     NamedTypeOutOfRange,
     /// A named type applies a number of arguments its declaration does not
     /// take.
@@ -224,6 +236,9 @@ pub(crate) enum RelationViolationKind {
     ReachableAnonymousContainerOutsideClosure,
     /// A reachable pattern binding is outside the reachable set.
     ReachablePatternBindingOutsideClosure,
+    /// A reachable declaration's type edge names a type outside the reachable
+    /// set.
+    ReachableTypeOutsideClosure,
     /// A reachable local binding names no owner.
     ReachableLocalOwnerMissing,
 }
@@ -245,9 +260,6 @@ pub(crate) fn assert_known_relations(program: &Program, facts: &Facts, boundary:
 /// The known-defect ledger: the only violations that may survive a boundary.
 fn known_defect(boundary: RelationBoundary, kind: RelationViolationKind) -> bool {
     match kind {
-        // A type is not a declaration node and is not listed in
-        // File.declarations. Stage 2 makes it one.
-        RelationViolationKind::TypeNotInFile => true,
         // Prune does not remap Namespace.brought. Stage 5 removes the remap
         // entirely.
         RelationViolationKind::BroughtNotRemapped => boundary == RelationBoundary::Pruned,
@@ -264,7 +276,7 @@ pub(crate) fn verify_relations(
     let mut violations = Vec::new();
     check_namespace_tree(program, &mut violations);
     check_names(program, &mut violations);
-    check_types(program, &mut violations);
+    check_type_names(program, &mut violations);
     check_method_pools(program, &mut violations);
     check_files(program, &mut violations);
     check_anonymous_containers(program, &mut violations);
@@ -374,6 +386,7 @@ pub(crate) fn verify_reachability(
             owner: *id,
             violations: &mut violations,
         };
+        collector.check_declaration_types(declaration);
         if let Some(function) = declaration.function() {
             collector.check_function_edges(function);
             walk_statements(&mut collector, &function.body);
@@ -407,8 +420,8 @@ fn namespace_label(program: &Program, id: NamespaceId) -> String {
     }
 }
 
-fn type_label(program: &Program, id: TypeId) -> String {
-    match program.types.get(id.0) {
+fn type_label(program: &Program, id: DeclarationId) -> String {
+    match program.declarations.get(id.0) {
         Some(declaration) => format!("type `{}` (id {})", declaration.name, id.0),
         None => format!("type id {}", id.0),
     }
@@ -433,16 +446,35 @@ fn target_label(program: &Program, target: UseTarget) -> String {
     }
 }
 
-/// The head of a type, or `None` when the type's declaration id is out of
-/// range. The arity check reports the bad id; the pool check must not panic on
-/// it while deriving the receiver head.
-fn safe_head(ty: &Type, types: &[TypeDecl]) -> Option<TypeHead> {
-    if let Type::Named(id, _) = ty
-        && id.0 >= types.len()
-    {
-        return None;
+/// The head of a type, or `None` when a named type it contains points out of
+/// range or at a declaration with no type body. The arity check reports the bad
+/// id; the pool check must not panic on it while deriving the receiver head.
+fn safe_head(ty: &Type, declarations: &[Declaration]) -> Option<TypeHead> {
+    fn valid(ty: &Type, declarations: &[Declaration]) -> bool {
+        match ty {
+            Type::Named(id, arguments) => {
+                declarations
+                    .get(id.0)
+                    .is_some_and(|declaration| declaration.type_body().is_some())
+                    && arguments
+                        .iter()
+                        .all(|argument| valid(argument, declarations))
+            }
+            Type::Function {
+                parameters,
+                returns,
+            } => {
+                parameters
+                    .iter()
+                    .all(|parameter| valid(parameter, declarations))
+                    && returns
+                        .as_ref()
+                        .is_none_or(|returns| valid(returns, declarations))
+            }
+            Type::Text | Type::Bool | Type::Int | Type::Parameter(_) => true,
+        }
     }
-    Some(ty.head(types))
+    valid(ty, declarations).then(|| ty.head(declarations))
 }
 
 fn check_namespace_tree(program: &Program, violations: &mut Vec<RelationViolation>) {
@@ -588,6 +620,16 @@ fn check_names(program: &Program, violations: &mut Vec<RelationViolation>) {
                     ),
                 ));
             }
+            if declaration.kind.declares_type() {
+                violations.push(violation(
+                    RelationViolationKind::NameDeclarationIsType,
+                    format!(
+                        "{} registers {}, which is a type declaration",
+                        namespace_label(program, namespace_id),
+                        declaration_label(program, declaration_id)
+                    ),
+                ));
+            }
             if program.intern.resolve(&declaration.name) != Some(symbol) {
                 violations.push(violation(
                     RelationViolationKind::NameSymbolMismatch,
@@ -613,7 +655,7 @@ fn check_names(program: &Program, violations: &mut Vec<RelationViolation>) {
         })
         .collect();
     for (index, declaration) in program.declarations.iter().enumerate() {
-        if !declaration.owns_name() {
+        if !declaration.owns_name() || declaration.kind.declares_type() {
             continue;
         }
         let id = DeclarationId(index);
@@ -648,55 +690,90 @@ fn check_names(program: &Program, violations: &mut Vec<RelationViolation>) {
     }
 }
 
-fn check_types(program: &Program, violations: &mut Vec<RelationViolation>) {
+/// Check the type-name pool: every entry names a type declaration of this
+/// namespace under its own symbol, and every type declaration is in its
+/// namespace's pool. The value pool is checked by `check_names`; a type is
+/// never expected there.
+fn check_type_names(program: &Program, violations: &mut Vec<RelationViolation>) {
+    let declaration_count = program.declarations.len();
     for (namespace_index, namespace) in program.namespaces.iter().enumerate() {
         let namespace_id = NamespaceId(namespace_index);
-        for (symbol, type_id) in namespace.types.iter_entries() {
-            if type_id.0 >= program.types.len() {
+        for (symbol, declaration_id) in namespace.types.iter_entries() {
+            if declaration_id.0 >= declaration_count {
                 violations.push(violation(
-                    RelationViolationKind::TypeEntryOutOfRange,
+                    RelationViolationKind::TypeNameDeclarationOutOfRange,
                     format!(
-                        "{} registers type id {} under {}",
+                        "{} registers type declaration id {} under {}",
                         namespace_label(program, namespace_id),
-                        type_id.0,
+                        declaration_id.0,
                         symbol_label(symbol)
                     ),
                 ));
                 continue;
             }
-            let declaration = &program.types[type_id.0];
+            let declaration = &program.declarations[declaration_id.0];
             if declaration.namespace != namespace_id {
                 violations.push(violation(
-                    RelationViolationKind::TypeNamespaceMismatch,
+                    RelationViolationKind::TypeNameDeclarationNamespaceMismatch,
                     format!(
                         "{} registers {}, which is declared in {}",
                         namespace_label(program, namespace_id),
-                        type_label(program, type_id),
+                        declaration_label(program, declaration_id),
                         namespace_label(program, declaration.namespace)
+                    ),
+                ));
+            }
+            if !declaration.kind.declares_type() {
+                violations.push(violation(
+                    RelationViolationKind::TypeNameDeclarationNotType,
+                    format!(
+                        "{} registers {}, whose kind {:?} declares no type",
+                        namespace_label(program, namespace_id),
+                        declaration_label(program, declaration_id),
+                        declaration.kind
                     ),
                 ));
             }
             if program.intern.resolve(&declaration.name) != Some(symbol) {
                 violations.push(violation(
-                    RelationViolationKind::TypeSymbolMismatch,
+                    RelationViolationKind::TypeNameSymbolMismatch,
                     format!(
                         "{} registers {} under {}, which is not the symbol of its name",
                         namespace_label(program, namespace_id),
-                        type_label(program, type_id),
+                        declaration_label(program, declaration_id),
                         symbol_label(symbol)
                     ),
                 ));
             }
         }
     }
-    for (index, declaration) in program.types.iter().enumerate() {
-        if let Some(file) = declaration.file {
+    for (index, declaration) in program.declarations.iter().enumerate() {
+        if !declaration.kind.declares_type() {
+            continue;
+        }
+        let id = DeclarationId(index);
+        let Some(namespace) = program.namespaces.get(declaration.namespace.0) else {
+            continue;
+        };
+        let Some(symbol) = program.intern.resolve(&declaration.name) else {
             violations.push(violation(
-                RelationViolationKind::TypeNotInFile,
+                RelationViolationKind::TypeDeclarationMissingFromTypes,
                 format!(
-                    "{} is written in {}, but a type is not a declaration node and no File.declarations lists it",
-                    type_label(program, TypeId(index)),
-                    file_label(program, file)
+                    "{} declares a type, but `{}` was never interned",
+                    declaration_label(program, id),
+                    declaration.name
+                ),
+            ));
+            continue;
+        };
+        if namespace.types.get(symbol) != Some(id) {
+            violations.push(violation(
+                RelationViolationKind::TypeDeclarationMissingFromTypes,
+                format!(
+                    "{} declares a type, but {} does not register it under {}",
+                    declaration_label(program, id),
+                    namespace_label(program, declaration.namespace),
+                    symbol_label(symbol)
                 ),
             ));
         }
@@ -764,6 +841,23 @@ fn check_pool_entry(
         return;
     }
     let declaration = &program.declarations[declaration_id.0];
+    if declaration.kind != DeclarationKind::Native
+        && let TypeHead::Named(type_id) = head
+        && let Some(type_declaration) = program.declarations.get(type_id.0)
+        && type_declaration.kind.declares_type()
+        && type_declaration.namespace != namespace_id
+    {
+        violations.push(violation(
+            RelationViolationKind::BoundTypeNamespaceMismatch,
+            format!(
+                "{} registers {} under {}, whose type is declared in {}",
+                namespace_label(program, namespace_id),
+                declaration_label(program, declaration_id),
+                type_label(program, type_id),
+                namespace_label(program, type_declaration.namespace)
+            ),
+        ));
+    }
     let namespace_mismatch = match pool {
         Pool::Method => RelationViolationKind::MethodNamespaceMismatch,
         Pool::Associate => RelationViolationKind::AssociateNamespaceMismatch,
@@ -835,7 +929,7 @@ fn check_pool_entry(
     };
     let first = parameters
         .first()
-        .and_then(|parameter| safe_head(parameter, &program.types));
+        .and_then(|parameter| safe_head(parameter, &program.declarations));
     match pool {
         Pool::Method if first != Some(head) => violations.push(violation(
             RelationViolationKind::MethodReceiverMismatch,
@@ -1045,9 +1139,68 @@ fn check_declaration_types(program: &Program, violations: &mut Vec<RelationViola
 }
 
 fn check_type_declarations(program: &Program, violations: &mut Vec<RelationViolation>) {
-    for (index, declaration) in program.types.iter().enumerate() {
-        let id = TypeId(index);
-        match &declaration.kind {
+    for (index, declaration) in program.declarations.iter().enumerate() {
+        let id = DeclarationId(index);
+        let body = match (declaration.kind, declaration.type_body()) {
+            (DeclarationKind::Rec | DeclarationKind::Enum, Some(_)) => {
+                declaration.expect_type_body()
+            }
+            (DeclarationKind::Rec | DeclarationKind::Enum, None) => {
+                violations.push(violation(
+                    RelationViolationKind::TypeDeclarationMismatch,
+                    format!(
+                        "{} has a rec or enum kind and no type body",
+                        type_label(program, id)
+                    ),
+                ));
+                continue;
+            }
+            (_, Some(_)) => {
+                violations.push(violation(
+                    RelationViolationKind::TypeDeclarationMismatch,
+                    format!(
+                        "{} is not a type declaration but carries a type body",
+                        type_label(program, id)
+                    ),
+                ));
+                continue;
+            }
+            (_, None) => continue,
+        };
+        let kind_matches = matches!(
+            (declaration.kind, &body.kind),
+            (DeclarationKind::Rec, TypeKind::Rec(_)) | (DeclarationKind::Enum, TypeKind::Enum(_))
+        );
+        if !kind_matches {
+            violations.push(violation(
+                RelationViolationKind::TypeDeclarationMismatch,
+                format!(
+                    "{} has declaration kind {:?} and body kind {:?}",
+                    type_label(program, id),
+                    declaration.kind,
+                    body.kind
+                ),
+            ));
+        }
+        let expected_ty = Type::Named(
+            id,
+            body.parameters
+                .iter()
+                .cloned()
+                .map(Type::Parameter)
+                .collect(),
+        );
+        if declaration.ty != expected_ty {
+            violations.push(violation(
+                RelationViolationKind::TypeDeclarationMismatch,
+                format!(
+                    "{} carries type {:?}, not the constructor applied to its parameters",
+                    type_label(program, id),
+                    declaration.ty
+                ),
+            ));
+        }
+        match &body.kind {
             TypeKind::Rec(fields) => {
                 for field in fields {
                     check_type_arity(
@@ -1086,16 +1239,37 @@ fn check_type_arity(
 ) {
     match ty {
         Type::Named(id, arguments) => {
-            match program.types.get(id.0) {
+            match program.declarations.get(id.0) {
                 Some(declaration) => {
-                    if arguments.len() != declaration.parameters.len() {
+                    let Some(body) = declaration.type_body() else {
+                        violations.push(violation(
+                            RelationViolationKind::NamedTypeOutOfRange,
+                            format!(
+                                "{context} names declaration id {}, which is not a type declaration",
+                                id.0
+                            ),
+                        ));
+                        return;
+                    };
+                    if !matches!(
+                        declaration.kind,
+                        DeclarationKind::Rec | DeclarationKind::Enum
+                    ) {
+                        violations.push(violation(
+                            RelationViolationKind::NamedTypeOutOfRange,
+                            format!(
+                                "{context} names declaration id {}, whose kind {:?} is not a type",
+                                id.0, declaration.kind
+                            ),
+                        ));
+                    } else if arguments.len() != body.parameters.len() {
                         violations.push(violation(
                             RelationViolationKind::TypeArityMismatch,
                             format!(
                                 "{context} applies {} argument(s) to `{}`, which declares {}",
                                 arguments.len(),
                                 declaration.name,
-                                declaration.parameters.len()
+                                body.parameters.len()
                             ),
                         ));
                     }
@@ -1257,9 +1431,12 @@ fn delivery_failure(program: &Program, symbol: Symbol, target: UseTarget) -> Opt
             None
         }
         UseTarget::Type(id) => {
-            let Some(declaration) = program.types.get(id.0) else {
+            let Some(declaration) = program.declarations.get(id.0) else {
                 return Some(format!("type id {} is out of range", id.0));
             };
+            if declaration.type_body().is_none() {
+                return Some(format!("declaration id {} is not a type declaration", id.0));
+            }
             if program.intern.resolve(&declaration.name) != Some(symbol) {
                 return Some(format!(
                     "the type name `{}` does not resolve to the delivered symbol",
@@ -1272,9 +1449,9 @@ fn delivery_failure(program: &Program, symbol: Symbol, target: UseTarget) -> Opt
             let Some(declaration) = program.declarations.get(id.0) else {
                 return Some(format!("declaration id {} is out of range", id.0));
             };
-            if !declaration.kind.useable() {
+            if !declaration.kind.useable() || declaration.kind.declares_type() {
                 return Some(format!(
-                    "the target's kind {:?} is not a use target",
+                    "the target's kind {:?} is not a function use target",
                     declaration.kind
                 ));
             }
@@ -1628,6 +1805,86 @@ struct ReachableEdgeCheck<'a> {
 }
 
 impl ReachableEdgeCheck<'_> {
+    /// Check every type edge a declaration carries: its declared type, its
+    /// type body's fields or payloads, its function binding's head, and a
+    /// literal's own return annotation.
+    fn check_declaration_types(&mut self, declaration: &Declaration) {
+        self.check_type(&declaration.ty, "a declaration type");
+        if let Some(body) = declaration.type_body() {
+            match &body.kind {
+                TypeKind::Rec(fields) => {
+                    for field in fields {
+                        self.check_type(&field.ty, "a type field");
+                    }
+                }
+                TypeKind::Enum(variants) => {
+                    for variant in variants {
+                        for ty in &variant.payload {
+                            self.check_type(ty, "a variant payload");
+                        }
+                    }
+                }
+            }
+        }
+        match declaration.binding {
+            Some(FunctionBinding::Method {
+                receiver: TypeHead::Named(id),
+            }) => self.check_type_edge(id, "a method receiver head"),
+            Some(FunctionBinding::Associated {
+                owner: TypeHead::Named(id),
+            }) => self.check_type_edge(id, "an associated function's type head"),
+            _ => {}
+        }
+        if let Some(function) = declaration.function()
+            && let Some(return_type) = &function.declared_return
+        {
+            self.check_type(return_type, "a function literal's return type");
+        }
+    }
+
+    fn check_type(&mut self, ty: &Type, what: &str) {
+        match ty {
+            Type::Named(id, arguments) => {
+                self.check_type_edge(*id, what);
+                for argument in arguments {
+                    self.check_type(argument, what);
+                }
+            }
+            Type::Function {
+                parameters,
+                returns,
+            } => {
+                for parameter in parameters {
+                    self.check_type(parameter, what);
+                }
+                if let Some(returns) = returns {
+                    self.check_type(returns, what);
+                }
+            }
+            Type::Text | Type::Bool | Type::Int | Type::Parameter(_) => {}
+        }
+    }
+
+    fn check_type_edge(&mut self, id: DeclarationId, what: &str) {
+        if id.0 >= self.program.declarations.len() {
+            self.violations.push(violation(
+                RelationViolationKind::ReachableTypeOutsideClosure,
+                format!(
+                    "{what} names declaration id {}, which is out of range",
+                    id.0
+                ),
+            ));
+        } else if !self.reachable.contains(&id) {
+            self.violations.push(violation(
+                RelationViolationKind::ReachableTypeOutsideClosure,
+                format!(
+                    "{what} names {}, which is not in the reachable set",
+                    declaration_label(self.program, id)
+                ),
+            ));
+        }
+    }
+
     fn check_function_edges(&mut self, function: &Function) {
         for parameter in &function.parameters {
             self.check_edge(
@@ -1710,9 +1967,10 @@ impl Visitor for ReachableEdgeCheck<'_> {
     }
 
     fn variant_pattern(&mut self, pattern: &Pattern) {
-        let Pattern::Variant { bindings, .. } = pattern else {
+        let Pattern::Variant { ty, bindings, .. } = pattern else {
             unreachable!("the walk names a variant pattern");
         };
+        self.check_type_edge(*ty, "a variant pattern");
         for binding in bindings.iter().flatten() {
             self.check_edge(
                 *binding,
@@ -1726,7 +1984,12 @@ impl Visitor for ReachableEdgeCheck<'_> {
     fn map(&mut self, _: &Expression) {}
     fn boolean(&mut self, _: &Expression) {}
     fn integer(&mut self, _: &Expression) {}
-    fn variant(&mut self, _: &Expression) {}
+    fn variant(&mut self, expression: &Expression) {
+        let Expression::Variant { ty, .. } = expression else {
+            unreachable!("the walk names a variant");
+        };
+        self.check_type_edge(*ty, "a variant construction");
+    }
     fn interpolated(&mut self, _: &Expression) {}
     fn call(&mut self, _: &Expression) {}
 

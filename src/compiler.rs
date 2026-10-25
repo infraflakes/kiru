@@ -45,7 +45,9 @@ pub(crate) use compile::package::{
     attach_trailer, deserialize_bytecode, payload_in, serialize_bytecode,
 };
 pub(crate) use compile::prune::{mark_reachable, prune_unreachable};
-pub(crate) use compile::resolve::{EntryShape, MISSING_MAIN, program_main};
+#[cfg(test)]
+pub(crate) use compile::resolve::program_main;
+pub(crate) use compile::resolve::{EntryShape, MISSING_MAIN};
 pub(crate) use diagnostic::DIAGNOSTIC_PREFIX;
 pub use diagnostic::{Diagnostic, RelatedSpan, Severity};
 pub(in crate::compiler) use diagnostic::{

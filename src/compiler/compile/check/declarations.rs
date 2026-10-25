@@ -47,7 +47,7 @@ fn check_bodies(program: &Program, facts: &mut Facts) -> Vec<Diagnostic> {
             continue;
         }
         let return_type = if has_function_body {
-            declaration.return_type(&program.types)
+            declaration.return_type(&program.declarations)
         } else {
             None
         };
