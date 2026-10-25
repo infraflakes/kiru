@@ -453,7 +453,20 @@ Stage 1 makes the checked graph immutable. The checker reads it and records deri
 - The method target is a relation the verifier checks: at `Resolved` a family is a linked site with no target yet; at `Checked` and `Pruned` every family site has a target. `verify_reachability` follows the target fact. The old `MethodFamilyAfterCheck` violation is removed because a family surviving the check is now the correct graph.
 - The checker's test fixture returns the facts beside the program and the entry; every lowering caller passes them. The 237 tests and the payload sha are unchanged.
 
-### 10.3 Delegation and stray handling
+### 10.3 Stage 2: types as declarations
+
+Stage 2 gives a declared type one identity: the declaration node. The parallel `TypeId` table and the `Namespace` type registry are removed.
+
+- `Declaration` gains a type body for the `Rec` and `Enum` kinds. The body carries the type parameters, the runtime marker, and the fields or variants. The declaration carries the name, name span, file, visibility, and namespace. A type declaration's `ty` is `Type::Named` of its own id applied to its parameters; the type body is not a second identity.
+- `Type::Named(DeclarationId, arguments)` and `TypeHead::Named(DeclarationId)`. `TypeId`, `Program.types`, `Namespace.types`, and `TypeTable` are gone. The group, head, name, shape, runtime shape, finiteness, type arguments, and list marker read a declaration and its type body.
+- `Namespace.names` is the one namespace name table. A type is a namespace name, so the one-name rule applies to a type and a value in the same namespace. `UseTarget::Type` carries the type's `DeclarationId`.
+- The resolver reserves every type declaration node before any field is resolved, so a type may name itself or any other type in any order. The runtime list is an ordinary declaration registered in `std::dynamic`; its marker is its type body's runtime fact. `register_declarations` fills the reserved body and does not declare a second node.
+- Type references are edges. Every `Type::Named` in a declaration's type, a function signature, a field, a variant payload, an expression variant, a pattern, a function binding's head, a method-pool key, or the check's derived pattern type is an edge. Reachability follows them, and prune remaps the type ids everywhere it remaps a declaration id. A type declaration is retained or dropped like any other node.
+- A method or associated-function pool is keyed by the type declaration's id; pruning remaps the key with the value, and a retained method's head type is retained by the same edge walk.
+- The verifier's `TypeNotInFile` defect is fixed because a type is now in `File.declarations`; `check_types` and the parallel-table checks are removed. The name table and file checks cover types. After this stage the known-defect ledger holds only `BroughtNotRemapped`; stage 5 removes it.
+- The payload is unchanged: a type declaration owns no bytecode, so it reserves no code id and the body order that fixes code ids is unchanged. The 237 tests and the payload sha are the gate.
+
+### 10.4 Delegation and stray handling
 
 Each stage is delegated with a brief that leaves no decision to the delegate, and the result is inspected as a claim.
 
