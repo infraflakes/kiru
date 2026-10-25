@@ -153,7 +153,9 @@ impl Runtime {
                     frame.registers[*dst as usize] = frame.registers[*src as usize].clone();
                 }
                 Instruction::StoreLocal { slot, src } => {
-                    frame.registers[*slot as usize] = frame.registers[*src as usize].clone();
+                    let value =
+                        std::mem::replace(&mut frame.registers[*src as usize], Value::Nothing);
+                    frame.registers[*slot as usize] = value;
                 }
                 Instruction::BuildMap { dst, fields } => {
                     let mut map = Map::default();

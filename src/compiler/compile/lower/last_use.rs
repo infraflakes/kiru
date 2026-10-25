@@ -29,7 +29,8 @@ pub(super) fn rewrite(codes: &mut [Code]) {
         let mut moved = vec![0usize; old_count + 1];
         for (index, instruction) in instructions.into_iter().enumerate() {
             moved[index] = rewritten.len();
-            let (instruction, copies) = rewrite_call(instruction, &live_out[index], &mut next);
+            let (instruction, copies) =
+                rewrite_instruction(instruction, &live_out[index], &mut next);
             rewritten.extend(copies);
             rewritten.push(instruction);
         }
@@ -97,14 +98,19 @@ fn live_out(instructions: &[Instruction]) -> Vec<HashSet<u16>> {
         .collect()
 }
 
-/// Rewrite one call. A non-call instruction is returned unchanged.
-fn rewrite_call(
+/// Rewrite one transfer instruction. A call consumes its arguments; a store
+/// consumes its source. Every other instruction is returned unchanged.
+fn rewrite_instruction(
     instruction: Instruction,
     live: &HashSet<u16>,
     next: &mut u16,
 ) -> (Instruction, Vec<Instruction>) {
     let mut copies = Vec::new();
     match instruction {
+        Instruction::StoreLocal { slot, src } => {
+            let src = keep_if_live(src, slot, live, next, &mut copies);
+            (Instruction::StoreLocal { slot, src }, copies)
+        }
         Instruction::CallNative {
             dst,
             native,
@@ -146,6 +152,28 @@ fn rewrite_call(
         }
         other => (other, copies),
     }
+}
+
+/// Keep a store's source when it is still read later. A source that equals the
+/// destination is already staying in place. Every other source is a last use
+/// and the store takes it.
+fn keep_if_live(
+    value: u16,
+    destination: u16,
+    live: &HashSet<u16>,
+    next: &mut u16,
+    copies: &mut Vec<Instruction>,
+) -> u16 {
+    if value == destination || !live.contains(&value) {
+        return value;
+    }
+    let copy = *next;
+    *next = next.checked_add(1).expect("the register count fits u16");
+    copies.push(Instruction::Copy {
+        dst: copy,
+        src: value,
+    });
+    copy
 }
 
 /// Keep a register for a call when it is still read later, by a later
