@@ -58,6 +58,6 @@ mod tests {
         ))
         .expect("serializes");
         assert_eq!(bytes.len(), 12123);
-        assert_eq!(name_hash(&bytes), 8410953220798926407);
+        assert_eq!(name_hash(&bytes), 13566962478231213970);
     }
 }

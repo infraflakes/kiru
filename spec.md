@@ -104,8 +104,8 @@ use std::dynamic::{HashMap, Vec};
 
 Things to remember:
 
-- A `use` may end at a namespace, or at a name that may denote a type and/or a plain function.
-- A `use` of a name brings every type and plain function that name denotes. The type pool and value pool are separate, so a type and a function can share a spelling and one `use` brings both. Visibility is checked where the name is read, not by the `use` itself.
+- A `use` may end at a namespace, at a type, at a plain function, or at a name that denotes more than one of them.
+- A `use` of a name brings every namespace, type, and plain function that name denotes. The pools are separate, so a directory, a type, and a function can share a spelling and one `use` brings all of them. Visibility is checked where the name is read, not by the `use` itself.
 - A `use` may not name a module value, a method, or an associate function. Those are reached through their owner.
 - A type-`use` brings the type's bound functions with it.
 - There is no `as`.

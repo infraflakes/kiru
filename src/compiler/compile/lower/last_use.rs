@@ -107,6 +107,12 @@ fn rewrite_instruction(
 ) -> (Instruction, Vec<Instruction>) {
     let mut copies = Vec::new();
     match instruction {
+        // A field read at the record's last use takes the field instead of
+        // copying it. A record still read later keeps the field, and a record
+        // that is still shared copies on the take, so no other value changes.
+        Instruction::GetField { dst, map, key } if dst != map && !live.contains(&map) => {
+            (Instruction::TakeField { dst, map, key }, copies)
+        }
         Instruction::StoreLocal { slot, src } => {
             let src = keep_if_live(src, slot, live, next, &mut copies);
             (Instruction::StoreLocal { slot, src }, copies)
@@ -238,6 +244,7 @@ fn uses(instruction: &Instruction) -> Vec<u16> {
         Instruction::ToText { src, .. } => vec![*src],
         Instruction::SetField { map, value, .. } => vec![*map, *value],
         Instruction::GetField { map, .. } => vec![*map],
+        Instruction::TakeField { map, .. } => vec![*map],
         Instruction::Concat { left, right, .. } => vec![*left, *right],
         Instruction::CallNative { arguments, .. } => arguments.clone(),
         Instruction::Return { value } => vec![*value],
@@ -268,6 +275,7 @@ fn defined(instruction: &Instruction) -> Option<u16> {
         | Instruction::Compare { dst, .. }
         | Instruction::ToText { dst, .. }
         | Instruction::GetField { dst, .. }
+        | Instruction::TakeField { dst, .. }
         | Instruction::Concat { dst, .. }
         | Instruction::CallNative { dst, .. }
         | Instruction::Copy { dst, .. } => Some(*dst),

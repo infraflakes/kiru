@@ -63,26 +63,28 @@ impl Builder {
 
     /// Resolve a `use` path to everything it reaches. The path is absolute:
     /// its prefix names a namespace from the root. A path that names a
-    /// namespace delivers that namespace alone. A path that names a name
-    /// delivers every public type and plain function that name denotes: the
-    /// type pool and the value pool are separate, so one name can deliver
-    /// both. Any other declaration is no candidate at all, so the lookup never
-    /// names one.
+    /// namespace delivers that namespace. A path that names a name delivers
+    /// every public type and plain function that name denotes: the type pool
+    /// and the value pool are separate, so one name can deliver both. A path
+    /// may name a namespace and a type or function at once, and then it
+    /// delivers every one of them; each read takes the target its own pool
+    /// names. Any other declaration is no candidate at all, so the lookup
+    /// never names one.
     pub(in crate::compiler::derive::resolve) fn resolve_uses(
         &self,
         path: &[String],
     ) -> Vec<UseTarget> {
+        let mut targets = Vec::new();
         if let Some(namespace) = namespace_at(&self.intern, &self.namespaces, path) {
-            return vec![UseTarget::Namespace(namespace)];
+            targets.push(UseTarget::Namespace(namespace));
         }
         let Some((name, prefix)) = path.split_last() else {
-            return Vec::new();
+            return targets;
         };
         let Some(namespace) = namespace_at(&self.intern, &self.namespaces, prefix) else {
-            return Vec::new();
+            return targets;
         };
         let namespace_table = &self.namespaces[namespace.0];
-        let mut targets = Vec::new();
         if let Some(found) = namespace_table.type_id(&self.intern, name) {
             targets.push(UseTarget::Type(found));
         }

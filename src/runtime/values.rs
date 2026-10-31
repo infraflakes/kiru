@@ -524,6 +524,17 @@ impl Map {
         }
     }
 
+    /// Move a field out of the record, leaving its key absent. A caller that
+    /// has proved the record is dead after this read takes the value instead of
+    /// copying it.
+    pub(crate) fn take(&mut self, key: &str) -> Option<Value> {
+        let entries = Arc::make_mut(&mut self.entries);
+        entries
+            .iter_mut()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| std::mem::replace(value, Value::Nothing))
+    }
+
     /// Read a field, or `None` when it is absent.
     pub(crate) fn get(&self, key: &str) -> Option<&Value> {
         self.entries

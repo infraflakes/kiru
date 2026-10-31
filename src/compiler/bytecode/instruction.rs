@@ -162,6 +162,15 @@ pub(crate) enum Instruction {
         map: u16,
         key: u32,
     },
+    /// Move a field out of a record whose register is dead after this
+    /// instruction: `dst = map.key`, and the record is left without it. A
+    /// record that is still shared keeps its field, because taking unshares
+    /// first; only a record with no other reader is consumed.
+    TakeField {
+        dst: u16,
+        map: u16,
+        key: u32,
+    },
     Concat {
         dst: u16,
         left: u16,

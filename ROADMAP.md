@@ -166,7 +166,8 @@ tracked so they are settled before they block a phase.
   so a program writes them without a `use`. Every other name is reached exactly
   as any other name is: an absolute path resolves on its own, a bare name sees
   its own namespace and the names a `use` brings in, and a `use` only shortens a
-  path. `Vec<T>` is a declaration in `std::dynamic`, so a program reaches it by
+  path: every namespace, type, and plain function the shortened name denotes is
+  brought under it. `Vec<T>` is a declaration in `std::dynamic`, so a program reaches it by
   its path or with `use std::dynamic::Vec;`. A bound function is gated by `pub`
   alone, so a method call needs no `use`: `xs.len()` resolves by the receiver's
   type head wherever the method is declared. `fn(T)` with no arrow is a

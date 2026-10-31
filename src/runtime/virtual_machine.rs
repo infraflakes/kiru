@@ -328,6 +328,14 @@ impl Runtime {
                     )?;
                     frame.registers[*dst as usize] = value;
                 }
+                Instruction::TakeField { dst, map, key } => {
+                    let key = &self.bytecode.constants[*key as usize];
+                    let Value::Record(record) = &mut frame.registers[*map as usize] else {
+                        return Err(self.fail());
+                    };
+                    let value = self.required(record.take(key))?;
+                    frame.registers[*dst as usize] = value;
+                }
                 Instruction::Concat { dst, left, right } => {
                     let left = self
                         .required(frame.registers[*left as usize].text())?

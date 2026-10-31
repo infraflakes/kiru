@@ -182,6 +182,11 @@ fn validate_instruction(
             slot(*map)?;
             constant(*key)?;
         }
+        Instruction::TakeField { dst, map, key } => {
+            slot(*dst)?;
+            slot(*map)?;
+            constant(*key)?;
+        }
         Instruction::Concat { dst, left, right } => {
             slot(*dst)?;
             slot(*left)?;

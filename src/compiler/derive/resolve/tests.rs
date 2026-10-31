@@ -3,7 +3,7 @@
 use super::{program_main, resolve_tree};
 use crate::compiler::checked_program;
 use crate::compiler::graph::{
-    DeclarationKind, Expression, FunctionBinding, Program, Statement, TypeHead,
+    DeclarationKind, Expression, FunctionBinding, Program, Statement, TypeHead, UseTarget,
 };
 
 fn linked(files: &[(&str, &str)]) -> Result<Program, String> {
@@ -281,6 +281,80 @@ fn a_use_shortens_paths() {
         "main.kiru",
         "use std::dynamic::{HashMap, text_order};\nfn main() { let m: HashMap<txt, int> = HashMap.new(); let b: bool = text_order(\"a\", \"b\"); };",
     )]);
+}
+
+#[test]
+fn a_use_delivers_a_namespace_and_a_name_that_share_a_spelling() {
+    // `api::HashMap` is a directory, a type, and a plain function at once.
+    // One `use` brings all three, and each read takes the target its own pool
+    // names: a type annotation the type, `HashMap.new()` its associate,
+    // `HashMap()` the function, and `HashMap::nested()` the namespace.
+    let program = accept(&[
+        (
+            "api/defs.kiru",
+            "pub rec HashMap { pub x: int };\n\
+             pub fn HashMap() -> HashMap { return { x = 1 }; };\n\
+             impl HashMap { pub fn new() -> HashMap { return { x = 2 }; }; };",
+        ),
+        (
+            "api/HashMap/help.kiru",
+            "pub fn nested() -> int { return 3; };",
+        ),
+        (
+            "main.kiru",
+            "use root::api::HashMap;\n\
+             fn main() {\n\
+               let h: HashMap = HashMap.new();\n\
+               let f: HashMap = HashMap();\n\
+               let n: int = HashMap::nested();\n\
+             };",
+        ),
+    ]);
+    let root = program
+        .namespace_at(&["root".to_owned()])
+        .expect("the program root exists");
+    let symbol = program
+        .intern
+        .resolve("HashMap")
+        .expect("the name is interned");
+    let mut delivered: Vec<&str> = program.namespace(root).brought[&symbol]
+        .iter()
+        .map(|delivery| match delivery.target {
+            UseTarget::Namespace(_) => "namespace",
+            UseTarget::Type(_) => "type",
+            UseTarget::Function(_) => "function",
+        })
+        .collect();
+    delivered.sort_unstable();
+    assert_eq!(
+        delivered,
+        ["function", "namespace", "type"],
+        "one use delivers every pool the name denotes"
+    );
+}
+
+#[test]
+fn a_use_brings_a_type_that_shares_its_namespace_name() {
+    // The directory `api::HashMap` and the type `api::HashMap` share one
+    // spelling. A `use` brings both, so the type and its associated function
+    // resolve beside the namespace path.
+    crate::compiler::test_support::checked_files(&[
+        (
+            "api/defs.kiru",
+            "pub rec HashMap { pub x: int };\n\
+             impl HashMap { pub fn new() -> HashMap { return { x = 2 }; }; };",
+        ),
+        (
+            "api/HashMap/help.kiru",
+            "pub fn nested() -> int { return 3; };",
+        ),
+        (
+            "main.kiru",
+            "use root::api::HashMap;\n\
+             fn main() { let h: HashMap = HashMap.new(); let n: int = HashMap::nested(); };",
+        ),
+    ])
+    .expect("the type and the namespace share one delivered name");
 }
 
 #[test]

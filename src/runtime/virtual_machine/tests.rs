@@ -473,6 +473,60 @@ fn hash_maps_evaluate() {
 }
 
 #[test]
+fn a_hash_map_grows_and_keeps_every_entry() {
+    // The map starts with eight buckets and doubles past three quarters full.
+    // A thousand entries cross several growths, and every one must survive the
+    // reinsertion.
+    let source = "use std;\n\
+        use std::dynamic::HashMap;\n\
+        fn f() -> txt {\n\
+          let m: HashMap<int, int> = HashMap.new();\n\
+          let i: int = 0;\n\
+          for {\n\
+            match i < 1000 { false => { break; }; true => {}; };\n\
+            m = m.insert(i, i * 2);\n\
+            i = i + 1;\n\
+          };\n\
+          let sum: int = 0;\n\
+          let j: int = 0;\n\
+          for {\n\
+            match j < 1000 { false => { break; }; true => {}; };\n\
+            sum = sum + m.get(j);\n\
+            j = j + 1;\n\
+          };\n\
+          return \"@(m.len()) @(sum)\";\n\
+        };\n\
+        fn main() {};";
+    assert_eq!(call_text(&runtime(source), "f"), "1000 999000");
+}
+
+#[test]
+fn a_field_read_at_the_records_last_use_keeps_every_alias() {
+    // A record read twice keeps its field, and a record copied before its
+    // last read gives the copy its own field: taking unshares first.
+    let twice = "use std;\n\
+        rec P { pub x: int };\n\
+        fn f() -> txt {\n\
+          let a: P = { x = 1 };\n\
+          let x: int = a.x;\n\
+          let y: int = a.x;\n\
+          return \"@(x)@(y)\";\n\
+        };\n\
+        fn main() {};";
+    assert_eq!(call_text(&runtime(twice), "f"), "11");
+    let aliased = "use std;\n\
+        rec P { pub x: int };\n\
+        fn f() -> txt {\n\
+          let a: P = { x = 1 };\n\
+          let b: P = a;\n\
+          let x: int = a.x;\n\
+          return \"@(x)@(b.x)\";\n\
+        };\n\
+        fn main() {};";
+    assert_eq!(call_text(&runtime(aliased), "f"), "11");
+}
+
+#[test]
 fn function_values_evaluate() {
     expect_text_results(&[
         (

@@ -64,7 +64,8 @@ kind, the container's in `std::dynamic` and the text kernel's in `std::text`.
 
 A `use` is pure path-shortening. It may stand anywhere among a file's
 top-level items, and belongs to the namespace, not to the file. What the path
-ends at decides what it shortens, and there are three endings:
+ends at decides what it shortens. A target is a namespace, a type, or a plain
+function, and one path may end at more than one of them at once:
 
 - a **namespace** gives the qualifier its last segment spells:
 
@@ -102,6 +103,12 @@ ends at decides what it shortens, and there are three endings:
     std::print(quote("a b"));
   };
   ```
+
+A directory, a type, and a plain function may share a spelling, and one `use`
+brings every target the name denotes. Each position then takes the one it
+names: a type annotation reads the type, `Name(...)` reads the function, and
+`Name::member` reads the namespace. Nothing is dropped and nothing is guessed
+from the spelling.
 
 One level of braces shortens several names under one prefix:
 
