@@ -122,7 +122,7 @@ Hiding stdout while keeping stderr is the usual choice for a parallel step: its
 stdout is noise, but a failure still prints its diagnostics.
 [Threads](/concurrency/threads/) shows the parallel case.
 
-## argv-level processes
+## Argv-Level Processes
 
 When a shell is not wanted, `std::syscalls::posix_spawn(argv)` runs an argv
 directly in its own process group and returns a pid as an `int`.

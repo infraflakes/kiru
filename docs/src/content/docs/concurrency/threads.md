@@ -7,7 +7,7 @@ Kiru can run a function on its own thread while the rest of the program
 continues. This is useful for work that should happen in parallel, such as
 building two projects at once.
 
-## Starting a thread
+## Starting a Thread
 
 `async <call>;` starts a call on its own thread:
 
@@ -35,7 +35,7 @@ done
 The call's arguments are evaluated at the statement, in the current body,
 before the thread starts.
 
-## No handles
+## No Handles
 
 Each `async` starts one thread and binds nothing. There is no handle to store,
 so a thread cannot be bound, passed, or returned; a call that returns no value
@@ -62,7 +62,7 @@ fn main() {
 };
 ```
 
-## Waiting for threads
+## Waiting for Threads
 
 `wait;` joins the threads the calling thread started, then continues:
 
@@ -90,7 +90,7 @@ When `main` returns, the runtime waits for every running thread before it uses
 `main`'s return value as the exit status. A thread the program never joins
 still runs to completion.
 
-## Shared output
+## Shared Output
 
 Every thread writes to the same stdout and stderr, so output from parallel work
 interleaves. The order between threads is not fixed; writes within one thread

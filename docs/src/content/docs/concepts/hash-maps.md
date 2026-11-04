@@ -18,7 +18,7 @@ and no literal: a map is built and read only through its methods.
 alone ([Methods](/concepts/methods/) covers reachability).
 [HashMap](/stdlib/hashmap/) lists every signature.
 
-## Building a map
+## Building a Map
 
 A map starts empty with `HashMap::new()` and grows with `insert`:
 
@@ -40,7 +40,7 @@ expected type, so `let env: HashMap<txt, txt> = HashMap::new();` binds both
 parameters; without an annotation there is nothing to fix them and the call is
 an error. [Generics](/concepts/generics/) covers inference.
 
-## Reading with get
+## Reading with `get`
 
 A map is read with `get`, not with a field. `m.get(key)` is the value stored for
 `key`; a key the map does not have has no value, so `get` stops the run. When a
@@ -62,7 +62,7 @@ A map has no declared field to read, so `m.key` does not exist and a map is read
 only through its methods. `contains(key)` answers whether a key is present
 without stopping the run.
 
-## Writing with insert
+## Writing with `insert`
 
 `m.insert(key, value)` returns a new map with `value` stored for `key`,
 replacing an existing value or adding a new key. The map it is called on is
@@ -88,7 +88,7 @@ it is called on; returning a new map and rebinding is how a map grows.
 `m.remove(key)` is the other direction: it returns a new map without that key,
 and a key that is absent leaves the map as it was.
 
-## Keys are unordered
+## Keys Are Unordered
 
 A hash map stores its keys by their hash, so it has no first key and no last
 key. `keys()` and `values()` return vecs in the table's own order: the two calls
@@ -112,7 +112,7 @@ fn main() {
 When output must be stable, sort what you read, as above. `sort()` orders a
 `Vec<txt>` in byte order; `sort_by` takes any comparator.
 
-## A set without a Set type
+## A Set Without a `Set` Type
 
 Kiru has no `Set` type. A set is a vec with duplicate values dropped, or a hash
 map whose values are a membership flag.
@@ -132,7 +132,7 @@ fn main() {
 the order never matters, `HashMap<txt, bool>` gives a constant-time
 `contains(key)` instead of a linear scan.
 
-## A map or a declared type?
+## A Map or a Declared Type?
 
 A `HashMap<K, V>` fixes only the key and value types, so the set of keys is
 open. When the shape is a fixed set of fields whose types differ, declare a

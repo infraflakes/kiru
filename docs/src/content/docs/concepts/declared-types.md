@@ -8,7 +8,7 @@ else. When a shape should be fixed and its fields should carry their own types,
 declare a type. A `rec` names a fixed set of typed fields, and an `enum` names a
 fixed set of variants; both are **declared types**.
 
-## rec
+## `rec`
 
 A `rec` declaration lists its fields, each `name: Type`:
 
@@ -74,7 +74,7 @@ written outside the namespace must name only `pub` fields. An enum variant is a
 declaration too, and takes `pub` the same way (`pub Ready`).
 [Modules](/concepts/modules/) states the rule once.
 
-## enum
+## `enum`
 
 An enum is a type with a fixed set of variants. Each variant may carry a
 payload, so an enum says a value is "one of these":

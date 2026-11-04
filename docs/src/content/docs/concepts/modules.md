@@ -60,7 +60,7 @@ touches the operating system lives in `std::syscalls` under its syscall or C
 library name (`posix_spawn`, `mkstemp`, `waitpid`), and a pure one stays with its
 kind, the container's in `std::dynamic` and the text kernel's in `std::text`.
 
-## use shortens a path
+## `use` Shortens a Path
 
 A `use` is pure path-shortening. It may stand anywhere among a file's
 top-level items, and belongs to the namespace, not to the file. What the path

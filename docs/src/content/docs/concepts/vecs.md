@@ -138,7 +138,7 @@ fn main() {
 };
 ```
 
-## for without a vec
+## `for` Without a Vec
 
 `for { ... };` repeats until a `break;`:
 
@@ -156,7 +156,7 @@ fn main() {
 
 A plain `for` with no `break` never returns.
 
-## break
+## `break`
 
 `break;` ends the nearest loop. It is an error outside a loop. A loop body is
 its own scope.

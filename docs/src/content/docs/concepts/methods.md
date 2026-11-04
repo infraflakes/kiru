@@ -14,7 +14,7 @@ There are two kinds, told apart by the first parameter:
 A bound function is never a namespace-level name. It is reached only through its
 type: a value call, a `Type::name` call, or `Type::name` as a value.
 
-## impl blocks
+## `impl` Blocks
 
 `impl Type { fn ...; };` files every function inside under the block's type.
 The type is named as a written type is, so `impl Vec` and `impl Command` work

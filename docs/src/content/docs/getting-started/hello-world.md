@@ -74,7 +74,7 @@ fn main() {
 which every program has; `::` separates the namespace from the function. The
 argument is a string literal in double quotes.
 
-## main's Signature
+## `main`'s Signature
 
 `main` takes no parameter or one parameter, and returns nothing or an `int`:
 

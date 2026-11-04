@@ -34,7 +34,7 @@ fn main() {
 };
 ```
 
-## or and has
+## `or` and `has`
 
 Two methods answer the common cases. `or(fallback)` returns the value
 inside `some`, or `fallback` when it is `none`:

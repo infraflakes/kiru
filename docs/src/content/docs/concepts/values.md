@@ -52,7 +52,7 @@ fn main() { std::print(normalize("x")); };    # x!
 A `let` at the top level is a module value: computed once when the program
 starts, and never assignable. [Namespaces](/concepts/modules/) covers it.
 
-## The types
+## The Types
 
 The runtime provides three intrinsic types:
 
