@@ -123,7 +123,7 @@ impl Declaration {
 /// An `impl Type { fn ...; };` block. Every function in the block is filed
 /// under the block's type: one whose first parameter's type is the block's type
 /// is a method, reached as `receiver.name(...)`; every other one is an
-/// associated function, reached as `Type.name(...)`.
+/// associated function, reached as `Type::name(...)`.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct ImplBlock {
     /// The type the block's functions are filed under, written as any type
@@ -241,7 +241,7 @@ impl TypeExpr {
 /// type means the function returns no value. Inside an `impl` block, a function
 /// whose first parameter accepts the block's type is a method, called as
 /// `receiver.name(...)`; every other function in the block is an associated
-/// function, called as `Type.name(...)`.
+/// function, called as `Type::name(...)`.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Function {
     pub(crate) name: String,

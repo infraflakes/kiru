@@ -28,7 +28,7 @@ pub(in crate::compiler::derive::resolve) struct DeclarationSite<'a> {
     pub(in crate::compiler::derive::resolve) receiver_head: Option<TypeHead>,
     /// The type head of the block this declaration is an associated function
     /// of, when it sits in an `impl` block and its first parameter does not
-    /// have the block's type. What a `Type.name(...)` call matches against.
+    /// have the block's type. What a `Type::name(...)` call matches against.
     pub(in crate::compiler::derive::resolve) associated_head: Option<TypeHead>,
     pub(in crate::compiler::derive::resolve) file: Option<FileId>,
     pub(in crate::compiler::derive::resolve) reported_path: &'a std::path::Path,
@@ -56,7 +56,7 @@ pub(in crate::compiler::derive::resolve) struct Skeleton {
     /// The type head of the block this declaration is an associated function
     /// of, when it sits in an `impl` block and its first parameter does not
     /// have the block's type. Known at registration so a forward
-    /// `Type.name(...)` reference can be dispatched before its target is
+    /// `Type::name(...)` reference can be dispatched before its target is
     /// linked.
     pub(in crate::compiler::derive::resolve) associated_head: Option<TypeHead>,
     pub(in crate::compiler::derive::resolve) file: Option<FileId>,

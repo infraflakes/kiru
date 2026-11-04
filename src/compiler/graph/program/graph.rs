@@ -154,7 +154,7 @@ pub(crate) struct Namespace {
     pub(crate) methods: MethodTable,
     /// The associated functions declared here, keyed by the type they are
     /// filed under and their name. An associated function is reached as
-    /// `Type.name(...)`, where a method is reached as `value.name(...)`.
+    /// `Type::name(...)`, where a method is reached as `value.name(...)`.
     pub(crate) associates: MethodTable,
     /// What each `use` this namespace wrote reaches, resolved once, keyed by
     /// the name it delivers. Two `use`s may deliver one name, so the entries
