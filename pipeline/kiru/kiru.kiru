@@ -4,7 +4,7 @@ fn build_kiru(project: Project) -> int {
 };
 
 fn check_kiru(project: Project) -> int {
-  let steps: Vec<txt> = Vec.new()
+  let steps: Vec<txt> = Vec::new()
     .push("cargo test")
     .push("cargo test --release")
     .push("cargo clippy --all-targets -- -D warnings")
@@ -15,14 +15,14 @@ fn check_kiru(project: Project) -> int {
 };
 
 fn format_kiru(project: Project) -> int {
-  let steps: Vec<txt> = Vec.new()
+  let steps: Vec<txt> = Vec::new()
     .push("cargo clippy --fix --allow-dirty --all-targets")
     .push("cargo fmt");
   return run_steps(project, steps);
 };
 
 fn update_kiru(kiru: Project) -> int {
-  let steps: Vec<txt> = Vec.new()
+  let steps: Vec<txt> = Vec::new()
     .push("cargo update --verbose")
     .push("cargo upgrade --verbose --verbose");
   return run_steps(kiru, steps);

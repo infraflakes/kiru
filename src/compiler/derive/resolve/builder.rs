@@ -15,4 +15,3 @@ mod type_resolution;
 pub(in crate::compiler::derive::resolve) use registration::{
     Builder, DeclarationSite, Pending, Skeleton, Slot,
 };
-pub(in crate::compiler::derive::resolve) use type_resolution::Variant;

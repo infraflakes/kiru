@@ -94,7 +94,7 @@ fn main() {
   let name: txt = "backend";                 # text
   let retries: int = 3;                      # an integer
   let verbose: bool = true;                  # a boolean
-  let tags: Vec<txt> = Vec.new();            # a vec, built with its operations
+  let tags: Vec<txt> = Vec::new();            # a vec, built with its operations
   tags = tags.push("api");
   std::print("@(name) @(retries) @(verbose) @(tags.len())");
 };
@@ -105,7 +105,7 @@ fn main() {
 | text | `: txt` | a string literal, an interpolation, a field access, a name, or a call returning text |
 | int | `: int` | an integer literal, an arithmetic expression, a name, or a call returning an integer |
 | bool | `: bool` | `true`, `false`, a comparison, a logical expression, a name, or a call returning a boolean |
-| vec | `: Vec<T>` | a `Vec.new()` call, a vec variable, or a call returning a vec |
+| vec | `: Vec<T>` | a `Vec::new()` call, a vec variable, or a call returning a vec |
 
 A `{ … }` literal takes its type from the position it is checked against, so one
 with no expected type is an error; it is the literal for a declared type, not an

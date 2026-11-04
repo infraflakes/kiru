@@ -84,8 +84,8 @@ text.memchr(needle: txt) -> std::Option<int>
 use std;
 use std::text;
 match "hello".memchr("l") {
-  std::Option.some(index) => { std::print("@(index)"); };   # 2
-  std::Option.none => { std::print("absent"); };
+  std::Option::some(index) => { std::print("@(index)"); };   # 2
+  std::Option::none => { std::print("absent"); };
 };
 ```
 

@@ -36,20 +36,20 @@ pub fn wait_for(pid: int) -> int {
 # no group is ever signalled with a signal number nobody named.
 pub fn signal(pid: int, name: txt) {
   let number: std::Option<int> = match name {
-    "TERM" => std::Option.some(15);
-    "KILL" => std::Option.some(9);
-    "INT" => std::Option.some(2);
-    "HUP" => std::Option.some(1);
-    "QUIT" => std::Option.some(3);
-    "USR1" => std::Option.some(10);
-    "USR2" => std::Option.some(12);
-    "STOP" => std::Option.some(19);
-    "CONT" => std::Option.some(18);
-    _ => std::Option.none;
+    "TERM" => std::Option::some(15);
+    "KILL" => std::Option::some(9);
+    "INT" => std::Option::some(2);
+    "HUP" => std::Option::some(1);
+    "QUIT" => std::Option::some(3);
+    "USR1" => std::Option::some(10);
+    "USR2" => std::Option::some(12);
+    "STOP" => std::Option::some(19);
+    "CONT" => std::Option::some(18);
+    _ => std::Option::none;
   };
   match number {
-    std::Option.some(value) => { std::syscalls::killpg(pid, value); };
-    std::Option.none => { std::eprint("unknown signal `@(name)`"); };
+    std::Option::some(value) => { std::syscalls::killpg(pid, value); };
+    std::Option::none => { std::eprint("unknown signal `@(name)`"); };
   };
 };
 
@@ -74,8 +74,8 @@ pub rec Output {
 
 # A command under construction. `std::process::command(line)` returns the
 # defaults and each setting method returns a new `Command`, so calls chain:
-# `std::process::stream(std::process::dir(std::process::command("cargo build"), "docs"), std::process::Stream.stderr, "/dev/null")`.
-# An unset entry is `std::Option.none`, not empty text. The type is `pub`, so a
+# `std::process::stream(std::process::dir(std::process::command("cargo build"), "docs"), std::process::Stream::stderr, "/dev/null")`.
+# An unset entry is `std::Option::none`, not empty text. The type is `pub`, so a
 # program can name a half-built command and configure it conditionally; the
 # fields stay private, so a program builds a command through the methods.
 pub rec Command {
@@ -95,35 +95,35 @@ pub rec Command {
 # stream to that file with the shell's redirection operator.
 fn shell(dir: std::Option<txt>, env: std::Option<txt>, timeout: std::Option<int>, stdin: std::Option<txt>, stdout: std::Option<txt>, stderr: std::Option<txt>, line: txt) -> int {
   let directed: txt = match dir {
-    std::Option.some(path) => "cd @(std::process::quote(path)) && @(line)";
-    std::Option.none => line;
+    std::Option::some(path) => "cd @(std::process::quote(path)) && @(line)";
+    std::Option::none => line;
   };
   let exported: txt = match env {
-    std::Option.some(assignments) => "export @(assignments); @(directed)";
-    std::Option.none => directed;
+    std::Option::some(assignments) => "export @(assignments); @(directed)";
+    std::Option::none => directed;
   };
   let timed: txt = match timeout {
-    std::Option.some(seconds) => "timeout @(seconds) sh -c @(std::process::quote(exported))";
-    std::Option.none => exported;
+    std::Option::some(seconds) => "timeout @(seconds) sh -c @(std::process::quote(exported))";
+    std::Option::none => exported;
   };
   let input: txt = match stdin {
-    std::Option.some(path) => " < @(std::process::quote(path))";
-    std::Option.none => "";
+    std::Option::some(path) => " < @(std::process::quote(path))";
+    std::Option::none => "";
   };
   let output_redirect: txt = match stdout {
-    std::Option.some(path) => " > @(std::process::quote(path))";
-    std::Option.none => "";
+    std::Option::some(path) => " > @(std::process::quote(path))";
+    std::Option::none => "";
   };
   let error: txt = match stderr {
-    std::Option.some(path) => " 2> @(std::process::quote(path))";
-    std::Option.none => "";
+    std::Option::some(path) => " 2> @(std::process::quote(path))";
+    std::Option::none => "";
   };
   let redirects: txt = "@(input)@(output_redirect)@(error)";
   let wrapped: txt = match redirects {
     "" => timed;
     _ => "{ @(timed); }@(redirects)";
   };
-  let argv: std::dynamic::Vec<txt> = std::dynamic::Vec.new();
+  let argv: std::dynamic::Vec<txt> = std::dynamic::Vec::new();
   argv = std::dynamic::push(argv, "/bin/sh");
   argv = std::dynamic::push(argv, "-c");
   argv = std::dynamic::push(argv, wrapped);
@@ -134,12 +134,12 @@ fn shell(dir: std::Option<txt>, env: std::Option<txt>, timeout: std::Option<int>
 pub fn command(line: txt) -> std::process::Command {
   return {
     line = line,
-    dir = std::Option.none,
-    env = std::Option.none,
-    timeout = std::Option.none,
-    stdin = std::Option.none,
-    stdout = std::Option.none,
-    stderr = std::Option.none,
+    dir = std::Option::none,
+    env = std::Option::none,
+    timeout = std::Option::none,
+    stdin = std::Option::none,
+    stdout = std::Option::none,
+    stderr = std::Option::none,
   };
 };
 
@@ -147,7 +147,7 @@ impl Command {
   # Change the working directory.
   pub fn dir(self: std::process::Command, path: txt) -> std::process::Command {
     let copy: std::process::Command = self;
-    copy.dir = std::Option.some(path);
+    copy.dir = std::Option::some(path);
     return copy;
   };
 
@@ -156,8 +156,8 @@ impl Command {
     let copy: std::process::Command = self;
     let assignment: txt = "@(name)=@(std::process::quote(value))";
     copy.env = match copy.env {
-      std::Option.some(existing) => std::Option.some("@(existing) @(assignment)");
-      std::Option.none => std::Option.some(assignment);
+      std::Option::some(existing) => std::Option::some("@(existing) @(assignment)");
+      std::Option::none => std::Option::some(assignment);
     };
     return copy;
   };
@@ -165,7 +165,7 @@ impl Command {
   # Bound the run to `seconds` with `timeout`.
   pub fn timeout(self: std::process::Command, seconds: int) -> std::process::Command {
     let copy: std::process::Command = self;
-    copy.timeout = std::Option.some(seconds);
+    copy.timeout = std::Option::some(seconds);
     return copy;
   };
 
@@ -175,9 +175,9 @@ impl Command {
   pub fn stream(self: std::process::Command, stream: std::process::Stream, target: txt) -> std::process::Command {
     let copy: std::process::Command = self;
     match stream {
-      std::process::Stream.stdin => { copy.stdin = std::Option.some(target); };
-      std::process::Stream.stdout => { copy.stdout = std::Option.some(target); };
-      std::process::Stream.stderr => { copy.stderr = std::Option.some(target); };
+      std::process::Stream::stdin => { copy.stdin = std::Option::some(target); };
+      std::process::Stream::stdout => { copy.stdout = std::Option::some(target); };
+      std::process::Stream::stderr => { copy.stderr = std::Option::some(target); };
     };
     return copy;
   };
@@ -193,7 +193,7 @@ impl Command {
   pub fn capture(self: std::process::Command) -> std::process::Output {
     let out_path: txt = std::fs::temp_file();
     let err_path: txt = std::fs::temp_file();
-    let code: int = std::process::shell(self.dir, self.env, self.timeout, self.stdin, std::Option.some(out_path), std::Option.some(err_path), self.line);
+    let code: int = std::process::shell(self.dir, self.env, self.timeout, self.stdin, std::Option::some(out_path), std::Option::some(err_path), self.line);
     let result: std::process::Output = {
       code = code,
       out = std::fs::read(out_path),

@@ -19,7 +19,7 @@ is shell syntax, run through `/bin/sh -c`, and each setting method returns a new
 | `dir(path)` | run after `cd <path> &&`, with `path` quoted by `std::process::quote` |
 | `env(name, value)` | prepend `export <name>=<quoted value>;`, with `value` quoted by `std::process::quote` |
 | `timeout(seconds)` | bound the line with `timeout <seconds> sh -c` |
-| `stream(stream, target)` | attach `std::process::Stream.stdin`, `.stdout`, or `.stderr` to `target` |
+| `stream(stream, target)` | attach `std::process::Stream::stdin`, `.stdout`, or `.stderr` to `target` |
 
 An unset method is the default: no directory change, no added environment, no
 timeout, and every stream inherited. The options are the private fields of the
@@ -52,7 +52,7 @@ fn main() {
   let quiet: bool = true;
   let step: std::process::Command = std::process::command("echo working");
   match quiet {
-    true => { step = step.stream(std::process::Stream.stdout, "/dev/null"); };
+    true => { step = step.stream(std::process::Stream::stdout, "/dev/null"); };
     _ => {};
   };
   std::print("exit @(step.run())");
@@ -115,8 +115,8 @@ one keeps the other:
 | Call | Effect |
 | --- | --- |
 | (none) | the stream is inherited and prints live |
-| `.stream(std::process::Stream.stdout, "/dev/null")` | stdout is discarded |
-| `.stream(std::process::Stream.stderr, "/dev/null")` | stderr is discarded |
+| `.stream(std::process::Stream::stdout, "/dev/null")` | stdout is discarded |
+| `.stream(std::process::Stream::stderr, "/dev/null")` | stderr is discarded |
 
 Hiding stdout while keeping stderr is the usual choice for a parallel step: its
 stdout is noise, but a failure still prints its diagnostics.
@@ -135,7 +135,7 @@ use std::process;
 use std::dynamic::Vec;
 
 fn main() {
-  let argv: Vec<txt> = Vec.new();
+  let argv: Vec<txt> = Vec::new();
   argv = argv.push("sleep");
   argv = argv.push("5");
   let pid: int = std::syscalls::posix_spawn(argv);

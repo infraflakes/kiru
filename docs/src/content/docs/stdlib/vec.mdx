@@ -15,7 +15,7 @@ transform returns a new vec, so calls chain. [Vecs](/concepts/vecs/) and
 <summary><code>new</code> — the empty vec</summary>
 
 ```text
-std::dynamic::Vec.new<T>() -> Vec<T>
+std::dynamic::Vec::new<T>() -> Vec<T>
 ```
 
 - Returns a vec with no elements. Its element type comes from the expected type.
@@ -24,7 +24,7 @@ std::dynamic::Vec.new<T>() -> Vec<T>
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<int> = Vec.new();
+  let xs: Vec<int> = Vec::new();
   std::print("@(xs.len())");   # 0
 };
 ```
@@ -44,7 +44,7 @@ items.len() -> int
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let items: Vec<txt> = Vec.new();
+  let items: Vec<txt> = Vec::new();
   items = items.push("a");
   items = items.push("b");
   items = items.push("c");
@@ -68,7 +68,7 @@ items.at(index: int) -> T
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let items: Vec<txt> = Vec.new();
+  let items: Vec<txt> = Vec::new();
   items = items.push("a");
   items = items.push("b");
   std::print(items.at(1));   # b
@@ -91,7 +91,7 @@ items.push(element: T) -> Vec<T>
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<txt> = Vec.new();
+  let xs: Vec<txt> = Vec::new();
   xs = xs.push("a");
   xs = xs.push("b");
   std::print("@(xs.len())");   # 2
@@ -116,7 +116,7 @@ items.replace(index: int, element: T) -> Vec<T>
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<int> = Vec.new();
+  let xs: Vec<int> = Vec::new();
   xs = xs.push(10);
   xs = xs.push(20);
   xs = xs.replace(0, 99);
@@ -142,7 +142,7 @@ items.insert(index: int, element: T) -> Vec<T>
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<txt> = Vec.new();
+  let xs: Vec<txt> = Vec::new();
   xs = xs.push("a");
   xs = xs.push("c");
   xs = xs.insert(1, "b");
@@ -166,7 +166,7 @@ items.remove(index: int) -> Vec<T>
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<txt> = Vec.new();
+  let xs: Vec<txt> = Vec::new();
   xs = xs.push("a");
   xs = xs.push("b");
   xs = xs.push("c");
@@ -190,8 +190,8 @@ items.is_empty() -> bool
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<int> = Vec.new();
-  let ys: Vec<int> = Vec.new();
+  let xs: Vec<int> = Vec::new();
+  let ys: Vec<int> = Vec::new();
   ys = ys.push(1);
   std::print("@(xs.is_empty()) @(ys.is_empty())");   # true false
 };
@@ -212,7 +212,7 @@ items.clear() -> Vec<T>
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<txt> = Vec.new();
+  let xs: Vec<txt> = Vec::new();
   xs = xs.push("a");
   xs = xs.push("b");
   xs = xs.clear();
@@ -238,7 +238,7 @@ items.slice(from: int, to: int) -> Vec<T>
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<txt> = Vec.new();
+  let xs: Vec<txt> = Vec::new();
   xs = xs.push("a");
   xs = xs.push("b");
   xs = xs.push("c");
@@ -264,7 +264,7 @@ items.take(count: int) -> Vec<T>
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<txt> = Vec.new();
+  let xs: Vec<txt> = Vec::new();
   xs = xs.push("a");
   xs = xs.push("b");
   xs = xs.push("c");
@@ -288,7 +288,7 @@ items.skip(count: int) -> Vec<T>
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<txt> = Vec.new();
+  let xs: Vec<txt> = Vec::new();
   xs = xs.push("a");
   xs = xs.push("b");
   xs = xs.push("c");
@@ -312,9 +312,9 @@ items.concat(other: Vec<T>) -> Vec<T>
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let a: Vec<txt> = Vec.new();
+  let a: Vec<txt> = Vec::new();
   a = a.push("a");
-  let b: Vec<txt> = Vec.new();
+  let b: Vec<txt> = Vec::new();
   b = b.push("b");
   let xs: Vec<txt> = a.concat(b);
   std::print("@(xs.len())");   # 2
@@ -336,7 +336,7 @@ items.reverse() -> Vec<T>
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<txt> = Vec.new();
+  let xs: Vec<txt> = Vec::new();
   xs = xs.push("a");
   xs = xs.push("b");
   std::print(xs.reverse().at(0));   # b
@@ -359,7 +359,7 @@ items.contains(element: T) -> bool
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<txt> = Vec.new();
+  let xs: Vec<txt> = Vec::new();
   xs = xs.push("a");
   xs = xs.push("b");
   std::print("@(xs.contains("b"))");   # true
@@ -376,14 +376,14 @@ items.index_of(element: T) -> std::Option<int>
 ```
 
 - `element` — the element to look for.
-- Returns `Option.some(index)` at the first position where `==` holds, or
-  `Option.none` when it is not an element.
+- Returns `Option::some(index)` at the first position where `==` holds, or
+  `Option::none` when it is not an element.
 
 ```kiru
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<txt> = Vec.new();
+  let xs: Vec<txt> = Vec::new();
   xs = xs.push("a");
   xs = xs.push("b");
   std::print("@(xs.index_of("b").or(-1))");   # 1
@@ -408,7 +408,7 @@ items.first() -> T
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<txt> = Vec.new();
+  let xs: Vec<txt> = Vec::new();
   xs = xs.push("a");
   xs = xs.push("b");
   std::print(xs.first());   # a
@@ -431,7 +431,7 @@ items.last() -> T
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<txt> = Vec.new();
+  let xs: Vec<txt> = Vec::new();
   xs = xs.push("a");
   xs = xs.push("b");
   std::print(xs.last());   # b
@@ -455,7 +455,7 @@ use std;
 use std::dynamic::Vec;
 fn double(x: int) -> int { return x * 2; };
 fn main() {
-  let xs: Vec<int> = Vec.new();
+  let xs: Vec<int> = Vec::new();
   xs = xs.push(1);
   xs = xs.push(2);
   let doubled: Vec<int> = xs.map(double);
@@ -480,7 +480,7 @@ use std;
 use std::dynamic::Vec;
 fn even(x: int) -> bool { return x % 2 == 0; };
 fn main() {
-  let xs: Vec<int> = Vec.new();
+  let xs: Vec<int> = Vec::new();
   xs = xs.push(1);
   xs = xs.push(2);
   xs = xs.push(3);
@@ -509,7 +509,7 @@ use std;
 use std::dynamic::Vec;
 fn add(acc: int, x: int) -> int { return acc + x; };
 fn main() {
-  let xs: Vec<int> = Vec.new();
+  let xs: Vec<int> = Vec::new();
   xs = xs.push(1);
   xs = xs.push(2);
   xs = xs.push(3);
@@ -534,7 +534,7 @@ use std;
 use std::dynamic::Vec;
 fn show(x: int) { std::print("@(x)"); };
 fn main() {
-  let xs: Vec<int> = Vec.new();
+  let xs: Vec<int> = Vec::new();
   xs = xs.push(1);
   xs = xs.push(2);
   xs.each(show);   # 1
@@ -559,7 +559,7 @@ use std;
 use std::dynamic::Vec;
 fn even(x: int) -> bool { return x % 2 == 0; };
 fn main() {
-  let xs: Vec<int> = Vec.new();
+  let xs: Vec<int> = Vec::new();
   xs = xs.push(1);
   xs = xs.push(2);
   xs = xs.push(3);
@@ -586,7 +586,7 @@ use std;
 use std::dynamic::Vec;
 fn greater(a: int, b: int) -> bool { return a > b; };
 fn main() {
-  let xs: Vec<int> = Vec.new();
+  let xs: Vec<int> = Vec::new();
   xs = xs.push(1);
   xs = xs.push(3);
   xs = xs.push(2);
@@ -610,7 +610,7 @@ items.sort() -> Vec<txt>
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<txt> = Vec.new();
+  let xs: Vec<txt> = Vec::new();
   xs = xs.push("c");
   xs = xs.push("a");
   xs = xs.push("b");
@@ -634,7 +634,7 @@ items.dedup() -> Vec<T>
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<txt> = Vec.new();
+  let xs: Vec<txt> = Vec::new();
   xs = xs.push("a");
   xs = xs.push("a");
   xs = xs.push("b");
@@ -658,7 +658,7 @@ items.join(separator: txt) -> txt
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let parts: Vec<txt> = Vec.new();
+  let parts: Vec<txt> = Vec::new();
   parts = parts.push("a");
   parts = parts.push("b");
   std::print(parts.join("-"));   # a-b

@@ -20,23 +20,23 @@ alone ([Methods](/concepts/methods/) covers reachability).
 
 ## Building a map
 
-A map starts empty with `HashMap.new()` and grows with `insert`:
+A map starts empty with `HashMap::new()` and grows with `insert`:
 
 ```kiru
 use std;
 use std::dynamic::HashMap;
 
 fn main() {
-  let env: HashMap<txt, txt> = HashMap.new();
+  let env: HashMap<txt, txt> = HashMap::new();
   env = env.insert("RUST_BACKTRACE", "1");
   env = env.insert("CARGO_TERM_COLOR", "never");
   std::print(env.get_or("RUST_BACKTRACE", "unset"));   # 1
 };
 ```
 
-`HashMap.new()` has no argument, so `K` and `V` come from the type the call is
+`HashMap::new()` has no argument, so `K` and `V` come from the type the call is
 checked against — here the annotation `HashMap<txt, txt>`. A call uses its
-expected type, so `let env: HashMap<txt, txt> = HashMap.new();` binds both
+expected type, so `let env: HashMap<txt, txt> = HashMap::new();` binds both
 parameters; without an annotation there is nothing to fix them and the call is
 an error. [Generics](/concepts/generics/) covers inference.
 
@@ -51,7 +51,7 @@ use std;
 use std::dynamic::HashMap;
 
 fn main() {
-  let env: HashMap<txt, txt> = HashMap.new();
+  let env: HashMap<txt, txt> = HashMap::new();
   env = env.insert("A", "1");
   std::print(env.get("A"));                  # 1
   std::print(env.get_or("B", "(unset)"));    # (unset)
@@ -73,7 +73,7 @@ use std;
 use std::dynamic::HashMap;
 
 fn main() {
-  let env: HashMap<txt, txt> = HashMap.new();
+  let env: HashMap<txt, txt> = HashMap::new();
   env = env.insert("RUST_BACKTRACE", "1");        # adds a key
   env = env.insert("RUST_BACKTRACE", "0");        # replaces the value
   env = env.insert("CARGO_TERM_COLOR", "never");  # adds another key
@@ -101,7 +101,7 @@ use std::dynamic::HashMap;
 use std::dynamic::Vec;
 
 fn main() {
-  let env: HashMap<txt, txt> = HashMap.new();
+  let env: HashMap<txt, txt> = HashMap::new();
   env = env.insert("A", "1");
   env = env.insert("B", "2");
   let keys: Vec<txt> = env.keys().sort();
@@ -122,7 +122,7 @@ use std;
 use std::dynamic::Vec;
 
 fn main() {
-  let tags: Vec<txt> = Vec.new().push("b").push("a").push("b");
+  let tags: Vec<txt> = Vec::new().push("b").push("a").push("b");
   let unique: Vec<txt> = tags.sort().dedup();
   std::print(unique.join(","));   # a,b
 };

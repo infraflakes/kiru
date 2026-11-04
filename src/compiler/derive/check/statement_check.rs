@@ -95,6 +95,7 @@ impl<'a> Checker<'a> {
         type_id: DeclarationId,
         name: &str,
         public: bool,
+        separator: &str,
         span: Span,
     ) -> Result<(), Diagnostic> {
         let declaration = self.model.declaration(type_id);
@@ -102,7 +103,10 @@ impl<'a> Checker<'a> {
             return Ok(());
         }
         let namespace = self.namespace_name(declaration.namespace);
-        Err(self.error(span, private_member(&declaration.name, name, &namespace)))
+        Err(self.error(
+            span,
+            private_member(&declaration.name, name, &namespace, separator),
+        ))
     }
 
     /// The namespace path for a diagnostic: the root namespace has no path.
@@ -262,7 +266,7 @@ impl<'a> Checker<'a> {
                 let Some(field_decl) = rec_field(self.model.declarations(), id, field) else {
                     return Err(self.error(name_span, format!("`{name}` has no field `{field}`")));
                 };
-                self.check_member(id, field, field_decl.public, name_span)?;
+                self.check_member(id, field, field_decl.public, ".", name_span)?;
                 let ty = substitute(
                     &field_decl.ty,
                     self.model.declarations(),

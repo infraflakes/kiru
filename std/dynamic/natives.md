@@ -4,7 +4,7 @@ The runtime keeps two containers itself: the vec and the hash map. Each is a
 declared `rec` in this namespace, and its operations are the natives below. A
 call reaches one as `std::dynamic::name(...)`, or as a method on its receiver:
 `xs.at(index)`, `m.insert(key, value)`. A `new` is an associated function,
-reached as `std::dynamic::Vec.new()` or `std::dynamic::HashMap.new()`.
+reached as `std::dynamic::Vec::new()` or `std::dynamic::HashMap::new()`.
 
 ## The vec
 
@@ -28,7 +28,7 @@ an entry is stored under that equality. A key may be any value.
   with `value` stored under `key`. An existing key keeps its place and its
   value is replaced. Returns the new map.
 - `find(self: HashMap<K, V>, key: K) -> Option<V>`: the value stored under
-  `key`, or `std::Option.none` when the key is absent. Returns the option.
+  `key`, or `std::Option::none` when the key is absent. Returns the option.
   `get`, `get_or`, and `contains` are kiru over this one lookup.
 - `remove(self: HashMap<K, V>, key: K) -> HashMap<K, V>`: a new map without
   `key`. A key that is absent leaves the map unchanged. Returns the new map.

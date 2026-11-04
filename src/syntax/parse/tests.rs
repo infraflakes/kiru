@@ -83,7 +83,7 @@ fn expect_rejections(cases: &[(&str, &str, &str)]) {
 #[test]
 fn rejects_index_assignment() {
     // Brackets open a closure's parameter list only: `xs[i] = v` is not a form.
-    let message = parse_error("fn main() { let xs: Vec<int> = Vec.new(); xs[0] = 1; };");
+    let message = parse_error("fn main() { let xs: Vec<int> = Vec::new(); xs[0] = 1; };");
     assert_eq!(message, "expected `;` after the expression, found `[`");
 }
 
@@ -600,7 +600,7 @@ fn parses_a_no_value_function_type() {
 fn parses_an_impl_block() {
     let file = parse(
         "impl Vec {\n\
-           pub fn new<T>() -> Vec<T> { return Vec.new(); };\n\
+           pub fn new<T>() -> Vec<T> { return Vec::new(); };\n\
            fn push<T>(self: Vec<T>, item: T) -> Vec<T> { return self; };\n\
          };",
     );

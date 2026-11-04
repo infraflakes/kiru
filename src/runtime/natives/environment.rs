@@ -3,7 +3,7 @@
 use crate::runtime::Value;
 use crate::runtime::natives::{option_none, option_some};
 
-/// The value of an environment variable, or `std::Option.none` when it is
+/// The value of an environment variable, or `std::Option::none` when it is
 /// unset. An unset variable is not empty text.
 pub(crate) fn var(name: &str) -> Value {
     match std::env::var(name) {

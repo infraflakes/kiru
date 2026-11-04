@@ -234,8 +234,8 @@ No pass writes the candidate into the body. The call site keeps its written path
 
 The same shape handles:
 
-- a bound function value (`Type.name`),
-- an associated function (`Type.name(...)`),
+- a bound function value (`Type::name`),
+- an associated function (`Type::name(...)`),
 - a plain call,
 - a use delivery,
 - a type annotation.

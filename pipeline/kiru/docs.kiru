@@ -1,14 +1,14 @@
 use std::dynamic::Vec;
 
 fn build_docs(docs: Project) -> int {
-  let steps: Vec<txt> = Vec.new()
+  let steps: Vec<txt> = Vec::new()
     .push("bun install --frozen-lockfile")
     .push("bun run build");
   return run_steps(docs, steps);
 };
 
 fn check_docs(docs: Project) -> int {
-  let steps: Vec<txt> = Vec.new()
+  let steps: Vec<txt> = Vec::new()
     .push("bun run check")
     .push("bun run types");
   return run_steps(docs, steps);
@@ -19,7 +19,7 @@ fn format_docs(docs: Project) -> int {
 };
 
 fn update_docs(docs: Project) -> int {
-  let steps: Vec<txt> = Vec.new()
+  let steps: Vec<txt> = Vec::new()
     .push("bun update")
     .push("biome migrate");
   return run_steps(docs, steps);

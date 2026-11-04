@@ -9,7 +9,7 @@
 # reached through its absolute path.
 
 impl txt {
-  # The byte index of the first occurrence of `needle`, or `std::Option.none`
+  # The byte index of the first occurrence of `needle`, or `std::Option::none`
   # when it is not present. The kernel native `std::text::memchr` returns the
   # option itself, not a `-1` sentinel, so this is the kernel under the
   # method's name.
@@ -54,14 +54,14 @@ impl txt {
   pub fn number(self: txt) -> std::Option<int> {
     let count: int = std::text::strlen(self);
     match count {
-      0 => { return std::Option.none; };
+      0 => { return std::Option::none; };
       _ => {};
     };
     # 45 is `-`.
     let negative: bool = std::text::byte_at(self, 0) == 45;
     let start: int = match negative { true => 1; false => 0; };
     match start == count {
-      true => { return std::Option.none; };
+      true => { return std::Option::none; };
       _ => {};
     };
     let value: int = 0;
@@ -72,22 +72,22 @@ impl txt {
       let digit: int = std::text::byte_at(self, index);
       match digit >= 48 && digit <= 57 {
         true => {};
-        false => { return std::Option.none; };
+        false => { return std::Option::none; };
       };
       value = value * 10 + (digit - 48);
       index = index + 1;
     };
     match negative {
-      true => { return std::Option.some(-value); };
-      _ => { return std::Option.some(value); };
+      true => { return std::Option::some(-value); };
+      _ => { return std::Option::some(value); };
     };
   };
 
   # Whether `self` starts with `prefix`: the first occurrence is at index zero.
   pub fn starts_with(self: txt, prefix: txt) -> bool {
     let starts: bool = match std::text::find(self, prefix) {
-      std::Option.some(index) => index == 0;
-      std::Option.none => false;
+      std::Option::some(index) => index == 0;
+      std::Option::none => false;
     };
     return starts;
   };
@@ -136,7 +136,7 @@ impl txt {
   # Split `self` into a vec of lines. A trailing newline does not produce a
   # trailing empty element.
   pub fn lines(self: txt) -> std::dynamic::Vec<txt> {
-    let result: std::dynamic::Vec<txt> = std::dynamic::Vec.new();
+    let result: std::dynamic::Vec<txt> = std::dynamic::Vec::new();
     let pending: txt = "";
     let first: bool = true;
     let parts: std::dynamic::Vec<txt> = std::text::split(self, "\n");
@@ -171,18 +171,18 @@ impl txt {
       _ => {};
     };
     let count: int = std::text::strlen(self);
-    let result: std::dynamic::Vec<txt> = std::dynamic::Vec.new();
+    let result: std::dynamic::Vec<txt> = std::dynamic::Vec::new();
     let index: int = 0;
     for {
       match index <= count { false => { break; }; true => {}; };
       let rest: txt = std::text::substr(self, index, count);
       let found: std::Option<int> = std::text::memchr(rest, separator);
       match found {
-        std::Option.some(offset) => {
+        std::Option::some(offset) => {
           result = std::dynamic::push(result, std::text::substr(self, index, index + offset));
           index = index + offset + std::text::strlen(separator);
         };
-        std::Option.none => {
+        std::Option::none => {
           result = std::dynamic::push(result, std::text::substr(self, index, count));
           break;
         };

@@ -18,7 +18,7 @@ is kiru.
   `.` and `..`, in sorted order. A directory that cannot be read stops the
   run. Returns the names.
 - `getenv(name: txt) -> Option<txt>`: the value of the environment variable
-  `name`, or `std::Option.none` when it is unset. Returns the value.
+  `name`, or `std::Option::none` when it is unset. Returns the value.
 - `getcwd() -> txt`: the process's current working directory. Returns the
   path.
 - `isatty(file_descriptor: int) -> bool`: whether `file_descriptor` is a

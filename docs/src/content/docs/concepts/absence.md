@@ -27,8 +27,8 @@ use std::text;
 fn main() {
   let value: std::Option<int> = "a=b".find("=");
   let index: int = match value {
-    std::Option.some(index) => index;
-    std::Option.none => -1;
+    std::Option::some(index) => index;
+    std::Option::none => -1;
   };
   std::print("@(index)");   # 1
 };
@@ -67,9 +67,9 @@ like any other name.
 
 The absence shows up wherever a lookup can miss:
 
-- `std::syscalls::getenv(name)` is `Option<txt>`, and `Option.none` when the
+- `std::syscalls::getenv(name)` is `Option<txt>`, and `Option::none` when the
   variable is unset ([std::syscalls](/stdlib/syscalls/) covers it);
-- `text.find(needle)` is `Option<int>`, and `Option.none` when the needle is
+- `text.find(needle)` is `Option<int>`, and `Option::none` when the needle is
   absent ([Text](/concepts/text/) covers the byte index).
 
 A call that returns no value produces no value at all, so it is not an `Option`;

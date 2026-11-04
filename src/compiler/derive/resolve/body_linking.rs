@@ -17,6 +17,7 @@ use crate::compiler::{Report, ReportRule};
 use crate::syntax::Span;
 use crate::syntax::{Expression as ParsedExpression, Statement as ParsedStatement, TypeExpr};
 
+use super::binding_linking::QualifiedMember;
 use super::builder::{Builder, Pending};
 use super::name_resolution::CalleeLink;
 use super::scopes::{Context, Scopes};
@@ -69,6 +70,9 @@ fn prepare(loaded: &LoadedProgram) -> Result<Builder, Diagnostic> {
     // The plain functions a `use` brings are registered by now, so the second
     // pass records the `use`s that reached nothing above.
     builder.index_uses(loaded);
+    // A namespace and a type share one `::` path pool, so their names cannot
+    // collide. The check runs once every namespace and type exists.
+    builder.check_type_namespace_collisions()?;
     Ok(builder)
 }
 
@@ -431,38 +435,15 @@ impl Builder {
                 arguments,
                 span,
             } => {
-                if let Some(variant) = self.variant_member(context, receiver, method)? {
-                    let ty = variant.ty;
-                    let index = variant.index;
-                    let mut payload = Vec::new();
-                    for argument in arguments {
-                        payload.push(self.link_expression(argument, context)?);
-                    }
-                    return Ok(Expression::Variant {
-                        ty,
-                        index,
-                        payload,
-                        span: *span,
-                    });
-                }
-                // A type name as the receiver reaches an associated function:
-                // the function in the type's `impl` block whose first parameter
-                // is not the type. The type is not a value, so it is not an
-                // argument.
-                if let Some(declaration) = self.associated_member(context, receiver, method)? {
-                    let mut linked_arguments = Vec::new();
-                    for argument in arguments {
-                        linked_arguments.push(self.link_expression(argument, context)?);
-                    }
-                    return Ok(Expression::Call {
-                        callee: Box::new(Expression::Reference {
-                            declaration,
-                            span: *method_span,
-                        }),
-                        callee_span: *method_span,
-                        arguments: linked_arguments,
-                        span: *span,
-                    });
+                if let Some(type_path) = self.type_path_of(context, receiver) {
+                    return Err(Diagnostic::new(
+                        &self.files[context.file.0].path,
+                        *method_span,
+                        format!(
+                            "a type is not a value; write `{}::{method}`",
+                            crate::compiler::graph::join_path(type_path)
+                        ),
+                    ));
                 }
                 let linked = self.link_expression(receiver, context)?;
                 // A `receiver.name(args)` call is a call to a function named
@@ -487,6 +468,20 @@ impl Builder {
                 }
             }
             ParsedExpression::Name { path, span } => {
+                if let Some(member) = self.qualified_member(context, path, *span)? {
+                    return Ok(match member {
+                        QualifiedMember::Variant { ty, index } => Expression::Variant {
+                            ty,
+                            index,
+                            payload: Vec::new(),
+                            span: *span,
+                        },
+                        QualifiedMember::Function(declaration) => Expression::Reference {
+                            declaration,
+                            span: *span,
+                        },
+                    });
+                }
                 let declaration = self.resolve(context, path, *span)?;
                 Expression::Reference {
                     declaration,
@@ -505,6 +500,29 @@ impl Builder {
                 arguments,
                 span,
             } => {
+                if let Some(member) = self.qualified_member(context, callee, *callee_span)? {
+                    let mut linked_arguments = Vec::new();
+                    for argument in arguments {
+                        linked_arguments.push(self.link_expression(argument, context)?);
+                    }
+                    return Ok(match member {
+                        QualifiedMember::Variant { ty, index } => Expression::Variant {
+                            ty,
+                            index,
+                            payload: linked_arguments,
+                            span: *span,
+                        },
+                        QualifiedMember::Function(declaration) => Expression::Call {
+                            callee: Box::new(Expression::Reference {
+                                declaration,
+                                span: *callee_span,
+                            }),
+                            callee_span: *callee_span,
+                            arguments: linked_arguments,
+                            span: *span,
+                        },
+                    });
+                }
                 let mut linked_arguments = Vec::new();
                 for argument in arguments {
                     linked_arguments.push(self.link_expression(argument, context)?);
@@ -537,21 +555,15 @@ impl Builder {
                 name_span,
                 span,
             } => {
-                // A bound function reached through its type as a value:
-                // `Type.name` is the function value, with no call parentheses.
-                if let Some(declaration) = self.bound_member(context, target, name)? {
-                    return Ok(Expression::Reference {
-                        declaration,
-                        span: *name_span,
-                    });
-                }
-                if let Some(variant) = self.variant_member(context, target, name)? {
-                    return Ok(Expression::Variant {
-                        ty: variant.ty,
-                        index: variant.index,
-                        payload: Vec::new(),
-                        span: *span,
-                    });
+                if let Some(type_path) = self.type_path_of(context, target) {
+                    return Err(Diagnostic::new(
+                        &self.files[context.file.0].path,
+                        *name_span,
+                        format!(
+                            "a type is not a value; write `{}::{name}`",
+                            crate::compiler::graph::join_path(type_path)
+                        ),
+                    ));
                 }
                 Expression::Field {
                     target: Box::new(self.link_expression(target, context)?),

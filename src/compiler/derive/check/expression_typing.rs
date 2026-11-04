@@ -220,7 +220,7 @@ impl<'a> Checker<'a> {
                             let message = format!("`{}` has no field `{name}`", declaration.name);
                             return Err(self.error(*name_span, message));
                         };
-                        self.check_member(id, name, field.public, *name_span)?;
+                        self.check_member(id, name, field.public, ".", *name_span)?;
                         let ty = substitute(
                             &field.ty,
                             self.model.declarations(),
@@ -865,7 +865,7 @@ impl<'a> Checker<'a> {
             let Some(field) = fields.iter().find(|field| &field.name == field_name) else {
                 return Err(self.error(span, format!("`{name}` is missing field `{field_name}`")));
             };
-            self.check_member(id, field_name, *public, field.name_span)?;
+            self.check_member(id, field_name, *public, ".", field.name_span)?;
             self.require(&field.value, field_ty)?;
         }
         for field in fields.iter() {
@@ -909,8 +909,8 @@ impl<'a> Checker<'a> {
                 variant.payload.clone(),
             )
         };
-        self.check_member(id, &variant_name, public, span)?;
-        let subject = format!("{name}.{variant_name}");
+        self.check_member(id, &variant_name, public, "::", span)?;
+        let subject = format!("{name}::{variant_name}");
         if let Some(message) = crate::compiler::diagnostic::variant_payload_count(
             &subject,
             declared.len(),

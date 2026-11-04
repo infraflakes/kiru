@@ -4,9 +4,10 @@
 //! `use` brings in by name; a qualified path starts at a tree name and walks
 //! from the root, or at a namespace-`use`'s qualifier. A method call is
 //! resolved by the check, which keys the method pool on the receiver's type
-//! head; a `Type.name(...)` call reads the associated-function pool by the
-//! type's head. A bound function is gated by `pub` alone, never by a `use`.
-//! Resolution is order-free: any declaration in the program may be named.
+//! head; a `Type::name(...)` call reads the type's bound functions, which the
+//! receiver's type head selects. A bound function is gated by `pub` alone,
+//! never by a `use`. Resolution is order-free: any declaration in the program
+//! may be named.
 
 use crate::compiler::Diagnostic;
 use crate::compiler::graph::TypeHead;

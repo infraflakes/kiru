@@ -53,9 +53,9 @@ pub fn command(name: txt) -> std::cli::Subcommand {
   return {
     name = name,
     about = "",
-    flags = std::dynamic::push(std::dynamic::Vec.new(), std::cli::help_flag()),
-    children = std::dynamic::Vec.new(),
-    action = std::cli::Context.no_action,
+    flags = std::dynamic::push(std::dynamic::Vec::new(), std::cli::help_flag()),
+    children = std::dynamic::Vec::new(),
+    action = std::cli::Context::no_action,
   };
 };
 
@@ -96,12 +96,12 @@ fn flag_named(flags: std::dynamic::Vec<std::cli::Flag>, word: txt) -> std::Optio
     match index < count { false => { break; }; true => {}; };
     let flag: std::cli::Flag = std::dynamic::at(flags, index);
     match flag.named(word) {
-      true => { return std::Option.some(flag); };
+      true => { return std::Option::some(flag); };
       _ => {};
     };
     index = index + 1;
   };
-  return std::Option.none;
+  return std::Option::none;
 };
 
 # The words a scan separates: flags the tree does not declare, and words that
@@ -116,8 +116,8 @@ rec WordScan {
 # it is neither a flag nor an argument.
 fn scan(words: std::dynamic::Vec<txt>, flags: std::dynamic::Vec<std::cli::Flag>) -> std::cli::WordScan {
   let out: std::cli::WordScan = {
-    unknown = std::dynamic::Vec.new(),
-    args = std::dynamic::Vec.new(),
+    unknown = std::dynamic::Vec::new(),
+    args = std::dynamic::Vec::new(),
   };
   let skip: bool = false;
   let index: int = 0;
@@ -131,13 +131,13 @@ fn scan(words: std::dynamic::Vec<txt>, flags: std::dynamic::Vec<std::cli::Flag>)
         match std::cli::is_flag(word) {
           true => {
             match std::cli::flag_named(flags, word) {
-              std::Option.some(flag) => {
+              std::Option::some(flag) => {
                 match flag.takes {
                   true => { skip = true; };
                   _ => {};
                 };
               };
-              std::Option.none => { out.unknown = std::dynamic::push(out.unknown, word); };
+              std::Option::none => { out.unknown = std::dynamic::push(out.unknown, word); };
             };
           };
           _ => { out.args = std::dynamic::push(out.args, word); };
@@ -150,14 +150,14 @@ fn scan(words: std::dynamic::Vec<txt>, flags: std::dynamic::Vec<std::cli::Flag>)
 };
 
 # The first flag in `words` that `flags` does not declare, or
-# `std::Option.none` when every flag is known.
+# `std::Option::none` when every flag is known.
 fn unknown(words: std::dynamic::Vec<txt>, flags: std::dynamic::Vec<std::cli::Flag>) -> std::Option<txt> {
   let scanned: std::cli::WordScan = std::cli::scan(words, flags);
   match std::dynamic::len(scanned.unknown) > 0 {
-    true => { return std::Option.some(std::dynamic::at(scanned.unknown, 0)); };
+    true => { return std::Option::some(std::dynamic::at(scanned.unknown, 0)); };
     _ => {};
   };
-  return std::Option.none;
+  return std::Option::none;
 };
 
 # The word after `flag`, or the flag's fallback.
@@ -184,7 +184,7 @@ fn value_of(words: std::dynamic::Vec<txt>, flag: std::cli::Flag) -> txt {
 
 impl Context {
   # The action of a command that has none: report it and fail. It is a method,
-  # so its value is reached as `std::cli::Context.no_action`.
+  # so its value is reached as `std::cli::Context::no_action`.
   pub fn no_action(context: std::cli::Context) -> int {
     let line: txt = std::dynamic::join(context.path, " ");
     std::eprint("no action for `@(line)`");
@@ -217,8 +217,8 @@ impl Context {
   pub fn number(self: std::cli::Context, flag: std::cli::Flag) -> int {
     let raw: txt = std::cli::value_of(self.words, flag);
     match std::text::number(raw) {
-      std::Option.some(value) => { return value; };
-      std::Option.none => { std::eprint("`@(flag.name)` needs a whole number, found `@(raw)`"); };
+      std::Option::some(value) => { return value; };
+      std::Option::none => { std::eprint("`@(flag.name)` needs a whole number, found `@(raw)`"); };
     };
   };
 
@@ -314,20 +314,20 @@ impl Subcommand {
   # command path does not rebuild the word vec at every step.
   pub fn parse(self: std::cli::Subcommand, words: std::dynamic::Vec<txt>) -> int {
     let current: std::cli::Subcommand = self;
-    let path: std::dynamic::Vec<txt> = std::dynamic::push(std::dynamic::Vec.new(), self.name);
+    let path: std::dynamic::Vec<txt> = std::dynamic::push(std::dynamic::Vec::new(), self.name);
     let flags: std::dynamic::Vec<std::cli::Flag> = self.flags;
     let count: int = std::dynamic::len(words);
     let at: int = 0;
     for {
       match at < count { false => { break; }; true => {}; };
-      let child: std::Option<std::cli::Subcommand> = std::Option.none;
+      let child: std::Option<std::cli::Subcommand> = std::Option::none;
       let index: int = 0;
       let children: int = std::dynamic::len(current.children);
       for {
         match index < children { false => { break; }; true => {}; };
         let candidate: std::cli::Subcommand = std::dynamic::at(current.children, index);
         match candidate.name == std::dynamic::at(words, at) {
-          true => { child = std::Option.some(candidate); break; };
+          true => { child = std::Option::some(candidate); break; };
           _ => {};
         };
         index = index + 1;
@@ -335,8 +335,8 @@ impl Subcommand {
       match std::contains(child) {
         true => {
           current = match child {
-            std::Option.some(next) => next;
-            std::Option.none => current;
+            std::Option::some(next) => next;
+            std::Option::none => current;
           };
           path = std::dynamic::push(path, current.name);
           let flag_index: int = 0;
@@ -351,7 +351,7 @@ impl Subcommand {
         _ => { break; };
       };
     };
-    let rest: std::dynamic::Vec<txt> = std::dynamic::Vec.new();
+    let rest: std::dynamic::Vec<txt> = std::dynamic::Vec::new();
     let rest_index: int = 0;
     for {
       match rest_index < count { false => { break; }; true => {}; };
@@ -369,8 +369,8 @@ impl Subcommand {
     };
     let bad: std::Option<txt> = std::cli::unknown(rest, flags);
     match bad {
-      std::Option.none => {};
-      std::Option.some(word) => {
+      std::Option::none => {};
+      std::Option::some(word) => {
         let line: txt = std::cli::usage(current);
         std::eprint("unknown flag `@(word)`\n@(line)");
       };

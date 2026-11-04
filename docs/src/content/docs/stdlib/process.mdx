@@ -27,7 +27,7 @@ private, reached only through its methods.
 | `command.dir(path: txt) -> Command` | the working directory |
 | `command.env(name: txt, value: txt) -> Command` | export one variable |
 | `command.timeout(seconds: int) -> Command` | bound the run |
-| `command.stream(stream: std::process::Stream, target: txt) -> Command` | attach `Stream.stdin`, `Stream.stdout`, or `Stream.stderr` to a path |
+| `command.stream(stream: std::process::Stream, target: txt) -> Command` | attach `Stream::stdin`, `Stream::stdout`, or `Stream::stderr` to a path |
 | `command.run() -> int` | run and return the exit code |
 | `command.capture() -> std::process::Output` | run and return `code`, `out`, and `err` |
 
@@ -86,7 +86,7 @@ use std;
 use std::process;
 use std::dynamic::Vec;
 fn main() {
-  let argv: Vec<txt> = Vec.new();
+  let argv: Vec<txt> = Vec::new();
   argv = argv.push("/bin/true");
   let pid: int = std::syscalls::posix_spawn(argv);
   std::print("@(std::process::wait_for(pid))");
@@ -113,7 +113,7 @@ use std;
 use std::process;
 use std::dynamic::Vec;
 fn main() {
-  let argv: Vec<txt> = Vec.new();
+  let argv: Vec<txt> = Vec::new();
   argv = argv.push("sleep");
   argv = argv.push("5");
   let pid: int = std::syscalls::posix_spawn(argv);

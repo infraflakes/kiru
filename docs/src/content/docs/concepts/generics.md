@@ -86,17 +86,17 @@ enum Choice<T> { just(T), nothing };
 
 fn or(value: Choice<int>, fallback: int) -> int {
   let result: int = match value {
-    Choice.just(x) => x;      # x is int
-    Choice.nothing => fallback;
+    Choice::just(x) => x;      # x is int
+    Choice::nothing => fallback;
   };
   return result;
 };
 
-fn main() { std::print("@(or(Choice.just(5), 0))"); };
+fn main() { std::print("@(or(Choice::just(5), 0))"); };
 ```
 
 Because a variant's payload type is only known once the type arguments are, a
-construction like `Choice.just(5)` needs an expected type to fix `T`: an
+construction like `Choice::just(5)` needs an expected type to fix `T`: an
 annotation, a parameter, or a return type. On its own it is an error.
 
 ## Generic functions
@@ -124,7 +124,7 @@ fn length<T>(xs: Vec<T>) -> int {
 fn main() {
   std::print("@(identity(5))");        # T is int
   std::print(identity("hi"));          # T is txt
-  let xs: Vec<int> = Vec.new();
+  let xs: Vec<int> = Vec::new();
   xs = xs.push(1);
   xs = xs.push(2);
   xs = xs.push(3);

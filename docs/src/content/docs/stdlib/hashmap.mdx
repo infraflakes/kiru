@@ -8,7 +8,7 @@ equality. It is a built-in named type, not an intrinsic: the runtime keeps its
 value as a table, so it has no fields and no literal, and it is built and read
 only through the methods below. A method whose first parameter is a
 `HashMap<K, V>` is callable as `m.name(...)`; an associated function is reached
-as `HashMap.name(...)`. `use std::dynamic;` brings the type and its methods into
+as `HashMap::name(...)`. `use std::dynamic;` brings the type and its methods into
 scope, and a qualified `std::dynamic::HashMap` names the type without it.
 [Hash maps](/concepts/hash-maps/) covers the narrative.
 
@@ -19,7 +19,7 @@ be stable sorts what it reads.
 <summary><code>new</code> — the empty map</summary>
 
 ```text
-std::dynamic::HashMap.new<K, V>() -> HashMap<K, V>
+std::dynamic::HashMap::new<K, V>() -> HashMap<K, V>
 ```
 
 - Returns a map with no entries.
@@ -31,7 +31,7 @@ its expected type: write the annotation and it works.
 use std;
 use std::dynamic::HashMap;
 fn main() {
-  let m: HashMap<txt, txt> = HashMap.new();
+  let m: HashMap<txt, txt> = HashMap::new();
   std::print("@(m.len())");   # 0
 };
 ```
@@ -54,7 +54,7 @@ map.insert(key: K, value: V) -> HashMap<K, V>
 use std;
 use std::dynamic::HashMap;
 fn main() {
-  let m: HashMap<txt, txt> = HashMap.new();
+  let m: HashMap<txt, txt> = HashMap::new();
   m = m.insert("a", "1");
   let n: HashMap<txt, txt> = m.insert("b", "2");
   std::print("@(n.len())");   # 2
@@ -79,7 +79,7 @@ map.get(key: K) -> V
 use std;
 use std::dynamic::HashMap;
 fn main() {
-  let m: HashMap<txt, txt> = HashMap.new();
+  let m: HashMap<txt, txt> = HashMap::new();
   m = m.insert("a", "1");
   std::print(m.get("a"));   # 1
 };
@@ -103,7 +103,7 @@ map.get_or(key: K, fallback: V) -> V
 use std;
 use std::dynamic::HashMap;
 fn main() {
-  let m: HashMap<txt, txt> = HashMap.new();
+  let m: HashMap<txt, txt> = HashMap::new();
   m = m.insert("a", "1");
   std::print(m.get_or("a", "missing"));   # 1
   std::print(m.get_or("z", "missing"));   # missing
@@ -120,8 +120,8 @@ map.find(key: K) -> Option<V>
 ```
 
 - `key` — the key to read.
-- Returns `std::Option.some(value)` for a present key and
-  `std::Option.none` for an absent one.
+- Returns `std::Option::some(value)` for a present key and
+  `std::Option::none` for an absent one.
 - `get`, `get_or`, and `contains` are written on this one lookup, so a caller
   that must branch on presence can use it directly.
 
@@ -130,10 +130,10 @@ use std;
 use std::dynamic::HashMap;
 use std::Option;
 fn main() {
-  let m: HashMap<txt, txt> = HashMap.new();
+  let m: HashMap<txt, txt> = HashMap::new();
   m = m.insert("a", "1");
   let found: Option<txt> = m.find("a");
-  std::print(match found { Option.some(v) => v; Option.none => "missing"; });   # 1
+  std::print(match found { Option::some(v) => v; Option::none => "missing"; });   # 1
 };
 ```
 
@@ -153,7 +153,7 @@ map.contains(key: K) -> bool
 use std;
 use std::dynamic::HashMap;
 fn main() {
-  let m: HashMap<txt, txt> = HashMap.new();
+  let m: HashMap<txt, txt> = HashMap::new();
   m = m.insert("a", "1");
   std::print("@(m.contains("a")) @(m.contains("z"))");   # true false
 };
@@ -176,7 +176,7 @@ map.remove(key: K) -> HashMap<K, V>
 use std;
 use std::dynamic::HashMap;
 fn main() {
-  let m: HashMap<txt, txt> = HashMap.new();
+  let m: HashMap<txt, txt> = HashMap::new();
   m = m.insert("a", "1");
   m = m.insert("b", "2");
   m = m.remove("a");
@@ -203,7 +203,7 @@ use std;
 use std::dynamic::HashMap;
 use std::dynamic::Vec;
 fn main() {
-  let m: HashMap<txt, txt> = HashMap.new();
+  let m: HashMap<txt, txt> = HashMap::new();
   m = m.insert("a", "1");
   m = m.insert("b", "2");
   let keys: Vec<txt> = m.keys().sort();
@@ -228,7 +228,7 @@ map.values() -> Vec<V>
 use std;
 use std::dynamic::HashMap;
 fn main() {
-  let m: HashMap<txt, txt> = HashMap.new();
+  let m: HashMap<txt, txt> = HashMap::new();
   m = m.insert("a", "1");
   std::print(m.values().at(0));   # 1
 };
@@ -249,7 +249,7 @@ map.len() -> int
 use std;
 use std::dynamic::HashMap;
 fn main() {
-  let m: HashMap<txt, txt> = HashMap.new();
+  let m: HashMap<txt, txt> = HashMap::new();
   m = m.insert("a", "1");
   m = m.insert("b", "2");
   std::print("@(m.len())");   # 2

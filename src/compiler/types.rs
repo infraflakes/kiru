@@ -219,7 +219,7 @@ mod tests {
     #[test]
     fn a_declared_type_reads_the_shape_its_declaration_says() {
         let program = checked_program(
-            "enum Color { Red, Green };\nrec Point { x: int };\nfn main() { let xs: std::dynamic::Vec<int> = std::dynamic::Vec.new(); return; };",
+            "enum Color { Red, Green };\nrec Point { x: int };\nfn main() { let xs: std::dynamic::Vec<int> = std::dynamic::Vec::new(); return; };",
         );
         let color = program.declarations.iter().position(|declaration| {
             declaration
@@ -278,7 +278,7 @@ mod tests {
     #[test]
     fn vec_is_a_rec_and_is_dispatchable() {
         let program = checked_program(
-            "fn main() { let xs: std::dynamic::Vec<int> = std::dynamic::Vec.new(); return; };",
+            "fn main() { let xs: std::dynamic::Vec<int> = std::dynamic::Vec::new(); return; };",
         );
         let vec = program
             .list_type()
@@ -309,7 +309,7 @@ mod tests {
     fn declarations_take_their_own_groups() {
         let program = checked_program(
             "rec Point { x: int }; enum Choice { a, b }; \
-             fn main() { let p: Point = { x = 1 }; let c: Choice = Choice.a; return; };",
+             fn main() { let p: Point = { x = 1 }; let c: Choice = Choice::a; return; };",
         );
         let point = program
             .declarations

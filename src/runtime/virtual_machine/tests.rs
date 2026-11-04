@@ -175,7 +175,7 @@ fn match_on_records_and_lists_produces_values() {
         ),
         (
             "a Vec subject matches a reference",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let s: Vec<txt> = Vec.new().push(\"a\").push(\"b\"); let p: Vec<txt> = Vec.new().push(\"a\").push(\"b\"); let label: txt = match s { p => \"hit\"; _ => \"miss\"; }; return label; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let s: Vec<txt> = Vec::new().push(\"a\").push(\"b\"); let p: Vec<txt> = Vec::new().push(\"a\").push(\"b\"); let label: txt = match s { p => \"hit\"; _ => \"miss\"; }; return label; };\nfn main() {};",
             "f",
             "hit",
         ),
@@ -193,7 +193,7 @@ fn match_on_records_and_lists_produces_values() {
         ),
         (
             "a Vec reference is a pattern",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let s: Vec<txt> = Vec.new().push(\"a\"); let p: Vec<txt> = Vec.new().push(\"a\"); let label: txt = match s { p => \"hit\"; _ => \"miss\"; }; return label; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let s: Vec<txt> = Vec::new().push(\"a\"); let p: Vec<txt> = Vec::new().push(\"a\"); let label: txt = match s { p => \"hit\"; _ => \"miss\"; }; return label; };\nfn main() {};",
             "f",
             "hit",
         ),
@@ -231,7 +231,7 @@ fn lists_and_for_evaluate() {
     expect_text_results(&[
         (
             "a Vec joins",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { return Vec.new().push(\"a\").push(\"b\").join(\"-\"); };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { return Vec::new().push(\"a\").push(\"b\").join(\"-\"); };\nfn main() {};",
             "f",
             "a-b",
         ),
@@ -249,19 +249,19 @@ fn lists_and_for_evaluate() {
         ),
         (
             "an indexed loop accumulates over a Vec",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\").push(\"c\"); let out: txt = \"\"; let index: int = 0; let count: int = xs.len(); for { match index < count { false => { break; }; true => {}; }; let x: txt = xs.at(index); out = \"@(out)@(x)\"; index = index + 1; }; return out; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec::new().push(\"a\").push(\"b\").push(\"c\"); let out: txt = \"\"; let index: int = 0; let count: int = xs.len(); for { match index < count { false => { break; }; true => {}; }; let x: txt = xs.at(index); out = \"@(out)@(x)\"; index = index + 1; }; return out; };\nfn main() {};",
             "f",
             "abc",
         ),
         (
             "break ends the loop",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\").push(\"c\"); let out: txt = \"\"; let index: int = 0; let count: int = xs.len(); for { match index < count { false => { break; }; true => {}; }; let x: txt = xs.at(index); out = \"@(out)@(x)\"; break; }; return out; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec::new().push(\"a\").push(\"b\").push(\"c\"); let out: txt = \"\"; let index: int = 0; let count: int = xs.len(); for { match index < count { false => { break; }; true => {}; }; let x: txt = xs.at(index); out = \"@(out)@(x)\"; break; }; return out; };\nfn main() {};",
             "f",
             "a",
         ),
         (
             "a match default skips an element",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\").push(\"c\"); let out: txt = \"\"; let index: int = 0; let count: int = xs.len(); for { match index < count { false => { break; }; true => {}; }; let x: txt = xs.at(index); match x { \"b\" => {}; _ => { out = \"@(out)@(x)\"; }; }; index = index + 1; }; return out; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec::new().push(\"a\").push(\"b\").push(\"c\"); let out: txt = \"\"; let index: int = 0; let count: int = xs.len(); for { match index < count { false => { break; }; true => {}; }; let x: txt = xs.at(index); match x { \"b\" => {}; _ => { out = \"@(out)@(x)\"; }; }; index = index + 1; }; return out; };\nfn main() {};",
             "f",
             "ac",
         ),
@@ -273,7 +273,7 @@ fn lists_and_for_evaluate() {
         ),
         (
             "an empty Vec runs the body zero times",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new(); let out: txt = \"x\"; let index: int = 0; let count: int = xs.len(); for { match index < count { false => { break; }; true => {}; }; out = \"y\"; index = index + 1; }; return out; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec::new(); let out: txt = \"x\"; let index: int = 0; let count: int = xs.len(); for { match index < count { false => { break; }; true => {}; }; out = \"y\"; index = index + 1; }; return out; };\nfn main() {};",
             "f",
             "x",
         ),
@@ -285,7 +285,7 @@ fn lists_and_for_evaluate() {
         ),
         (
             "a module Vec value is read",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nlet xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\");\nfn f() -> txt { return xs.join(\"\"); };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nlet xs: Vec<txt> = Vec::new().push(\"a\").push(\"b\");\nfn f() -> txt { return xs.join(\"\"); };\nfn main() {};",
             "f",
             "ab",
         ),
@@ -297,19 +297,19 @@ fn typed_lists_evaluate() {
     expect_text_results(&[
         (
             "a Vec of ints sums over a loop",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3); let s: int = 0; let index: int = 0; let count: int = xs.len(); for { match index < count { false => { break; }; true => {}; }; s = s + xs.at(index); index = index + 1; }; return \"@(s)\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec::new().push(1).push(2).push(3); let s: int = 0; let index: int = 0; let count: int = xs.len(); for { match index < count { false => { break; }; true => {}; }; s = s + xs.at(index); index = index + 1; }; return \"@(s)\"; };\nfn main() {};",
             "f",
             "6",
         ),
         (
             "a Vec of declared recs keeps field access in a loop",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Task { name: txt, weight: int };\nfn f() -> txt { let a: Task = { name = \"a\", weight = 2 }; let b: Task = { name = \"b\", weight = 3 }; let tasks: Vec<Task> = Vec.new().push(a).push(b); let s: int = 0; let index: int = 0; let count: int = tasks.len(); for { match index < count { false => { break; }; true => {}; }; let t: Task = tasks.at(index); s = s + t.weight; index = index + 1; }; return \"@(s)\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Task { name: txt, weight: int };\nfn f() -> txt { let a: Task = { name = \"a\", weight = 2 }; let b: Task = { name = \"b\", weight = 3 }; let tasks: Vec<Task> = Vec::new().push(a).push(b); let s: int = 0; let index: int = 0; let count: int = tasks.len(); for { match index < count { false => { break; }; true => {}; }; let t: Task = tasks.at(index); s = s + t.weight; index = index + 1; }; return \"@(s)\"; };\nfn main() {};",
             "f",
             "5",
         ),
         (
             "Vec values compare by element",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2); let ys: Vec<int> = Vec.new().push(1).push(2); let verdict: txt = match xs { ys => \"same\"; _ => \"diff\"; }; return verdict; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec::new().push(1).push(2); let ys: Vec<int> = Vec::new().push(1).push(2); let verdict: txt = match xs { ys => \"same\"; _ => \"diff\"; }; return verdict; };\nfn main() {};",
             "f",
             "same",
         ),
@@ -321,19 +321,19 @@ fn vec_access_evaluates() {
     expect_text_results(&[
         (
             "an element by index",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(10).push(20).push(30); return \"@(xs.at(1))\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec::new().push(10).push(20).push(30); return \"@(xs.at(1))\"; };\nfn main() {};",
             "f",
             "20",
         ),
         (
             "field access through an element",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec T { n: txt };\nfn f() -> txt { let a: T = { n = \"a\" }; let b: T = { n = \"b\" }; let xs: Vec<T> = Vec.new().push(a).push(b); return xs.at(1).n; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec T { n: txt };\nfn f() -> txt { let a: T = { n = \"a\" }; let b: T = { n = \"b\" }; let xs: Vec<T> = Vec::new().push(a).push(b); return xs.at(1).n; };\nfn main() {};",
             "f",
             "b",
         ),
         (
             "a variable index in a loop",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\").push(\"c\"); let out: txt = \"\"; let i: int = 0; for { out = \"@(out)@(xs.at(i))\"; i = i + 1; match i { 3 => { break; }; _ => {}; }; }; return out; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec::new().push(\"a\").push(\"b\").push(\"c\"); let out: txt = \"\"; let i: int = 0; for { out = \"@(out)@(xs.at(i))\"; i = i + 1; match i { 3 => { break; }; _ => {}; }; }; return out; };\nfn main() {};",
             "f",
             "abc",
         ),
@@ -345,25 +345,25 @@ fn enum_match_evaluates() {
     expect_text_results(&[
         (
             "a variant payload is bound in the arm",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nenum Shape { Dot, Circle(int) };\nfn f() -> txt { let s: Shape = Shape.Circle(4); let label: txt = match s { Shape.Circle(r) => \"@(r * r)\"; Shape.Dot => \"0\"; }; return label; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nenum Shape { Dot, Circle(int) };\nfn f() -> txt { let s: Shape = Shape::Circle(4); let label: txt = match s { Shape::Circle(r) => \"@(r * r)\"; Shape::Dot => \"0\"; }; return label; };\nfn main() {};",
             "f",
             "16",
         ),
         (
             "a payloadless variant matches by tag",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nenum Color { Red, Green, Blue };\nfn f() -> txt { let c: Color = Color.Green; let label: txt = match c { Color.Red => \"r\"; Color.Green => \"g\"; Color.Blue => \"b\"; }; return label; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nenum Color { Red, Green, Blue };\nfn f() -> txt { let c: Color = Color::Green; let label: txt = match c { Color::Red => \"r\"; Color::Green => \"g\"; Color::Blue => \"b\"; }; return label; };\nfn main() {};",
             "f",
             "g",
         ),
         (
             "a variant pattern ignores a payload with underscore",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nenum Shape { Circle(int), Rect(int, int) };\nfn f() -> txt { let s: Shape = Shape.Rect(2, 3); let label: txt = match s { Shape.Circle(_) => \"circle\"; Shape.Rect(w, _) => \"@(w)\"; }; return label; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nenum Shape { Circle(int), Rect(int, int) };\nfn f() -> txt { let s: Shape = Shape::Rect(2, 3); let label: txt = match s { Shape::Circle(_) => \"circle\"; Shape::Rect(w, _) => \"@(w)\"; }; return label; };\nfn main() {};",
             "f",
             "2",
         ),
         (
             "the default arm takes the rest",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nenum Color { Red, Green, Blue };\nfn f() -> txt { let c: Color = Color.Blue; let label: txt = match c { Color.Red => \"r\"; _ => \"other\"; }; return label; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nenum Color { Red, Green, Blue };\nfn f() -> txt { let c: Color = Color::Blue; let label: txt = match c { Color::Red => \"r\"; _ => \"other\"; }; return label; };\nfn main() {};",
             "f",
             "other",
         ),
@@ -381,7 +381,7 @@ fn generic_types_evaluate() {
         ),
         (
             "a generic enum binds a substituted payload",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nenum Option<T> { some(T), none };\nfn f() -> txt { let o: Option<int> = Option.some(9); let label: txt = match o { Option.some(x) => \"@(x)\"; Option.none => \"none\"; }; return label; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nenum Option<T> { some(T), none };\nfn f() -> txt { let o: Option<int> = Option::some(9); let label: txt = match o { Option::some(x) => \"@(x)\"; Option::none => \"none\"; }; return label; };\nfn main() {};",
             "f",
             "9",
         ),
@@ -399,13 +399,13 @@ fn generic_functions_evaluate() {
         ),
         (
             "a generic length over an inferred Vec",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn length<T>(xs: Vec<T>) -> int { return xs.len(); };\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3); return \"@(length(xs))\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn length<T>(xs: Vec<T>) -> int { return xs.len(); };\nfn f() -> txt { let xs: Vec<int> = Vec::new().push(1).push(2).push(3); return \"@(length(xs))\"; };\nfn main() {};",
             "f",
             "3",
         ),
         (
             "inference flows through a generic call",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn id<T>(x: T) -> T { return x; };\nfn wrap<T>(x: T) -> Vec<T> { let out: Vec<T> = Vec.new(); return out.push(x); };\nfn f() -> txt { let xs: Vec<txt> = wrap(id(\"hi\")); return xs.at(0); };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn id<T>(x: T) -> T { return x; };\nfn wrap<T>(x: T) -> Vec<T> { let out: Vec<T> = Vec::new(); return out.push(x); };\nfn f() -> txt { let xs: Vec<txt> = wrap(id(\"hi\")); return xs.at(0); };\nfn main() {};",
             "f",
             "hi",
         ),
@@ -417,19 +417,19 @@ fn vec_mutation_evaluates() {
     expect_text_results(&[
         (
             "replace replaces an element",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\"); xs = xs.replace(1, \"c\"); return xs.join(\"\"); };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec::new().push(\"a\").push(\"b\"); xs = xs.replace(1, \"c\"); return xs.join(\"\"); };\nfn main() {};",
             "f",
             "ac",
         ),
         (
             "push appends",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new(); xs = xs.push(1); xs = xs.push(2); return \"@(xs.at(0))@(xs.at(1))\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec::new(); xs = xs.push(1); xs = xs.push(2); return \"@(xs.at(0))@(xs.at(1))\"; };\nfn main() {};",
             "f",
             "12",
         ),
         (
             "a loop builds a Vec",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new(); let i: int = 0; for { xs = xs.push(i * i); i = i + 1; match i { 4 => { break; }; _ => {}; }; }; return \"@(xs.at(3))\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec::new(); let i: int = 0; for { xs = xs.push(i * i); i = i + 1; match i { 4 => { break; }; _ => {}; }; }; return \"@(xs.at(3))\"; };\nfn main() {};",
             "f",
             "9",
         ),
@@ -441,31 +441,31 @@ fn hash_maps_evaluate() {
     expect_text_results(&[
         (
             "insert replaces a key's value without adding an entry",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::dynamic::Vec;\nuse std::dynamic::HashMap;\nfn f() -> txt { let m: HashMap<txt, txt> = HashMap.new(); m = m.insert(\"a\", \"1\"); m = m.insert(\"b\", \"2\"); m = m.insert(\"a\", \"3\"); return \"@(m.len()) @(m.get(\"a\"))\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::dynamic::Vec;\nuse std::dynamic::HashMap;\nfn f() -> txt { let m: HashMap<txt, txt> = HashMap::new(); m = m.insert(\"a\", \"1\"); m = m.insert(\"b\", \"2\"); m = m.insert(\"a\", \"3\"); return \"@(m.len()) @(m.get(\"a\"))\"; };\nfn main() {};",
             "f",
             "2 3",
         ),
         (
             "remove drops a key and ignores an absent one",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::dynamic::Vec;\nuse std::dynamic::HashMap;\nfn f() -> txt { let m: HashMap<txt, txt> = HashMap.new(); m = m.insert(\"a\", \"1\"); m = m.insert(\"b\", \"2\"); m = m.remove(\"a\"); m = m.remove(\"missing\"); return \"@(m.len()) @(m.contains(\"a\")) @(m.get_or(\"b\", \"-\"))\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::dynamic::Vec;\nuse std::dynamic::HashMap;\nfn f() -> txt { let m: HashMap<txt, txt> = HashMap::new(); m = m.insert(\"a\", \"1\"); m = m.insert(\"b\", \"2\"); m = m.remove(\"a\"); m = m.remove(\"missing\"); return \"@(m.len()) @(m.contains(\"a\")) @(m.get_or(\"b\", \"-\"))\"; };\nfn main() {};",
             "f",
             "1 false 2",
         ),
         (
             "one key whatever text representation holds it",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::dynamic::Vec;\nuse std::dynamic::HashMap;\nfn f() -> txt { let m: HashMap<txt, txt> = HashMap.new(); m = m.insert(\"ab\", \"flat\"); let a: txt = \"a\"; let b: txt = \"b\"; m = m.insert(\"@(a)@(b)\", \"rope\"); m = m.insert(std::text::substr(\"xabx\", 1, 3), \"slice\"); return \"@(m.len()) @(m.get(\"ab\"))\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::dynamic::Vec;\nuse std::dynamic::HashMap;\nfn f() -> txt { let m: HashMap<txt, txt> = HashMap::new(); m = m.insert(\"ab\", \"flat\"); let a: txt = \"a\"; let b: txt = \"b\"; m = m.insert(\"@(a)@(b)\", \"rope\"); m = m.insert(std::text::substr(\"xabx\", 1, 3), \"slice\"); return \"@(m.len()) @(m.get(\"ab\"))\"; };\nfn main() {};",
             "f",
             "1 slice",
         ),
         (
             "a record key is equal whatever its field order",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::dynamic::Vec;\nuse std::dynamic::HashMap;\nrec Point { pub x: int, pub y: int };\nfn f() -> txt { let m: HashMap<Point, txt> = HashMap.new(); m = m.insert({ x = 1, y = 2 }, \"first\"); m = m.insert({ y = 2, x = 1 }, \"second\"); return \"@(m.len()) @(m.get({ y = 2, x = 1 }))\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::dynamic::Vec;\nuse std::dynamic::HashMap;\nrec Point { pub x: int, pub y: int };\nfn f() -> txt { let m: HashMap<Point, txt> = HashMap::new(); m = m.insert({ x = 1, y = 2 }, \"first\"); m = m.insert({ y = 2, x = 1 }, \"second\"); return \"@(m.len()) @(m.get({ y = 2, x = 1 }))\"; };\nfn main() {};",
             "f",
             "1 second",
         ),
         (
             "keys and values line up for one map value",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::dynamic::Vec;\nuse std::dynamic::HashMap;\nfn f() -> txt { let m: HashMap<txt, txt> = HashMap.new(); m = m.insert(\"a\", \"1\"); m = m.insert(\"b\", \"2\"); m = m.insert(\"c\", \"3\"); let keys: Vec<txt> = m.keys(); let values: Vec<txt> = m.values(); let i: int = 0; for { match i < keys.len() { false => { break; }; true => {}; }; match values.at(i) == m.get(keys.at(i)) { false => { return \"misaligned\"; }; true => {}; }; i = i + 1; }; return \"aligned\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::dynamic::Vec;\nuse std::dynamic::HashMap;\nfn f() -> txt { let m: HashMap<txt, txt> = HashMap::new(); m = m.insert(\"a\", \"1\"); m = m.insert(\"b\", \"2\"); m = m.insert(\"c\", \"3\"); let keys: Vec<txt> = m.keys(); let values: Vec<txt> = m.values(); let i: int = 0; for { match i < keys.len() { false => { break; }; true => {}; }; match values.at(i) == m.get(keys.at(i)) { false => { return \"misaligned\"; }; true => {}; }; i = i + 1; }; return \"aligned\"; };\nfn main() {};",
             "f",
             "aligned",
         ),
@@ -480,7 +480,7 @@ fn a_hash_map_grows_and_keeps_every_entry() {
     let source = "use std;\n\
         use std::dynamic::HashMap;\n\
         fn f() -> txt {\n\
-          let m: HashMap<int, int> = HashMap.new();\n\
+          let m: HashMap<int, int> = HashMap::new();\n\
           let i: int = 0;\n\
           for {\n\
             match i < 1000 { false => { break; }; true => {}; };\n\
@@ -537,13 +537,13 @@ fn function_values_evaluate() {
         ),
         (
             "map applies a function to every element",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn double(x: int) -> int { return x * 2; };\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3); let ys: Vec<int> = xs.map(double); return \"@(ys.at(0)),@(ys.at(1)),@(ys.at(2))\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn double(x: int) -> int { return x * 2; };\nfn f() -> txt { let xs: Vec<int> = Vec::new().push(1).push(2).push(3); let ys: Vec<int> = xs.map(double); return \"@(ys.at(0)),@(ys.at(1)),@(ys.at(2))\"; };\nfn main() {};",
             "f",
             "2,4,6",
         ),
         (
             "filter keeps the elements a predicate accepts",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn even(x: int) -> bool { return x % 2 == 0; };\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3).push(4); let ys: Vec<int> = xs.filter(even); return \"@(ys.len())@(ys.at(0))\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn even(x: int) -> bool { return x % 2 == 0; };\nfn f() -> txt { let xs: Vec<int> = Vec::new().push(1).push(2).push(3).push(4); let ys: Vec<int> = xs.filter(even); return \"@(ys.len())@(ys.at(0))\"; };\nfn main() {};",
             "f",
             "22",
         ),
@@ -561,13 +561,13 @@ fn text_comparisons_and_sort_evaluate() {
         ),
         (
             "sort orders text ascending",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"c\").push(\"a\").push(\"b\"); let ys: Vec<txt> = std::dynamic::sort(xs); return \"@(ys.at(0))@(ys.at(1))@(ys.at(2))\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec::new().push(\"c\").push(\"a\").push(\"b\"); let ys: Vec<txt> = std::dynamic::sort(xs); return \"@(ys.at(0))@(ys.at(1))@(ys.at(2))\"; };\nfn main() {};",
             "f",
             "abc",
         ),
         (
             "sort_by orders with a comparator",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn greater(a: int, b: int) -> bool { return a > b; };\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(3).push(2); let ys: Vec<int> = xs.sort_by(greater); return \"@(ys.at(0))@(ys.at(1))@(ys.at(2))\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn greater(a: int, b: int) -> bool { return a > b; };\nfn f() -> txt { let xs: Vec<int> = Vec::new().push(1).push(3).push(2); let ys: Vec<int> = xs.sort_by(greater); return \"@(ys.at(0))@(ys.at(1))@(ys.at(2))\"; };\nfn main() {};",
             "f",
             "321",
         ),
@@ -579,73 +579,73 @@ fn new_vec_methods_evaluate() {
     expect_text_results(&[
         (
             "insert places an element and shifts the rest up",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\").push(\"c\"); xs = xs.insert(1, \"b\"); return xs.join(\"\"); };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec::new().push(\"a\").push(\"c\"); xs = xs.insert(1, \"b\"); return xs.join(\"\"); };\nfn main() {};",
             "f",
             "abc",
         ),
         (
             "insert at the length appends",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\"); xs = xs.insert(1, \"b\"); return xs.join(\"\"); };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec::new().push(\"a\"); xs = xs.insert(1, \"b\"); return xs.join(\"\"); };\nfn main() {};",
             "f",
             "ab",
         ),
         (
             "remove drops an element and shifts the rest down",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\").push(\"c\"); xs = xs.remove(1); return xs.join(\"\"); };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec::new().push(\"a\").push(\"b\").push(\"c\"); xs = xs.remove(1); return xs.join(\"\"); };\nfn main() {};",
             "f",
             "ac",
         ),
         (
             "is_empty answers whether there are no elements",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new(); let ys: Vec<int> = Vec.new().push(1); return \"@(xs.is_empty()):@(ys.is_empty())\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec::new(); let ys: Vec<int> = Vec::new().push(1); return \"@(xs.is_empty()):@(ys.is_empty())\"; };\nfn main() {};",
             "f",
             "true:false",
         ),
         (
             "clear drops every element",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\"); xs = xs.clear(); return \"@(xs.len())\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec::new().push(\"a\").push(\"b\"); xs = xs.clear(); return \"@(xs.len())\"; };\nfn main() {};",
             "f",
             "0",
         ),
         (
             "slice keeps the half-open range",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\").push(\"c\").push(\"d\"); let ys: Vec<txt> = xs.slice(1, 3); return ys.join(\"\"); };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec::new().push(\"a\").push(\"b\").push(\"c\").push(\"d\"); let ys: Vec<txt> = xs.slice(1, 3); return ys.join(\"\"); };\nfn main() {};",
             "f",
             "bc",
         ),
         (
             "take keeps the first count",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\").push(\"c\"); let ys: Vec<txt> = xs.take(2); return ys.join(\"\"); };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec::new().push(\"a\").push(\"b\").push(\"c\"); let ys: Vec<txt> = xs.take(2); return ys.join(\"\"); };\nfn main() {};",
             "f",
             "ab",
         ),
         (
             "take past the length keeps every element",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\").push(\"c\"); let ys: Vec<txt> = xs.take(9); return ys.join(\"\"); };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec::new().push(\"a\").push(\"b\").push(\"c\"); let ys: Vec<txt> = xs.take(9); return ys.join(\"\"); };\nfn main() {};",
             "f",
             "abc",
         ),
         (
             "skip drops the first count",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\").push(\"c\"); let ys: Vec<txt> = xs.skip(1); return ys.join(\"\"); };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec::new().push(\"a\").push(\"b\").push(\"c\"); let ys: Vec<txt> = xs.skip(1); return ys.join(\"\"); };\nfn main() {};",
             "f",
             "bc",
         ),
         (
             "fold combines from the left with the accumulator first",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3); let total: int = xs.fold(0, [acc: int, x: int] -> int { return acc + x; }); return \"@(total)\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec::new().push(1).push(2).push(3); let total: int = xs.fold(0, [acc: int, x: int] -> int { return acc + x; }); return \"@(total)\"; };\nfn main() {};",
             "f",
             "6",
         ),
         (
             "each runs over every element and returns nothing",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3); xs.each([x: int] { }); return \"done\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec::new().push(1).push(2).push(3); xs.each([x: int] { }); return \"done\"; };\nfn main() {};",
             "f",
             "done",
         ),
         (
             "count answers how many elements satisfy the predicate",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn even(x: int) -> bool { return x % 2 == 0; };\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3).push(4); return \"@(xs.count(even))\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn even(x: int) -> bool { return x % 2 == 0; };\nfn f() -> txt { let xs: Vec<int> = Vec::new().push(1).push(2).push(3).push(4); return \"@(xs.count(even))\"; };\nfn main() {};",
             "f",
             "2",
         ),
@@ -657,11 +657,11 @@ fn each_calls_apply_for_every_element() {
     // A panicking apply proves the element is visited; an empty vec calls it
     // never, so the run completes.
     let visited = runtime(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3); xs.each([x: int] { match x { 3 => { std::eprint(\"visited\"); }; _ => {}; }; }); return \"ok\"; };\nfn main() {};",
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec::new().push(1).push(2).push(3); xs.each([x: int] { match x { 3 => { std::eprint(\"visited\"); }; _ => {}; }; }); return \"ok\"; };\nfn main() {};",
     );
     assert!(visited.call_root("f", Vec::new()).is_err());
     let empty = runtime(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new(); xs.each([x: int] { std::eprint(\"visited\"); }); return \"ok\"; };\nfn main() {};",
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec::new(); xs.each([x: int] { std::eprint(\"visited\"); }); return \"ok\"; };\nfn main() {};",
     );
     assert_eq!(call_text(&empty, "f"), "ok");
 }
@@ -669,7 +669,7 @@ fn each_calls_apply_for_every_element() {
 #[test]
 fn an_out_of_range_insert_fails_the_run() {
     let runtime = runtime(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\"); xs = xs.insert(9, \"b\"); return xs.join(\"\"); };\nfn main() {};",
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec::new().push(\"a\"); xs = xs.insert(9, \"b\"); return xs.join(\"\"); };\nfn main() {};",
     );
     assert!(runtime.call_root("f", Vec::new()).is_err());
     assert!(runtime.state.panicked(), "the run remembers the failure");
@@ -678,7 +678,7 @@ fn an_out_of_range_insert_fails_the_run() {
 #[test]
 fn an_out_of_range_remove_fails_the_run() {
     let runtime = runtime(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\"); xs = xs.remove(9); return xs.join(\"\"); };\nfn main() {};",
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec::new().push(\"a\"); xs = xs.remove(9); return xs.join(\"\"); };\nfn main() {};",
     );
     assert!(runtime.call_root("f", Vec::new()).is_err());
     assert!(runtime.state.panicked(), "the run remembers the failure");
@@ -687,7 +687,7 @@ fn an_out_of_range_remove_fails_the_run() {
 #[test]
 fn an_out_of_range_slice_fails_the_run() {
     let runtime = runtime(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\"); let ys: Vec<txt> = xs.slice(0, 9); return ys.join(\"\"); };\nfn main() {};",
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec::new().push(\"a\"); let ys: Vec<txt> = xs.slice(0, 9); return ys.join(\"\"); };\nfn main() {};",
     );
     assert!(runtime.call_root("f", Vec::new()).is_err());
     assert!(runtime.state.panicked(), "the run remembers the failure");
@@ -717,7 +717,7 @@ fn a_record_literal_is_a_match_subject() {
 fn recursive_types_evaluate() {
     expect_text_results(&[(
         "a self-referential tree",
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Node { name: txt, children: Vec<Node> };\nfn f() -> txt { let leaf: Node = { name = \"leaf\", children = Vec.new() }; let root: Node = { name = \"root\", children = Vec.new().push(leaf) }; return root.children.at(0).name; };\nfn main() {};",
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Node { name: txt, children: Vec<Node> };\nfn f() -> txt { let leaf: Node = { name = \"leaf\", children = Vec::new() }; let root: Node = { name = \"root\", children = Vec::new().push(leaf) }; return root.children.at(0).name; };\nfn main() {};",
         "f",
         "leaf",
     )]);
@@ -738,7 +738,7 @@ fn methods_evaluate() {
     expect_text_results(&[
         (
             "a declared-type method counts elements",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Bag { items: Vec<int> };\nimpl Bag { fn tally(self: Bag) -> int { return self.items.len(); }; };\nfn f() -> txt { let bag: Bag = { items = Vec.new().push(1).push(2).push(3) }; return \"@(bag.tally())\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Bag { items: Vec<int> };\nimpl Bag { fn tally(self: Bag) -> int { return self.items.len(); }; };\nfn f() -> txt { let bag: Bag = { items = Vec::new().push(1).push(2).push(3) }; return \"@(bag.tally())\"; };\nfn main() {};",
             "f",
             "3",
         ),
@@ -750,7 +750,7 @@ fn methods_evaluate() {
         ),
         (
             "a method chains into another",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Bag { items: Vec<int> };\nimpl Bag { fn tally(self: Bag) -> int { return self.items.len(); }; fn doubled(self: Bag) -> int { return self.tally() + self.tally(); }; };\nfn f() -> txt { let bag: Bag = { items = Vec.new().push(1).push(2) }; return \"@(bag.doubled())\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Bag { items: Vec<int> };\nimpl Bag { fn tally(self: Bag) -> int { return self.items.len(); }; fn doubled(self: Bag) -> int { return self.tally() + self.tally(); }; };\nfn f() -> txt { let bag: Bag = { items = Vec::new().push(1).push(2) }; return \"@(bag.doubled())\"; };\nfn main() {};",
             "f",
             "4",
         ),
@@ -762,13 +762,13 @@ fn closures_evaluate() {
     expect_text_results(&[
         (
             "an inline closure doubles",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(1).push(2).push(3); let ys: Vec<int> = xs.map([x: int] -> int { return x * 2; }); return \"@(ys.at(0))@(ys.at(1))@(ys.at(2))\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec::new().push(1).push(2).push(3); let ys: Vec<int> = xs.map([x: int] -> int { return x * 2; }); return \"@(ys.at(0))@(ys.at(1))@(ys.at(2))\"; };\nfn main() {};",
             "f",
             "246",
         ),
         (
             "a closure captures an enclosing local",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let factor: int = 10; let xs: Vec<int> = Vec.new().push(1).push(2); let ys: Vec<int> = xs.map([x: int] -> int { return x * factor; }); return \"@(ys.at(0)),@(ys.at(1))\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let factor: int = 10; let xs: Vec<int> = Vec::new().push(1).push(2); let ys: Vec<int> = xs.map([x: int] -> int { return x * factor; }); return \"@(ys.at(0)),@(ys.at(1))\"; };\nfn main() {};",
             "f",
             "10,20",
         ),
@@ -786,7 +786,7 @@ fn closures_evaluate() {
         ),
         (
             "a closure captures a loop variable by value",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec.new().push(10).push(20); let fs: Vec<fn() -> int> = Vec.new(); let index: int = 0; let count: int = xs.len(); for { match index < count { false => { break; }; true => {}; }; let x: int = xs.at(index); fs = fs.push([] -> int { return x; }); index = index + 1; }; let a: fn() -> int = fs.at(0); let b: fn() -> int = fs.at(1); return \"@(a()),@(b())\"; };\nfn main() {};",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<int> = Vec::new().push(10).push(20); let fs: Vec<fn() -> int> = Vec::new(); let index: int = 0; let count: int = xs.len(); for { match index < count { false => { break; }; true => {}; }; let x: int = xs.at(index); fs = fs.push([] -> int { return x; }); index = index + 1; }; let a: fn() -> int = fs.at(0); let b: fn() -> int = fs.at(1); return \"@(a()),@(b())\"; };\nfn main() {};",
             "f",
             "10,20",
         ),
@@ -808,7 +808,7 @@ fn closures_evaluate() {
 #[test]
 fn an_out_of_range_at_fails_the_run() {
     let runtime = runtime(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\"); return xs.at(9); };\nfn main() {};",
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec::new().push(\"a\"); return xs.at(9); };\nfn main() {};",
     );
     assert!(runtime.call_root("f", Vec::new()).is_err());
     assert!(runtime.state.panicked(), "the run remembers the failure");
@@ -817,7 +817,7 @@ fn an_out_of_range_at_fails_the_run() {
 #[test]
 fn a_negative_at_fails_the_run() {
     let runtime = runtime(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\"); return xs.at(-1); };\nfn main() {};",
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec::new().push(\"a\"); return xs.at(-1); };\nfn main() {};",
     );
     assert!(runtime.call_root("f", Vec::new()).is_err());
 }
@@ -825,7 +825,7 @@ fn a_negative_at_fails_the_run() {
 #[test]
 fn an_out_of_range_replace_fails_the_run() {
     let runtime = runtime(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\"); xs = xs.replace(9, \"b\"); return xs.at(0); };\nfn main() {};",
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec::new().push(\"a\"); xs = xs.replace(9, \"b\"); return xs.at(0); };\nfn main() {};",
     );
     assert!(runtime.call_root("f", Vec::new()).is_err());
     assert!(runtime.state.panicked(), "the run remembers the failure");
@@ -835,7 +835,7 @@ fn an_out_of_range_replace_fails_the_run() {
 fn replace_at_the_length_fails_the_run() {
     // `replace` never appends: an index at the length is outside the vec.
     let runtime = runtime(
-        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec.new().push(\"a\"); xs = xs.replace(1, \"b\"); return xs.at(0); };\nfn main() {};",
+        "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn f() -> txt { let xs: Vec<txt> = Vec::new().push(\"a\"); xs = xs.replace(1, \"b\"); return xs.at(0); };\nfn main() {};",
     );
     assert!(runtime.call_root("f", Vec::new()).is_err());
 }
@@ -1066,11 +1066,11 @@ fn a_command_tree_declares_help_as_a_flag() {
     let runtime = runtime(
         "use std;\nuse std::text;\nuse std::dynamic;\nuse std::Option;\n\
          fn long_help() -> int {\n\
-           let words: std::dynamic::Vec<txt> = std::dynamic::push(std::dynamic::Vec.new(), \"--help\");\n\
+           let words: std::dynamic::Vec<txt> = std::dynamic::push(std::dynamic::Vec::new(), \"--help\");\n\
            return std::cli::parse(std::cli::command(\"app\"), words);\n\
          };\n\
          fn short_help() -> int {\n\
-           let words: std::dynamic::Vec<txt> = std::dynamic::push(std::dynamic::Vec.new(), \"-h\");\n\
+           let words: std::dynamic::Vec<txt> = std::dynamic::push(std::dynamic::Vec::new(), \"-h\");\n\
            return std::cli::parse(std::cli::command(\"app\"), words);\n\
          };\n\
          fn main() {};",

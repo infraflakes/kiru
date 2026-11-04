@@ -97,9 +97,9 @@ bare:
 use std;
 enum Shape { Dot, Circle(int), Rect(int, int) };
 fn main() {
-  let dot: Shape = Shape.Dot;
-  let circle: Shape = Shape.Circle(2);
-  let rect: Shape = Shape.Rect(3, 4);
+  let dot: Shape = Shape::Dot;
+  let circle: Shape = Shape::Circle(2);
+  let rect: Shape = Shape::Rect(3, 4);
   std::print("built three shapes");
 };
 ```
@@ -112,13 +112,13 @@ use std;
 enum Shape { Dot, Circle(int), Rect(int, int) };
 fn area(shape: Shape) -> int {
   let result: int = match shape {
-    Shape.Dot => 0;
-    Shape.Circle(radius) => radius * radius * 3;
-    Shape.Rect(width, height) => width * height;
+    Shape::Dot => 0;
+    Shape::Circle(radius) => radius * radius * 3;
+    Shape::Rect(width, height) => width * height;
   };
   return result;
 };
-fn main() { std::print("@(area(Shape.Rect(3, 4)))"); };
+fn main() { std::print("@(area(Shape::Rect(3, 4)))"); };
 ```
 
 A match on an enum must cover every variant, or end with a `_` arm:
@@ -128,7 +128,7 @@ $ kc
 main.kiru:4:20: error: a match that produces a value must cover every case; add a `_` arm
   let color: txt = match c {
                    ^^^^^^^^^
-    Color.Red => "red";
+    Color::Red => "red";
 ^^^^^^^^^^^^^^^^^^^^^^^^
   };
 ^^^

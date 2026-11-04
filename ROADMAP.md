@@ -110,7 +110,7 @@ tracked so they are settled before they block a phase.
   runs the leaf's action. `usage` is a method too. A command's description is
   `about` and a flag's is `help`: different concepts, different words. A name
   may repeat only when the functions are bound to different types, so
-  `Command.about` and `Flag.about` could coexist, but a description and a help
+  `Command::about` and `Flag::about` could coexist, but a description and a help
   line are different things and keep different names. The readers take a `Flag`
   *value*, not a string, so a flag is declared once. `main` takes the words, so
   argv is no longer a flat record.
@@ -134,7 +134,7 @@ tracked so they are settled before they block a phase.
   in the `std::dynamic` category (`std/dynamic/vec.kiru`), a `rec` whose
   operations are the `new`/`push`/`replace`/`at`/`len` natives, so
   `use std::dynamic;` brings the type and its methods. `HashMap<K, V>` is a
-  declared `rec` beside it (`std/dynamic/hash_map.kiru`) that the runtime keeps
+  declared `rec` beside it (`std/dynamic/hashmap.kiru`) that the runtime keeps
   as a hash table, so its operations are natives and its keys are unordered. It
   is a built-in named type, not an intrinsic. A
   field read `r.field` is only for a field of a declared `rec`; the second rule
@@ -276,11 +276,11 @@ tracked so they are settled before they block a phase.
   `let name: Type = shape;` (`let p: Project = { … };`).
 - **`.` reads a member of a value or a type; `::` reads a namespace.** Field
   access (`r.a`), a method call (`xs.len()`), an associated-function call
-  (`Vec.new()`), and variant construction and patterns (`Option.some`,
-  `Shape.Circle(2)`) all use `.`; a namespace path (`std::fs::glob`) uses `::`.
+  (`Vec::new()`), and variant construction and patterns (`Option::some`,
+  `Shape::Circle(2)`) all use `.`; a namespace path (`std::fs::glob`) uses `::`.
   A variant is told from a field by the root: a type name is a variant, a value
   is a field. (Dropped `Name::Variant`: one separator for "a member of
-  something", so `Option.some` mirrors `r.field`.)
+  something", so `Option::some` mirrors `r.field`.)
 - **Duplicate record fields always error**, Rust-like: a repeated field name is
   an error in any record literal, mutable or not. (A spec built field by field
   will use a builder pattern instead.)
@@ -300,15 +300,15 @@ tracked so they are settled before they block a phase.
 - **A bound function is declared in an `impl` block and reached through its
   type.** `impl Type { fn ...; };` files every function inside under the block's
   type. A function whose first parameter accepts the receiver is a method,
-  reached as a value call (`xs.len()`) or a `Type.name` call; its parameter's
+  reached as a value call (`xs.len()`) or a `Type::name` call; its parameter's
   type is the dispatch target and its name is irrelevant. Every other function
-  in the block is an associated function, reached as `Type.name(...)`
-  (`Vec.new()`, `HashMap.new()`). A bound function is never a
+  in the block is an associated function, reached as `Type::name(...)`
+  (`Vec::new()`, `HashMap::new()`). A bound function is never a
   namespace-level name, so a `use` never shortens it and a bare name never
   reaches it. Its reachability is `pub` on the function and `pub` on the type,
   never a `use`. A name may repeat in a namespace only when the functions are
-  bound to different types: `Vec.len` and `HashMap.len` share `len` in
-  `std::dynamic`, and the receiver's type head selects between them. Every other
+  bound to different types: the `len` method exists on both `Vec` and
+  `HashMap`, and the receiver's type head selects between them. Every other
   declaration makes a name unique, so a genuine duplicate is an error. First
   user: the `std::process` command builder (`command(line).dir(...).run()`).
   Next: the vec/text helpers.
@@ -410,12 +410,12 @@ orchestration programs smaller and clearer?
 2. **Bound functions ✅, and the stdlib is migrated.** A function in an `impl`
    block whose first parameter accepts the receiver is a method (its name is
    irrelevant; any file in a namespace); `receiver.name(args)` dispatches at link
-   time on the receiver's declared type head, and a `Type.name(...)` call reaches
+   time on the receiver's declared type head, and a `Type::name(...)` call reaches
    an associated function. The stdlib now uses them: `std::process::command` is a
    builder; `Vec<T>` has `concat`/`reverse`/`contains`/`index_of`/
    `dedup`/`map`/`filter`/`first`/`last`/`sort_by`/`sort`/`join`; `txt` has
    `find`/`contains`/`trim`/`number`/`starts_with`/`ends_with`/`replace`/`lines`/
-   `split`; `Option<T>` has `or`/`contains`. `Vec.sort` and `Vec.join` stay
+   `split`; `Option<T>` has `or`/`contains`. `sort` and `join` on `Vec<txt>` stay
    bound to `Vec<txt>` alone, since each applies to text elements rather than to
    every `Vec<T>`.
 3. **Phase 4.** 4a ✅ the vec's `push`/`replace` operations. 4b ✅ function values
@@ -482,18 +482,18 @@ gains capability.
 | `std::syscalls::getcwd` | `getcwd` | floor |
 | `std::fs::read` | `open`/`read` | path convenience |
 | `std::fs::write` | `open`/`write` | path convenience |
-| `std::dynamic::Vec.new` | an empty vec | container |
-| `std::dynamic::Vec.push` | append one element | container |
-| `std::dynamic::Vec.replace` | replace one element | container |
-| `std::dynamic::Vec.at` | read one element | container |
-| `std::dynamic::Vec.len` | element count | container |
-| `std::dynamic::HashMap.new` | an empty hash map | container |
-| `std::dynamic::HashMap.insert` | write one key | container |
-| `std::dynamic::HashMap.find` | read one key, as an option | container |
-| `std::dynamic::HashMap.remove` | delete one key | container |
-| `std::dynamic::HashMap.len` | entry count | container |
-| `std::dynamic::HashMap.keys` | collect the keys | container |
-| `std::dynamic::HashMap.values` | collect the values | container |
+| `std::dynamic::Vec::new` | an empty vec | container |
+| `std::dynamic::Vec::push` | append one element | container |
+| `std::dynamic::Vec::replace` | replace one element | container |
+| `std::dynamic::Vec::at` | read one element | container |
+| `std::dynamic::Vec::len` | element count | container |
+| `std::dynamic::HashMap::new` | an empty hash map | container |
+| `std::dynamic::HashMap::insert` | write one key | container |
+| `std::dynamic::HashMap::find` | read one key, as an option | container |
+| `std::dynamic::HashMap::remove` | delete one key | container |
+| `std::dynamic::HashMap::len` | entry count | container |
+| `std::dynamic::HashMap::keys` | collect the keys | container |
+| `std::dynamic::HashMap::values` | collect the values | container |
 | `std::text::strlen` | byte length | kernel |
 | `std::text::byte_at` | byte read | kernel |
 | `std::text::memchr` | byte search | kernel |
@@ -510,8 +510,8 @@ place by being inexpressible in kiru, not by being convenient.** A high-level
 convenience in the kernel — a `whole` native, say — is the drift to refuse: it
 would make the next one look reasonable. The kernel is surfaced as methods
 (`s.strlen()`, `s.byte_at(i)`, `s.substr(a, b)`, `s.memchr(needle)`), so the
-everyday surface is uniform. (Moved into kiru earlier: `Vec.len` in 3c; `Vec.push` and
-`Vec.replace` in 4a; `Vec.sort` in 4b, with `<` extended to `txt`; then the
+everyday surface is uniform. (Moved into kiru earlier: `Vec::len` in 3c; `Vec::push` and
+`Vec::replace` in 4a; `Vec::sort` in 4b, with `<` extended to `txt`; then the
 whole `Vec`/`txt`/`Option` helper set became methods in the `impl` phase.)
 
 ### The minimization: which native deletes the most
@@ -561,7 +561,7 @@ table, keeping recursive descent for primaries and the postfix loop for `.` and
 comparison in expression positions.
 
 - **Vec type syntax: `Vec<T>`.** The canonical vec type is `Vec<T>`, used in
-  every position (`let tags: Vec<txt> = Vec.new();`, `fn f(tags: Vec<txt>)`).
+  every position (`let tags: Vec<txt> = Vec::new();`, `fn f(tags: Vec<txt>)`).
   `Vec` is a declared `rec` in `std::dynamic`, so it has no literal and no
-  brackets: a value is built with `Vec.new()` and grown with `push`. An
+  brackets: a value is built with `Vec::new()` and grown with `push`. An
   element-type shorthand in `let` is deferred sugar, not a rule.

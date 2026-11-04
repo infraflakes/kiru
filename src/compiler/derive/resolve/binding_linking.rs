@@ -6,11 +6,18 @@
 
 use crate::compiler::graph::{DeclarationId, DeclarationKind, NamespaceId, Pattern, TypeHead};
 use crate::compiler::{Diagnostic, duplicate_name};
-use crate::syntax::Expression as ParsedExpression;
+use crate::syntax::{Expression as ParsedExpression, Span};
 
 use super::body_linking::LocalDeclaration;
-use super::builder::{Builder, Skeleton, Slot, Variant};
+use super::builder::{Builder, Skeleton, Slot};
 use super::scopes::{Context, Scopes};
+
+/// A member a `::` path reaches on a type: a variant construction or a
+/// associated function.
+pub(super) enum QualifiedMember {
+    Variant { ty: DeclarationId, index: usize },
+    Function(DeclarationId),
+}
 
 impl Builder {
     /// Create a local binding node owned by a function, rejecting a name that
@@ -72,85 +79,80 @@ impl Builder {
         Ok(Pattern::Value(self.link_expression(pattern, context)?))
     }
 
-    /// The enum variant a `.member` names, when the receiver is a bare type path
-    /// that no value shadows: `Option.some`, `std::Option.none`. A type that is
-    /// not an enum has no variants, so `None` lets the associated-function
-    /// lookup run.
-    pub(super) fn variant_member(
+    /// The type a receiver names, when the receiver is a type and not a value.
+    /// A `::` path is the only way to a type's members, so `.` on a type
+    /// reports this path instead of resolving a field.
+    pub(super) fn type_path_of<'a>(
         &self,
         context: &Context,
-        receiver: &ParsedExpression,
-        member: &str,
-    ) -> Result<Option<Variant<'_>>, Diagnostic> {
+        receiver: &'a ParsedExpression,
+    ) -> Option<&'a [String]> {
         let ParsedExpression::Name { path, span } = receiver else {
-            return Ok(None);
+            return None;
         };
         if self.resolve(context, path, *span).is_ok() {
-            return Ok(None);
+            return None;
         }
-        let mut full = path.clone();
-        full.push(member.to_owned());
-        if let Some(found) = self.resolve_variant(context.namespace, &full) {
-            return Ok(Some(found));
-        }
-        // The receiver names an enum, but not this variant: say so precisely.
-        if let Some(id) = self.find_type(context.namespace, path)
-            && self.declarations[id.0]
-                .type_body()
-                .expect("a named type names a type declaration")
-                .group()
-                .has_variants()
-        {
-            let (member, type_path) = full
-                .split_last()
-                .expect("the variant path has at least two segments");
-            return Err(Diagnostic::new(
-                &self.files[context.file.0].path,
-                *span,
-                format!(
-                    "unknown enum variant `{}.{member}`",
-                    crate::compiler::graph::join_path(type_path)
-                ),
-            ));
-        }
-        Ok(None)
+        self.find_type(context.namespace, path)
+            .map(|_| path.as_slice())
     }
 
-    /// The associated function a `.member` on a type name names: a function in
-    /// an `impl` block for the type whose first parameter is not the type.
-    /// `None` when the receiver names a value or no type. A type receiver that
-    /// names no such function is an error, because a type is not a value.
-    pub(super) fn associated_member(
+    /// The member a `::` path reaches on a type: the type's variant when the
+    /// member names one, otherwise the associated function in the type's
+    /// `impl` block. A path whose prefix names no type is not qualified and
+    /// returns `None`, so the ordinary name pools answer it.
+    pub(super) fn qualified_member(
         &self,
         context: &Context,
-        receiver: &ParsedExpression,
-        member: &str,
-    ) -> Result<Option<DeclarationId>, Diagnostic> {
-        let ParsedExpression::Name { path, span } = receiver else {
-            return Ok(None);
-        };
-        // A receiver that names a value is an ordinary method call.
-        if self.resolve(context, path, *span).is_ok() {
+        path: &[String],
+        span: Span,
+    ) -> Result<Option<QualifiedMember>, Diagnostic> {
+        let (member, type_path) = path
+            .split_last()
+            .expect("a name path has at least one segment");
+        if type_path.is_empty() {
             return Ok(None);
         }
-        let Some(id) = self.find_type(context.namespace, path) else {
+        let Some(id) = self.find_type(context.namespace, type_path) else {
             return Ok(None);
         };
+        if let Some(found) = self.resolve_variant(context.namespace, path) {
+            return Ok(Some(QualifiedMember::Variant {
+                ty: found.ty,
+                index: found.index,
+            }));
+        }
         let head = TypeHead::Named(id);
-        let found = self.visible_associates(context, member, head);
+        let mut found = self.visible_associates(context, member, head);
+        found.extend(self.visible_methods(context, member, head));
         match found.as_slice() {
-            [] => Err(Diagnostic::new(
-                &self.files[context.file.0].path,
-                *span,
-                format!(
-                    "`{}` has no associated function `{member}`",
-                    crate::compiler::graph::join_path(path)
-                ),
-            )),
-            [declaration] => Ok(Some(*declaration)),
+            [] => {
+                let body = self.declarations[id.0]
+                    .type_body()
+                    .expect("a named type names a type declaration");
+                if body.group().has_variants() {
+                    return Err(Diagnostic::new(
+                        &self.files[context.file.0].path,
+                        span,
+                        format!(
+                            "unknown enum variant `{}::{member}`",
+                            crate::compiler::graph::join_path(type_path)
+                        ),
+                    ));
+                }
+                Err(Diagnostic::new(
+                    &self.files[context.file.0].path,
+                    span,
+                    format!(
+                        "`{}` has no function `{member}`",
+                        crate::compiler::graph::join_path(type_path)
+                    ),
+                ))
+            }
+            [declaration] => Ok(Some(QualifiedMember::Function(*declaration))),
             _ => Err(Diagnostic::new(
                 &self.files[context.file.0].path,
-                *span,
+                span,
                 format!("`{member}` is ambiguous for this type"),
             )),
         }
@@ -179,69 +181,49 @@ impl Builder {
         found
     }
 
-    /// The bound function a `.member` on a type name names, as a value: a
-    /// method or an associated function filed under that type. Methods come
-    /// bundled with their type, so `Type.name` is the function value and
-    /// `Type.name(...)` is the call. `None` when the receiver names a value or
-    /// no type, or when the type carries no such function.
-    pub(super) fn bound_member(
-        &self,
-        context: &Context,
-        receiver: &ParsedExpression,
-        member: &str,
-    ) -> Result<Option<DeclarationId>, Diagnostic> {
-        let ParsedExpression::Name { path, span } = receiver else {
-            return Ok(None);
-        };
-        // A receiver that names a value is an ordinary field access.
-        if self.resolve(context, path, *span).is_ok() {
-            return Ok(None);
-        }
-        let Some(id) = self.find_type(context.namespace, path) else {
-            return Ok(None);
-        };
-        let head = TypeHead::Named(id);
-        let mut found = self.visible_associates(context, member, head);
-        found.extend(self.visible_methods(context, member, head));
-        match found.as_slice() {
-            [] => Ok(None),
-            [declaration] => Ok(Some(*declaration)),
-            _ => Err(Diagnostic::new(
-                &self.files[context.file.0].path,
-                *span,
-                format!("`{member}` is ambiguous for this type"),
-            )),
-        }
-    }
-
-    /// Link a `Name.variant(bind, ...)` pattern into a variant pattern, creating
-    /// a local for each binding so the arm body can read the payload. `None`
-    /// when the pattern does not name a variant.
+    /// Link a `Name::variant(bind, ...)` pattern into a variant pattern,
+    /// creating a local for each binding so the arm body can read the payload.
+    /// `None` when the pattern does not name a variant.
     fn link_variant_pattern(
         &mut self,
         pattern: &ParsedExpression,
         context: &mut Context,
     ) -> Result<Option<Pattern>, Diagnostic> {
         let (found, arguments, span) = match pattern {
-            ParsedExpression::MethodCall {
-                receiver,
-                method,
+            ParsedExpression::Call {
+                callee,
                 arguments,
                 span,
                 ..
             } => {
-                let Some(found) = self.variant_member(context, receiver, method)? else {
+                let Some(found) = self.resolve_variant(context.namespace, callee) else {
                     return Ok(None);
                 };
                 (found, arguments.as_slice(), *span)
             }
-            ParsedExpression::Field {
-                target, name, span, ..
-            } => {
-                let Some(found) = self.variant_member(context, target, name)? else {
+            ParsedExpression::Name { path, span } => {
+                let Some(found) = self.resolve_variant(context.namespace, path) else {
                     return Ok(None);
                 };
                 (found, &[] as &[ParsedExpression], *span)
+            }
+            ParsedExpression::MethodCall {
+                receiver,
+                method,
+                span,
+                ..
+            } => {
+                if let Some(type_path) = self.type_path_of(context, receiver) {
+                    return Err(Diagnostic::new(
+                        &self.files[context.file.0].path,
+                        *span,
+                        format!(
+                            "a type is not a value; write `{}::{method}`",
+                            crate::compiler::graph::join_path(type_path)
+                        ),
+                    ));
+                }
+                return Ok(None);
             }
             _ => return Ok(None),
         };

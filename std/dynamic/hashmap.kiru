@@ -1,4 +1,4 @@
-# std/dynamic/hash_map.kiru
+# std/dynamic/hashmap.kiru
 #
 # The hash map: an association from keys to values, kept by the runtime as a
 # table keyed by structural equality. `std::dynamic::HashMap<K, V>` is a
@@ -19,8 +19,8 @@ impl HashMap {
   # The value stored for `key`. A missing key has no value, so it stops the run.
   pub fn get<K, V>(self: std::dynamic::HashMap<K, V>, key: K) -> V {
     match std::dynamic::find(self, key) {
-      std::Option.some(value) => { return value; };
-      std::Option.none => {};
+      std::Option::some(value) => { return value; };
+      std::Option::none => {};
     };
     std::eprint("get: the hash map has no entry for the key");
   };
@@ -28,16 +28,16 @@ impl HashMap {
   # The value stored for `key`, or `fallback` when it is missing.
   pub fn get_or<K, V>(self: std::dynamic::HashMap<K, V>, key: K, fallback: V) -> V {
     match std::dynamic::find(self, key) {
-      std::Option.some(value) => { return value; };
-      std::Option.none => { return fallback; };
+      std::Option::some(value) => { return value; };
+      std::Option::none => { return fallback; };
     };
   };
 
   # Whether `key` is present.
   pub fn contains<K, V>(self: std::dynamic::HashMap<K, V>, key: K) -> bool {
     match std::dynamic::find(self, key) {
-      std::Option.some(_) => { return true; };
-      std::Option.none => { return false; };
+      std::Option::some(_) => { return true; };
+      std::Option::none => { return false; };
     };
   };
 };

@@ -205,7 +205,7 @@ fn a_namespace_scoped_use_covers_the_directory() {
         ),
         (
             "shared/a.kiru",
-            "use std::Option;\npub fn f() -> Option<int> { return Option.none; };",
+            "use std::Option;\npub fn f() -> Option<int> { return Option::none; };",
         ),
         (
             "shared/b.kiru",
@@ -220,13 +220,13 @@ fn a_method_needs_no_use() {
     // is `use`d: `xs.len()` works with no `use` in the file at all.
     accept(&[(
         "main.kiru",
-        "fn main() { let xs: std::dynamic::Vec<int> = std::dynamic::Vec.new(); xs = xs.push(1); let n: int = xs.len(); };",
+        "fn main() { let xs: std::dynamic::Vec<int> = std::dynamic::Vec::new(); xs = xs.push(1); let n: int = xs.len(); };",
     )]);
     // A name-`use` of the type alone reaches the type and, through it, its
     // bound functions.
     accept(&[(
         "main.kiru",
-        "use std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new(); let n: int = xs.len(); };",
+        "use std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec::new(); let n: int = xs.len(); };",
     )]);
 }
 
@@ -236,7 +236,7 @@ fn absolute_paths_resolve_with_no_use() {
     // resolve: no `use` is needed for an absolute path.
     accept(&[(
         "main.kiru",
-        "fn main() { std::print(\"no use at all\"); let xs: std::dynamic::Vec<int> = std::dynamic::Vec.new(); std::print(\"@(std::dynamic::len(xs))\"); };",
+        "fn main() { std::print(\"no use at all\"); let xs: std::dynamic::Vec<int> = std::dynamic::Vec::new(); std::print(\"@(std::dynamic::len(xs))\"); };",
     )]);
     accept(&[
         (
@@ -269,26 +269,25 @@ fn a_use_shortens_paths() {
     // A namespace-`use` gives the qualifier its last segment spells.
     accept(&[(
         "main.kiru",
-        "use std::dynamic;\nfn main() { let xs: dynamic::Vec<int> = dynamic::Vec.new(); let n: int = dynamic::len(xs); };",
+        "use std::dynamic;\nfn main() { let xs: dynamic::Vec<int> = dynamic::Vec::new(); let n: int = dynamic::len(xs); };",
     )]);
     // A type-`use` gives a bare type, and its bound functions come with it.
     accept(&[(
         "main.kiru",
-        "use std::dynamic::HashMap;\nfn main() { let m: HashMap<txt, int> = HashMap.new(); let n: int = m.len(); };",
+        "use std::dynamic::HashMap;\nfn main() { let m: HashMap<txt, int> = HashMap::new(); let n: int = m.len(); };",
     )]);
     // One level of braces names several things under one prefix.
     accept(&[(
         "main.kiru",
-        "use std::dynamic::{HashMap, text_order};\nfn main() { let m: HashMap<txt, int> = HashMap.new(); let b: bool = text_order(\"a\", \"b\"); };",
+        "use std::dynamic::{HashMap, text_order};\nfn main() { let m: HashMap<txt, int> = HashMap::new(); let b: bool = text_order(\"a\", \"b\"); };",
     )]);
 }
 
 #[test]
-fn a_use_delivers_a_namespace_and_a_name_that_share_a_spelling() {
-    // `api::HashMap` is a directory, a type, and a plain function at once.
-    // One `use` brings all three, and each read takes the target its own pool
-    // names: a type annotation the type, `HashMap.new()` its associate,
-    // `HashMap()` the function, and `HashMap::nested()` the namespace.
+fn a_use_delivers_a_type_and_a_function_that_share_a_spelling() {
+    // A type and a plain function may share a spelling, and one `use` brings
+    // both: a type annotation reads the type, `HashMap::new()` its function,
+    // and `HashMap()` the plain function.
     let program = accept(&[
         (
             "api/defs.kiru",
@@ -297,16 +296,12 @@ fn a_use_delivers_a_namespace_and_a_name_that_share_a_spelling() {
              impl HashMap { pub fn new() -> HashMap { return { x = 2 }; }; };",
         ),
         (
-            "api/HashMap/help.kiru",
-            "pub fn nested() -> int { return 3; };",
-        ),
-        (
             "main.kiru",
             "use root::api::HashMap;\n\
              fn main() {\n\
-               let h: HashMap = HashMap.new();\n\
+               let h: HashMap = HashMap::new();\n\
                let f: HashMap = HashMap();\n\
-               let n: int = HashMap::nested();\n\
+               let n: int = h.x;\n\
              };",
         ),
     ]);
@@ -328,33 +323,28 @@ fn a_use_delivers_a_namespace_and_a_name_that_share_a_spelling() {
     delivered.sort_unstable();
     assert_eq!(
         delivered,
-        ["function", "namespace", "type"],
-        "one use delivers every pool the name denotes"
+        ["function", "type"],
+        "one use delivers every target the name denotes"
     );
 }
 
 #[test]
-fn a_use_brings_a_type_that_shares_its_namespace_name() {
-    // The directory `api::HashMap` and the type `api::HashMap` share one
-    // spelling. A `use` brings both, so the type and its associated function
-    // resolve beside the namespace path.
-    crate::compiler::test_support::checked_files(&[
-        (
-            "api/defs.kiru",
-            "pub rec HashMap { pub x: int };\n\
-             impl HashMap { pub fn new() -> HashMap { return { x = 2 }; }; };",
-        ),
+fn a_namespace_and_a_type_may_not_share_a_name() {
+    // `::` reaches both a namespace and a type, so one spelling cannot be
+    // both. The type declaration reports the collision.
+    let error = crate::compiler::test_support::checked_files(&[
+        ("api/defs.kiru", "pub rec HashMap { pub x: int };"),
         (
             "api/HashMap/help.kiru",
             "pub fn nested() -> int { return 3; };",
         ),
-        (
-            "main.kiru",
-            "use root::api::HashMap;\n\
-             fn main() { let h: HashMap = HashMap.new(); let n: int = HashMap::nested(); };",
-        ),
+        ("main.kiru", "fn main() {};"),
     ])
-    .expect("the type and the namespace share one delivered name");
+    .expect_err("a namespace and a type share the name `HashMap`");
+    assert!(
+        error.contains("a namespace and a type share the name `HashMap`"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -375,7 +365,7 @@ fn an_impl_bound_function_is_not_a_name() {
             "a bare method call",
             &[(
                 "main.kiru",
-                "use std::dynamic;\nfn main() { let xs: dynamic::Vec<int> = dynamic::Vec.new(); push(xs, 1); };",
+                "use std::dynamic;\nfn main() { let xs: dynamic::Vec<int> = dynamic::Vec::new(); push(xs, 1); };",
             )],
             "unknown name `push`",
         ),
@@ -400,7 +390,7 @@ fn an_impl_bound_function_is_not_a_name() {
     // the method reaches it through the receiver.
     accept(&[(
         "main.kiru",
-        "fn main() { let xs: std::dynamic::Vec<int> = std::dynamic::Vec.new(); xs = std::dynamic::push(xs, 1); xs = xs.push(2); };",
+        "fn main() { let xs: std::dynamic::Vec<int> = std::dynamic::Vec::new(); xs = std::dynamic::push(xs, 1); xs = xs.push(2); };",
     )]);
 }
 
@@ -422,29 +412,29 @@ fn vec_is_a_declared_type_in_std_dynamic() {
             "a bare Vec receiver without a use",
             &[(
                 "main.kiru",
-                "use std;\nfn main() { let xs: dynamic::Vec<int> = Vec.new(); };",
+                "use std;\nfn main() { let xs: dynamic::Vec<int> = Vec::new(); };",
             )],
-            "unknown name `Vec`",
+            "unknown name `Vec::new`",
         ),
     ]);
     accept(&[(
         "main.kiru",
-        "use std;\nuse std::dynamic;\nfn main() { let xs: dynamic::Vec<int> = dynamic::Vec.new(); };",
+        "use std;\nuse std::dynamic;\nfn main() { let xs: dynamic::Vec<int> = dynamic::Vec::new(); };",
     )]);
     accept(&[(
         "main.kiru",
-        "use std;\nuse std::dynamic;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new(); };",
+        "use std;\nuse std::dynamic;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec::new(); };",
     )]);
 }
 
 #[test]
 fn associated_functions_are_reached_through_the_type() {
     // A function in an `impl` block whose first parameter is not the block's
-    // type is an associated function: `Vec.new()` finds the native vec `new`
-    // and `HashMap.new()` the map one, both filed under their type.
+    // type is an associated function: `Vec::new()` finds the native vec `new`
+    // and `HashMap::new()` the map one, both filed under their type.
     let program = accept(&[(
         "main.kiru",
-        "use std;\nuse std::dynamic;\nuse std::dynamic::Vec;\nuse std::dynamic::HashMap;\nfn main() { let xs: Vec<int> = Vec.new(); let m: HashMap<txt, int> = HashMap.new(); };",
+        "use std;\nuse std::dynamic;\nuse std::dynamic::Vec;\nuse std::dynamic::HashMap;\nfn main() { let xs: Vec<int> = Vec::new(); let m: HashMap<txt, int> = HashMap::new(); };",
     )]);
     let root = program
         .namespace_at(&["root".to_owned()])
@@ -489,10 +479,10 @@ fn associated_functions_are_reached_through_the_type() {
 fn the_library_files_its_functions_under_their_types() {
     // The runtime's `Vec` rows name `Vec` themselves: `push` has it as its
     // first parameter, so it is a method, and `new` returns it, so it is an
-    // associated function reached as `Vec.new()`.
+    // associated function reached as `Vec::new()`.
     let program = accept(&[(
         "main.kiru",
-        "use std;\nuse std::dynamic;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new(); xs = xs.push(1); };",
+        "use std;\nuse std::dynamic;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec::new(); xs = xs.push(1); };",
     )]);
     let dynamic = program
         .namespace_at(&["std".to_owned(), "dynamic".to_owned()])
@@ -592,7 +582,7 @@ fn a_same_named_function_in_two_blocks_does_not_collide() {
              rec A { x: int };\nrec B { y: int };\n\
              impl A { pub fn of() -> A { return { x = 1 }; }; };\n\
              impl B { pub fn of() -> B { return { y = 2 }; }; };\n\
-             fn main() { let a: A = A.of(); let b: B = B.of(); std::print(\"@(a.x) @(b.y)\"); };",
+             fn main() { let a: A = A::of(); let b: B = B::of(); std::print(\"@(a.x) @(b.y)\"); };",
     )]);
 }
 
@@ -602,7 +592,7 @@ fn a_plain_function_is_not_a_method() {
     // first parameter's type is irrelevant.
     expect_checked_rejections(&[(
         "a plain function with a matching first parameter",
-        "use std;\nuse std::dynamic;\nuse std::dynamic::Vec;\nfn describe(xs: Vec<int>) -> int { return 0; };\nfn main() { let xs: Vec<int> = Vec.new(); xs.describe(); };",
+        "use std;\nuse std::dynamic;\nuse std::dynamic::Vec;\nfn describe(xs: Vec<int>) -> int { return 0; };\nfn main() { let xs: Vec<int> = Vec::new(); xs.describe(); };",
         "no method `describe` for this value",
     )]);
 }
@@ -865,7 +855,7 @@ fn a_loop_item_keeps_its_element_type_for_dispatch() {
              impl Service { pub fn line(self: Service) -> txt { return self.name; }; };\n\
              fn main() {\n\
              let api: Service = { name = \"api\" };\n\
-             let services: Vec<Service> = Vec.new().push(api);\n\
+             let services: Vec<Service> = Vec::new().push(api);\n\
              let index: int = 0;\n\
              let count: int = services.len();\n\
              for {\n\
@@ -1105,7 +1095,7 @@ fn method_rules() {
     expect_checked_accepts(&[
         (
             "a method on a generic declared type",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Bag<T> { items: Vec<T> };\nimpl Bag { pub fn tally<T>(self: Bag<T>) -> int { let n: int = 0; let index: int = 0; let total: int = self.items.len(); for { match index < total { false => { break; }; true => {}; }; n = n + 1; index = index + 1; }; return n; }; };\nfn main() { let bag: Bag<int> = { items = Vec.new().push(1).push(2) }; let n: int = bag.tally(); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Bag<T> { items: Vec<T> };\nimpl Bag { pub fn tally<T>(self: Bag<T>) -> int { let n: int = 0; let index: int = 0; let total: int = self.items.len(); for { match index < total { false => { break; }; true => {}; }; n = n + 1; index = index + 1; }; return n; }; };\nfn main() { let bag: Bag<int> = { items = Vec::new().push(1).push(2) }; let n: int = bag.tally(); };",
         ),
         (
             "a method on a declared type",
@@ -1113,37 +1103,41 @@ fn method_rules() {
         ),
         (
             "a method calling an earlier method",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Bag<T> { items: Vec<T> };\nimpl Bag { pub fn tally<T>(self: Bag<T>) -> int { return 0; }; pub fn head<T>(self: Bag<T>) -> int { return self.tally(); }; };\nfn main() { let bag: Bag<int> = { items = Vec.new().push(1) }; let n: int = bag.head(); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Bag<T> { items: Vec<T> };\nimpl Bag { pub fn tally<T>(self: Bag<T>) -> int { return 0; }; pub fn head<T>(self: Bag<T>) -> int { return self.tally(); }; };\nfn main() { let bag: Bag<int> = { items = Vec::new().push(1) }; let n: int = bag.head(); };",
         ),
         (
             "the receiver parameter's name is irrelevant",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Bag<T> { items: Vec<T> };\nimpl Bag { pub fn tally<T>(items: Bag<T>) -> int { return 0; }; };\nfn main() { let bag: Bag<int> = { items = Vec.new().push(1) }; let n: int = bag.tally(); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Bag<T> { items: Vec<T> };\nimpl Bag { pub fn tally<T>(items: Bag<T>) -> int { return 0; }; };\nfn main() { let bag: Bag<int> = { items = Vec::new().push(1) }; let n: int = bag.tally(); };",
         ),
         (
             "an associated function is reached through the type",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Point { x: int };\nimpl Point { pub fn origin() -> Point { return { x = 0 }; }; };\nfn main() { let p: Point = Point.origin(); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Point { x: int };\nimpl Point { pub fn origin() -> Point { return { x = 0 }; }; };\nfn main() { let p: Point = Point::origin(); };",
         ),
         (
             "a method needs no use in the file",
-            "fn main() { let xs: std::dynamic::Vec<int> = std::dynamic::Vec.new(); xs = xs.push(1); std::print(\"@(xs.len())\"); };",
+            "fn main() { let xs: std::dynamic::Vec<int> = std::dynamic::Vec::new(); xs = xs.push(1); std::print(\"@(xs.len())\"); };",
         ),
         (
             "a qualified path reaches a bound function",
-            "fn main() { let xs: std::dynamic::Vec<int> = std::dynamic::Vec.new(); xs = xs.push(1); std::print(\"@(std::dynamic::len(xs))\"); };",
+            "fn main() { let xs: std::dynamic::Vec<int> = std::dynamic::Vec::new(); xs = xs.push(1); std::print(\"@(std::dynamic::len(xs))\"); };",
         ),
         (
             "a bound function is a value through its type",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Point { x: int };\nimpl Point { pub fn origin() -> Point { return { x = 0 }; }; pub fn x_of(self: Point) -> int { return self.x; }; };\nfn main() { let make: fn() -> Point = Point.origin; let read: fn(Point) -> int = Point.x_of; let p: Point = make(); let n: int = read(p); std::print(\"@(n)\"); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Point { x: int };\nimpl Point { pub fn origin() -> Point { return { x = 0 }; }; pub fn x_of(self: Point) -> int { return self.x; }; };\nfn main() { let make: fn() -> Point = Point::origin; let read: fn(Point) -> int = Point::x_of; let p: Point = make(); let n: int = read(p); std::print(\"@(n)\"); };",
         ),
         (
             "a plain native is a namespace-level name",
             "fn main() { std::print(std::syscalls::getcwd()); };",
         ),
+        (
+            "a method is a value through its type",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec A { x: int };\nimpl A { pub fn tally(self: A) -> int { return 0; }; };\nfn main() { let a: A = { x = 1 }; let n: int = A::tally(a); };",
+        ),
     ]);
     expect_checked_rejections(&[
         (
             "an unknown method",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new().push(1).push(2); xs.nope(); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec::new().push(1).push(2); xs.nope(); };",
             "no method `nope` for this value",
         ),
         (
@@ -1153,7 +1147,7 @@ fn method_rules() {
         ),
         (
             "a bare call reaches no bound function",
-            "fn main() { let xs: std::dynamic::Vec<int> = std::dynamic::Vec.new(); std::dynamic::push(xs, 1); push(xs, 2); };",
+            "fn main() { let xs: std::dynamic::Vec<int> = std::dynamic::Vec::new(); std::dynamic::push(xs, 1); push(xs, 2); };",
             "unknown name `push`",
         ),
         (
@@ -1168,18 +1162,23 @@ fn method_rules() {
         ),
         (
             "a plain function is not a method",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn tally(xs: Vec<txt>) -> int { return 0; };\nfn main() { let xs: Vec<int> = Vec.new().push(1); xs.tally(); };",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn tally(xs: Vec<txt>) -> int { return 0; };\nfn main() { let xs: Vec<int> = Vec::new().push(1); xs.tally(); };",
             "no method `tally` for this value",
         ),
         (
-            "a method is not an associated function",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec A { x: int };\nimpl A { pub fn tally(self: A) -> int { return 0; }; };\nfn main() { let n: int = A.tally(); };",
-            "`A` has no associated function `tally`",
+            "an unknown bound function",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Point { x: int };\nfn main() { let p: Point = Point::origin(); };",
+            "`Point` has no function `origin`",
         ),
         (
-            "an unknown associated function",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Point { x: int };\nfn main() { let p: Point = Point.origin(); };",
-            "`Point` has no associated function `origin`",
+            "a type is not a value",
+            "use std::dynamic::Vec;\nfn main() { let xs: Vec<int> = Vec.new(); };",
+            "a type is not a value; write `Vec::new`",
+        ),
+        (
+            "a variant is not reached through a dot",
+            "use std::Option;\nfn main() { let o: Option<int> = Option.none; };",
+            "a type is not a value; write `Option::none`",
         ),
     ]);
 }
@@ -1203,19 +1202,19 @@ fn rule_conformance_order_and_scope() {
         ),
         (
             "a method call dispatches on the receiver's type",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn main() {\n  let xs: Vec<txt> = Vec.new().push(\"a\").push(\"b\").push(\"c\");\n  let n: int = xs.len();\n  let m: int = \"abc\".strlen();\n  std::print(\"@(n) @(m)\");\n};\n",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nfn main() {\n  let xs: Vec<txt> = Vec::new().push(\"a\").push(\"b\").push(\"c\");\n  let n: int = xs.len();\n  let m: int = \"abc\".strlen();\n  std::print(\"@(n) @(m)\");\n};\n",
         ),
         (
             "a method needs no `use` in the file",
-            "fn main() {\n  let xs: std::dynamic::Vec<int> = std::dynamic::Vec.new();\n  xs = xs.push(1);\n  std::print(\"@(xs.len())\");\n};\n",
+            "fn main() {\n  let xs: std::dynamic::Vec<int> = std::dynamic::Vec::new();\n  xs = xs.push(1);\n  std::print(\"@(xs.len())\");\n};\n",
         ),
         (
             "an absolute path needs no `use`",
-            "fn main() { let m: std::dynamic::HashMap<txt, int> = std::dynamic::HashMap.new(); std::print(\"@(std::dynamic::len(m))\"); };\n",
+            "fn main() { let m: std::dynamic::HashMap<txt, int> = std::dynamic::HashMap::new(); std::print(\"@(std::dynamic::len(m))\"); };\n",
         ),
         (
             "a recursive declared type",
-            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Tree { name: txt, kids: Vec<Tree> };\nfn main() { let t: Tree = { name = \"r\", kids = Vec.new() }; std::print(t.name); };\n",
+            "use std;\nuse std::text;\nuse std::dynamic;\nuse std::process;\nuse std::Option;\nuse std::dynamic::Vec;\nrec Tree { name: txt, kids: Vec<Tree> };\nfn main() { let t: Tree = { name = \"r\", kids = Vec::new() }; std::print(t.name); };\n",
         ),
         (
             "a forward reference resolves",

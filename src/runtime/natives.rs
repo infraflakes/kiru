@@ -16,7 +16,7 @@ use crate::runtime::Value;
 
 /// The tag of `std::Option`'s `some` variant, in the order the standard
 /// library's declaration names its variants. A native whose result is an
-/// option builds that variant directly, exactly as a `std::Option.some(...)`
+/// option builds that variant directly, exactly as a `std::Option::some(...)`
 /// construction lowers, so the runtime needs the order without a program.
 pub(crate) const OPTION_SOME: u16 = 0;
 

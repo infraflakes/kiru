@@ -51,7 +51,7 @@ use std::dynamic::Vec;
 fn main() {
   let x: int = 1;
   let s: txt = "a";
-  let xs: Vec<int> = Vec.new();
+  let xs: Vec<int> = Vec::new();
   std::print("@(x) @(s) @(xs.len())");
 };
 ```

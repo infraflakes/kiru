@@ -14,7 +14,7 @@ value is built and changed through its operations.
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<txt> = Vec.new();
+  let xs: Vec<txt> = Vec::new();
   xs = xs.push("a");
   xs = xs.push("b");
   xs = xs.push("c");
@@ -46,7 +46,7 @@ fn heaviest(tasks: Vec<Task>) -> txt {
   return best;
 };
 fn main() {
-  let tasks: Vec<Task> = Vec.new();
+  let tasks: Vec<Task> = Vec::new();
   tasks = tasks.push({ name = "a", weight = 2 });
   tasks = tasks.push({ name = "b", weight = 5 });
   std::print(heaviest(tasks));   # b
@@ -64,7 +64,7 @@ vec and the index an `int`; an index at or past the end stops the run:
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<txt> = Vec.new();
+  let xs: Vec<txt> = Vec::new();
   xs = xs.push("a");
   xs = xs.push("b");
   xs = xs.push("c");
@@ -77,14 +77,14 @@ works for a vec of any element type.
 
 ## Building a vec
 
-A vec is built with `Vec.new()` and grown with `push`. `replace(i, value)`
+A vec is built with `Vec::new()` and grown with `push`. `replace(i, value)`
 replaces the element at `i`:
 
 ```kiru
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<int> = Vec.new();
+  let xs: Vec<int> = Vec::new();
   xs = xs.push(10);
   xs = xs.push(20);
   xs = xs.replace(0, 99);
@@ -99,7 +99,7 @@ element at a time:
 use std;
 use std::dynamic::Vec;
 fn squares(count: int) -> Vec<int> {
-  let out: Vec<int> = Vec.new();
+  let out: Vec<int> = Vec::new();
   let i: int = 0;
   for {
     match i < count { false => { break; }; true => {}; };
@@ -130,7 +130,7 @@ fn total(xs: Vec<int>) -> int {
   return sum;
 };
 fn main() {
-  let xs: Vec<int> = Vec.new();
+  let xs: Vec<int> = Vec::new();
   xs = xs.push(1);
   xs = xs.push(2);
   xs = xs.push(3);
@@ -168,7 +168,7 @@ use std;
 use std::text;
 use std::dynamic::Vec;
 fn main() {
-  let paths: Vec<txt> = Vec.new();
+  let paths: Vec<txt> = Vec::new();
   paths = paths.push("keep.kiru");
   paths = paths.push("skip.tmp");
   let index: int = 0;
@@ -200,7 +200,7 @@ and `join(separator)` builds one text:
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let xs: Vec<txt> = Vec.new();
+  let xs: Vec<txt> = Vec::new();
   xs = xs.push("b");
   xs = xs.push("a");
   xs = xs.push("a");
@@ -211,4 +211,4 @@ fn main() {
 
 [Closures](/concepts/closures/) covers `map`, `filter`, `fold`, `each`, and
 `sort_by`, which take a function value. The standard library reads the OS into a vec and joins it
-back: `std::fs::glob`, `std::text::lines`, and `Vec.join`.
+back: `std::fs::glob`, `std::text::lines`, and `join` on a `Vec<txt>`.

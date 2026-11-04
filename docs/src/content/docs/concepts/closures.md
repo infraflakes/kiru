@@ -39,7 +39,7 @@ use std::dynamic::Vec;
 fn triple(x: int) -> int { return x * 3; };
 
 fn main() {
-  let fs: Vec<fn(int) -> int> = Vec.new();
+  let fs: Vec<fn(int) -> int> = Vec::new();
   fs = fs.push(triple);
   let f: fn(int) -> int = fs.at(0);
   let n: int = f(3);
@@ -58,7 +58,7 @@ use std::dynamic::Vec;
 
 fn main() {
   let factor: int = 10;
-  let xs: Vec<int> = Vec.new();
+  let xs: Vec<int> = Vec::new();
   xs = xs.push(1);
   xs = xs.push(2);
   xs = xs.push(3);
@@ -96,7 +96,7 @@ use std;
 use std::dynamic::Vec;
 
 fn main() {
-  let xs: Vec<int> = Vec.new();
+  let xs: Vec<int> = Vec::new();
   xs = xs.push(1);
   xs = xs.push(2);
   xs = xs.push(3);
@@ -109,5 +109,5 @@ fn main() {
 ```
 
 `sort_by` takes `fn(T, T) -> bool` and answers `true` when its first argument
-orders before its second. For a `Vec<txt>` in byte order, `Vec.sort` is the
+orders before its second. For a `Vec<txt>` in byte order, `sort` on a `Vec<txt>` is the
 ready-made method: `items.sort()`.

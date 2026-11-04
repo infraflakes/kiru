@@ -190,4 +190,37 @@ impl Builder {
         self.files[file.0].declarations.push(id);
         Ok(())
     }
+
+    /// A namespace and a type share one `::` path pool, so they may not share a
+    /// spelling: a segment would name both a directory and a type. The type
+    /// declaration carries the name and the file that reports the collision.
+    pub(in crate::compiler::derive::resolve) fn check_type_namespace_collisions(
+        &self,
+    ) -> Result<(), Diagnostic> {
+        for namespace in &self.namespaces {
+            for id in namespace.types.iter() {
+                let declaration = &self.declarations[id.0];
+                if declaration.type_body().is_none() {
+                    continue;
+                }
+                let Some(file) = declaration.file else {
+                    continue;
+                };
+                let Some(symbol) = self.intern.resolve(&declaration.name) else {
+                    continue;
+                };
+                if namespace.children.contains_key(&symbol) {
+                    return Err(Diagnostic::new(
+                        &self.files[file.0].path,
+                        declaration.name_span,
+                        format!(
+                            "a namespace and a type share the name `{}`",
+                            declaration.name
+                        ),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
 }

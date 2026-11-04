@@ -189,15 +189,15 @@ std::syscalls::getenv(name: txt) -> std::Option<txt>
 ```
 
 - `name` — the variable to read.
-- Returns its value as `Option.some`, or `Option.none` when it is unset.
+- Returns its value as `Option::some`, or `Option::none` when it is unset.
   [Absence](/concepts/absence/) covers the optional value.
 
 ```kiru
 use std;
 fn main() {
   std::print(match std::syscalls::getenv("HOME") {
-    std::Option.some(home) => home;
-    std::Option.none => "(unset)";
+    std::Option::some(home) => home;
+    std::Option::none => "(unset)";
   });
 };
 ```
@@ -239,7 +239,7 @@ Runs `argv` without a shell, in its own process group, and returns the pid as an
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let argv: Vec<txt> = Vec.new();
+  let argv: Vec<txt> = Vec::new();
   argv = argv.push("/bin/true");
   let pid: int = std::syscalls::posix_spawn(argv);
   std::print("@(std::syscalls::waitpid(pid))");
@@ -265,7 +265,7 @@ Waits for the process named by `pid` and reaps it.
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let argv: Vec<txt> = Vec.new();
+  let argv: Vec<txt> = Vec::new();
   argv = argv.push("/bin/true");
   let pid: int = std::syscalls::posix_spawn(argv);
   std::print("@(std::process::wait_for(pid))");
@@ -290,7 +290,7 @@ Sends the numbered signal to the process group led by `pid`.
 use std;
 use std::dynamic::Vec;
 fn main() {
-  let argv: Vec<txt> = Vec.new();
+  let argv: Vec<txt> = Vec::new();
   argv = argv.push("sleep");
   argv = argv.push("5");
   let pid: int = std::syscalls::posix_spawn(argv);

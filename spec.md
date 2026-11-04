@@ -25,7 +25,7 @@ This holds names that mean a type:
 - the scalar names `txt`, `bool`, `int`
 - declared type names from the library, such as `Vec`, `HashMap`, and `Option`
 
-A type name is unique inside its namespace. A type can share a spelling with a value, because they are different pools.
+A type name is unique inside its namespace. A type can share a spelling with a value, because they are different pools. It cannot share one with a namespace: both are reached through `::`, so one spelling would name two things.
 
 ### Value pool
 
@@ -90,8 +90,8 @@ Every public function, type, field, variant, and bound function can be named fro
 
 ```
 root::kiru::usage()
-std::dynamic::Vec.new()
-std::Option.some(1)
+std::dynamic::Vec::new()
+std::Option::some(1)
 ```
 
 `use` shortens a path. It does not change visibility.
@@ -105,7 +105,7 @@ use std::dynamic::{HashMap, Vec};
 Things to remember:
 
 - A `use` may end at a namespace, at a type, at a plain function, or at a name that denotes more than one of them.
-- A `use` of a name brings every namespace, type, and plain function that name denotes. The pools are separate, so a directory, a type, and a function can share a spelling and one `use` brings all of them. Visibility is checked where the name is read, not by the `use` itself.
+- A `use` of a name brings every namespace, type, and plain function that name denotes. A type and a plain function may share a spelling, and one `use` brings both; a namespace and a type may not share one, because `::` reaches both. Visibility is checked where the name is read, not by the `use` itself.
 - A `use` may not name a module value, a method, or an associate function. Those are reached through their owner.
 - A type-`use` brings the type's bound functions with it.
 - There is no `as`.
@@ -170,7 +170,7 @@ There is one function form, with four ways to bind it:
 - **Named function**: owns a name in the value pool. It captures nothing.
 - **Anonymous function**: a closure literal. It owns no name. It is contained by the function or module value whose body writes it. It owns its parameters and locals, and captures the enclosing locals it reads.
 - **Method**: a function in `impl T` whose first parameter has type `T`. It is called as `value.name(arguments)`. The first parameter is the receiver. The name `self` is convention; any name works.
-- **Associate**: a function in `impl T` whose first parameter is not `T`, including no parameters. The other parameters do not decide. It is reached as `Type.name(arguments)` or used as the value `Type.name`.
+- **Associate**: a function in `impl T` whose first parameter is not `T`, including no parameters. The other parameters do not decide. It is reached as `Type::name(arguments)` or used as the value `Type::name`.
 
 A method's first parameter is passed by every call. A body that ignores it does not warn as an unused local.
 
@@ -227,7 +227,7 @@ and change it with its operations:
 ```
 use std::dynamic::Vec;
 
-let values: Vec<int> = Vec.new().push(1).push(2);
+let values: Vec<int> = Vec::new().push(1).push(2);
 let size: int = values.len();
 let first: int = values.at(0);
 ```
@@ -239,7 +239,7 @@ either, and its keys are unordered:
 ```
 use std::dynamic::HashMap;
 
-let counts: HashMap<txt, int> = HashMap.new().insert("a", 1);
+let counts: HashMap<txt, int> = HashMap::new().insert("a", 1);
 let one: int = counts.get("a");
 let maybe: int = counts.get_or("b", 0);
 let present: bool = counts.contains("a");
@@ -251,8 +251,8 @@ A key is compared by `==`, so any value can be a key.
 `Option<T>` is an ordinary declared `enum` in `std`:
 
 ```
-std::Option.some(1)
-std::Option.none
+std::Option::some(1)
+std::Option::none
 ```
 
 There are no floats and no characters. `txt` is the text type.
@@ -267,7 +267,7 @@ Expressions include:
 - `true` and `false`
 - integer literals
 - record literals: `{ name = "api", port = 8080 }`
-- enum variants: `Option.some(1)`
+- enum variants: `Option::some(1)`
 - names and paths: `value`, `root::kiru::usage`
 - calls: `name(arguments)`, `value.method(arguments)`, `Type.associate(arguments)`
 - field access: `value.field`
@@ -306,7 +306,7 @@ match ready {
 A match has a subject and one or more arms. Patterns can be:
 
 - a value, such as `0` or `"ok"`
-- an enum variant, such as `Option.some(value)` or `Option.none`
+- an enum variant, such as `Option::some(value)` or `Option::none`
 - the wildcard `_`
 
 A match expression must cover every value its subject can take. A match statement records whether it is exhaustive; the flow rules use that to decide whether the statement can fall through.
@@ -372,7 +372,7 @@ This table is only for the places where Kiru differs from Rust. If a concept is 
 | `i8` ... `i128`, `u8` ... `u128` | `int`                            | One integer type.                                                                     |
 | floats, chars                    | none                             | Kiru has `txt`, `bool`, and `int`, and nothing else.                                  |
 | arrays, slices                   | `Vec<T>`                         | No fixed arrays, no list literal, no indexing, no slicing.                            |
-| `Option<T>`                      | `std::Option<T>`                 | Constructed as `Option.some(value)` or `Option.none`.                                 |
+| `Option<T>`                      | `std::Option<T>`                 | Constructed as `Option::some(value)` or `Option::none`.                                 |
 | `Result<T, E>`, `?`              | none                             | Stop with `panic;` or use `Option` and match it.                                      |
 | `Box`, `Rc`, `Arc`               | none                             | No source-level pointer or reference types.                                           |
 | `&T`, `&mut T`, lifetimes        | none                             | No borrowing, no ownership, no lifetimes.                                             |

@@ -21,7 +21,7 @@ pub(crate) fn byte(text: &str, index: i64) -> Result<Value, String> {
     Ok(Value::Int(bytes[index as usize] as i64))
 }
 
-/// The byte index of the first occurrence of `needle`, or `std::Option.none`
+/// The byte index of the first occurrence of `needle`, or `std::Option::none`
 /// when it is not present. There is no `-1` sentinel: a missing index is the
 /// `none` variant, exactly as a program writes it.
 pub(crate) fn find(text: &str, needle: &str) -> Value {

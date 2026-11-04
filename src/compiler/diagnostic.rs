@@ -374,9 +374,15 @@ pub(crate) fn first_declaration(name: &str) -> String {
 
 /// The message for a field or variant reached across a namespace that does not
 /// mark it `pub`. A member is private to its own namespace, exactly like a
-/// declaration.
-pub(crate) fn private_member(owner: &str, member: &str, namespace: &str) -> String {
-    format!("`{owner}.{member}` is private to `{namespace}`; mark it `pub` to reach it")
+/// declaration. A field is reached with `.` and a variant with `::`, so the
+/// separator is the caller's.
+pub(crate) fn private_member(
+    owner: &str,
+    member: &str,
+    namespace: &str,
+    separator: &str,
+) -> String {
+    format!("`{owner}{separator}{member}` is private to `{namespace}`; mark it `pub` to reach it")
 }
 
 #[cfg(test)]

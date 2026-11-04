@@ -27,7 +27,7 @@ impl Vec {
   # A new vec with the elements reversed. It appends into a fresh vec while
   # reading `self` from the end.
   pub fn reverse<T>(self: std::dynamic::Vec<T>) -> std::dynamic::Vec<T> {
-    let result: std::dynamic::Vec<T> = std::dynamic::Vec.new();
+    let result: std::dynamic::Vec<T> = std::dynamic::Vec::new();
     let index: int = std::dynamic::len(self);
     for {
       match index > 0 { false => { break; }; true => {}; };
@@ -53,7 +53,7 @@ impl Vec {
     return found;
   };
 
-  # The first index of `item`, or `std::Option.none` when it is not an
+  # The first index of `item`, or `std::Option::none` when it is not an
   # element. Equality is `==`.
   pub fn index_of<T>(self: std::dynamic::Vec<T>, item: T) -> std::Option<int> {
     let index: int = 0;
@@ -61,19 +61,19 @@ impl Vec {
     for {
       match index < count { false => { break; }; true => {}; };
       match std::dynamic::at(self, index) == item {
-        true => { return std::Option.some(index); };
+        true => { return std::Option::some(index); };
         _ => {};
       };
       index = index + 1;
     };
-    return std::Option.none;
+    return std::Option::none;
   };
 
   # A new vec with adjacent duplicates dropped. `std::dynamic::sort_by` then
   # `std::dynamic::dedup` keeps one of each value, so a sorted vec becomes
   # unique. Equality is `==`.
   pub fn dedup<T>(self: std::dynamic::Vec<T>) -> std::dynamic::Vec<T> {
-    let out: std::dynamic::Vec<T> = std::dynamic::Vec.new();
+    let out: std::dynamic::Vec<T> = std::dynamic::Vec::new();
     let count: int = std::dynamic::len(self);
     match count {
       0 => { return out; };
@@ -94,7 +94,7 @@ impl Vec {
 
   # A new vec with `apply` called on every element.
   pub fn map<T, U>(self: std::dynamic::Vec<T>, apply: fn(T) -> U) -> std::dynamic::Vec<U> {
-    let out: std::dynamic::Vec<U> = std::dynamic::Vec.new();
+    let out: std::dynamic::Vec<U> = std::dynamic::Vec::new();
     let index: int = 0;
     let count: int = std::dynamic::len(self);
     for {
@@ -107,7 +107,7 @@ impl Vec {
 
   # A new vec with the elements for which `keep` answers `true`.
   pub fn filter<T>(self: std::dynamic::Vec<T>, keep: fn(T) -> bool) -> std::dynamic::Vec<T> {
-    let out: std::dynamic::Vec<T> = std::dynamic::Vec.new();
+    let out: std::dynamic::Vec<T> = std::dynamic::Vec::new();
     let index: int = 0;
     let count: int = std::dynamic::len(self);
     for {
@@ -131,7 +131,7 @@ impl Vec {
       true => { std::eprint("insert: the index is outside the vec"); };
       _ => {};
     };
-    let out: std::dynamic::Vec<T> = std::dynamic::Vec.new();
+    let out: std::dynamic::Vec<T> = std::dynamic::Vec::new();
     let at: int = 0;
     for {
       match at < count { false => { break; }; true => {}; };
@@ -157,7 +157,7 @@ impl Vec {
       true => { std::eprint("remove: the index is outside the vec"); };
       _ => {};
     };
-    let out: std::dynamic::Vec<T> = std::dynamic::Vec.new();
+    let out: std::dynamic::Vec<T> = std::dynamic::Vec::new();
     let at: int = 0;
     for {
       match at < count { false => { break; }; true => {}; };
@@ -177,7 +177,7 @@ impl Vec {
 
   # The empty vec.
   pub fn clear<T>(self: std::dynamic::Vec<T>) -> std::dynamic::Vec<T> {
-    return std::dynamic::Vec.new();
+    return std::dynamic::Vec::new();
   };
 
   # A new vec of the elements in the half-open range `from` up to `to`. A
@@ -188,7 +188,7 @@ impl Vec {
       true => { std::eprint("slice: the range is outside the vec"); };
       _ => {};
     };
-    let out: std::dynamic::Vec<T> = std::dynamic::Vec.new();
+    let out: std::dynamic::Vec<T> = std::dynamic::Vec::new();
     let at: int = from;
     for {
       match at < to { false => { break; }; true => {}; };
@@ -201,7 +201,7 @@ impl Vec {
   # The first `count` elements, or all of them when `count` exceeds the length.
   # A `count` below zero yields no elements.
   pub fn take<T>(self: std::dynamic::Vec<T>, count: int) -> std::dynamic::Vec<T> {
-    let out: std::dynamic::Vec<T> = std::dynamic::Vec.new();
+    let out: std::dynamic::Vec<T> = std::dynamic::Vec::new();
     let total: int = std::dynamic::len(self);
     let at: int = 0;
     for {
@@ -215,7 +215,7 @@ impl Vec {
   # Everything after the first `count` elements. A `count` below zero skips
   # nothing.
   pub fn skip<T>(self: std::dynamic::Vec<T>, count: int) -> std::dynamic::Vec<T> {
-    let out: std::dynamic::Vec<T> = std::dynamic::Vec.new();
+    let out: std::dynamic::Vec<T> = std::dynamic::Vec::new();
     let total: int = std::dynamic::len(self);
     let at: int = match count < 0 { true => 0; _ => count; };
     for {
@@ -298,7 +298,7 @@ impl Vec {
     let width: int = 1;
     for {
       match width < count { false => { break; }; true => {}; };
-      let merged: std::dynamic::Vec<T> = std::dynamic::Vec.new();
+      let merged: std::dynamic::Vec<T> = std::dynamic::Vec::new();
       let base: int = 0;
       for {
         match base < count { false => { break; }; true => {}; };

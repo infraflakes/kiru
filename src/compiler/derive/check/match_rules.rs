@@ -336,7 +336,7 @@ impl<'a> Checker<'a> {
                         variant.payload.clone(),
                     )
                 };
-                self.check_member(*ty, &variant_name, public, *span)?;
+                self.check_member(*ty, &variant_name, public, "::", *span)?;
                 for (binding, field_type) in bindings.iter().zip(&declared) {
                     if let Some(binding) = binding {
                         let ty = substitute(

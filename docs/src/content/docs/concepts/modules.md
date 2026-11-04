@@ -43,13 +43,13 @@ name (`std` or `root`) and walks down:
 use std;
 
 fn main() {
-  let xs: std::dynamic::Vec<int> = std::dynamic::Vec.new();
+  let xs: std::dynamic::Vec<int> = std::dynamic::Vec::new();
   xs = std::dynamic::push(xs, 1);
   std::print("@(std::dynamic::len(xs))");
 };
 ```
 
-`std::dynamic::Vec` is the type; `std::dynamic::Vec.new()` is its associated
+`std::dynamic::Vec` is the type; `std::dynamic::Vec::new()` is its associated
 function; `std::dynamic::push` is a native in that namespace. A declaration
 reached across a namespace must be `pub`; `std::` holds only public names.
 
@@ -74,7 +74,7 @@ function, and one path may end at more than one of them at once:
   use std::dynamic;
 
   fn main() {
-    let xs: dynamic::Vec<int> = dynamic::Vec.new();
+    let xs: dynamic::Vec<int> = dynamic::Vec::new();
     std::print("@(dynamic::len(xs))");
   };
   ```
@@ -86,7 +86,7 @@ function, and one path may end at more than one of them at once:
   use std::dynamic::Vec;
 
   fn main() {
-    let xs: Vec<txt> = Vec.new();
+    let xs: Vec<txt> = Vec::new();
     xs = xs.push("b");
     xs = xs.push("a");
     std::print(xs.sort().at(0));
@@ -104,11 +104,12 @@ function, and one path may end at more than one of them at once:
   };
   ```
 
-A directory, a type, and a plain function may share a spelling, and one `use`
-brings every target the name denotes. Each position then takes the one it
-names: a type annotation reads the type, `Name(...)` reads the function, and
-`Name::member` reads the namespace. Nothing is dropped and nothing is guessed
-from the spelling.
+A type and a plain function may share a spelling, and one `use` brings both. A
+directory and a type may not share one: `::` reaches both, so one spelling would
+name two things. Each position still takes the target it names: a type
+annotation reads the type, `Name(...)` reads the function, and `Name::member`
+reads the namespace or the type's bound function. Nothing is guessed from the
+spelling.
 
 One level of braces shortens several names under one prefix:
 
@@ -117,14 +118,14 @@ use std;
 use std::dynamic::{HashMap, Vec};
 
 fn main() {
-  let m: HashMap<txt, int> = HashMap.new();
-  let xs: Vec<int> = Vec.new();
+  let m: HashMap<txt, int> = HashMap::new();
+  let xs: Vec<int> = Vec::new();
   std::print("@(m.len()) @(xs.len())");
 };
 ```
 
 There is no alias and no `as`. A `use` does not reach a sub-namespace and does
-not chain: `use std::dynamic;` gives `dynamic::Vec`, not `dynamic::Vec.new`
+not chain: `use std::dynamic;` gives `dynamic::Vec`, not `dynamic::Vec::new`
 without the `Vec`, and it never reaches `std::text`. A `use` also never reaches
 a module value or a bound function — a bound function is reached through its
 type ([Methods](/concepts/methods/) covers that).
@@ -200,7 +201,7 @@ fn thing() -> txt { return "function thing"; };
 
 The one exception is a bound function: two functions bound to different types
 may share a name, because the receiver's type head selects between them.
-`Vec.len` and `HashMap.len` share `len` in `std::dynamic`. Two functions bound to
+the `len` method on both `Vec` and `HashMap` share `len` in `std::dynamic`. Two functions bound to
 the same type, or two plain declarations of one name, are still an error.
 [Methods](/concepts/methods/) covers the rule.
 

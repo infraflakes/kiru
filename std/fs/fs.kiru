@@ -17,7 +17,7 @@ pub fn temp_file() -> txt {
 };
 
 # Whether the `[...]` class starting at `p` matches `value`: the index just
-# after the closing `]`, or `std::Option.none`. A leading `!` or `^` negates,
+# after the closing `]`, or `std::Option::none`. A leading `!` or `^` negates,
 # `a-z` is a range, and `\` escapes the next byte.
 fn class_end(pattern: txt, p: int, value: int) -> std::Option<int> {
   let count: int = std::text::strlen(pattern);
@@ -70,13 +70,13 @@ fn class_end(pattern: txt, p: int, value: int) -> std::Option<int> {
   };
   let answer: bool = match negate { true => !matched; false => matched; };
   return match answer {
-    true => std::Option.some(index);
-    false => std::Option.none;
+    true => std::Option::some(index);
+    false => std::Option::none;
   };
 };
 
 # Whether the token at `p` in `pattern` matches the byte `value`: the index
-# just after the token, or `std::Option.none` when it does not match.
+# just after the token, or `std::Option::none` when it does not match.
 fn token_matches(pattern: txt, p: int, value: int) -> std::Option<int> {
   let count: int = std::text::strlen(pattern);
   let code: int = std::text::byte_at(pattern, p);
@@ -84,21 +84,21 @@ fn token_matches(pattern: txt, p: int, value: int) -> std::Option<int> {
   match code == 92 {
     true => {
       match p + 1 < count {
-        false => { return std::Option.none; };
+        false => { return std::Option::none; };
         _ => {};
       };
       let next: int = p + 1;
       let literal: int = std::text::byte_at(pattern, next);
       return match literal == value {
-        true => std::Option.some(next + 1);
-        false => std::Option.none;
+        true => std::Option::some(next + 1);
+        false => std::Option::none;
       };
     };
     _ => {};
   };
   # 63 is `?`: any one byte.
   match code == 63 {
-    true => { return std::Option.some(p + 1); };
+    true => { return std::Option::some(p + 1); };
     _ => {};
   };
   # 91 is `[`: a class.
@@ -107,8 +107,8 @@ fn token_matches(pattern: txt, p: int, value: int) -> std::Option<int> {
     _ => {};
   };
   return match code == value {
-    true => std::Option.some(p + 1);
-    false => std::Option.none;
+    true => std::Option::some(p + 1);
+    false => std::Option::none;
   };
 };
 
@@ -121,24 +121,24 @@ fn match_name(pattern: txt, name: txt) -> bool {
   let nlen: int = std::text::strlen(name);
   let p: int = 0;
   let n: int = 0;
-  let star: std::Option<int> = std::Option.none;
+  let star: std::Option<int> = std::Option::none;
   let mark: int = 0;
   for {
     match n < nlen { false => { break; }; true => {}; };
     # 42 is `*`: remember it and let it match a run.
     match p < plen && std::text::byte_at(pattern, p) == 42 {
-      true => { star = std::Option.some(p); mark = n; p = p + 1; };
+      true => { star = std::Option::some(p); mark = n; p = p + 1; };
       _ => {
         let next: std::Option<int> = match p < plen {
           true => std::fs::token_matches(pattern, p, std::text::byte_at(name, n));
-          false => std::Option.none;
+          false => std::Option::none;
         };
         match next {
-          std::Option.some(after) => { p = after; n = n + 1; };
-          std::Option.none => {
+          std::Option::some(after) => { p = after; n = n + 1; };
+          std::Option::none => {
             match star {
-              std::Option.some(position) => { p = position + 1; mark = mark + 1; n = mark; };
-              std::Option.none => { return false; };
+              std::Option::some(position) => { p = position + 1; mark = mark + 1; n = mark; };
+              std::Option::none => { return false; };
             };
           };
         };
@@ -218,12 +218,12 @@ pub fn glob(pattern: txt) -> std::dynamic::Vec<txt> {
   let absolute: bool = std::text::starts_with(pattern, "/");
   # A worklist of (segment index, prefix), in two parallel vecs because a
   # worklist entry is a pair and there is no recursion. `count` is its length.
-  let work_at: std::dynamic::Vec<int> = std::dynamic::Vec.new();
-  let work_prefix: std::dynamic::Vec<txt> = std::dynamic::Vec.new();
+  let work_at: std::dynamic::Vec<int> = std::dynamic::Vec::new();
+  let work_prefix: std::dynamic::Vec<txt> = std::dynamic::Vec::new();
   let count: int = 1;
   work_at = std::fs::put(work_at, 0, match absolute { true => 1; false => 0; });
   work_prefix = std::fs::put(work_prefix, 0, match absolute { true => "/"; false => ""; });
-  let results: std::dynamic::Vec<txt> = std::dynamic::Vec.new();
+  let results: std::dynamic::Vec<txt> = std::dynamic::Vec::new();
   for {
     match count > 0 { false => { break; }; true => {}; };
     count = count - 1;

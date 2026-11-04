@@ -9,10 +9,10 @@ There are two kinds, told apart by the first parameter:
 - a **method** has the block's type as its first parameter, so a call
   `receiver.name(arguments)` passes the receiver as that first argument;
 - an **associated function** has any other first parameter, so it is reached as
-  `Type.name(arguments)`.
+  `Type::name(arguments)`.
 
 A bound function is never a namespace-level name. It is reached only through its
-type: a value call, a `Type.name` call, or `Type.name` as a value.
+type: a value call, a `Type::name` call, or `Type::name` as a value.
 
 ## impl blocks
 
@@ -58,13 +58,13 @@ impl Point {
 };
 
 fn main() {
-  let p: Point = Point.origin();
+  let p: Point = Point::origin();
   std::print("@(p.x)");   # 0
 };
 ```
 
-`Point.origin()` is a `Type.name` call. The type's name is also how the function
-is reached as a value: `Point.origin` is the function itself.
+`Point::origin()` is a `Type::name` call. The type's name is also how the function
+is reached as a value: `Point::origin` is the function itself.
 
 ```kiru
 use std;
@@ -82,7 +82,7 @@ fn make(build: fn() -> Counter) -> Counter {
 };
 
 fn main() {
-  let c: Counter = make(Counter.zero);
+  let c: Counter = make(Counter::zero);
   std::print("@(c.n)");   # 0
 };
 ```
@@ -91,11 +91,11 @@ fn main() {
 
 A value call dispatches on the receiver's type head: `xs.len()` on a `Vec<int>`
 picks the `len` whose first parameter is a `Vec<T>`, and the arguments are then
-checked exactly. A `Type.name` call reads the associated-function pool by the
+checked exactly. A `Type::name` call reads the associated-function pool by the
 type's head.
 
 Because a bound function is filed under a type, a name may repeat in a namespace
-when the functions are bound to **different types**. `Vec.len` and `HashMap.len`
+when the functions are bound to **different types**. the `len` method on both `Vec` and `HashMap`
 share `len` in `std::dynamic`, and the receiver's type head selects between
 them:
 
@@ -143,7 +143,7 @@ use std::dynamic::Vec;
 
 fn main() {
   let word: txt = "abc";
-  let xs: Vec<txt> = Vec.new();
+  let xs: Vec<txt> = Vec::new();
   xs = xs.push(word);
   std::print("@(xs.len())");   # 1
 };
