@@ -1,0 +1,103 @@
+# Checking every `kiru` block in the book.
+#
+# A block is a whole program: it is written into one project and compiled by
+# the compiler this repository just built. A block that does not compile is a
+# book bug, not a reader's problem, so this check runs beside the backend
+# checks.
+#
+# The block's project is separate from the pipeline's own manifest, so a block
+# never overwrites the running pipeline binary.
+
+# The `kiru` blocks of one page. A fence opens with ```` ```kiru ```` and
+# closes with ```` ``` ````; a `text` fence is not a program. Every other line
+# inside a block is kept exactly as the page writes it, including blank lines.
+fn blocks_of(page: txt) -> std::dynamic::Vec<txt> {
+  let blocks: std::dynamic::Vec<txt> = std::dynamic::Vec::new();
+  let lines: std::dynamic::Vec<txt> = page.lines();
+  let inside: bool = false;
+  let source: txt = "";
+  let index: int = 0;
+  let count: int = std::dynamic::len(lines);
+  for {
+    match index < count { false => { break; }; true => {}; };
+    let raw: txt = std::dynamic::at(lines, index);
+    let line: txt = std::text::trim(raw);
+    match line == "```kiru" {
+      true => { inside = true; source = ""; };
+      _ => {
+        match inside && line == "```" {
+          true => { blocks = std::dynamic::push(blocks, source); inside = false; };
+          _ => {
+            match inside {
+              true => { source = "@(source)@(raw)\n"; };
+              _ => {};
+            };
+          };
+        };
+      };
+    };
+    index = index + 1;
+  };
+  return blocks;
+};
+
+# Compile one block. The compiler's own diagnostics name the block's line in
+# the generated project; the report below names the page and the block.
+fn check_block(page: txt, block: int, source: txt) -> int {
+  std::fs::write("book-check/main.kiru", source);
+  let output: std::process::Output = std::process::command(
+    "cargo run --release --quiet -- book-check/kiru.toml",
+  ).capture();
+  match output.code {
+    0 => { return 0; };
+    _ => {
+      std::eprint("@(page): kiru block @(block) does not compile
+@(output.err)");
+      return 1;
+    };
+  };
+};
+
+# Compile every block of one page. A block that is only whitespace is skipped.
+fn check_page(page: txt) -> int {
+  let blocks: std::dynamic::Vec<txt> = blocks_of(std::fs::read(page));
+  let index: int = 0;
+  let failures: int = 0;
+  let count: int = std::dynamic::len(blocks);
+  for {
+    match index < count { false => { break; }; true => {}; };
+    let source: txt = std::dynamic::at(blocks, index);
+    match std::text::trim(source) {
+      "" => {};
+      _ => { failures = failures + check_block(page, index, source); };
+    };
+    index = index + 1;
+  };
+  return failures;
+};
+
+# Compile every `kiru` block of every page. The pages are the Markdown and MDX
+# files under the book's content root, at any depth.
+pub fn book_check() -> int {
+  let pages: std::dynamic::Vec<txt> = std::fs::glob("docs/src/content/docs/**/*.md")
+    .concat(std::fs::glob("docs/src/content/docs/**/*.mdx"));
+  std::log("Checking @(std::dynamic::len(pages)) book pages");
+  let index: int = 0;
+  let failures: int = 0;
+  let count: int = std::dynamic::len(pages);
+  for {
+    match index < count { false => { break; }; true => {}; };
+    failures = failures + check_page(std::dynamic::at(pages, index));
+    index = index + 1;
+  };
+  match failures {
+    0 => {
+      std::log("Every kiru block in the book compiles");
+      return 0;
+    };
+    _ => {
+      std::eprint("@(failures) kiru block(s) in the book do not compile");
+      return 1;
+    };
+  };
+};

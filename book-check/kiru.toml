@@ -1,0 +1,3 @@
+[project]
+root = "."
+output = "main"

@@ -124,6 +124,7 @@
               packages = with pkgs; [
                 bun
                 biome
+                cargo-audit
                 cargo-edit
               ];
             }

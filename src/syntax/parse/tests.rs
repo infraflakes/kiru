@@ -15,6 +15,36 @@ fn parse(source: &str) -> File {
     parsed.file
 }
 
+#[test]
+fn the_front_end_survives_random_source() {
+    // Every form the lexer can meet, in one alphabet. Random input must become
+    // diagnostics, never a panic: the editor feeds the parser whatever the
+    // buffer holds, including half-written declarations and stray punctuation.
+    const ALPHABET: &[&str] = &[
+        "fn", "rec", "enum", "impl", "let", "match", "for", "break", "return", "use", "pub",
+        "async", "wait", "panic", "true", "false", "txt", "int", "bool", "self", "std", "dynamic",
+        "a", "b", "T", "0", "1", "42", "{", "}", "(", ")", "[", "]", "::", ".", ";", ",", ":",
+        "=>", "->", "@(", "\"", "'", "#", "\\", "\n", " ", "==", "!=", "+", "-", "*", "/", "%",
+        "<", ">", "&&", "||", "!", "_",
+    ];
+    let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+    let mut next = || {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        state >> 33
+    };
+    for _ in 0..256 {
+        let mut source = String::new();
+        let length = next() % 64;
+        for _ in 0..length {
+            source.push_str(ALPHABET[(next() as usize) % ALPHABET.len()]);
+            source.push(' ');
+        }
+        let _ = parse_file(&source);
+    }
+}
+
 /// The name a written type names: a bare, unapplied single-segment path. A
 /// built-in and a user type parse the same way.
 fn written_name(expr: &TypeExpr) -> &str {

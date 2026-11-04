@@ -10,7 +10,8 @@ fn check_kiru(project: Project) -> int {
     .push("cargo clippy --all-targets -- -D warnings")
     .push("cargo fmt --check")
     .push("cargo build --release")
-    .push("cargo run --release -- pipeline/check/kiru.toml");
+    .push("cargo run --release -- pipeline/check/kiru.toml")
+    .push("./pipeline/check-main kiru book");
   return run_steps(project, steps);
 };
 

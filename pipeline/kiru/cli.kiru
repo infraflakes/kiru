@@ -2,6 +2,8 @@ let usage_kiru: txt = "usage: kiru <flag>
 
 flags:
 check      run the checks
+book       compile every kiru block in the book
+audit      check dependencies for advisories
 build      build the binary
 container  docker or podman build into bin
 format     apply clippy and rustfmt fixes
@@ -48,6 +50,8 @@ fn container_cmd() -> txt {
 pub fn kiru_command(project: Project, flag: txt) -> int {
   match flag {
     "check" => { return check_kiru(project); };
+    "book" => { return book_check(); };
+    "audit" => { return run(project, "cargo audit"); };
     "build" => { return build_kiru(project); };
     "container" => {
       return run(project, "@(container_cmd()) build --output type=local,dest=bin .");
